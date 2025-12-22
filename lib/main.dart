@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io'; // Import Platform
 import 'dart:math';
 import 'dart:ui'; 
+import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; 
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 
@@ -21,7 +24,7 @@ class Station {
        name = json['location']['name'];
     }
     return Station(
-      id: json['id'] ?? '',
+      id: json['id']?.toString() ?? '',
       name: name,
       distance: json['distance'] != null ? (json['distance'] as num).toDouble() : null,
     );
@@ -84,7 +87,7 @@ class TransportApi {
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
     if (query.length < 2) return [];
     try {
-      String url = '$_baseUrl/locations?query=$query&results=5';
+      String url = '$_baseUrl/locations?query=${Uri.encodeComponent(query)}&results=5';
       if (lat != null && lng != null) {
         url += '&latitude=$lat&longitude=$lng'; 
       }
@@ -183,52 +186,80 @@ class _MainScreenState extends State<MainScreen> {
   Position? _currentPosition;
   bool _gettingLocation = true;
 
-  // Mock Data
-  final List<Friend> _friends = [
-    Friend('Alex', 'On Bus 42', Colors.blue, 40, 10),
-    Friend('Sarah', 'At Central St.', Colors.green, 50, 60),
-    Friend('Mike', 'On Tram 10', Colors.purple, 20, 80),
-  ];
-
   @override
   void initState() {
     super.initState();
+    // Don't await this, let it run in background to not block UI init
     _determinePosition();
   }
 
+  // --- LOCATION LOGIC ---
   Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() => _gettingLocation = false);
-      return;
+    // Quick check for Linux Desktop to avoid hanging on missing plugins
+    if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+       debugPrint("Desktop OS detected: Skipping native geolocation to prevent lag.");
+       _useMockLocation();
+       return;
     }
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+    try {
+      bool serviceEnabled;
+      LocationPermission permission;
+
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw 'Location services are disabled.';
+      }
+
+      permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        setState(() => _gettingLocation = false);
-        return;
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw 'Location permissions are denied';
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        throw 'Location permissions are permanently denied';
+      } 
+
+      final pos = await Geolocator.getCurrentPosition(
+        timeLimit: const Duration(seconds: 5) // Fail fast if GPS is slow
+      );
+      
+      if (mounted) {
+        setState(() {
+          _currentPosition = pos;
+          _gettingLocation = false;
+        });
+        _fetchNearbySuggestions();
+      }
+    } catch (e) {
+      if (mounted) {
+        debugPrint("Location Failed: $e. Using Mock.");
+        _useMockLocation();
       }
     }
-    
-    if (permission == LocationPermission.deniedForever) {
-      setState(() => _gettingLocation = false);
-      return;
-    } 
+  }
 
-    final pos = await Geolocator.getCurrentPosition();
+  void _useMockLocation() {
     setState(() {
-      _currentPosition = pos;
       _gettingLocation = false;
+      // Mock location: Wiesbaden
+      _currentPosition = Position(
+        longitude: 8.24, 
+        latitude: 50.07, 
+        timestamp: DateTime.now(), 
+        accuracy: 0, 
+        altitude: 0, 
+        heading: 0, 
+        speed: 0, 
+        speedAccuracy: 0,
+        altitudeAccuracy: 0, 
+        headingAccuracy: 0
+      );
     });
-    
-    if (_currentPosition != null) {
-      _fetchNearbySuggestions();
-    }
+    _fetchNearbySuggestions();
   }
 
   Future<void> _fetchNearbySuggestions() async {
@@ -241,6 +272,8 @@ class _MainScreenState extends State<MainScreen> {
      }
   }
 
+  // --- HANDLERS ---
+
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
     
@@ -250,18 +283,22 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _debounce = Timer(const Duration(milliseconds: 400), () async { // Increased debounce to 400ms
       if (query.length > 2) {
         final results = await TransportApi.searchStations(
           query, 
           lat: _currentPosition?.latitude, 
           lng: _currentPosition?.longitude
         );
-        setState(() {
-          _suggestions = results;
-        });
+        if (mounted) {
+          setState(() {
+            _suggestions = results;
+          });
+        }
       } else {
-        setState(() => _suggestions = []);
+        if (mounted) {
+          setState(() => _suggestions = []);
+        }
       }
     });
   }
@@ -287,75 +324,103 @@ class _MainScreenState extends State<MainScreen> {
       _suggestions = [];
       _activeSearchField = '';
     });
-    FocusManager.instance.primaryFocus?.unfocus();
+    // unfocus logic handled by Flutter usually, explicit call sometimes causes lag on Linux if IME is slow
+    FocusScope.of(context).unfocus(); 
   }
 
   Future<void> _findRoutes() async {
     if (_fromStation == null || _toStation == null) return;
     setState(() => _isLoading = true);
 
-    final journeyData = await TransportApi.searchJourney(_fromStation!.id, _toStation!.id);
+    try {
+      final journeyData = await TransportApi.searchJourney(_fromStation!.id, _toStation!.id);
 
-    if (journeyData != null) {
-      final List legs = journeyData['legs'];
-      final List<JourneyStep> steps = [];
-      final random = Random();
+      if (journeyData != null && journeyData['legs'] != null) {
+        final List legs = journeyData['legs'];
+        final List<JourneyStep> steps = [];
+        final random = Random();
 
-      for (var leg in legs) {
-        final mode = leg['mode'];
-        final lineName = leg['line'] != null ? leg['line']['name'] : mode.toString().toUpperCase();
-        final dest = leg['destination']['name'];
-        final depStr = leg['departure'];
-        final arrStr = leg['arrival'];
-        
-        DateTime dep = DateTime.parse(depStr);
-        DateTime arr = DateTime.parse(arrStr);
-        int durationMin = arr.difference(dep).inMinutes;
+        for (var leg in legs) {
+          final mode = leg['mode'] ?? 'transport';
+          
+          String lineName = 'Transport';
+          if (leg['line'] != null && leg['line']['name'] != null) {
+            lineName = leg['line']['name'].toString();
+          } else {
+            lineName = mode.toString().toUpperCase();
+          }
 
-        String? alert;
-        String? seating;
-        int? chatCount;
+          String destName = 'Destination';
+          if (leg['destination'] != null && leg['destination']['name'] != null) {
+            destName = leg['destination']['name'].toString();
+          }
 
-        if (mode != 'walking') {
-          if (random.nextDouble() > 0.7) alert = "Smart Alt: Delay ahead.";
-          if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
-          chatCount = random.nextInt(15) + 1;
+          final depStr = leg['departure'] as String?;
+          final arrStr = leg['arrival'] as String?;
+          
+          if (depStr == null || arrStr == null) continue;
+
+          DateTime dep = DateTime.parse(depStr);
+          DateTime arr = DateTime.parse(arrStr);
+          int durationMin = arr.difference(dep).inMinutes;
+
+          String? alert;
+          String? seating;
+          int? chatCount;
+
+          if (mode != 'walking') {
+            if (random.nextDouble() > 0.7) alert = "Smart Alt: Delay ahead.";
+            if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
+            chatCount = random.nextInt(15) + 1;
+          }
+
+          steps.add(JourneyStep(
+            type: mode == 'walking' ? 'walk' : 'transport',
+            line: lineName,
+            instruction: mode == 'walking' ? "Walk to $destName" : "$lineName to $destName",
+            duration: "$durationMin min",
+            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+            alert: alert,
+            seating: seating,
+            chatCount: chatCount,
+          ));
         }
 
-        steps.add(JourneyStep(
-          type: mode == 'walking' ? 'walk' : 'transport',
-          line: lineName,
-          instruction: mode == 'walking' ? "Walk to $dest" : "$lineName to $dest",
-          duration: "$durationMin min",
-          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-          alert: alert,
-          seating: seating,
-          chatCount: chatCount,
-        ));
+        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
+        String eta = "--:--";
+        if (journeyData['arrival'] != null) {
+           final arr = DateTime.parse(journeyData['arrival']);
+           eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+        }
+
+        final newTab = RouteTab(
+          id: newTabId,
+          title: _toStation!.name,
+          subtitle: "${_fromStation!.name} → ${_toStation!.name}",
+          eta: eta,
+          steps: steps,
+        );
+
+        setState(() {
+          _tabs.add(newTab);
+          _activeTabId = newTabId;
+          _fromStation = null;
+          _toStation = null;
+          _fromController.clear();
+          _toController.clear();
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
+        }
       }
-
-      final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-      final newTab = RouteTab(
-        id: newTabId,
-        title: _toStation!.name,
-        subtitle: "${_fromStation!.name} → ${_toStation!.name}",
-        eta: "${DateTime.parse(journeyData['arrival']).hour.toString().padLeft(2, '0')}:${DateTime.parse(journeyData['arrival']).minute.toString().padLeft(2, '0')}",
-        steps: steps,
-      );
-
-      setState(() {
-        _tabs.add(newTab);
-        _activeTabId = newTabId;
-        _fromStation = null;
-        _toStation = null;
-        _fromController.clear();
-        _toController.clear();
-        _isLoading = false;
-      });
-    } else {
+    } catch (e) {
       setState(() => _isLoading = false);
+      debugPrint("Route finding error: $e");
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
       }
     }
   }
@@ -368,6 +433,8 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
   }
+
+  // --- UI ---
 
   @override
   Widget build(BuildContext context) {
@@ -428,62 +495,118 @@ class _MainScreenState extends State<MainScreen> {
     if (_currentIndex == 1) return const Center(child: Text("Friends Map Placeholder", style: TextStyle(color: Colors.grey)));
     if (_currentIndex == 2) return const Center(child: Text("Settings Placeholder", style: TextStyle(color: Colors.grey)));
     
-    return Stack(
+    return Column(
       children: [
-        Column(
-          children: [
-            const SizedBox(height: 100),
-            if (_tabs.isNotEmpty)
-              SizedBox(
-                height: 50,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: _tabs.length + 1,
-                  itemBuilder: (ctx, idx) {
-                    if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null));
-                    final tab = _tabs[idx];
-                    final isActive = tab.id == _activeTabId;
-                    return GestureDetector(
-                      onTap: () => setState(() => _activeTabId = tab.id),
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: isActive ? const Color(0xFF4F46E5) : const Color(0xFF1F2937),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.directions, size: 16, color: Colors.white),
-                            const SizedBox(width: 6),
-                            Text(tab.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                            const SizedBox(width: 4),
-                            GestureDetector(onTap: () => _closeTab(tab.id), child: const Icon(Icons.close, size: 14, color: Colors.white70))
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            Expanded(
-              child: _activeTabId == null ? _buildSearchView() : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId)),
-            ),
-          ],
-        ),
+        const SizedBox(height: 100),
         
-        if (_suggestions.isNotEmpty)
-          Positioned(
-            top: _activeSearchField == 'from' ? 240 : 310,
-            left: 32, right: 32,
-            child: Material(
-              elevation: 8,
-              color: const Color(0xFF1F2937),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                constraints: const BoxConstraints(maxHeight: 200),
+        // Tab Bar
+        if (_tabs.isNotEmpty)
+          SizedBox(
+            height: 50,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _tabs.length + 1,
+              itemBuilder: (ctx, idx) {
+                if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null));
+                final tab = _tabs[idx];
+                final isActive = tab.id == _activeTabId;
+                return GestureDetector(
+                  onTap: () => setState(() => _activeTabId = tab.id),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isActive ? const Color(0xFF4F46E5) : const Color(0xFF1F2937),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.directions, size: 16, color: Colors.white),
+                        const SizedBox(width: 6),
+                        Text(tab.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                        const SizedBox(width: 4),
+                        GestureDetector(onTap: () => _closeTab(tab.id), child: const Icon(Icons.close, size: 14, color: Colors.white70))
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        
+        // Main Content Area
+        Expanded(
+          child: _activeTabId == null ? _buildSearchView() : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchView() {
+    // Wrapped in SingleChildScrollView to fix resize breakage
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111827).withOpacity(0.8),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                        child: const Icon(Icons.search, color: Colors.indigoAccent),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  _buildTextField("From", _fromController, _fromStation != null, 'from'),
+                  const SizedBox(height: 12),
+                  _buildTextField("To", _toController, _toStation != null, 'to'),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: (_fromStation != null && _toStation != null && !_isLoading) ? _findRoutes : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4F46E5),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: _isLoading 
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
+                  )
+                ],
+              ),
+            ),
+            
+            // Suggestions List - Embedded safely in layout
+            if (_suggestions.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F2937),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white10),
+                ),
                 child: ListView.separated(
+                  shrinkWrap: true, // Important for nested listview
+                  physics: const NeverScrollableScrollPhysics(),
                   padding: EdgeInsets.zero,
                   itemCount: _suggestions.length,
                   separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
@@ -502,62 +625,9 @@ class _MainScreenState extends State<MainScreen> {
                   },
                 ),
               ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSearchView() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111827).withOpacity(0.8),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.search, color: Colors.indigoAccent),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                _buildTextField("From", _fromController, _fromStation != null, 'from'),
-                const SizedBox(height: 12),
-                _buildTextField("To", _toController, _toStation != null, 'to'),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    onPressed: (_fromStation != null && _toStation != null && !_isLoading) ? _findRoutes : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4F46E5),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: _isLoading 
-                      ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                )
-              ],
-            ),
-          ),
-        ],
+            ]
+          ],
+        ),
       ),
     );
   }
@@ -609,7 +679,13 @@ class _MainScreenState extends State<MainScreen> {
           decoration: BoxDecoration(color: const Color(0xFF111827), borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(step.instruction, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Expanded( 
+                child: Text(
+                  step.instruction, 
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                )
+              ),
               Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
             ]),
             Text(step.line, style: const TextStyle(color: Colors.grey)),
