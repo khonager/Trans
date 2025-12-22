@@ -64,30 +64,30 @@ Connect with your fellow commuters.
 
 ### 1. Setup Dependencies
 Install all required packages (http, geolocator, vibration, flutter_local_notifications):
-\`\`\`bash
+```bash
 flutter pub get
-\`\`\`
+```
 
 ### 2. Run in Debug Mode
 Start the app on your connected emulator or physical device:
-\`\`\`bash
+```bash
 flutter run
-\`\`\`
+```
 
 ### 3. Build for Android (APK)
 Generate a release APK for installation on Android devices:
-\`\`\`bash
+```bash
 flutter build apk
-\`\`\`
+```
 
 ### 4. Analyze Code
 Check for linting errors or style issues:
-\`\`\`bash
+```bash
 flutter analyze
-\`\`\`
+```
 
 ### 5. Clean Build
 If you encounter strange caching errors, run this to reset:
-\`\`\`bash
+```bash
 flutter clean
-\`\`\`
+```
