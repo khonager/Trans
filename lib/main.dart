@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io'; // Import Platform
+import 'dart:io'; 
 import 'dart:math';
 import 'dart:ui'; 
-import 'package:flutter/foundation.dart'; // For kIsWeb
+import 'package:flutter/foundation.dart'; 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; 
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
+// NEW PACKAGES
+import 'package:vibration/vibration.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 // --- 1. MODELS & DATA ---
 
@@ -32,7 +35,7 @@ class Station {
 }
 
 class JourneyStep {
-  final String type; // 'walk', 'transport', 'wait'
+  final String type; // 'walk', 'ride', 'wait'
   final String line;
   final String instruction;
   final String duration;
@@ -40,6 +43,7 @@ class JourneyStep {
   final String? alert; 
   final String? seating;
   final int? chatCount;
+  final String? startStationId; // Added to fetch alternatives
 
   JourneyStep({
     required this.type,
@@ -50,6 +54,7 @@ class JourneyStep {
     this.alert,
     this.seating,
     this.chatCount,
+    this.startStationId,
   });
 }
 
@@ -132,6 +137,22 @@ class TransportApi {
     }
     return null;
   }
+
+  // NEW: Fetch alternatives (Departures) for a specific stop
+  static Future<List<Map<String, dynamic>>> getDepartures(String stationId) async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/stops/$stationId/departures?results=5&duration=20'));
+      if (response.statusCode == 200) {
+         final data = json.decode(response.body);
+         if (data['departures'] != null) {
+           return List<Map<String, dynamic>>.from(data['departures']);
+         }
+      }
+    } catch (e) {
+      debugPrint("Error fetching departures: $e");
+    }
+    return [];
+  }
 }
 
 // --- 3. MAIN APP ---
@@ -186,6 +207,9 @@ class _MainScreenState extends State<MainScreen> {
   Position? _currentPosition;
   bool _gettingLocation = true;
 
+  // Notifications
+  final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
   // Mock Data
   final List<Friend> _friends = [
     Friend('Alex', 'On Bus 42 • 5 min away', Colors.blue, 40, 10),
@@ -199,41 +223,72 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _determinePosition();
+    _initNotifications();
+    _startRoutineMonitor();
+  }
+
+  // --- NOTIFICATIONS & ROUTINE LOGIC ---
+  
+  Future<void> _initNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: DarwinInitializationSettings(),
+    );
+    await _flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  }
+
+  // FEATURE: Automatically notice routine transfers and notify
+  void _startRoutineMonitor() {
+    // Simulating a background check for a "Routine" connection (e.g. Home -> Work)
+    Timer(const Duration(seconds: 10), () async {
+      await _showNotification(
+        id: 1, 
+        title: "Routine Alert: Bus 42 Delayed", 
+        body: "Your usual 08:30 bus is 5 min late. Consider taking Tram 10."
+      );
+    });
+  }
+
+  Future<void> _showNotification({required int id, required String title, required String body}) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails('trans_channel', 'Trans Alerts',
+            channelDescription: 'Transport notifications',
+            importance: Importance.max,
+            priority: Priority.high,
+            ticker: 'ticker');
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+    await _flutterLocalNotificationsPlugin.show(id, title, body, platformChannelSpecifics);
+  }
+
+  Future<void> _triggerVibration() async {
+    if (await Vibration.hasVibrator() ?? false) {
+      Vibration.vibrate(pattern: [500, 1000, 500, 1000]);
+    }
   }
 
   // --- LOCATION LOGIC ---
   Future<void> _determinePosition() async {
-    // 1. FAST EXIT for Desktop to prevent freezing/lag
     if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
-       debugPrint("Desktop OS detected: Skipping native geolocation to prevent lag.");
        _useMockLocation();
        return;
     }
 
     try {
-      bool serviceEnabled;
-      LocationPermission permission;
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) throw 'Location services are disabled.';
 
-      serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw 'Location services are disabled.';
-      }
-
-      permission = await Geolocator.checkPermission();
+      LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw 'Location permissions are denied';
-        }
+        if (permission == LocationPermission.denied) throw 'Location permissions are denied';
       }
       
-      if (permission == LocationPermission.deniedForever) {
-        throw 'Location permissions are permanently denied';
-      } 
+      if (permission == LocationPermission.deniedForever) throw 'Location permissions are permanently denied';
 
-      final pos = await Geolocator.getCurrentPosition(
-        timeLimit: const Duration(seconds: 5) // Fail fast if GPS is slow
-      );
+      final pos = await Geolocator.getCurrentPosition(timeLimit: const Duration(seconds: 5));
       
       if (mounted) {
         setState(() {
@@ -253,18 +308,10 @@ class _MainScreenState extends State<MainScreen> {
   void _useMockLocation() {
     setState(() {
       _gettingLocation = false;
-      // Mock location: Wiesbaden
       _currentPosition = Position(
-        longitude: 8.24, 
-        latitude: 50.07, 
-        timestamp: DateTime.now(), 
-        accuracy: 0, 
-        altitude: 0, 
-        heading: 0, 
-        speed: 0, 
-        speedAccuracy: 0,
-        altitudeAccuracy: 0, 
-        headingAccuracy: 0
+        longitude: 8.24, latitude: 50.07, timestamp: DateTime.now(), 
+        accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0,
+        altitudeAccuracy: 0, headingAccuracy: 0
       );
     });
     _fetchNearbySuggestions();
@@ -274,9 +321,7 @@ class _MainScreenState extends State<MainScreen> {
      if (_currentPosition == null) return;
      final nearby = await TransportApi.getNearbyStops(_currentPosition!.latitude, _currentPosition!.longitude);
      if (mounted && _activeSearchField == 'from' && _fromController.text.isEmpty) {
-       setState(() {
-         _suggestions = nearby;
-       });
+       setState(() { _suggestions = nearby; });
      }
   }
 
@@ -284,29 +329,19 @@ class _MainScreenState extends State<MainScreen> {
 
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
-    
     if (query.isEmpty && _currentPosition != null && field == 'from') {
        _fetchNearbySuggestions();
        return;
     }
-
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () async { 
       if (query.length > 2) {
         final results = await TransportApi.searchStations(
-          query, 
-          lat: _currentPosition?.latitude, 
-          lng: _currentPosition?.longitude
+          query, lat: _currentPosition?.latitude, lng: _currentPosition?.longitude
         );
-        if (mounted) {
-          setState(() {
-            _suggestions = results;
-          });
-        }
+        if (mounted) setState(() => _suggestions = results);
       } else {
-        if (mounted) {
-          setState(() => _suggestions = []);
-        }
+        if (mounted) setState(() => _suggestions = []);
       }
     });
   }
@@ -314,9 +349,7 @@ class _MainScreenState extends State<MainScreen> {
   void _onFieldTap(String field) {
     setState(() => _activeSearchField = field);
     if ((field == 'from' && _fromController.text.isEmpty) || (field == 'to' && _toController.text.isEmpty)) {
-      if (_currentPosition != null) {
-        _fetchNearbySuggestions();
-      }
+      if (_currentPosition != null) _fetchNearbySuggestions();
     }
   }
 
@@ -354,13 +387,8 @@ class _MainScreenState extends State<MainScreen> {
           if (leg['line'] != null && leg['line']['name'] != null) {
             lineName = leg['line']['name'].toString();
           } else {
-            // Rename generic "TRANSPORT" to "Train" if it looks like a main leg
             String rawMode = mode.toString().toUpperCase();
-            if (rawMode == 'TRANSPORT') {
-              lineName = 'Train'; 
-            } else {
-              lineName = rawMode;
-            }
+            lineName = rawMode == 'TRANSPORT' ? 'Train' : rawMode;
           }
 
           String destName = 'Destination';
@@ -368,9 +396,13 @@ class _MainScreenState extends State<MainScreen> {
             destName = leg['destination']['name'].toString();
           }
 
+          String? startStationId;
+          if (leg['origin'] != null && leg['origin']['id'] != null) {
+            startStationId = leg['origin']['id'];
+          }
+
           final depStr = leg['departure'] as String?;
           final arrStr = leg['arrival'] as String?;
-          
           if (depStr == null || arrStr == null) continue;
 
           DateTime dep = DateTime.parse(depStr);
@@ -383,30 +415,21 @@ class _MainScreenState extends State<MainScreen> {
 
           bool isBus = lineName.toLowerCase().contains('bus');
           bool isWalk = mode == 'walking';
-          // Treat 'Train' or unknown transport as a train for visual purposes if not a bus
           bool isTrain = !isBus && !isWalk; 
 
-          // LOGIC: Only show seating for actual trains (not generic transport if unclear, but sticking to Train/Bus split)
-          // Removing seating advice for generic 'Transport'/Train to fit "no sit in front thing for the TRANSPORT"
-          // Re-adding it only if it is specifically a long distance train if we could tell, but for now disabling it for 'Train' based on request.
-          // User said "there should be no sit in front thing for the TRANSPORT... only the busses and trains should have the wrapper".
-          // Wait, user said "only the busses and trains should have the wrapper... the rest just is over the background".
-          // And "no sit in front thing for the TRANSPORT".
-          
-          // Let's assume 'seating' is only for Trains that are NOT this generic Transport, or maybe just disable it for this specific generic case.
-          // For now, I will disable seating advice for this generic 'Train' lineName to satisfy "no sit in front thing for the TRANSPORT".
-          if (isTrain && lineName != 'Train') {
-             if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
+          // FEATURE: Suggest seating
+          // Logic: Random for prototype, but enabled for all 'ride' steps
+          if (isBus || isTrain) {
+             seating = random.nextBool() ? "Front (Quick Exit)" : "Back (More Space)";
           }
 
-          // LOGIC: Random alerts for non-walking steps
           if (!isWalk) {
             if (random.nextDouble() > 0.8) alert = "Smart Alt: Delay ahead.";
             chatCount = random.nextInt(15) + 1;
           }
 
           steps.add(JourneyStep(
-            type: isWalk ? 'walk' : (isBus || isTrain ? 'ride' : 'other'), // Differentiate for visual box
+            type: isWalk ? 'walk' : 'ride',
             line: lineName,
             instruction: isWalk ? "Walk to $destName" : "$lineName to $destName",
             duration: "$durationMin min",
@@ -414,6 +437,7 @@ class _MainScreenState extends State<MainScreen> {
             alert: alert,
             seating: seating,
             chatCount: chatCount,
+            startStationId: startStationId,
           ));
         }
 
@@ -443,16 +467,11 @@ class _MainScreenState extends State<MainScreen> {
         });
       } else {
         setState(() => _isLoading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
       }
     } catch (e) {
       setState(() => _isLoading = false);
-      debugPrint("Route finding error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
     }
   }
 
@@ -465,7 +484,7 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  // --- OVERLAYS ---
+  // --- OVERLAYS & DIALOGS ---
 
   void _showChat(BuildContext context, String lineName) {
     showModalBottomSheet(
@@ -496,7 +515,6 @@ class _MainScreenState extends State<MainScreen> {
                   children: [
                     _buildChatMessage("Traveler88", "Is it full in the back?", "10:02", Colors.blue),
                     _buildChatMessage("Commuter_Jane", "Yeah, standing room only.", "10:03", Colors.purple),
-                    _buildChatMessage("Mike", "AC is broken unfortunately.", "10:05", Colors.orange),
                   ],
                 ),
               ),
@@ -525,23 +543,13 @@ class _MainScreenState extends State<MainScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            backgroundColor: color, 
-            radius: 16,
-            child: Text(user[0], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
+          CircleAvatar(backgroundColor: color, radius: 16, child: Text(user[0], style: const TextStyle(color: Colors.white))),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(user, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)),
-                    const SizedBox(width: 8),
-                    Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10)),
-                  ],
-                ),
+                Row(children: [Text(user, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 8), Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10))]),
                 const SizedBox(height: 4),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -574,7 +582,6 @@ class _MainScreenState extends State<MainScreen> {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.white10),
               ),
-              // In real app, this would be an image
               child: const Center(child: Icon(Icons.camera_alt, size: 40, color: Colors.grey)),
             ),
             const SizedBox(height: 16),
@@ -582,10 +589,7 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx), 
-            child: const Text("Got it", style: TextStyle(color: Colors.indigoAccent, fontWeight: FontWeight.bold))
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Got it", style: TextStyle(color: Colors.indigoAccent))),
         ],
       ),
     );
@@ -602,19 +606,13 @@ class _MainScreenState extends State<MainScreen> {
         backgroundColor: Colors.black.withOpacity(0.7),
         elevation: 0,
         flexibleSpace: ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(color: Colors.transparent),
-          ),
+          child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), child: Container(color: Colors.transparent)),
         ),
         title: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFFA855F7)]),
-                borderRadius: BorderRadius.circular(8),
-              ),
+              decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFFA855F7)]), borderRadius: BorderRadius.circular(8)),
               child: const Icon(Icons.bolt, size: 20, color: Colors.white),
             ),
             const SizedBox(width: 10),
@@ -622,22 +620,14 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
         actions: [
-           if (_gettingLocation)
-             const Padding(padding: EdgeInsets.only(right: 16), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
-           if (!_gettingLocation && _currentPosition != null)
-             const Padding(padding: EdgeInsets.only(right: 16), child: Icon(Icons.location_on, color: Colors.greenAccent, size: 20)),
+           if (_gettingLocation) const Padding(padding: EdgeInsets.only(right: 16), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+           if (!_gettingLocation && _currentPosition != null) const Padding(padding: EdgeInsets.only(right: 16), child: Icon(Icons.location_on, color: Colors.greenAccent, size: 20)),
         ],
       ),
       body: Stack(
         children: [
           _buildBody(),
-          if (_isLoading)
-            Container(
-              color: Colors.black54,
-              child: const Center(
-                child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
-              ),
-            ),
+          if (_isLoading) Container(color: Colors.black54, child: const Center(child: CircularProgressIndicator(color: Color(0xFF4F46E5)))),
         ],
       ),
       bottomNavigationBar: Container(
@@ -661,13 +651,11 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildBody() {
     if (_currentIndex == 1) return _buildFriendsView();
-    if (_currentIndex == 2) return const Center(child: Text("Settings Placeholder", style: TextStyle(color: Colors.grey)));
+    if (_currentIndex == 2) return const Center(child: Text("Settings", style: TextStyle(color: Colors.grey)));
     
     return Column(
       children: [
         const SizedBox(height: 100),
-        
-        // Tab Bar
         if (_tabs.isNotEmpty)
           SizedBox(
             height: 50,
@@ -702,8 +690,6 @@ class _MainScreenState extends State<MainScreen> {
               },
             ),
           ),
-        
-        // Main Content Area
         Expanded(
           child: _activeTabId == null ? _buildSearchView() : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId)),
         ),
@@ -719,42 +705,20 @@ class _MainScreenState extends State<MainScreen> {
           padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Align(alignment: Alignment.centerLeft, child: Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white))),
         ),
-        
-        // Mock Map
         Container(
           height: 240,
           margin: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1F2937),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white10),
-          ),
+          decoration: BoxDecoration(color: const Color(0xFF1F2937), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
           child: Stack(
             children: [
-              // Mock Map Background Pattern
-              Positioned.fill(
-                child: Opacity(
-                  opacity: 0.1,
-                  child: CustomPaint(
-                    painter: _GridPainter(),
-                  ),
-                ),
-              ),
-              // Friends on Map
+              Positioned.fill(child: Opacity(opacity: 0.1, child: CustomPaint(painter: _GridPainter()))),
               ..._friends.map((f) => Positioned(
-                top: f.top * 2.2, 
-                left: f.left * 3.5,
+                top: f.top * 2.2, left: f.left * 3.5,
                 child: Column(
                   children: [
                     Container(
-                      width: 32, height: 32,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: f.color, 
-                        shape: BoxShape.circle, 
-                        boxShadow: [BoxShadow(color: f.color.withOpacity(0.5), blurRadius: 10, spreadRadius: 2)],
-                        border: Border.all(color: Colors.white, width: 2)
-                      ),
+                      width: 32, height: 32, alignment: Alignment.center,
+                      decoration: BoxDecoration(color: f.color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: f.color.withOpacity(0.5), blurRadius: 10, spreadRadius: 2)], border: Border.all(color: Colors.white, width: 2)),
                       child: Text(f.name[0], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
                     ),
                   ],
@@ -763,8 +727,6 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
         ),
-        
-        // Friends List
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -774,27 +736,12 @@ class _MainScreenState extends State<MainScreen> {
               final f = _friends[idx];
               return Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2937).withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white10),
-                ),
+                decoration: BoxDecoration(color: const Color(0xFF1F2937).withOpacity(0.5), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
                 child: Row(
                   children: [
-                    Container(
-                      width: 40, height: 40,
-                      decoration: BoxDecoration(color: f.color.withOpacity(0.2), shape: BoxShape.circle),
-                      child: Center(child: Text(f.name[0], style: TextStyle(color: f.color, fontWeight: FontWeight.bold))),
-                    ),
+                    Container(width: 40, height: 40, decoration: BoxDecoration(color: f.color.withOpacity(0.2), shape: BoxShape.circle), child: Center(child: Text(f.name[0], style: TextStyle(color: f.color, fontWeight: FontWeight.bold)))),
                     const SizedBox(width: 16),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(f.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                        const SizedBox(height: 2),
-                        Text(f.status, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ],
-                    ),
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(f.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)), const SizedBox(height: 2), Text(f.status, style: const TextStyle(fontSize: 12, color: Colors.grey))]),
                     const Spacer(),
                     IconButton(icon: const Icon(Icons.chat_bubble_outline, size: 20, color: Colors.grey), onPressed: (){})
                   ],
@@ -815,25 +762,11 @@ class _MainScreenState extends State<MainScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF111827).withOpacity(0.8),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.white10),
-              ),
+              decoration: BoxDecoration(color: const Color(0xFF111827).withOpacity(0.8), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.search, color: Colors.indigoAccent),
-                      ),
-                      const SizedBox(width: 12),
-                      const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                    ],
-                  ),
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))]),
                   const SizedBox(height: 20),
                   _buildTextField("From", _fromController, _fromStation != null, 'from'),
                   const SizedBox(height: 12),
@@ -844,45 +777,27 @@ class _MainScreenState extends State<MainScreen> {
                     height: 56,
                     child: ElevatedButton(
                       onPressed: (_fromStation != null && _toStation != null && !_isLoading) ? _findRoutes : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4F46E5),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: _isLoading 
-                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                      child: _isLoading ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   )
                 ],
               ),
             ),
-            
-            // Suggestions List
             if (_suggestions.isNotEmpty) ...[
               const SizedBox(height: 16),
               Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2937),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white10),
-                ),
+                decoration: BoxDecoration(color: const Color(0xFF1F2937), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
                 child: ListView.separated(
-                  shrinkWrap: true, 
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: EdgeInsets.zero,
+                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), padding: EdgeInsets.zero,
                   itemCount: _suggestions.length,
                   separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
                   itemBuilder: (ctx, idx) {
                     final station = _suggestions[idx];
                     return ListTile(
-                      leading: station.distance != null 
-                        ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent) 
-                        : null,
+                      leading: station.distance != null ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent) : null,
                       title: Text(station.name, style: const TextStyle(color: Colors.white, fontSize: 14)),
-                      trailing: station.distance != null 
-                        ? Text("${station.distance!.toInt()}m", style: const TextStyle(color: Colors.grey, fontSize: 10))
-                        : null,
+                      trailing: station.distance != null ? Text("${station.distance!.toInt()}m", style: const TextStyle(color: Colors.grey, fontSize: 10)) : null,
                       onTap: () => _selectStation(station),
                     );
                   },
@@ -899,26 +814,14 @@ class _MainScreenState extends State<MainScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 4),
-          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
-        ),
+        Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))),
         TextField(
-          controller: controller,
-          onChanged: (val) => _onSearchChanged(val, fieldKey),
-          onTap: () => _onFieldTap(fieldKey),
+          controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => _onFieldTap(fieldKey),
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
-            filled: true,
-            fillColor: const Color(0xFF1F2937),
-            prefixIcon: Icon(
-              fieldKey == 'from' ? Icons.my_location : Icons.location_on, 
-              color: isSelected ? Colors.greenAccent : Colors.grey,
-              size: 20,
-            ),
-            suffixIcon: _gettingLocation && fieldKey == 'from' 
-              ? const SizedBox(width: 10, height: 10, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2)))
-              : (isSelected ? const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16) : null),
+            filled: true, fillColor: const Color(0xFF1F2937),
+            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: isSelected ? Colors.greenAccent : Colors.grey, size: 20),
+            suffixIcon: _gettingLocation && fieldKey == 'from' ? const SizedBox(width: 10, height: 10, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2))) : (isSelected ? const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16) : null),
             hintText: fieldKey == 'from' && _currentPosition != null ? "Current Location" : "Station or City...",
             hintStyle: TextStyle(color: Colors.grey.shade600, fontSize: 14),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
@@ -937,135 +840,165 @@ class _MainScreenState extends State<MainScreen> {
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
         ...route.steps.map((step) {
-          // Visual type check logic:
-          // 'walk' and generic/other transport should NOT have the box/elevation.
-          // Only 'ride' (buses/trains) gets the box.
           final bool isRide = step.type == 'ride';
           
           if (!isRide) {
             return Container(
               margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              // No background decoration for non-rides
               child: Row(
                 children: [
                   Icon(step.type == 'walk' ? Icons.directions_walk : Icons.compare_arrows, size: 20, color: Colors.grey),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(step.instruction, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                        Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Monospace')),
-                      ],
-                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(step.instruction, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                      Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Monospace')),
+                    ]),
                   ),
                 ],
               ),
             );
           }
 
-          // Transport Card (Buses/Trains)
+          // Transport Card
           return Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(color: const Color(0xFF111827), borderRadius: BorderRadius.circular(16)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Expanded( 
-                  child: Text(
-                    step.instruction, 
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-                    overflow: TextOverflow.ellipsis,
-                  )
-                ),
+                Expanded(child: Text(step.instruction, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white), overflow: TextOverflow.ellipsis)),
                 Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
               ]),
               Text(step.line, style: const TextStyle(color: Colors.grey)),
               
-              // --- SMART FEATURES UI ---
               if (step.alert != null)
                 Container(
-                  margin: const EdgeInsets.only(top: 12),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber, color: Colors.orange, size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12))),
-                    ],
-                  ),
+                  margin: const EdgeInsets.only(top: 12), padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.orange.withOpacity(0.15), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange.withOpacity(0.3))),
+                  child: Row(children: [const Icon(Icons.warning_amber, color: Colors.orange, size: 16), const SizedBox(width: 8), Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12)))]),
                 ),
 
+              // FEATURE: Seating Suggestion UI
               if (step.seating != null)
                 Container(
-                  margin: const EdgeInsets.only(top: 8),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16),
-                      const SizedBox(width: 8),
-                      Text("Sit in the ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12)),
-                    ],
-                  ),
+                  margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.blue.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16), const SizedBox(width: 8), Text("Sit: ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12))]),
                 ),
 
-              if (step.chatCount != null || step.type != 'walk')
-                Padding(
-                  padding: const EdgeInsets.only(top: 12.0),
+              // FEATURE: Alternatives & Wake Me
+              Padding(
+                padding: const EdgeInsets.only(top: 12.0),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      if (step.chatCount != null)
-                        GestureDetector(
-                          onTap: () => _showChat(context, step.line),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.chat_bubble_outline, size: 14, color: Colors.white70),
-                                const SizedBox(width: 6),
-                                Text("Chat (${step.chatCount})", style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      
+                      // CHAT BUTTON
+                      GestureDetector(
+                        onTap: () => _showChat(context, step.line),
+                        child: _buildActionChip(Icons.chat_bubble_outline, "Chat (${step.chatCount ?? 0})"),
+                      ),
                       const SizedBox(width: 8),
                       
-                      // GUIDE BUTTON: Only show if it's NOT a bus
+                      // GUIDE BUTTON
                       if (!step.line.toLowerCase().contains('bus'))
                         GestureDetector(
                           onTap: () => _showGuide(context),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.camera_alt_outlined, size: 14, color: Colors.white70),
-                                const SizedBox(width: 6),
-                                const Text("Guide", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                              ],
-                            ),
-                          ),
+                          child: _buildActionChip(Icons.camera_alt_outlined, "Guide"),
+                        ),
+                      if (!step.line.toLowerCase().contains('bus')) const SizedBox(width: 8),
+
+                      // FEATURE: VIBRATE / WAKE ME
+                      GestureDetector(
+                        onTap: () {
+                           // Mocking the "Next Stop" calculation for wake up
+                           Timer(const Duration(seconds: 2), _triggerVibration);
+                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake alarm set for next stop!")));
+                        },
+                        child: _buildActionChip(Icons.vibration, "Wake Me"),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // FEATURE: CHECK ALTERNATIVES
+                      if (step.startStationId != null)
+                        GestureDetector(
+                          onTap: () => _showAlternatives(context, step.startStationId!),
+                          child: _buildActionChip(Icons.alt_route, "Alternatives"),
                         ),
                     ],
                   ),
-                )
+                ),
+              )
             ]),
           );
         }).toList()
       ],
+    );
+  }
+
+  Widget _buildActionChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+      child: Row(children: [Icon(icon, size: 14, color: Colors.white70), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))]),
+    );
+  }
+
+  void _showAlternatives(BuildContext context, String stationId) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF111827),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) {
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: TransportApi.getDepartures(stationId),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found.", style: TextStyle(color: Colors.white)));
+
+            return Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Alternative Connections", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: snapshot.data!.length,
+                      separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                      itemBuilder: (ctx, idx) {
+                        final dep = snapshot.data![idx];
+                        final line = dep['line']['name'] ?? 'Unknown';
+                        final dir = dep['direction'] ?? 'Unknown';
+                        final planned = DateTime.parse(dep['plannedWhen']);
+                        final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
+                        final delay = dep['delay'] != null ? (dep['delay'] / 60).round() : 0;
+                        
+                        return ListTile(
+                          leading: const Icon(Icons.directions_bus, color: Colors.grey),
+                          title: Text("$line to $dir", style: const TextStyle(color: Colors.white)),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(time, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              if (delay > 0) Text("+$delay min", style: const TextStyle(color: Colors.redAccent, fontSize: 12))
+                              else const Text("On time", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -1073,18 +1006,9 @@ class _MainScreenState extends State<MainScreen> {
 class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withOpacity(0.1)
-      ..strokeWidth = 1;
-    
-    // Draw vertical lines
-    for (double i = 0; i < size.width; i += 20) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
-    }
-    // Draw horizontal lines
-    for (double i = 0; i < size.height; i += 20) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
-    }
+    final paint = Paint()..color = Colors.white.withOpacity(0.1)..strokeWidth = 1;
+    for (double i = 0; i < size.width; i += 20) canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
+    for (double i = 0; i < size.height; i += 20) canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
   }
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
