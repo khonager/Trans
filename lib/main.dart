@@ -1206,7 +1206,8 @@ class _MainScreenState extends State<MainScreen> {
           future: TransportApi.getDepartures(stationId),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
+            // FIX: Removed 'const' because Theme.of(context) is not a constant
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
 
             return Padding(
               padding: const EdgeInsets.all(16.0),
