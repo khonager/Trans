@@ -17,16 +17,20 @@
           };
         };
 
-        # 1. Das Android SDK erstellen
+        # 1. Das Android SDK erstellen (jetzt mit NDK!)
         androidComposition = pkgs.androidenv.composeAndroidPackages {
           cmdLineToolsVersion = "8.0";
-          platformToolsVersion = "35.0.2"; # AKTUALISIERT: War 34.0.4
+          platformToolsVersion = "35.0.2";
           buildToolsVersions = [ "30.0.3" "33.0.0" "34.0.0" ];
           includeEmulator = false;
           platformVersions = [ "33" "34" ];
           includeSystemImages = false;
           useGoogleAPIs = false;
           includeExtras = [ "extras;google;gcm" ];
+          
+          # HIER NEU: NDK hinzufügen
+          includeNDK = true;
+          ndkVersions = ["26.1.10909125"]; # Wir nutzen eine stabile Version, die Nix kennt
         };
 
         androidSdk = androidComposition.androidsdk;
@@ -49,22 +53,23 @@
             pkgs.flutter
             pkgs.dart
             pkgs.chromium
-            androidSdk # Das komplette SDK
+            androidSdk
           ] ++ linuxRuntimeLibs ++ nativeBuildInputs;
 
           shellHook = ''
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxRuntimeLibs}:$LD_LIBRARY_PATH
             export CHROME_EXECUTABLE="${pkgs.chromium}/bin/chromium"
             
-            # WICHTIG: Pfade für Android
             export ANDROID_SDK_ROOT="${androidSdk}/libexec/android-sdk"
             export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
             export JAVA_HOME="${pkgs.jdk17}"
             
-            # Fix für Gradle auf NixOS
-            export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/34.0.0/aapt2"
+            # Gradle Fixes für NixOS
+            # 1. Verhindert Download inkompatibler aapt2 Binaries
+            # 2. Setzt den NDK Pfad explizit, damit Gradle nicht versucht, es herunterzuladen
+            export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/34.0.0/aapt2 -Dandroid.ndkPath=${androidSdk}/libexec/android-sdk/ndk/26.1.10909125"
 
-            echo "🚀 Trans App Environment Ready (Android SDK konfiguriert)"
+            echo "🚀 Trans App Environment Ready (Android SDK + NDK)"
           '';
         };
       }
