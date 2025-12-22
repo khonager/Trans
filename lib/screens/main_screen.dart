@@ -36,9 +36,10 @@ class _MainScreenState extends State<MainScreen> {
   Station? _fromStation;
   Station? _toStation;
   List<Station> _suggestions = [];
-  String _activeSearchField = '';
+  String _activeSearchField = ''; // 'from' or 'to'
   Timer? _debounce;
-  bool _isLoading = false;
+  bool _isLoadingRoute = false;
+  bool _isSuggestionsLoading = false;
 
   // Location State
   Position? _currentPosition;
@@ -61,6 +62,9 @@ class _MainScreenState extends State<MainScreen> {
     _determinePosition();
     _initNotifications();
     _startRoutineMonitor();
+    
+    // Pre-load history
+    _fetchSuggestions(forceHistory: true);
   }
 
   // --- NOTIFICATIONS & ROUTINE LOGIC ---
@@ -162,14 +166,25 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  Future<void> _fetchSuggestions() async {
+  // --- SUGGESTION LOGIC ---
+  Future<void> _fetchSuggestions({bool forceHistory = false}) async {
+    if (forceHistory) {
+      final history = await SearchHistoryManager.getHistory();
+      if (mounted) setState(() => _suggestions = history);
+      return;
+    }
+
+    setState(() => _isSuggestionsLoading = true);
+
     List<Station> results = [];
 
+    // 1. History first
     final history = await SearchHistoryManager.getHistory();
     if (history.isNotEmpty) {
       results.addAll(history);
     }
 
+    // 2. Nearby if applicable
     if (_currentPosition != null && _activeSearchField == 'from') {
       final nearby = await TransportApi.getNearbyStops(_currentPosition!.latitude, _currentPosition!.longitude);
       for (var s in nearby) {
@@ -179,19 +194,25 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
 
-    if (mounted && (_activeSearchField == 'from' && _fromController.text.isEmpty) ||
-        (_activeSearchField == 'to' && _toController.text.isEmpty)) {
-      setState(() { _suggestions = results; });
+    if (mounted) {
+       setState(() { 
+         _suggestions = results;
+         _isSuggestionsLoading = false; 
+       });
     }
   }
 
   void _onSearchChanged(String query, String field) {
-    setState(() => _activeSearchField = field);
+    setState(() {
+      _activeSearchField = field;
+    });
 
     if (query.isEmpty) {
       _fetchSuggestions();
       return;
     }
+
+    setState(() => _isSuggestionsLoading = true);
 
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () async {
@@ -217,16 +238,27 @@ class _MainScreenState extends State<MainScreen> {
             lat: refLat,
             lng: refLng
         );
-        if (mounted) setState(() => _suggestions = results);
+        if (mounted) {
+          setState(() {
+            _suggestions = results;
+            _isSuggestionsLoading = false;
+          });
+        }
       } else {
-        if (mounted) setState(() => _suggestions = []);
+        if (mounted) {
+          setState(() {
+            _suggestions = [];
+            _isSuggestionsLoading = false;
+          });
+        }
       }
     });
   }
 
   void _onFieldTap(String field) {
     setState(() => _activeSearchField = field);
-    if ((field == 'from' && _fromController.text.isEmpty) || (field == 'to' && _toController.text.isEmpty)) {
+    if ((field == 'from' && _fromController.text.isEmpty) || 
+        (field == 'to' && _toController.text.isEmpty)) {
       _fetchSuggestions();
     }
   }
@@ -250,7 +282,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _findRoutes() async {
     if (_fromStation == null || _toStation == null) return;
-    setState(() => _isLoading = true);
+    setState(() => _isLoadingRoute = true);
 
     try {
       final journeyData = await TransportApi.searchJourney(_fromStation!.id, _toStation!.id);
@@ -276,6 +308,13 @@ class _MainScreenState extends State<MainScreen> {
             destName = leg['destination']['name'].toString();
           }
 
+          String? platform;
+          if (leg['platform'] != null) {
+            platform = "Plat ${leg['platform']}";
+          } else if (leg['departurePlatform'] != null) {
+            platform = "Plat ${leg['departurePlatform']}";
+          }
+
           String? startStationId;
           if (leg['origin'] != null && leg['origin']['id'] != null) {
             startStationId = leg['origin']['id'];
@@ -297,7 +336,10 @@ class _MainScreenState extends State<MainScreen> {
           bool isWalk = mode == 'walking';
           bool isTrain = !isBus && !isWalk;
 
-          if (isBus || isTrain) {
+          String direction = leg['direction'] ?? '';
+          bool isTerminating = direction.toLowerCase() == destName.toLowerCase();
+          
+          if ((isBus || isTrain) && !isTerminating) {
             seating = random.nextBool() ? "Front (Quick Exit)" : "Back (More Space)";
           }
 
@@ -316,6 +358,7 @@ class _MainScreenState extends State<MainScreen> {
             seating: seating,
             chatCount: chatCount,
             startStationId: startStationId,
+            platform: platform,
           ));
         }
 
@@ -341,14 +384,14 @@ class _MainScreenState extends State<MainScreen> {
           _toStation = null;
           _fromController.clear();
           _toController.clear();
-          _isLoading = false;
+          _isLoadingRoute = false;
         });
       } else {
-        setState(() => _isLoading = false);
+        setState(() => _isLoadingRoute = false);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() => _isLoadingRoute = false);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
     }
   }
@@ -474,7 +517,58 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // --- UI ---
+  // --- UI HELPERS ---
+
+  Widget _buildSuggestionsList() {
+    if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
+    
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final cardColor = Theme.of(context).cardColor;
+
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 250),
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4))
+        ]
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isSuggestionsLoading)
+            const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)),
+            
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: _suggestions.length,
+              separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
+              itemBuilder: (ctx, idx) {
+                final station = _suggestions[idx];
+                return ListTile(
+                  leading: station.distance != null
+                      ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent)
+                      : const Icon(Icons.history, size: 16, color: Colors.grey),
+                  title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)),
+                  trailing: station.distance != null 
+                    ? Text("${station.distance!.toInt()}m", style: const TextStyle(color: Colors.grey, fontSize: 10)) 
+                    : null,
+                  onTap: () => _selectStation(station),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- MAIN WIDGETS ---
 
   @override
   Widget build(BuildContext context) {
@@ -507,7 +601,7 @@ class _MainScreenState extends State<MainScreen> {
       body: Stack(
         children: [
           _buildBody(),
-          if (_isLoading) Container(color: Colors.black54, child: const Center(child: CircularProgressIndicator(color: Color(0xFF4F46E5)))),
+          if (_isLoadingRoute) Container(color: Colors.black54, child: const Center(child: CircularProgressIndicator(color: Color(0xFF4F46E5)))),
         ],
       ),
       bottomNavigationBar: Container(
@@ -698,46 +792,32 @@ class _MainScreenState extends State<MainScreen> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
                   const SizedBox(height: 20),
+                  
+                  // FROM FIELD
                   _buildTextField("From", _fromController, _fromStation != null, 'from'),
+                  // Suggestions for FROM
+                  if (_activeSearchField == 'from') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 12),
+                  
+                  // TO FIELD
                   _buildTextField("To", _toController, _toStation != null, 'to'),
+                  // Suggestions for TO
+                  if (_activeSearchField == 'to') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: (_fromStation != null && _toStation != null && !_isLoading) ? _findRoutes : null,
+                      onPressed: (_fromStation != null && _toStation != null && !_isLoadingRoute) ? _findRoutes : null,
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                      child: _isLoading ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   )
                 ],
               ),
             ),
-            if (_suggestions.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Align(alignment: Alignment.centerLeft, child: Text("Suggestions", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
-                child: ListView.separated(
-                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), padding: EdgeInsets.zero,
-                  itemCount: _suggestions.length,
-                  separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
-                  itemBuilder: (ctx, idx) {
-                    final station = _suggestions[idx];
-                    return ListTile(
-                      leading: station.distance != null
-                          ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent)
-                          : const Icon(Icons.history, size: 16, color: Colors.grey),
-                      title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)),
-                      trailing: station.distance != null ? Text("${station.distance!.toInt()}m", style: const TextStyle(color: Colors.grey, fontSize: 10)) : null,
-                      onTap: () => _selectStation(station),
-                    );
-                  },
-                ),
-              ),
-            ]
           ],
         ),
       ),
@@ -810,6 +890,12 @@ class _MainScreenState extends State<MainScreen> {
                 Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
               ]),
               Text(step.line, style: const TextStyle(color: Colors.grey)),
+
+              if (step.platform != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  child: Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
 
               if (step.alert != null)
                 Container(

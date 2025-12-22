@@ -4,10 +4,11 @@ class JourneyStep {
   final String instruction;
   final String duration;
   final String departureTime;
-  final String? alert;
+  final String? alert; 
   final String? seating;
   final int? chatCount;
-  final String? startStationId;
+  final String? startStationId; 
+  final String? platform; // NEW: Platform/Track info
 
   JourneyStep({
     required this.type,
@@ -19,6 +20,7 @@ class JourneyStep {
     this.seating,
     this.chatCount,
     this.startStationId,
+    this.platform,
   });
 }
 
