@@ -62,32 +62,98 @@ Connect with your fellow commuters.
 
 ## 💻 TERMINAL COMMANDS
 
-### 1. Setup Dependencies
+### 📦 Dependency Management
+
+#### Standard Setup
 Install all required packages (http, geolocator, vibration, flutter_local_notifications):
 ```bash
 flutter pub get
 ```
 
-### 2. Run in Debug Mode
-Start the app on your connected emulator or physical device:
+#### Nix / Flake Setup
+If you are using Nix, use these commands to handle the environment:
+```bash
+# Enter the development environment (installs SDK & tools)
+nix develop
+
+# Build the default package (usually the Linux release)
+nix build
+```
+
+---
+
+### ▶️ Run Commands
+
+#### General (Auto-detect)
+Start the app on your currently connected emulator or physical device:
 ```bash
 flutter run
 ```
 
-### 3. Build for Android (APK)
-Generate a release APK for installation on Android devices:
+#### Web (Chrome)
+Run the app in the Chrome browser (requires Chrome installed):
 ```bash
-flutter build apk
+flutter run -d chrome
 ```
 
-### 4. Analyze Code
-Check for linting errors or style issues:
+#### Desktop Platforms
+Run the app natively on your operating system:
+```bash
+# Linux
+flutter run -d linux
+
+# macOS
+flutter run -d macos
+
+# Windows
+flutter run -d windows
+```
+
+---
+
+### 🔨 Build Commands
+
+#### Mobile
+Generate release bundles for mobile devices:
+```bash
+# Android APK
+flutter build apk
+
+# iOS Archive (requires macOS and Xcode)
+flutter build ios
+```
+
+#### Web
+Build a production-ready web application (outputs to build/web):
+```bash
+flutter build web
+```
+
+#### Desktop
+Build standalone executables for desktop:
+```bash
+# Linux
+flutter build linux
+
+# macOS
+flutter build macos
+
+# Windows
+flutter build windows
+```
+
+---
+
+### 🛠 Maintenance & Quality
+
+#### Analyze Code
+Check for linting errors, type issues, or style violations:
 ```bash
 flutter analyze
 ```
 
-### 5. Clean Build
-If you encounter strange caching errors, run this to reset:
+#### Clean Build
+If you encounter strange caching errors or build artifacts, run this to reset:
 ```bash
 flutter clean
 ```
