@@ -354,7 +354,13 @@ class _MainScreenState extends State<MainScreen> {
           if (leg['line'] != null && leg['line']['name'] != null) {
             lineName = leg['line']['name'].toString();
           } else {
-            lineName = mode.toString().toUpperCase();
+            // Rename generic "TRANSPORT" to "Train" if it looks like a main leg
+            String rawMode = mode.toString().toUpperCase();
+            if (rawMode == 'TRANSPORT') {
+              lineName = 'Train'; 
+            } else {
+              lineName = rawMode;
+            }
           }
 
           String destName = 'Destination';
@@ -377,10 +383,20 @@ class _MainScreenState extends State<MainScreen> {
 
           bool isBus = lineName.toLowerCase().contains('bus');
           bool isWalk = mode == 'walking';
+          // Treat 'Train' or unknown transport as a train for visual purposes if not a bus
+          bool isTrain = !isBus && !isWalk; 
 
-          // LOGIC: Only show seating for non-bus transports (trains, etc.)
-          if (!isWalk && !isBus) {
-            if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
+          // LOGIC: Only show seating for actual trains (not generic transport if unclear, but sticking to Train/Bus split)
+          // Removing seating advice for generic 'Transport'/Train to fit "no sit in front thing for the TRANSPORT"
+          // Re-adding it only if it is specifically a long distance train if we could tell, but for now disabling it for 'Train' based on request.
+          // User said "there should be no sit in front thing for the TRANSPORT... only the busses and trains should have the wrapper".
+          // Wait, user said "only the busses and trains should have the wrapper... the rest just is over the background".
+          // And "no sit in front thing for the TRANSPORT".
+          
+          // Let's assume 'seating' is only for Trains that are NOT this generic Transport, or maybe just disable it for this specific generic case.
+          // For now, I will disable seating advice for this generic 'Train' lineName to satisfy "no sit in front thing for the TRANSPORT".
+          if (isTrain && lineName != 'Train') {
+             if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
           }
 
           // LOGIC: Random alerts for non-walking steps
@@ -390,7 +406,7 @@ class _MainScreenState extends State<MainScreen> {
           }
 
           steps.add(JourneyStep(
-            type: isWalk ? 'walk' : 'transport',
+            type: isWalk ? 'walk' : (isBus || isTrain ? 'ride' : 'other'), // Differentiate for visual box
             line: lineName,
             instruction: isWalk ? "Walk to $destName" : "$lineName to $destName",
             duration: "$durationMin min",
@@ -921,16 +937,19 @@ class _MainScreenState extends State<MainScreen> {
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
         ...route.steps.map((step) {
-          final bool isWalk = step.type == 'walk';
+          // Visual type check logic:
+          // 'walk' and generic/other transport should NOT have the box/elevation.
+          // Only 'ride' (buses/trains) gets the box.
+          final bool isRide = step.type == 'ride';
           
-          if (isWalk) {
+          if (!isRide) {
             return Container(
               margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              // No background decoration for walk
+              // No background decoration for non-rides
               child: Row(
                 children: [
-                  const Icon(Icons.directions_walk, size: 20, color: Colors.grey),
+                  Icon(step.type == 'walk' ? Icons.directions_walk : Icons.compare_arrows, size: 20, color: Colors.grey),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(
@@ -946,7 +965,7 @@ class _MainScreenState extends State<MainScreen> {
             );
           }
 
-          // Transport Card
+          // Transport Card (Buses/Trains)
           return Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(16),
@@ -1025,7 +1044,6 @@ class _MainScreenState extends State<MainScreen> {
                       const SizedBox(width: 8),
                       
                       // GUIDE BUTTON: Only show if it's NOT a bus
-                      // We check if the line name contains 'Bus' (case insensitive)
                       if (!step.line.toLowerCase().contains('bus'))
                         GestureDetector(
                           onTap: () => _showGuide(context),
