@@ -25,9 +25,9 @@ dependencies:
   flutter:
     sdk: flutter
   
-  # Add these two lines:
   http: ^1.1.0
-  geolocator: ^14.0.2
+  # FIX: Downgrade from ^14.0.2 to ^13.0.0 to avoid forcing Android SDK 36
+  geolocator: ^13.0.0
   
   cupertino_icons: ^1.0.2
 
@@ -35,7 +35,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-
+dependency_overrides:
+  geolocator_android: 4.6.1
 flutter:
 
   # The following line ensures that the Material Icons font is
