@@ -25,12 +25,17 @@
           cmdline-tools-latest
           build-tools-35-0-0
           platform-tools
-          # FIX: Include full range of platforms for plugins
+          
+          # Platforms required by various plugins
           platforms-android-36
           platforms-android-35
           platforms-android-34
-          platforms-android-33  # FIX: Added for 'vibration' plugin
+          platforms-android-33
+          
+          # Native development tools
           ndk-27-0-12077973
+          cmake-3-22-1       # FIX: Added CMake 3.22.1
+          
           emulator
         ]);
 

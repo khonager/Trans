@@ -16,27 +16,30 @@ dependencies:
   geolocator: ^13.0.0
   cupertino_icons: ^1.0.2
 
+  # NEW FEATURES DEPENDENCIES
+  # For "vibrate when you have to get out"
+  # FIX: Updated to 3.1.0 to support Android v2 embedding
+  vibration: ^3.1.0 
+  # For "automatically notice routine transfers... even when not using the app" (Local alerts)
+  flutter_local_notifications: ^18.0.0
+  # Timezone helper for scheduling notifications
+  timezone: ^0.9.2
+
   # Persistence for Settings & Recent Searches
   shared_preferences: ^2.2.0
 
   # Backend & Database
   supabase_flutter: ^2.0.0
 
-  # NEW FEATURES DEPENDENCIES
-  # For "vibrate when you have to get out"
-  vibration: ^1.9.0 
-  # For "automatically notice routine transfers... even when not using the app" (Local alerts)
-  flutter_local_notifications: ^18.0.0
-  # Timezone helper for scheduling notifications
-  timezone: ^0.9.2
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
 
-dependency_overrides:
-  geolocator_android: 4.6.1
+# FIX: Removed the geolocator override as it forces old versions.
+# If you run into resolution errors, run `flutter pub upgrade` or `flutter pub outdated`.
+# dependency_overrides:
+#   geolocator_android: 4.6.1
 
 flutter:
   uses-material-design: true

@@ -20,16 +20,15 @@ val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "
 android {
     namespace = "com.example.trans"
     compileSdk = 36
-    buildToolsVersion = "35.0.0"
     ndkVersion = "27.0.12077973"
+    buildToolsVersion = "35.0.0"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
+        // FIX 1: Enable Core Library Desugaring
+        isCoreLibraryDesugaringEnabled = true
     }
-
-    // kotlinOptions removed here to avoid DSL deprecation errors.
-    // We configure it via tasks.withType below.
 
     sourceSets {
         getByName("main").java.srcDirs("src/main/kotlin")
@@ -42,7 +41,6 @@ android {
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        // FIX: Changed .toInteger() (Groovy) to .toInt() (Kotlin)
         versionCode = flutterVersionCode.toInt()
         versionName = flutterVersionName
     }
@@ -60,7 +58,11 @@ flutter {
     source = "../.."
 }
 
-// FIX: Modern way to set Kotlin JVM target to 1.8
+// FIX 2: Add the desugaring library dependency
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+}
+
 tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
