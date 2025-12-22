@@ -8,9 +8,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; 
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 // NEW PACKAGES
 import 'package:vibration/vibration.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+// --- 0. CONFIG & SUPABASE ---
+
+class AppConfig {
+  // TODO: Replace with your actual Supabase URL and Anon Key
+  static const String supabaseUrl = 'YOUR_SUPABASE_URL'; 
+  static const String supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY'; 
+}
+
+class SupabaseService {
+  static final SupabaseClient client = Supabase.instance.client;
+
+  // Placeholder for future auth logic
+  static Future<void> signUp(String email, String password) async {
+    // await client.auth.signUp(email: email, password: password);
+  }
+}
 
 // --- 1. MODELS & DATA ---
 
@@ -18,18 +38,47 @@ class Station {
   final String id;
   final String name;
   final double? distance;
+  final double? latitude;
+  final double? longitude;
 
-  Station({required this.id, required this.name, this.distance});
+  Station({
+    required this.id, 
+    required this.name, 
+    this.distance,
+    this.latitude,
+    this.longitude,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'distance': distance,
+    'latitude': latitude,
+    'longitude': longitude,
+  };
 
   factory Station.fromJson(Map<String, dynamic> json) {
     String name = json['name'] ?? 'Unknown Station';
-    if (json['location'] != null && json['location']['name'] != null) {
-       name = json['location']['name'];
+    double? lat;
+    double? lng;
+
+    // Handle nested API structure or flattened storage structure
+    if (json['location'] != null) {
+       name = json['location']['name'] ?? name;
+       lat = json['location']['latitude'];
+       lng = json['location']['longitude'];
+    } else {
+       // Fallback for when reading from local storage where we flattened it
+       lat = json['latitude'];
+       lng = json['longitude'];
     }
+
     return Station(
       id: json['id']?.toString() ?? '',
       name: name,
       distance: json['distance'] != null ? (json['distance'] as num).toDouble() : null,
+      latitude: lat,
+      longitude: lng,
     );
   }
 }
@@ -43,7 +92,7 @@ class JourneyStep {
   final String? alert; 
   final String? seating;
   final int? chatCount;
-  final String? startStationId; // Added to fetch alternatives
+  final String? startStationId; 
 
   JourneyStep({
     required this.type,
@@ -84,7 +133,37 @@ class Friend {
   Friend(this.name, this.status, this.color, this.top, this.left);
 }
 
-// --- 2. API SERVICE ---
+// --- 2. STORAGE & API SERVICE ---
+
+class SearchHistoryManager {
+  static const _key = 'recent_stations';
+
+  static Future<void> saveStation(Station station) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> history = prefs.getStringList(_key) ?? [];
+    
+    // Create simple JSON string
+    String jsonStr = json.encode(station.toJson());
+    
+    // Remove duplicate IDs if they exist
+    history.removeWhere((item) {
+      final existing = json.decode(item);
+      return existing['id'] == station.id;
+    });
+
+    // Insert at top, keep max 10
+    history.insert(0, jsonStr);
+    if (history.length > 10) history = history.sublist(0, 10);
+    
+    await prefs.setStringList(_key, history);
+  }
+
+  static Future<List<Station>> getHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_key) ?? [];
+    return list.map((item) => Station.fromJson(json.decode(item))).toList();
+  }
+}
 
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
@@ -92,7 +171,9 @@ class TransportApi {
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
     if (query.length < 2) return [];
     try {
-      String url = '$_baseUrl/locations?query=${Uri.encodeComponent(query)}&results=5';
+      String url = '$_baseUrl/locations?query=${Uri.encodeComponent(query)}&results=10';
+      // Feature: Priority Logic
+      // The API prioritizes proximity if lat/long are provided.
       if (lat != null && lng != null) {
         url += '&latitude=$lat&longitude=$lng'; 
       }
@@ -112,7 +193,7 @@ class TransportApi {
 
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/stops/nearby?latitude=$lat&longitude=$lng&results=3'));
+      final response = await http.get(Uri.parse('$_baseUrl/stops/nearby?latitude=$lat&longitude=$lng&results=5'));
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
@@ -138,7 +219,6 @@ class TransportApi {
     return null;
   }
 
-  // NEW: Fetch alternatives (Departures) for a specific stop
   static Future<List<Map<String, dynamic>>> getDepartures(String stationId) async {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/stops/$stationId/departures?results=5&duration=20'));
@@ -155,34 +235,98 @@ class TransportApi {
   }
 }
 
-// --- 3. MAIN APP ---
+// --- 3. MAIN APP & STATE ---
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Supabase
+  // Wrappped in try-catch so app doesn't crash if keys aren't set yet
+  try {
+    await Supabase.initialize(
+      url: AppConfig.supabaseUrl,
+      anonKey: AppConfig.supabaseAnonKey,
+    );
+  } catch (e) {
+    debugPrint("Supabase init failed (likely missing keys): $e");
+  }
+
   runApp(const TransApp());
 }
 
-class TransApp extends StatelessWidget {
+class TransApp extends StatefulWidget {
   const TransApp({super.key});
+
+  @override
+  State<TransApp> createState() => _TransAppState();
+}
+
+class _TransAppState extends State<TransApp> {
+  ThemeMode _themeMode = ThemeMode.dark;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('isDark') ?? true;
+    setState(() {
+      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
+
+  Future<void> _toggleTheme(bool isDark) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isDark', isDark);
+    setState(() {
+      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Trans',
       debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
       theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFF3F4F6),
+        primaryColor: const Color(0xFF4F46E5),
+        cardColor: Colors.white,
+        useMaterial3: true,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+        )
+      ),
+      darkTheme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF000000),
         primaryColor: const Color(0xFF4F46E5),
         cardColor: const Color(0xFF111827),
         useMaterial3: true,
+        appBarTheme: AppBarTheme(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          foregroundColor: Colors.white,
+        )
       ),
-      home: const MainScreen(),
+      home: MainScreen(
+        onThemeChanged: _toggleTheme,
+        isDarkMode: _themeMode == ThemeMode.dark,
+      ),
     );
   }
 }
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final Function(bool) onThemeChanged;
+  final bool isDarkMode;
+
+  const MainScreen({super.key, required this.onThemeChanged, required this.isDarkMode});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -239,9 +383,7 @@ class _MainScreenState extends State<MainScreen> {
     await _flutterLocalNotificationsPlugin.initialize(initializationSettings);
   }
 
-  // FEATURE: Automatically notice routine transfers and notify
   void _startRoutineMonitor() {
-    // Simulating a background check for a "Routine" connection (e.g. Home -> Work)
     Timer(const Duration(seconds: 10), () async {
       await _showNotification(
         id: 1, 
@@ -295,7 +437,6 @@ class _MainScreenState extends State<MainScreen> {
           _currentPosition = pos;
           _gettingLocation = false;
         });
-        _fetchNearbySuggestions();
       }
     } catch (e) {
       if (mounted) {
@@ -314,14 +455,35 @@ class _MainScreenState extends State<MainScreen> {
         altitudeAccuracy: 0, headingAccuracy: 0
       );
     });
-    _fetchNearbySuggestions();
   }
 
-  Future<void> _fetchNearbySuggestions() async {
-     if (_currentPosition == null) return;
-     final nearby = await TransportApi.getNearbyStops(_currentPosition!.latitude, _currentPosition!.longitude);
-     if (mounted && _activeSearchField == 'from' && _fromController.text.isEmpty) {
-       setState(() { _suggestions = nearby; });
+  // FEATURE: Contextual Suggestions
+  // 1. If location is available -> Nearby
+  // 2. If not -> Past Searches
+  // 3. Always show past searches if query is empty
+  Future<void> _fetchSuggestions() async {
+     List<Station> results = [];
+     
+     // 1. Past Searches
+     final history = await SearchHistoryManager.getHistory();
+     if (history.isNotEmpty) {
+       results.addAll(history);
+     }
+
+     // 2. Nearby (if available and user hasn't typed anything yet)
+     if (_currentPosition != null && _activeSearchField == 'from') {
+       final nearby = await TransportApi.getNearbyStops(_currentPosition!.latitude, _currentPosition!.longitude);
+       // Avoid duplicates
+       for (var s in nearby) {
+         if (!results.any((h) => h.id == s.id)) {
+           results.insert(0, s); // prioritize nearby
+         }
+       }
+     }
+     
+     if (mounted && (_activeSearchField == 'from' && _fromController.text.isEmpty) || 
+                    (_activeSearchField == 'to' && _toController.text.isEmpty)) {
+       setState(() { _suggestions = results; });
      }
   }
 
@@ -329,15 +491,41 @@ class _MainScreenState extends State<MainScreen> {
 
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
-    if (query.isEmpty && _currentPosition != null && field == 'from') {
-       _fetchNearbySuggestions();
+    
+    // If empty, show suggestions (history + nearby)
+    if (query.isEmpty) {
+       _fetchSuggestions();
        return;
     }
+    
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () async { 
       if (query.length > 2) {
+        
+        // FEATURE: Priority Logic for Search
+        double? refLat;
+        double? refLng;
+
+        // If searching TO, and FROM is already selected, use FROM as reference
+        if (field == 'to' && _fromStation != null) {
+          refLat = _fromStation!.latitude;
+          refLng = _fromStation!.longitude;
+        }
+        // If searching FROM, and TO is selected, use TO as reference
+        else if (field == 'from' && _toStation != null) {
+           refLat = _toStation!.latitude;
+           refLng = _toStation!.longitude;
+        }
+        // Fallback: Use current GPS location
+        else if (_currentPosition != null) {
+          refLat = _currentPosition!.latitude;
+          refLng = _currentPosition!.longitude;
+        }
+
         final results = await TransportApi.searchStations(
-          query, lat: _currentPosition?.latitude, lng: _currentPosition?.longitude
+          query, 
+          lat: refLat, 
+          lng: refLng
         );
         if (mounted) setState(() => _suggestions = results);
       } else {
@@ -349,11 +537,13 @@ class _MainScreenState extends State<MainScreen> {
   void _onFieldTap(String field) {
     setState(() => _activeSearchField = field);
     if ((field == 'from' && _fromController.text.isEmpty) || (field == 'to' && _toController.text.isEmpty)) {
-      if (_currentPosition != null) _fetchNearbySuggestions();
+      _fetchSuggestions();
     }
   }
 
   void _selectStation(Station station) {
+    SearchHistoryManager.saveStation(station); // Save to history
+
     setState(() {
       if (_activeSearchField == 'from') {
         _fromStation = station;
@@ -417,8 +607,6 @@ class _MainScreenState extends State<MainScreen> {
           bool isWalk = mode == 'walking';
           bool isTrain = !isBus && !isWalk; 
 
-          // FEATURE: Suggest seating
-          // Logic: Random for prototype, but enabled for all 'ride' steps
           if (isBus || isTrain) {
              seating = random.nextBool() ? "Front (Quick Exit)" : "Back (More Space)";
           }
@@ -489,7 +677,7 @@ class _MainScreenState extends State<MainScreen> {
   void _showChat(BuildContext context, String lineName) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF111827),
+      backgroundColor: Theme.of(context).cardColor,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => Padding(
@@ -499,10 +687,10 @@ class _MainScreenState extends State<MainScreen> {
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade800, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade600, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
               Row(
                 children: [
-                  Text("Chat: $lineName", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                  Text("Chat: $lineName", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
                   const Spacer(),
                   const Icon(Icons.people, size: 16, color: Colors.green),
                   const SizedBox(width: 4),
@@ -519,12 +707,12 @@ class _MainScreenState extends State<MainScreen> {
                 ),
               ),
               TextField(
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color),
                 decoration: InputDecoration(
                   hintText: "Message...",
                   hintStyle: TextStyle(color: Colors.grey.shade600),
                   filled: true,
-                  fillColor: Colors.black,
+                  fillColor: Theme.of(context).scaffoldBackgroundColor,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                   suffixIcon: const Icon(Icons.send, color: Colors.indigoAccent),
@@ -538,6 +726,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildChatMessage(String user, String text, String time, Color color) {
+    final textColor = Theme.of(context).textTheme.bodyMedium?.color;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12.0),
       child: Row(
@@ -549,12 +738,12 @@ class _MainScreenState extends State<MainScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [Text(user, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 8), Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10))]),
+                Row(children: [Text(user, style: TextStyle(color: textColor?.withOpacity(0.7), fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 8), Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10))]),
                 const SizedBox(height: 4),
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12)),
-                  child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                  decoration: BoxDecoration(color: Theme.of(context).primaryColor.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                  child: Text(text, style: TextStyle(color: textColor, fontSize: 14)),
                 ),
               ],
             ),
@@ -568,9 +757,9 @@ class _MainScreenState extends State<MainScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF111827),
+        backgroundColor: Theme.of(ctx).cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text("Station Guide", style: TextStyle(color: Colors.white)),
+        title: Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -599,11 +788,12 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Scaffold(
       extendBodyBehindAppBar: true,
       resizeToAvoidBottomInset: false, 
       appBar: AppBar(
-        backgroundColor: Colors.black.withOpacity(0.7),
         elevation: 0,
         flexibleSpace: ClipRect(
           child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), child: Container(color: Colors.transparent)),
@@ -616,7 +806,7 @@ class _MainScreenState extends State<MainScreen> {
               child: const Icon(Icons.bolt, size: 20, color: Colors.white),
             ),
             const SizedBox(width: 10),
-            const Text("Trans", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            Text("Trans", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: isDark ? Colors.white : Colors.black)),
           ],
         ),
         actions: [
@@ -631,7 +821,10 @@ class _MainScreenState extends State<MainScreen> {
         ],
       ),
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(border: Border(top: BorderSide(color: Colors.white10)), color: Color(0xFF0F0F10)),
+        decoration: BoxDecoration(
+          border: const Border(top: BorderSide(color: Colors.white10)), 
+          color: Theme.of(context).cardColor
+        ),
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
@@ -651,7 +844,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildBody() {
     if (_currentIndex == 1) return _buildFriendsView();
-    if (_currentIndex == 2) return const Center(child: Text("Settings", style: TextStyle(color: Colors.grey)));
+    if (_currentIndex == 2) return _buildSettingsView(); // FEATURE: Settings UI
     
     return Column(
       children: [
@@ -673,16 +866,16 @@ class _MainScreenState extends State<MainScreen> {
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: isActive ? const Color(0xFF4F46E5) : const Color(0xFF1F2937),
+                      color: isActive ? const Color(0xFF4F46E5) : Theme.of(context).cardColor,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.directions, size: 16, color: Colors.white),
+                        Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey),
                         const SizedBox(width: 6),
-                        Text(tab.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
                         const SizedBox(width: 4),
-                        GestureDetector(onTap: () => _closeTab(tab.id), child: const Icon(Icons.close, size: 14, color: Colors.white70))
+                        GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))
                       ],
                     ),
                   ),
@@ -697,18 +890,64 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  // FEATURE: Settings Screen with Theme Toggle
+  Widget _buildSettingsView() {
+    final isDark = widget.isDarkMode;
+    final textColor = isDark ? Colors.white : Colors.black;
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 100),
+          Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: Text("Dark Mode", style: TextStyle(color: textColor)),
+                  secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode, color: Colors.purpleAccent),
+                  value: widget.isDarkMode,
+                  onChanged: (val) => widget.onThemeChanged(val),
+                ),
+                const Divider(),
+                ListTile(
+                  title: Text("Account (Supabase)", style: TextStyle(color: textColor)),
+                  subtitle: const Text("Not logged in", style: TextStyle(color: Colors.grey)),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                  onTap: () {
+                    // Placeholder for Auth Action
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Auth not implemented yet")));
+                  },
+                )
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
   Widget _buildFriendsView() {
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     return Column(
       children: [
         const SizedBox(height: 100),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Align(alignment: Alignment.centerLeft, child: Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Align(alignment: Alignment.centerLeft, child: Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor))),
         ),
         Container(
           height: 240,
           margin: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: const Color(0xFF1F2937), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+          decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
           child: Stack(
             children: [
               Positioned.fill(child: Opacity(opacity: 0.1, child: CustomPaint(painter: _GridPainter()))),
@@ -736,12 +975,12 @@ class _MainScreenState extends State<MainScreen> {
               final f = _friends[idx];
               return Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: const Color(0xFF1F2937).withOpacity(0.5), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+                decoration: BoxDecoration(color: Theme.of(context).cardColor.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
                 child: Row(
                   children: [
                     Container(width: 40, height: 40, decoration: BoxDecoration(color: f.color.withOpacity(0.2), shape: BoxShape.circle), child: Center(child: Text(f.name[0], style: TextStyle(color: f.color, fontWeight: FontWeight.bold)))),
                     const SizedBox(width: 16),
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(f.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)), const SizedBox(height: 2), Text(f.status, style: const TextStyle(fontSize: 12, color: Colors.grey))]),
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(f.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), const SizedBox(height: 2), Text(f.status, style: const TextStyle(fontSize: 12, color: Colors.grey))]),
                     const Spacer(),
                     IconButton(icon: const Icon(Icons.chat_bubble_outline, size: 20, color: Colors.grey), onPressed: (){})
                   ],
@@ -755,6 +994,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildSearchView() {
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final cardColor = Theme.of(context).cardColor;
+
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -762,11 +1004,11 @@ class _MainScreenState extends State<MainScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: const Color(0xFF111827).withOpacity(0.8), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+              decoration: BoxDecoration(color: cardColor.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))]),
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
                   const SizedBox(height: 20),
                   _buildTextField("From", _fromController, _fromStation != null, 'from'),
                   const SizedBox(height: 12),
@@ -786,8 +1028,10 @@ class _MainScreenState extends State<MainScreen> {
             ),
             if (_suggestions.isNotEmpty) ...[
               const SizedBox(height: 16),
+              Align(alignment: Alignment.centerLeft, child: Text("Suggestions", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))),
+              const SizedBox(height: 8),
               Container(
-                decoration: BoxDecoration(color: const Color(0xFF1F2937), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+                decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
                 child: ListView.separated(
                   shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), padding: EdgeInsets.zero,
                   itemCount: _suggestions.length,
@@ -795,8 +1039,10 @@ class _MainScreenState extends State<MainScreen> {
                   itemBuilder: (ctx, idx) {
                     final station = _suggestions[idx];
                     return ListTile(
-                      leading: station.distance != null ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent) : null,
-                      title: Text(station.name, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                      leading: station.distance != null 
+                        ? const Icon(Icons.near_me, size: 16, color: Colors.greenAccent) 
+                        : const Icon(Icons.history, size: 16, color: Colors.grey),
+                      title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)),
                       trailing: station.distance != null ? Text("${station.distance!.toInt()}m", style: const TextStyle(color: Colors.grey, fontSize: 10)) : null,
                       onTap: () => _selectStation(station),
                     );
@@ -811,15 +1057,17 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))),
         TextField(
           controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => _onFieldTap(fieldKey),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: isDark ? Colors.white : Colors.black),
           decoration: InputDecoration(
-            filled: true, fillColor: const Color(0xFF1F2937),
+            filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200,
             prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: isSelected ? Colors.greenAccent : Colors.grey, size: 20),
             suffixIcon: _gettingLocation && fieldKey == 'from' ? const SizedBox(width: 10, height: 10, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2))) : (isSelected ? const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16) : null),
             hintText: fieldKey == 'from' && _currentPosition != null ? "Current Location" : "Station or City...",
@@ -833,10 +1081,13 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final cardColor = Theme.of(context).cardColor;
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(route.title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+        Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
         ...route.steps.map((step) {
@@ -852,7 +1103,7 @@ class _MainScreenState extends State<MainScreen> {
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(step.instruction, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                      Text(step.instruction, style: TextStyle(color: textColor?.withOpacity(0.8), fontSize: 14)),
                       Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Monospace')),
                     ]),
                   ),
@@ -865,10 +1116,10 @@ class _MainScreenState extends State<MainScreen> {
           return Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: const Color(0xFF111827), borderRadius: BorderRadius.circular(16)),
+            decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Expanded(child: Text(step.instruction, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white), overflow: TextOverflow.ellipsis)),
+                Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor), overflow: TextOverflow.ellipsis)),
                 Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
               ]),
               Text(step.line, style: const TextStyle(color: Colors.grey)),
@@ -880,7 +1131,6 @@ class _MainScreenState extends State<MainScreen> {
                   child: Row(children: [const Icon(Icons.warning_amber, color: Colors.orange, size: 16), const SizedBox(width: 8), Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12)))]),
                 ),
 
-              // FEATURE: Seating Suggestion UI
               if (step.seating != null)
                 Container(
                   margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(8),
@@ -941,29 +1191,29 @@ class _MainScreenState extends State<MainScreen> {
   Widget _buildActionChip(IconData icon, String label) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
-      child: Row(children: [Icon(icon, size: 14, color: Colors.white70), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))]),
+      decoration: BoxDecoration(color: Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+      child: Row(children: [Icon(icon, size: 14, color: Colors.grey), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12))]),
     );
   }
 
   void _showAlternatives(BuildContext context, String stationId) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF111827),
+      backgroundColor: Theme.of(context).cardColor,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(
           future: TransportApi.getDepartures(stationId),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found.", style: TextStyle(color: Colors.white)));
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
 
             return Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Alternative Connections", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text("Alternative Connections", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   Expanded(
                     child: ListView.separated(
@@ -979,12 +1229,12 @@ class _MainScreenState extends State<MainScreen> {
                         
                         return ListTile(
                           leading: const Icon(Icons.directions_bus, color: Colors.grey),
-                          title: Text("$line to $dir", style: const TextStyle(color: Colors.white)),
+                          title: Text("$line to $dir", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(time, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              Text(time, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color, fontWeight: FontWeight.bold)),
                               if (delay > 0) Text("+$delay min", style: const TextStyle(color: Colors.redAccent, fontSize: 12))
                               else const Text("On time", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))
                             ],
