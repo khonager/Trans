@@ -186,10 +186,18 @@ class _MainScreenState extends State<MainScreen> {
   Position? _currentPosition;
   bool _gettingLocation = true;
 
+  // Mock Data
+  final List<Friend> _friends = [
+    Friend('Alex', 'On Bus 42 • 5 min away', Colors.blue, 40, 10),
+    Friend('Sarah', 'Waiting at Central St.', Colors.green, 50, 60),
+    Friend('Mike', 'On Tram 10 • Arriving soon', Colors.purple, 20, 80),
+    Friend('Jessica', 'Walking to Station', Colors.orange, 70, 30),
+    Friend('David', 'On U3 • Late', Colors.red, 10, 40),
+  ];
+
   @override
   void initState() {
     super.initState();
-    // Don't await this, let it run in background to not block UI init
     _determinePosition();
   }
 
@@ -283,7 +291,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () async { // Increased debounce to 400ms
+    _debounce = Timer(const Duration(milliseconds: 400), () async { 
       if (query.length > 2) {
         final results = await TransportApi.searchStations(
           query, 
@@ -324,7 +332,6 @@ class _MainScreenState extends State<MainScreen> {
       _suggestions = [];
       _activeSearchField = '';
     });
-    // unfocus logic handled by Flutter usually, explicit call sometimes causes lag on Linux if IME is slow
     FocusScope.of(context).unfocus(); 
   }
 
@@ -434,6 +441,132 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  // --- OVERLAYS ---
+
+  void _showChat(BuildContext context, String lineName) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF111827),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: Container(
+          height: 500,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade800, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
+              Row(
+                children: [
+                  Text("Chat: $lineName", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const Spacer(),
+                  const Icon(Icons.people, size: 16, color: Colors.green),
+                  const SizedBox(width: 4),
+                  const Text("12 Online", style: TextStyle(color: Colors.green, fontSize: 12)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView(
+                  children: [
+                    _buildChatMessage("Traveler88", "Is it full in the back?", "10:02", Colors.blue),
+                    _buildChatMessage("Commuter_Jane", "Yeah, standing room only.", "10:03", Colors.purple),
+                    _buildChatMessage("Mike", "AC is broken unfortunately.", "10:05", Colors.orange),
+                  ],
+                ),
+              ),
+              TextField(
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: "Message...",
+                  hintStyle: TextStyle(color: Colors.grey.shade600),
+                  filled: true,
+                  fillColor: Colors.black,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  suffixIcon: const Icon(Icons.send, color: Colors.indigoAccent),
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatMessage(String user, String text, String time, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            backgroundColor: color, 
+            radius: 16,
+            child: Text(user[0], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(user, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)),
+                    const SizedBox(width: 8),
+                    Text(time, style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(12)),
+                  child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showGuide(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111827),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text("Station Guide", style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              height: 160,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white10),
+              ),
+              // In real app, this would be an image
+              child: const Center(child: Icon(Icons.camera_alt, size: 40, color: Colors.grey)),
+            ),
+            const SizedBox(height: 16),
+            const Text("Follow signs to Platform 4.\nUse escalator B to avoid the crowd.", style: TextStyle(color: Colors.grey), textAlign: TextAlign.center),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text("Got it", style: TextStyle(color: Colors.indigoAccent, fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- UI ---
 
   @override
@@ -492,7 +625,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Widget _buildBody() {
-    if (_currentIndex == 1) return const Center(child: Text("Friends Map Placeholder", style: TextStyle(color: Colors.grey)));
+    if (_currentIndex == 1) return _buildFriendsView();
     if (_currentIndex == 2) return const Center(child: Text("Settings Placeholder", style: TextStyle(color: Colors.grey)));
     
     return Column(
@@ -543,8 +676,103 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  Widget _buildFriendsView() {
+    return Column(
+      children: [
+        const SizedBox(height: 100),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Align(alignment: Alignment.centerLeft, child: Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white))),
+        ),
+        
+        // Mock Map
+        Container(
+          height: 240,
+          margin: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1F2937),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Stack(
+            children: [
+              // Mock Map Background Pattern
+              Positioned.fill(
+                child: Opacity(
+                  opacity: 0.1,
+                  child: CustomPaint(
+                    painter: _GridPainter(),
+                  ),
+                ),
+              ),
+              // Friends on Map
+              ..._friends.map((f) => Positioned(
+                top: f.top * 2.2, 
+                left: f.left * 3.5,
+                child: Column(
+                  children: [
+                    Container(
+                      width: 32, height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: f.color, 
+                        shape: BoxShape.circle, 
+                        boxShadow: [BoxShadow(color: f.color.withOpacity(0.5), blurRadius: 10, spreadRadius: 2)],
+                        border: Border.all(color: Colors.white, width: 2)
+                      ),
+                      child: Text(f.name[0], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
+                    ),
+                  ],
+                ),
+              )),
+            ],
+          ),
+        ),
+        
+        // Friends List
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _friends.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (ctx, idx) {
+              final f = _friends[idx];
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F2937).withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40, height: 40,
+                      decoration: BoxDecoration(color: f.color.withOpacity(0.2), shape: BoxShape.circle),
+                      child: Center(child: Text(f.name[0], style: TextStyle(color: f.color, fontWeight: FontWeight.bold))),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(f.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
+                        const SizedBox(height: 2),
+                        Text(f.status, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                    const Spacer(),
+                    IconButton(icon: const Icon(Icons.chat_bubble_outline, size: 20, color: Colors.grey), onPressed: (){})
+                  ],
+                ),
+              );
+            },
+          ),
+        )
+      ],
+    );
+  }
+
   Widget _buildSearchView() {
-    // Wrapped in SingleChildScrollView to fix resize breakage
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -568,7 +796,7 @@ class _MainScreenState extends State<MainScreen> {
                         child: const Icon(Icons.search, color: Colors.indigoAccent),
                       ),
                       const SizedBox(width: 12),
-                      const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -595,7 +823,7 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
             
-            // Suggestions List - Embedded safely in layout
+            // Suggestions List
             if (_suggestions.isNotEmpty) ...[
               const SizedBox(height: 16),
               Container(
@@ -605,7 +833,7 @@ class _MainScreenState extends State<MainScreen> {
                   border: Border.all(color: Colors.white10),
                 ),
                 child: ListView.separated(
-                  shrinkWrap: true, // Important for nested listview
+                  shrinkWrap: true, 
                   physics: const NeverScrollableScrollPhysics(),
                   padding: EdgeInsets.zero,
                   itemCount: _suggestions.length,
@@ -670,7 +898,7 @@ class _MainScreenState extends State<MainScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(route.title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        Text(route.title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
         ...route.steps.map((step) => Container(
@@ -682,16 +910,113 @@ class _MainScreenState extends State<MainScreen> {
               Expanded( 
                 child: Text(
                   step.instruction, 
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
                   overflow: TextOverflow.ellipsis,
                 )
               ),
               Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
             ]),
             Text(step.line, style: const TextStyle(color: Colors.grey)),
+            
+            // --- SMART FEATURES UI ---
+            if (step.alert != null)
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber, color: Colors.orange, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12))),
+                  ],
+                ),
+              ),
+
+            if (step.seating != null)
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Text("Sit in the ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                  ],
+                ),
+              ),
+
+            if (step.chatCount != null || (step.line != 'Transport' && step.type != 'walk'))
+              Padding(
+                padding: const EdgeInsets.only(top: 12.0),
+                child: Row(
+                  children: [
+                    if (step.chatCount != null)
+                      GestureDetector(
+                        onTap: () => _showChat(context, step.line),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.chat_bubble_outline, size: 14, color: Colors.white70),
+                              const SizedBox(width: 6),
+                              Text("Chat (${step.chatCount})", style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 8),
+                    if (step.type != 'walk')
+                      GestureDetector(
+                        onTap: () => _showGuide(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.camera_alt_outlined, size: 14, color: Colors.white70),
+                              const SizedBox(width: 6),
+                              const Text("Guide", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              )
           ]),
         ))
       ],
     );
   }
+}
+
+class _GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.1)
+      ..strokeWidth = 1;
+    
+    // Draw vertical lines
+    for (double i = 0; i < size.width; i += 20) {
+      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
+    }
+    // Draw horizontal lines
+    for (double i = 0; i < size.height; i += 20) {
+      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
