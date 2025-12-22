@@ -1,5 +1,5 @@
 {
-  description = "Development environment for Trans Flutter App";
+  description = "Development environment for Trans Flutter App (Android + Linux)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,66 +17,54 @@
           };
         };
 
-        # 1. Libraries required for building the Linux Desktop target
-        # These are linked dynamically when you run `flutter run -d linux`
-        linuxRuntimeLibs = with pkgs; [
-          gtk3
-          glib
-          pango
-          harfbuzz
-          cairo
-          gdk-pixbuf
-          atk
+        # 1. Das Android SDK erstellen
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          cmdLineToolsVersion = "8.0";
+          platformToolsVersion = "35.0.2"; # AKTUALISIERT: War 34.0.4
+          buildToolsVersions = [ "30.0.3" "33.0.0" "34.0.0" ];
+          includeEmulator = false;
+          platformVersions = [ "33" "34" ];
+          includeSystemImages = false;
+          useGoogleAPIs = false;
+          includeExtras = [ "extras;google;gcm" ];
+        };
 
-          # X11 & OpenGL basics
-          xorg.libX11
-          xorg.libXcursor
-          xorg.libXrandr
-          xorg.libXinerama
-          xorg.libXi
-          xorg.libXext
-          xorg.libXfixes
-          libglvnd
-          libepoxy
+        androidSdk = androidComposition.androidsdk;
+
+        linuxRuntimeLibs = with pkgs; [
+          gtk3 glib pango harfbuzz cairo gdk-pixbuf atk
+          xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXinerama xorg.libXi xorg.libXext xorg.libXfixes
+          libglvnd libepoxy
         ];
 
-        # 2. Build tools required by CMake/Ninja
         nativeBuildInputs = with pkgs; [
-          cmake
-          ninja
-          pkg-config
-          clang
-          git
-          unzip
-          which
+          cmake ninja pkg-config clang git unzip which
+          jdk17
         ];
 
       in
       {
         devShells.default = pkgs.mkShell {
-          # Packages available in the shell
           buildInputs = [
             pkgs.flutter
             pkgs.dart
-            pkgs.chromium # For web debugging
+            pkgs.chromium
+            androidSdk # Das komplette SDK
           ] ++ linuxRuntimeLibs ++ nativeBuildInputs;
 
-          # 3. Environment Configuration
           shellHook = ''
-            # Fix for Flutter unable to find Linux libraries on NixOS
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath linuxRuntimeLibs}:$LD_LIBRARY_PATH
-            
-            # Tell Flutter where Chrome is (for web builds)
             export CHROME_EXECUTABLE="${pkgs.chromium}/bin/chromium"
+            
+            # WICHTIG: Pfade für Android
+            export ANDROID_SDK_ROOT="${androidSdk}/libexec/android-sdk"
+            export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
+            export JAVA_HOME="${pkgs.jdk17}"
+            
+            # Fix für Gradle auf NixOS
+            export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/34.0.0/aapt2"
 
-            # Welcome Message
-            echo "================================================="
-            echo " 🚅 Trans App - Flutter Dev Environment (NixOS) "
-            echo "================================================="
-            echo " Commands available:"
-            echo "   flutter run -d linux   (Native Linux App)"
-            echo "   flutter run -d chrome  (Web App)"
-            echo "================================================="
+            echo "🚀 Trans App Environment Ready (Android SDK konfiguriert)"
           '';
         };
       }
