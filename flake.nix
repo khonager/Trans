@@ -37,6 +37,7 @@ androidComposition = pkgs.androidenv.composeAndroidPackages {
           includeNDK = true;
           # Ensure you still have the versions from the previous step
           ndkVersions = ["26.1.10909125" "27.0.12077973"]; 
+          cmakeVersions = [ "3.22.1" ];
         };
                 androidSdk = androidComposition.androidsdk;
 
