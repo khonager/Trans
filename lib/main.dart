@@ -32,7 +32,7 @@ class Station {
 }
 
 class JourneyStep {
-  final String type; 
+  final String type; // 'walk', 'transport', 'wait'
   final String line;
   final String instruction;
   final String duration;
@@ -203,8 +203,8 @@ class _MainScreenState extends State<MainScreen> {
 
   // --- LOCATION LOGIC ---
   Future<void> _determinePosition() async {
-    // Quick check for Linux Desktop to avoid hanging on missing plugins
-    if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+    // 1. FAST EXIT for Desktop to prevent freezing/lag
+    if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
        debugPrint("Desktop OS detected: Skipping native geolocation to prevent lag.");
        _useMockLocation();
        return;
@@ -375,16 +375,24 @@ class _MainScreenState extends State<MainScreen> {
           String? seating;
           int? chatCount;
 
-          if (mode != 'walking') {
-            if (random.nextDouble() > 0.7) alert = "Smart Alt: Delay ahead.";
+          bool isBus = lineName.toLowerCase().contains('bus');
+          bool isWalk = mode == 'walking';
+
+          // LOGIC: Only show seating for non-bus transports (trains, etc.)
+          if (!isWalk && !isBus) {
             if (random.nextDouble() > 0.6) seating = random.nextBool() ? "Front" : "Back";
+          }
+
+          // LOGIC: Random alerts for non-walking steps
+          if (!isWalk) {
+            if (random.nextDouble() > 0.8) alert = "Smart Alt: Delay ahead.";
             chatCount = random.nextInt(15) + 1;
           }
 
           steps.add(JourneyStep(
-            type: mode == 'walking' ? 'walk' : 'transport',
+            type: isWalk ? 'walk' : 'transport',
             line: lineName,
-            instruction: mode == 'walking' ? "Walk to $destName" : "$lineName to $destName",
+            instruction: isWalk ? "Walk to $destName" : "$lineName to $destName",
             duration: "$durationMin min",
             departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
             alert: alert,
@@ -604,7 +612,18 @@ class _MainScreenState extends State<MainScreen> {
              const Padding(padding: EdgeInsets.only(right: 16), child: Icon(Icons.location_on, color: Colors.greenAccent, size: 20)),
         ],
       ),
-      body: _buildBody(),
+      body: Stack(
+        children: [
+          _buildBody(),
+          if (_isLoading)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
+              ),
+            ),
+        ],
+      ),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(border: Border(top: BorderSide(color: Colors.white10)), color: Color(0xFF0F0F10)),
         child: BottomNavigationBar(
@@ -901,101 +920,133 @@ class _MainScreenState extends State<MainScreen> {
         Text(route.title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
         const SizedBox(height: 20),
-        ...route.steps.map((step) => Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: const Color(0xFF111827), borderRadius: BorderRadius.circular(16)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Expanded( 
-                child: Text(
-                  step.instruction, 
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-                  overflow: TextOverflow.ellipsis,
+        ...route.steps.map((step) {
+          final bool isWalk = step.type == 'walk';
+          
+          if (isWalk) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              // No background decoration for walk
+              child: Row(
+                children: [
+                  const Icon(Icons.directions_walk, size: 20, color: Colors.grey),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(step.instruction, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                        Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'Monospace')),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          // Transport Card
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: const Color(0xFF111827), borderRadius: BorderRadius.circular(16)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Expanded( 
+                  child: Text(
+                    step.instruction, 
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                    overflow: TextOverflow.ellipsis,
+                  )
+                ),
+                Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
+              ]),
+              Text(step.line, style: const TextStyle(color: Colors.grey)),
+              
+              // --- SMART FEATURES UI ---
+              if (step.alert != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber, color: Colors.orange, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12))),
+                    ],
+                  ),
+                ),
+
+              if (step.seating != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16),
+                      const SizedBox(width: 8),
+                      Text("Sit in the ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                    ],
+                  ),
+                ),
+
+              if (step.chatCount != null || step.type != 'walk')
+                Padding(
+                  padding: const EdgeInsets.only(top: 12.0),
+                  child: Row(
+                    children: [
+                      if (step.chatCount != null)
+                        GestureDetector(
+                          onTap: () => _showChat(context, step.line),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.chat_bubble_outline, size: 14, color: Colors.white70),
+                                const SizedBox(width: 6),
+                                Text("Chat (${step.chatCount})", style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      
+                      const SizedBox(width: 8),
+                      
+                      // GUIDE BUTTON: Only show if it's NOT a bus
+                      // We check if the line name contains 'Bus' (case insensitive)
+                      if (!step.line.toLowerCase().contains('bus'))
+                        GestureDetector(
+                          onTap: () => _showGuide(context),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.camera_alt_outlined, size: 14, color: Colors.white70),
+                                const SizedBox(width: 6),
+                                const Text("Guide", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 )
-              ),
-              Text(step.duration, style: const TextStyle(fontFamily: 'Monospace', color: Colors.grey)),
             ]),
-            Text(step.line, style: const TextStyle(color: Colors.grey)),
-            
-            // --- SMART FEATURES UI ---
-            if (step.alert != null)
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber, color: Colors.orange, size: 16),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(step.alert!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12))),
-                  ],
-                ),
-              ),
-
-            if (step.seating != null)
-              Container(
-                margin: const EdgeInsets.only(top: 8),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16),
-                    const SizedBox(width: 8),
-                    Text("Sit in the ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12)),
-                  ],
-                ),
-              ),
-
-            if (step.chatCount != null || (step.line != 'Transport' && step.type != 'walk'))
-              Padding(
-                padding: const EdgeInsets.only(top: 12.0),
-                child: Row(
-                  children: [
-                    if (step.chatCount != null)
-                      GestureDetector(
-                        onTap: () => _showChat(context, step.line),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.chat_bubble_outline, size: 14, color: Colors.white70),
-                              const SizedBox(width: 6),
-                              Text("Chat (${step.chatCount})", style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: 8),
-                    if (step.type != 'walk')
-                      GestureDetector(
-                        onTap: () => _showGuide(context),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.camera_alt_outlined, size: 14, color: Colors.white70),
-                              const SizedBox(width: 6),
-                              const Text("Guide", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              )
-          ]),
-        ))
+          );
+        }).toList()
       ],
     );
   }
