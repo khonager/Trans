@@ -16,6 +16,12 @@ dependencies:
   geolocator: ^13.0.0
   cupertino_icons: ^1.0.2
 
+  # Persistence for Settings & Recent Searches
+  shared_preferences: ^2.2.0
+
+  # Backend & Database
+  supabase_flutter: ^2.0.0
+
   # NEW FEATURES DEPENDENCIES
   # For "vibrate when you have to get out"
   vibration: ^1.9.0 
@@ -27,7 +33,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0
 
 dependency_overrides:
   geolocator_android: 4.6.1
