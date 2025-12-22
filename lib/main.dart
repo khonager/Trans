@@ -11,7 +11,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// NEW PACKAGES
 import 'package:vibration/vibration.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -26,7 +25,6 @@ class AppConfig {
 class SupabaseService {
   static final SupabaseClient client = Supabase.instance.client;
 
-  // Placeholder for future auth logic
   static Future<void> signUp(String email, String password) async {
     // await client.auth.signUp(email: email, password: password);
   }
@@ -62,13 +60,11 @@ class Station {
     double? lat;
     double? lng;
 
-    // Handle nested API structure or flattened storage structure
     if (json['location'] != null) {
        name = json['location']['name'] ?? name;
        lat = json['location']['latitude'];
        lng = json['location']['longitude'];
     } else {
-       // Fallback for when reading from local storage where we flattened it
        lat = json['latitude'];
        lng = json['longitude'];
     }
@@ -84,7 +80,7 @@ class Station {
 }
 
 class JourneyStep {
-  final String type; // 'walk', 'ride', 'wait'
+  final String type; 
   final String line;
   final String instruction;
   final String duration;
@@ -142,16 +138,13 @@ class SearchHistoryManager {
     final prefs = await SharedPreferences.getInstance();
     List<String> history = prefs.getStringList(_key) ?? [];
     
-    // Create simple JSON string
     String jsonStr = json.encode(station.toJson());
     
-    // Remove duplicate IDs if they exist
     history.removeWhere((item) {
       final existing = json.decode(item);
       return existing['id'] == station.id;
     });
 
-    // Insert at top, keep max 10
     history.insert(0, jsonStr);
     if (history.length > 10) history = history.sublist(0, 10);
     
@@ -172,8 +165,6 @@ class TransportApi {
     if (query.length < 2) return [];
     try {
       String url = '$_baseUrl/locations?query=${Uri.encodeComponent(query)}&results=10';
-      // Feature: Priority Logic
-      // The API prioritizes proximity if lat/long are provided.
       if (lat != null && lng != null) {
         url += '&latitude=$lat&longitude=$lng'; 
       }
@@ -240,15 +231,13 @@ class TransportApi {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Supabase
-  // Wrappped in try-catch so app doesn't crash if keys aren't set yet
   try {
     await Supabase.initialize(
       url: AppConfig.supabaseUrl,
       anonKey: AppConfig.supabaseAnonKey,
     );
   } catch (e) {
-    debugPrint("Supabase init failed (likely missing keys): $e");
+    debugPrint("Supabase init failed: $e");
   }
 
   runApp(const TransApp());
@@ -354,7 +343,6 @@ class _MainScreenState extends State<MainScreen> {
   // Notifications
   final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
-  // Mock Data
   final List<Friend> _friends = [
     Friend('Alex', 'On Bus 42 • 5 min away', Colors.blue, 40, 10),
     Friend('Sarah', 'Waiting at Central St.', Colors.green, 50, 60),
@@ -376,10 +364,19 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _initNotifications() async {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings = InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: DarwinInitializationSettings(),
+        
+    // FIX: Added Linux Initialization Settings
+    final LinuxInitializationSettings initializationSettingsLinux =
+        LinuxInitializationSettings(
+      defaultActionName: 'Open notification',
     );
+
+    final InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: const DarwinInitializationSettings(),
+      linux: initializationSettingsLinux, // FIX: Pass Linux settings here
+    );
+    
     await _flutterLocalNotificationsPlugin.initialize(initializationSettings);
   }
 
@@ -400,20 +397,29 @@ class _MainScreenState extends State<MainScreen> {
             importance: Importance.max,
             priority: Priority.high,
             ticker: 'ticker');
+            
     const NotificationDetails platformChannelSpecifics =
         NotificationDetails(android: androidPlatformChannelSpecifics);
+        
     await _flutterLocalNotificationsPlugin.show(id, title, body, platformChannelSpecifics);
   }
 
   Future<void> _triggerVibration() async {
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(pattern: [500, 1000, 500, 1000]);
+    // Vibration might not work on standard Linux Desktop, so we guard it
+    try {
+      if (await Vibration.hasVibrator() ?? false) {
+        Vibration.vibrate(pattern: [500, 1000, 500, 1000]);
+      }
+    } catch (e) {
+      debugPrint("Vibration not supported on this device.");
     }
   }
 
   // --- LOCATION LOGIC ---
   Future<void> _determinePosition() async {
     if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+       // On Desktop, Geolocator often fails or requires specific system setup.
+       // We use a mock location for stability during development.
        _useMockLocation();
        return;
     }
@@ -457,26 +463,19 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  // FEATURE: Contextual Suggestions
-  // 1. If location is available -> Nearby
-  // 2. If not -> Past Searches
-  // 3. Always show past searches if query is empty
   Future<void> _fetchSuggestions() async {
      List<Station> results = [];
      
-     // 1. Past Searches
      final history = await SearchHistoryManager.getHistory();
      if (history.isNotEmpty) {
        results.addAll(history);
      }
 
-     // 2. Nearby (if available and user hasn't typed anything yet)
      if (_currentPosition != null && _activeSearchField == 'from') {
        final nearby = await TransportApi.getNearbyStops(_currentPosition!.latitude, _currentPosition!.longitude);
-       // Avoid duplicates
        for (var s in nearby) {
          if (!results.any((h) => h.id == s.id)) {
-           results.insert(0, s); // prioritize nearby
+           results.insert(0, s); 
          }
        }
      }
@@ -487,12 +486,9 @@ class _MainScreenState extends State<MainScreen> {
      }
   }
 
-  // --- HANDLERS ---
-
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
     
-    // If empty, show suggestions (history + nearby)
     if (query.isEmpty) {
        _fetchSuggestions();
        return;
@@ -502,21 +498,17 @@ class _MainScreenState extends State<MainScreen> {
     _debounce = Timer(const Duration(milliseconds: 400), () async { 
       if (query.length > 2) {
         
-        // FEATURE: Priority Logic for Search
         double? refLat;
         double? refLng;
 
-        // If searching TO, and FROM is already selected, use FROM as reference
         if (field == 'to' && _fromStation != null) {
           refLat = _fromStation!.latitude;
           refLng = _fromStation!.longitude;
         }
-        // If searching FROM, and TO is selected, use TO as reference
         else if (field == 'from' && _toStation != null) {
            refLat = _toStation!.latitude;
            refLng = _toStation!.longitude;
         }
-        // Fallback: Use current GPS location
         else if (_currentPosition != null) {
           refLat = _currentPosition!.latitude;
           refLng = _currentPosition!.longitude;
@@ -542,7 +534,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _selectStation(Station station) {
-    SearchHistoryManager.saveStation(station); // Save to history
+    SearchHistoryManager.saveStation(station); 
 
     setState(() {
       if (_activeSearchField == 'from') {
@@ -844,7 +836,7 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildBody() {
     if (_currentIndex == 1) return _buildFriendsView();
-    if (_currentIndex == 2) return _buildSettingsView(); // FEATURE: Settings UI
+    if (_currentIndex == 2) return _buildSettingsView(); 
     
     return Column(
       children: [
@@ -890,7 +882,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // FEATURE: Settings Screen with Theme Toggle
   Widget _buildSettingsView() {
     final isDark = widget.isDarkMode;
     final textColor = isDark ? Colors.white : Colors.black;
@@ -923,7 +914,6 @@ class _MainScreenState extends State<MainScreen> {
                   subtitle: const Text("Not logged in", style: TextStyle(color: Colors.grey)),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
                   onTap: () {
-                    // Placeholder for Auth Action
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Auth not implemented yet")));
                   },
                 )
@@ -1112,7 +1102,6 @@ class _MainScreenState extends State<MainScreen> {
             );
           }
 
-          // Transport Card
           return Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(16),
@@ -1138,21 +1127,18 @@ class _MainScreenState extends State<MainScreen> {
                   child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.airline_seat_recline_extra, color: Colors.blueAccent, size: 16), const SizedBox(width: 8), Text("Sit: ${step.seating}", style: const TextStyle(color: Colors.blueAccent, fontSize: 12))]),
                 ),
 
-              // FEATURE: Alternatives & Wake Me
               Padding(
                 padding: const EdgeInsets.only(top: 12.0),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      // CHAT BUTTON
                       GestureDetector(
                         onTap: () => _showChat(context, step.line),
                         child: _buildActionChip(Icons.chat_bubble_outline, "Chat (${step.chatCount ?? 0})"),
                       ),
                       const SizedBox(width: 8),
                       
-                      // GUIDE BUTTON
                       if (!step.line.toLowerCase().contains('bus'))
                         GestureDetector(
                           onTap: () => _showGuide(context),
@@ -1160,10 +1146,8 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                       if (!step.line.toLowerCase().contains('bus')) const SizedBox(width: 8),
 
-                      // FEATURE: VIBRATE / WAKE ME
                       GestureDetector(
                         onTap: () {
-                           // Mocking the "Next Stop" calculation for wake up
                            Timer(const Duration(seconds: 2), _triggerVibration);
                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake alarm set for next stop!")));
                         },
@@ -1171,7 +1155,6 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                       const SizedBox(width: 8),
 
-                      // FEATURE: CHECK ALTERNATIVES
                       if (step.startStationId != null)
                         GestureDetector(
                           onTap: () => _showAlternatives(context, step.startStationId!),
@@ -1206,7 +1189,6 @@ class _MainScreenState extends State<MainScreen> {
           future: TransportApi.getDepartures(stationId),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            // FIX: Removed 'const' because Theme.of(context) is not a constant
             if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
 
             return Padding(
