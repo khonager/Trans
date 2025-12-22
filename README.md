@@ -1,10 +1,3 @@
-/**
- * README.js
- * * Documentation for the Trans App.
- * Execute this file with `node README.js` to print the docs to the console.
- */
-
-const documentation = `
 # TRANS APP ⚡️
 
 A next-generation transportation app built with Flutter. "Trans" fills the gaps left by current market leaders by integrating social features, smart routine monitoring, and granular journey details like seating suggestions and station guides.
@@ -98,12 +91,3 @@ If you encounter strange caching errors, run this to reset:
 \`\`\`bash
 flutter clean
 \`\`\`
-
----
-`;
-
-// Output the documentation to the console
-console.log(documentation);
-
-// Export it for use in other modules if necessary
-module.exports = documentation;
