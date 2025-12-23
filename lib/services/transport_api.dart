@@ -6,10 +6,10 @@ import '../models/station.dart';
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
 
-  // Helper to append product filters
+  // HELPER: Appends filters to exclude high-speed trains if Nahverkehr is requested
   static String _addFilters(String url, bool useNahverkehrOnly) {
     if (useNahverkehrOnly) {
-      // Disable ICE (nationalExpress) and IC/EC (national)
+      // nationalExpress = ICE, national = IC/EC. Setting false enables "Deutschlandticket" mode.
       return '$url&nationalExpress=false&national=false';
     }
     return url;
@@ -52,13 +52,13 @@ class TransportApi {
   static Future<Map<String, dynamic>?> searchJourney(String fromId, String toId, {bool nahverkehrOnly = false}) async {
     try {
       String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3';
+      // Apply the filter
       url = _addFilters(url, nahverkehrOnly);
       
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null && (data['journeys'] as List).isNotEmpty) {
-          // Return the best journey (usually the first one)
           return data['journeys'][0];
         }
       }
@@ -71,6 +71,7 @@ class TransportApi {
   static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false}) async {
     try {
       String url = '$_baseUrl/stops/$stationId/departures?results=10&duration=60';
+      // Apply the filter
       url = _addFilters(url, nahverkehrOnly);
 
       final response = await http.get(Uri.parse(url));
