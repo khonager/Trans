@@ -35,11 +35,21 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
 
 # FIX: Removed the geolocator override as it forces old versions.
 # If you run into resolution errors, run `flutter pub upgrade` or `flutter pub outdated`.
 # dependency_overrides:
 #   geolocator_android: 4.6.1
 
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon.png"
+  min_sdk_android: 21 # essential for modern android icons
+
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/
