@@ -43,8 +43,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
   
-  // Feature: Nahverkehr Filter
-  bool _onlyNahverkehr = true; // Default to "Deutschlandticket Mode"
+  // Feature: Nahverkehr Filter (Default True for Deutschlandticket)
+  bool _onlyNahverkehr = true; 
 
   // Location State
   Position? _currentPosition;
@@ -87,9 +87,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _startRoutineMonitor() {
-    // Simple mock routine monitor
     Timer(const Duration(seconds: 30), () async {
-      // In a real app, this would check Supabase for saved routes and delays
+      // Mock routine logic
     });
   }
 
@@ -142,7 +141,7 @@ class _MainScreenState extends State<MainScreen> {
           _currentPosition = pos;
           _gettingLocation = false;
         });
-        // Initial upload
+        // Initial location upload to backend
         SupabaseService.updateLocation(pos);
       }
     } catch (e) {
@@ -198,7 +197,6 @@ class _MainScreenState extends State<MainScreen> {
       if (query.length > 2) {
         double? refLat = _currentPosition?.latitude;
         double? refLng = _currentPosition?.longitude;
-        // Prioritize proximity to the *other* selected station if available
         if (field == 'to' && _fromStation != null) {
           refLat = _fromStation!.latitude;
           refLng = _fromStation!.longitude;
@@ -294,7 +292,6 @@ class _MainScreenState extends State<MainScreen> {
           bool isWalk = mode == 'walking';
           bool isTrain = !isBus && !isWalk;
           
-          // Smart Seating
           String direction = leg['direction'] ?? '';
           bool isTerminating = direction.toLowerCase() == destName.toLowerCase();
           if ((isBus || isTrain) && !isTerminating) {
@@ -302,7 +299,6 @@ class _MainScreenState extends State<MainScreen> {
           }
 
           if (!isWalk) {
-            // Fetch real chat count later? For now random
             chatCount = random.nextInt(15) + 1;
           }
 
@@ -394,13 +390,12 @@ class _MainScreenState extends State<MainScreen> {
                     
                     final msgs = snapshot.data!;
                     return ListView.builder(
-                      reverse: false, // You might want true if you sort desc
+                      reverse: false,
                       itemCount: msgs.length,
                       itemBuilder: (context, index) {
                         final msg = msgs[index];
-                        // Future: fetch username for msg['user_id']
                         return _buildChatMessage(
-                           msg['user_id'].toString().substring(0, 4), // simple fallback name
+                           msg['user_id'].toString().substring(0, 4), // Simple fallback name
                            msg['content'], 
                            "Now", 
                            Colors.blue
@@ -499,10 +494,6 @@ class _MainScreenState extends State<MainScreen> {
                   const Icon(Icons.image_not_supported, size: 40, color: Colors.grey),
                   const SizedBox(height: 10),
                   const Text("No guide image found for this stop.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 10),
-                  // In a real implementation, you'd add an image picker here
-                  if (SupabaseService.currentUser != null)
-                     TextButton(onPressed: (){ /* Implementation for picker */ }, child: const Text("Upload One"))
                 ],
               );
             }
@@ -686,7 +677,7 @@ class _MainScreenState extends State<MainScreen> {
                         Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle), child: const Center(child: Icon(Icons.person, color: Colors.blue))),
                         const SizedBox(width: 16),
                         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text("User ${userId.substring(0,4)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
+                          Text("User ${userId.toString().substring(0,4)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
                           const SizedBox(height: 2), 
                           Text("${(dist/1000).toStringAsFixed(1)} km away", style: const TextStyle(fontSize: 12, color: Colors.grey))
                         ]),
@@ -926,13 +917,12 @@ class _MainScreenState extends State<MainScreen> {
   }
   
   void _showAlternatives(BuildContext context, String stationId) {
-    showModalBottomSheet(
+     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(
-          future: TransportApi.getDepartures(stationId),
+          future: TransportApi.getDepartures(stationId, nahverkehrOnly: _onlyNahverkehr),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
@@ -954,20 +944,11 @@ class _MainScreenState extends State<MainScreen> {
                         final dir = dep['direction'] ?? 'Unknown';
                         final planned = DateTime.parse(dep['plannedWhen']);
                         final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                        final delay = dep['delay'] != null ? (dep['delay'] / 60).round() : 0;
-
+                        
                         return ListTile(
                           leading: const Icon(Icons.directions_bus, color: Colors.grey),
                           title: Text("$line to $dir", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(time, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color, fontWeight: FontWeight.bold)),
-                              if (delay > 0) Text("+$delay min", style: const TextStyle(color: Colors.redAccent, fontSize: 12))
-                              else const Text("On time", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))
-                            ],
-                          ),
+                          trailing: Text(time, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color, fontWeight: FontWeight.bold)),
                         );
                       },
                     ),

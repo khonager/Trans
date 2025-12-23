@@ -12,6 +12,7 @@ class SupabaseService {
 
   static Future<void> signUp(String email, String password, String username) async {
     final response = await client.auth.signUp(email: email, password: password, data: {'username': username});
+    // Create public profile entry immediately
     if (response.user != null) {
       await client.from('profiles').upsert({
         'id': response.user!.id,
@@ -41,7 +42,7 @@ class SupabaseService {
     });
   }
 
-  // Stream of everyone's location (In a real app, you'd filter by 'friends' table)
+  // Stream of users locations (Replacing mock friends list)
   static Stream<List<Map<String, dynamic>>> streamUsersLocations() {
     return client
         .from('user_locations')
@@ -55,13 +56,14 @@ class SupabaseService {
   }
 
   // --- CHAT ---
+  // Filters chat messages by the specific transport line ID (e.g., "Bus 42")
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
     return client
         .from('messages')
         .stream(primaryKey: ['id'])
         .eq('line_id', lineId)
         .order('created_at', ascending: true)
-        .limit(50) // Last 50 messages
+        .limit(50) 
         .map((data) => List<Map<String, dynamic>>.from(data));
   }
 
@@ -86,6 +88,7 @@ class SupabaseService {
     }
   }
 
+  // NOTE: Requires image_picker plugin implementation in UI to be fully usable
   static Future<void> uploadStationImage(String stationId, File imageFile) async {
     final user = currentUser;
     if (user == null) return;
