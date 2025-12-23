@@ -647,7 +647,7 @@ class _MainScreenState extends State<MainScreen> {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFFA855F7)]), borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.bolt, size: 20, color: Colors.white),
+              child: Image.asset('assets/logo.png', width: 20, height: 20),
             ),
             const SizedBox(width: 10),
             Text("Trans", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: isDark ? Colors.white : Colors.black)),
