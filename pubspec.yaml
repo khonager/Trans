@@ -30,6 +30,7 @@ dependencies:
 
   # Backend & Database
   supabase_flutter: ^2.0.0
+  image_picker: ^1.0.7
 
 dev_dependencies:
   flutter_test:
