@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Needed for Clipboard
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -43,7 +44,12 @@ class _MainScreenState extends State<MainScreen> {
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
   
-  // Feature: Nahverkehr Filter (Default True for Deutschlandticket)
+  // Auth State
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController(); // NEW
+  
+  // Nahverkehr Filter
   bool _onlyNahverkehr = true; 
 
   // Location State
@@ -61,7 +67,6 @@ class _MainScreenState extends State<MainScreen> {
     _startRoutineMonitor();
     _fetchSuggestions(forceHistory: true);
     
-    // Start updating location to Supabase if logged in
     Timer.periodic(const Duration(minutes: 2), (timer) {
       if (_currentPosition != null && SupabaseService.currentUser != null) {
         SupabaseService.updateLocation(_currentPosition!);
@@ -69,7 +74,17 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  // --- NOTIFICATIONS ---
+  @override
+  void dispose() {
+    _fromController.dispose();
+    _toController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _usernameController.dispose();
+    super.dispose();
+  }
+
+  // --- NOTIFICATIONS & ROUTINE ---
   Future<void> _initNotifications() async {
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -87,9 +102,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _startRoutineMonitor() {
-    Timer(const Duration(seconds: 30), () async {
-      // Mock routine logic
-    });
+    Timer(const Duration(seconds: 30), () async {});
   }
 
   Future<void> _showNotification({required int id, required String title, required String body}) async {
@@ -141,7 +154,6 @@ class _MainScreenState extends State<MainScreen> {
           _currentPosition = pos;
           _gettingLocation = false;
         });
-        // Initial location upload to backend
         SupabaseService.updateLocation(pos);
       }
     } catch (e) {
@@ -162,7 +174,7 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  // --- SUGGESTIONS & SEARCH ---
+  // --- SEARCH & SUGGESTIONS ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -241,7 +253,6 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => _isLoadingRoute = true);
 
     try {
-      // Pass the nahverkehrOnly preference
       final journeyData = await TransportApi.searchJourney(
           _fromStation!.id, 
           _toStation!.id, 
@@ -359,6 +370,119 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  // --- FRIENDS & ADD USER LOGIC ---
+
+  void _showAddFriendSheet(BuildContext context) async {
+    final profile = await SupabaseService.getCurrentProfile();
+    final myUsername = profile != null ? profile['username'] : 'Unknown';
+    final searchCtrl = TextEditingController();
+    List<Map<String, dynamic>> searchResults = [];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+              height: 500,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade600, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
+                  Text("Add Friends", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                  const SizedBox(height: 16),
+                  
+                  // INVITE LINK SECTION
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: Theme.of(context).primaryColor.withOpacity(0.1), borderRadius: BorderRadius.circular(16)),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("Your Username", style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.7))),
+                              Text("@$myUsername", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy, color: Colors.blue),
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: "Add me on Trans App! My username is @$myUsername"));
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invite text copied!")));
+                          },
+                        )
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // SEARCH SECTION
+                  TextField(
+                    controller: searchCtrl,
+                    style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color),
+                    decoration: InputDecoration(
+                      hintText: "Search by username...",
+                      hintStyle: TextStyle(color: Colors.grey.shade600),
+                      filled: true,
+                      fillColor: Theme.of(context).scaffoldBackgroundColor,
+                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.arrow_forward, color: Colors.blue),
+                        onPressed: () async {
+                          final res = await SupabaseService.searchUsers(searchCtrl.text);
+                          setSheetState(() => searchResults = res);
+                        },
+                      )
+                    ),
+                    onSubmitted: (val) async {
+                      final res = await SupabaseService.searchUsers(val);
+                      setSheetState(() => searchResults = res);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: searchResults.length,
+                      separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                      itemBuilder: (ctx, idx) {
+                        final user = searchResults[idx];
+                        return ListTile(
+                          leading: CircleAvatar(child: Text(user['username'][0].toUpperCase())),
+                          title: Text(user['username'], style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.person_add, color: Colors.green),
+                            onPressed: () async {
+                              try {
+                                await SupabaseService.addFriend(user['id']);
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Added @${user['username']}!")));
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                              }
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  )
+                ],
+              ),
+            ),
+          );
+        }
+      ),
+    );
+  }
+
   // --- OVERLAYS: CHAT & GUIDE ---
 
   void _showChat(BuildContext context, String lineName) {
@@ -395,7 +519,7 @@ class _MainScreenState extends State<MainScreen> {
                       itemBuilder: (context, index) {
                         final msg = msgs[index];
                         return _buildChatMessage(
-                           msg['user_id'].toString().substring(0, 4), // Simple fallback name
+                           msg['user_id'].toString().substring(0, 4), 
                            msg['content'], 
                            "Now", 
                            Colors.blue
@@ -406,10 +530,7 @@ class _MainScreenState extends State<MainScreen> {
                 ),
               ),
               if (SupabaseService.currentUser == null)
-                const Padding(
-                  padding: EdgeInsets.all(8.0),
-                  child: Text("Log in to chat", style: TextStyle(color: Colors.grey)),
-                )
+                const Padding(padding: EdgeInsets.all(8.0), child: Text("Log in to chat", style: TextStyle(color: Colors.grey)))
               else
                 Row(
                   children: [
@@ -485,7 +606,6 @@ class _MainScreenState extends State<MainScreen> {
           future: SupabaseService.getStationImage(startStationId),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
-            
             final imageUrl = snapshot.data;
             if (imageUrl == null) {
               return Column(
@@ -497,7 +617,6 @@ class _MainScreenState extends State<MainScreen> {
                 ],
               );
             }
-
             return ClipRRect(
               borderRadius: BorderRadius.circular(16),
               child: Image.network(imageUrl, fit: BoxFit.cover, height: 200),
@@ -522,9 +641,7 @@ class _MainScreenState extends State<MainScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         elevation: 0,
-        flexibleSpace: ClipRect(
-          child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), child: Container(color: Colors.transparent)),
-        ),
+        flexibleSpace: ClipRect(child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), child: Container(color: Colors.transparent))),
         title: Row(
           children: [
             Container(
@@ -537,12 +654,8 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
         actions: [
-          // Nahverkehr Toggle Icon
           IconButton(
-            icon: Icon(
-              _onlyNahverkehr ? Icons.directions_bus : Icons.train,
-              color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey
-            ),
+            icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train, color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey),
             tooltip: _onlyNahverkehr ? "Deutschlandticket Mode (On)" : "All Trains",
             onPressed: () {
               setState(() => _onlyNahverkehr = !_onlyNahverkehr);
@@ -559,10 +672,7 @@ class _MainScreenState extends State<MainScreen> {
         ],
       ),
       bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-            border: const Border(top: BorderSide(color: Colors.white10)),
-            color: Theme.of(context).cardColor
-        ),
+        decoration: BoxDecoration(border: const Border(top: BorderSide(color: Colors.white10)), color: Theme.of(context).cardColor),
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
@@ -584,7 +694,6 @@ class _MainScreenState extends State<MainScreen> {
     if (_currentIndex == 1) return _buildFriendsView();
     if (_currentIndex == 2) return _buildSettingsView();
     
-    // Route Tab logic
     return Column(
       children: [
         const SizedBox(height: 100),
@@ -637,10 +746,19 @@ class _MainScreenState extends State<MainScreen> {
         const SizedBox(height: 100),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Align(alignment: Alignment.centerLeft, child: Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor))),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text("Friends Live", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
+              if (SupabaseService.currentUser != null)
+                IconButton(
+                  icon: const Icon(Icons.person_add, color: Colors.blue),
+                  onPressed: () => _showAddFriendSheet(context),
+                )
+            ],
+          ),
         ),
         
-        // Use Supabase Realtime Stream for Friends
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
             stream: SupabaseService.streamUsersLocations(),
@@ -658,7 +776,6 @@ class _MainScreenState extends State<MainScreen> {
                 itemBuilder: (ctx, idx) {
                   final loc = locations[idx];
                   final userId = loc['user_id'];
-                  // Simple distance calc
                   double dist = 0;
                   if (_currentPosition != null) {
                     dist = Geolocator.distanceBetween(_currentPosition!.latitude, _currentPosition!.longitude, loc['latitude'], loc['longitude']);
@@ -676,11 +793,17 @@ class _MainScreenState extends State<MainScreen> {
                       children: [
                         Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle), child: const Center(child: Icon(Icons.person, color: Colors.blue))),
                         const SizedBox(width: 16),
-                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text("User ${userId.toString().substring(0,4)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
-                          const SizedBox(height: 2), 
-                          Text("${(dist/1000).toStringAsFixed(1)} km away", style: const TextStyle(fontSize: 12, color: Colors.grey))
-                        ]),
+                        FutureBuilder<String?>(
+                          future: SupabaseService.getUsername(userId),
+                          builder: (context, snap) {
+                            final name = snap.data ?? "User ${userId.toString().substring(0,4)}";
+                            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
+                              const SizedBox(height: 2), 
+                              Text("${(dist/1000).toStringAsFixed(1)} km away", style: const TextStyle(fontSize: 12, color: Colors.grey))
+                            ]);
+                          }
+                        ),
                       ],
                     ),
                   );
@@ -697,10 +820,6 @@ class _MainScreenState extends State<MainScreen> {
     final isDark = widget.isDarkMode;
     final textColor = isDark ? Colors.white : Colors.black;
     final user = SupabaseService.currentUser;
-
-    // Login Controllers
-    final emailCtrl = TextEditingController();
-    final passCtrl = TextEditingController();
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -747,19 +866,40 @@ class _MainScreenState extends State<MainScreen> {
                   children: [
                     Text("Login / Sign Up", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 10),
-                    TextField(controller: emailCtrl, decoration: const InputDecoration(hintText: "Email")),
+                    TextField(controller: _emailController, decoration: const InputDecoration(hintText: "Email")),
                     const SizedBox(height: 10),
-                    TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
+                    TextField(controller: _usernameController, decoration: const InputDecoration(hintText: "Username (for Sign Up)")),
+                    const SizedBox(height: 10),
+                    TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
                     const SizedBox(height: 10),
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         TextButton(onPressed: () async {
-                           await SupabaseService.signIn(emailCtrl.text, passCtrl.text);
-                           setState((){});
+                           if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter email & password")));
+                             return;
+                           }
+                           try {
+                             await SupabaseService.signIn(_emailController.text, _passwordController.text);
+                             setState((){});
+                           } catch (e) {
+                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                           }
                         }, child: const Text("Login")),
+                        
                         TextButton(onPressed: () async {
-                           await SupabaseService.signUp(emailCtrl.text, passCtrl.text, "User");
-                           setState((){});
+                           if (_emailController.text.isEmpty || _passwordController.text.isEmpty || _usernameController.text.isEmpty) {
+                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter all fields")));
+                             return;
+                           }
+                           try {
+                             await SupabaseService.signUp(_emailController.text, _passwordController.text, _usernameController.text);
+                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Account created!")));
+                             setState((){});
+                           } catch (e) {
+                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                           }
                         }, child: const Text("Sign Up")),
                       ],
                     )
