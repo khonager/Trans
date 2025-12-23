@@ -4,7 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Needed for Clipboard
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -47,7 +47,7 @@ class _MainScreenState extends State<MainScreen> {
   // Auth State
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _usernameController = TextEditingController(); // NEW
+  final TextEditingController _usernameController = TextEditingController();
   
   // Nahverkehr Filter
   bool _onlyNahverkehr = true; 
@@ -67,6 +67,7 @@ class _MainScreenState extends State<MainScreen> {
     _startRoutineMonitor();
     _fetchSuggestions(forceHistory: true);
     
+    // Update location periodically
     Timer.periodic(const Duration(minutes: 2), (timer) {
       if (_currentPosition != null && SupabaseService.currentUser != null) {
         SupabaseService.updateLocation(_currentPosition!);
@@ -647,7 +648,7 @@ class _MainScreenState extends State<MainScreen> {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFFA855F7)]), borderRadius: BorderRadius.circular(8)),
-              child: Image.asset('assets/logo.png', width: 20, height: 20),
+              child: Image.asset('assets/icon.png', width: 24, height: 24),
             ),
             const SizedBox(width: 10),
             Text("Trans", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: isDark ? Colors.white : Colors.black)),
@@ -1033,13 +1034,49 @@ class _MainScreenState extends State<MainScreen> {
               Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
               Text(step.line, style: const TextStyle(color: Colors.grey)),
               if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+              
+              // RE-ADDED: Row with Chat, Guide, Wake Me, and Alternatives
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: Row(children: [
-                  GestureDetector(onTap: () => _showChat(context, step.line), child: _buildActionChip(Icons.chat, "Chat")),
-                  const SizedBox(width: 8),
-                  if (!step.line.toLowerCase().contains('bus')) GestureDetector(onTap: () => _showGuide(context, step.startStationId), child: _buildActionChip(Icons.image, "Guide")),
-                ]),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      // Chat
+                      GestureDetector(
+                        onTap: () => _showChat(context, step.line),
+                        child: _buildActionChip(Icons.chat_bubble_outline, "Chat"),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Guide (only if not a bus)
+                      if (!step.line.toLowerCase().contains('bus')) ...[
+                        GestureDetector(
+                          onTap: () => _showGuide(context, step.startStationId),
+                          child: _buildActionChip(Icons.camera_alt_outlined, "Guide"),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+
+                      // Wake Me (Vibration)
+                      GestureDetector(
+                        onTap: () {
+                          Timer(const Duration(seconds: 2), _triggerVibration);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake alarm set for next stop!")));
+                        },
+                        child: _buildActionChip(Icons.vibration, "Wake Me"),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Alternatives (Departures)
+                      if (step.startStationId != null)
+                        GestureDetector(
+                          onTap: () => _showAlternatives(context, step.startStationId!),
+                          child: _buildActionChip(Icons.alt_route, "Alternatives"),
+                        ),
+                    ],
+                  ),
+                ),
               )
             ]),
           );
