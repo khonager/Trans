@@ -26,34 +26,48 @@
           build-tools-35-0-0
           platform-tools
           
-          # Platforms required by various plugins
+          # Platforms
           platforms-android-36
           platforms-android-35
           platforms-android-34
           platforms-android-33
           
-          # Native development tools
+          # Native tools
           ndk-27-0-12077973
-          cmake-3-22-1       # FIX: Added CMake 3.22.1
+          cmake-3-22-1
           
           emulator
         ]);
 
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
+        fhs = pkgs.buildFHSEnv {
+          name = "flutter-dev-env";
+          targetPkgs = pkgs: (with pkgs; [
+            androidSdk
             flutter
             jdk17
-            androidSdk
-          ];
-
-          ANDROID_HOME = "${androidSdk}/share/android-sdk";
-          ANDROID_SDK_ROOT = "${androidSdk}/share/android-sdk";
-          JAVA_HOME = "${pkgs.jdk17}";
+            
+            # Common libraries needed by unpatched binaries (like aapt2)
+            glibc
+            zlib
+            ncurses5
+            stdenv.cc.cc.lib  # FIX: Replaces 'stdcxx'
+            openssl
+            expat
+          ]);
           
-          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}";
+          runScript = "bash";
+
+          profile = ''
+            export ANDROID_HOME="${androidSdk}/share/android-sdk"
+            export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
+            export JAVA_HOME="${pkgs.jdk17}"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}"
+          '';
         };
+
+      in
+      {
+        devShells.default = fhs.env;
       }
     );
 }
