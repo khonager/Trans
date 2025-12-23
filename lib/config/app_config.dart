@@ -1,5 +1,5 @@
 class AppConfig {
   // TODO: Replace with your actual Supabase URL and Anon Key
-  static const String supabaseUrl = 'YOUR_SUPABASE_URL';
-  static const String supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY';
+  static const String supabaseUrl = 'SUPABASE_URL_REMOVED';
+  static const String supabaseAnonKey = 'SUPABASE_ANON_KEY_REMOVED';
 }
