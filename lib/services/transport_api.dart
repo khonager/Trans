@@ -6,6 +6,15 @@ import '../models/station.dart';
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
 
+  // HELPER: Appends filters to exclude high-speed trains if Nahverkehr is requested
+  static String _addFilters(String url, bool useNahverkehrOnly) {
+    if (useNahverkehrOnly) {
+      // nationalExpress = ICE, national = IC/EC. Setting false enables "Deutschlandticket" mode.
+      return '$url&nationalExpress=false&national=false';
+    }
+    return url;
+  }
+
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
     if (query.length < 2) return [];
     try {
@@ -40,9 +49,13 @@ class TransportApi {
     return [];
   }
 
-  static Future<Map<String, dynamic>?> searchJourney(String fromId, String toId) async {
+  static Future<Map<String, dynamic>?> searchJourney(String fromId, String toId, {bool nahverkehrOnly = false}) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/journeys?from=$fromId&to=$toId&results=1'));
+      String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3';
+      // Apply the filter
+      url = _addFilters(url, nahverkehrOnly);
+      
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null && (data['journeys'] as List).isNotEmpty) {
@@ -55,9 +68,13 @@ class TransportApi {
     return null;
   }
 
-  static Future<List<Map<String, dynamic>>> getDepartures(String stationId) async {
+  static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false}) async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/stops/$stationId/departures?results=5&duration=20'));
+      String url = '$_baseUrl/stops/$stationId/departures?results=10&duration=60';
+      // Apply the filter
+      url = _addFilters(url, nahverkehrOnly);
+
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['departures'] != null) {
