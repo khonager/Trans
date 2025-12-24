@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
@@ -25,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Position? _currentPosition;
   bool _onlyNahverkehr = true;
   Timer? _locationTimer;
+  bool _gettingLocation = true;
 
   @override
   void initState() {
@@ -43,31 +42,109 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _determinePosition() async {
-    // Check permissions and get position (Copy logic from original file)
-    // For brevity:
     try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() => _gettingLocation = false);
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+           setState(() => _gettingLocation = false);
+           return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+         setState(() => _gettingLocation = false);
+         return;
+      }
+
       final pos = await Geolocator.getCurrentPosition();
-      setState(() => _currentPosition = pos);
-      SupabaseService.updateLocation(pos);
+      if (mounted) {
+        setState(() {
+          _currentPosition = pos;
+          _gettingLocation = false;
+        });
+        SupabaseService.updateLocation(pos);
+      }
     } catch (e) {
-      debugPrint("Loc error: $e");
+      if (mounted) setState(() => _gettingLocation = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       extendBodyBehindAppBar: true,
+      resizeToAvoidBottomInset: false, // Prevents bottom nav from jumping up
       appBar: AppBar(
-        flexibleSpace: ClipRect(child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10), child: Container(color: Colors.transparent))),
-        title: const Text("Trans"),
         elevation: 0,
+        // RESTORED: Blur effect
+        flexibleSpace: ClipRect(
+            child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(color: Colors.transparent))),
+        title: Row(
+          children: [
+            // RESTORED: Gradient Logo
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFF6366F1), Color(0xFFA855F7)]),
+                  borderRadius: BorderRadius.circular(8)),
+              child: Image.asset('assets/icon.png', width: 24, height: 24, errorBuilder: (_,__,___) => const Icon(Icons.directions_transit, size: 24, color: Colors.white)),
+            ),
+            const SizedBox(width: 10),
+            Text("Trans",
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                    color: isDark ? Colors.white : Colors.black)),
+          ],
+        ),
+        actions: [
+          // RESTORED: Deutschlandticket Toggle in AppBar
+          IconButton(
+            icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train,
+                color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey),
+            tooltip: _onlyNahverkehr
+                ? "Deutschlandticket Mode (On)"
+                : "All Trains",
+            onPressed: () {
+              setState(() => _onlyNahverkehr = !_onlyNahverkehr);
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(_onlyNahverkehr
+                      ? "Deutschlandticket Mode: On"
+                      : "All Trains Allowed")));
+            },
+          ),
+          if (_gettingLocation)
+            const Padding(
+                padding: EdgeInsets.only(right: 16),
+                child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))),
+        ],
       ),
       body: IndexedStack(
         index: _currentIndex,
         children: [
-          RoutesTab(currentPosition: _currentPosition, onlyNahverkehr: _onlyNahverkehr),
+          // ROUTES TAB
+          RoutesTab(
+            currentPosition: _currentPosition,
+            onlyNahverkehr: _onlyNahverkehr,
+          ),
+          // FRIENDS TAB
           FriendsTab(currentPosition: _currentPosition),
+          // SETTINGS TAB
           SettingsTab(
             isDarkMode: widget.isDarkMode,
             onThemeChanged: widget.onThemeChanged,
@@ -76,14 +153,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (idx) => setState(() => _currentIndex = idx),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.alt_route), label: 'Routes'),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: 'Friends'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
-        ],
+      // RESTORED: Bottom Nav Styling
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+            border: const Border(top: BorderSide(color: Colors.white10)),
+            color: Theme.of(context).cardColor),
+        child: BottomNavigationBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          selectedItemColor: const Color(0xFF6366F1),
+          unselectedItemColor: Colors.grey,
+          currentIndex: _currentIndex,
+          onTap: (idx) => setState(() => _currentIndex = idx),
+          items: const [
+            BottomNavigationBarItem(
+                icon: Icon(Icons.alt_route_outlined), label: 'Routes'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.people_outline), label: 'Friends'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.settings_outlined), label: 'Settings'),
+          ],
+        ),
       ),
     );
   }
