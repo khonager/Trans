@@ -38,16 +38,16 @@ class _RoutesTabState extends State<RoutesTab> {
   final TextEditingController _toController = TextEditingController();
   Station? _fromStation;
   Station? _toStation;
-  List<Station> _suggestions = [];
+  List<dynamic> _suggestions = []; // Changed to dynamic to hold Stations OR Favorites
   String _activeSearchField = '';
   Timer? _debounce;
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
   
   // Time Planning State
-  DateTime? _selectedDate; // If null, "Now"
+  DateTime? _selectedDate; 
   TimeOfDay? _selectedTime;
-  bool _isArrival = false; // false = Depart at, true = Arrive by
+  bool _isArrival = false; 
 
   // Haptics
   bool _isWakeAlarmSet = false;
@@ -77,23 +77,43 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- LOGIC ---
 
+  // FIX 3: Include Favorites in Search Suggestions
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
+      // Add Favorites to history view as well? 
+      // For now, let's keep history pure, but mixing favorites in search is the key.
       if (mounted) setState(() => _suggestions = history);
       return;
     }
 
     setState(() => _isSuggestionsLoading = true);
-    List<Station> results = [];
-    final history = await SearchHistoryManager.getHistory();
-    if (history.isNotEmpty) results.addAll(history);
+    List<dynamic> results = [];
 
-    if (widget.currentPosition != null && _activeSearchField == 'from') {
+    // 1. Add matching favorites first
+    final query = _activeSearchField == 'from' ? _fromController.text : _toController.text;
+    if (query.isNotEmpty) {
+      final matchingFavs = _favorites.where((f) => f.label.toLowerCase().contains(query.toLowerCase())).toList();
+      results.addAll(matchingFavs);
+    }
+
+    // 2. Add history
+    final history = await SearchHistoryManager.getHistory();
+    if (history.isNotEmpty) {
+       // Filter history if we have a query
+       if (query.isNotEmpty) {
+         results.addAll(history.where((s) => s.name.toLowerCase().contains(query.toLowerCase())));
+       } else {
+         results.addAll(history);
+       }
+    }
+
+    // 3. Add Nearby if "From" and empty query
+    if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
       final nearby = await TransportApi.getNearbyStops(
           widget.currentPosition!.latitude, widget.currentPosition!.longitude);
       for (var s in nearby) {
-        if (!results.any((h) => h.id == s.id)) results.insert(0, s);
+        if (!results.any((h) => h is Station && h.id == s.id)) results.insert(0, s);
       }
     }
 
@@ -102,10 +122,12 @@ class _RoutesTabState extends State<RoutesTab> {
 
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
-    if (query.isEmpty) {
-      _fetchSuggestions();
-      return;
-    }
+    
+    // Immediate local search (Favorites/History)
+    _fetchSuggestions();
+
+    if (query.isEmpty) return;
+
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () async {
@@ -118,12 +140,30 @@ class _RoutesTabState extends State<RoutesTab> {
           refLng = _fromStation!.longitude;
         }
 
-        final results = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
-        if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
+        final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
+        
+        if (mounted) {
+          setState(() { 
+            // Merge API results, avoiding duplicates from history/favorites (simplified check)
+            for (var s in apiResults) {
+               // Just adding to end
+               _suggestions.add(s);
+            }
+            _isSuggestionsLoading = false; 
+          });
+        }
       } else {
-        if (mounted) setState(() { _suggestions = []; _isSuggestionsLoading = false; });
+        if (mounted) setState(() => _isSuggestionsLoading = false);
       }
     });
+  }
+
+  void _selectItem(dynamic item) {
+    if (item is Station) {
+      _selectStation(item);
+    } else if (item is Favorite) {
+      _onFavoriteTap(item);
+    }
   }
 
   void _selectStation(Station station) {
@@ -142,43 +182,16 @@ class _RoutesTabState extends State<RoutesTab> {
     FocusScope.of(context).unfocus();
   }
 
-  // --- TIME PICKER HELPERS ---
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate ?? now,
-      firstDate: now.subtract(const Duration(days: 30)), // Past trips
-      lastDate: now.add(const Duration(days: 90)), // Future trips
-    );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = picked;
-        // If time wasn't selected, default to current time
-        _selectedTime ??= TimeOfDay.now();
-      });
-    }
-  }
-
-  Future<void> _pickTime() async {
-    final now = TimeOfDay.now();
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedTime ?? now,
-    );
-    if (picked != null) {
-      setState(() {
-        _selectedTime = picked;
-        // If date wasn't selected, default to today
-        _selectedDate ??= DateTime.now();
-      });
-    }
-  }
-
   // --- FAVORITE LOGIC ---
 
   Future<void> _onFavoriteTap(Favorite fav) async {
+    // Clear suggestions if we tapped a favorite from the list
+    setState(() {
+      _suggestions = [];
+      _activeSearchField = '';
+    });
+    FocusScope.of(context).unfocus();
+
     Station? target;
 
     if (fav.type == 'station') {
@@ -230,11 +243,17 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
+  // FIX 2: Proper Search in Edit Dialog
   void _showEditFavoriteDialog(Favorite fav) {
     final labelCtrl = TextEditingController(text: fav.label);
     Station? selectedStation = fav.station;
     String? selectedFriendId = fav.friendId;
     String currentType = fav.type;
+    
+    // Search State for Dialog
+    List<Station> dialogSuggestions = [];
+    Timer? dialogDebounce;
+    bool dialogLoading = false;
 
     showDialog(
       context: context,
@@ -274,27 +293,64 @@ class _RoutesTabState extends State<RoutesTab> {
                       ),
                     ],
                   ),
+                  
                   if (currentType == 'station') ...[
                     if (selectedStation != null)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.train),
-                        title: Text(selectedStation!.name),
+                        leading: const Icon(Icons.train, color: Colors.indigo),
+                        title: Text(selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                         trailing: IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () => setDialogState(() => selectedStation = null),
                         ),
                       )
-                    else
+                    else ...[
+                      // SEARCH FIELD INSIDE DIALOG
                       TextField(
-                        decoration: const InputDecoration(labelText: "Search Station Name"),
-                        onSubmitted: (val) async {
-                          final res = await TransportApi.searchStations(val);
-                          if (res.isNotEmpty) {
-                            setDialogState(() => selectedStation = res.first);
-                          }
+                        decoration: InputDecoration(
+                          labelText: "Search Station Name",
+                          prefixIcon: const Icon(Icons.search),
+                          suffix: dialogLoading ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+                        ),
+                        onChanged: (val) {
+                           if (dialogDebounce?.isActive ?? false) dialogDebounce!.cancel();
+                           dialogDebounce = Timer(const Duration(milliseconds: 400), () async {
+                             setDialogState(() => dialogLoading = true);
+                             final res = await TransportApi.searchStations(val);
+                             setDialogState(() {
+                               dialogSuggestions = res;
+                               dialogLoading = false;
+                             });
+                           });
                         },
                       ),
+                      // SUGGESTIONS LIST INSIDE DIALOG
+                      if (dialogSuggestions.isNotEmpty)
+                        Container(
+                          height: 150,
+                          margin: const EdgeInsets.only(top: 8),
+                          decoration: BoxDecoration(border: Border.all(color: Colors.white10), borderRadius: BorderRadius.circular(8)),
+                          child: ListView.builder(
+                            itemCount: dialogSuggestions.length,
+                            itemBuilder: (context, idx) {
+                              final s = dialogSuggestions[idx];
+                              return ListTile(
+                                dense: true,
+                                title: Text(s.name),
+                                onTap: () {
+                                  setDialogState(() {
+                                    selectedStation = s;
+                                    dialogSuggestions = [];
+                                    // Auto-fill label if empty
+                                    if (labelCtrl.text.isEmpty) labelCtrl.text = s.name;
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                        )
+                    ]
                   ],
                   if (currentType == 'friend') ...[
                      TextField(
@@ -358,7 +414,6 @@ class _RoutesTabState extends State<RoutesTab> {
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     
-    // Default location logic
     if (from == null && widget.currentPosition != null) {
        setState(() => _isLoadingRoute = true); 
        try {
@@ -386,7 +441,6 @@ class _RoutesTabState extends State<RoutesTab> {
     
     setState(() => _isLoadingRoute = true);
 
-    // Build Timestamp
     DateTime? searchTime;
     if (_selectedDate != null && _selectedTime != null) {
       searchTime = DateTime(
@@ -403,8 +457,8 @@ class _RoutesTabState extends State<RoutesTab> {
           from.id, 
           _toStation!.id, 
           nahverkehrOnly: widget.onlyNahverkehr,
-          when: searchTime, // Updated
-          isArrival: _isArrival // Updated
+          when: searchTime,
+          isArrival: _isArrival
       );
 
       if (journeyData != null && journeyData['legs'] != null) {
@@ -443,6 +497,10 @@ class _RoutesTabState extends State<RoutesTab> {
           DateTime dep = DateTime.parse(depStr);
           DateTime arr = DateTime.parse(arrStr);
           int durationMin = arr.difference(dep).inMinutes;
+          
+          // FIX 5: Format times
+          String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
+          String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
 
           String? alert;
           String? seating;
@@ -466,7 +524,8 @@ class _RoutesTabState extends State<RoutesTab> {
             line: lineName,
             instruction: isWalk ? "Walk to $destName" : "$lineName to $destName",
             duration: "$durationMin min",
-            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+            departureTime: depTime,
+            arrivalTime: arrTime, // Added
             alert: alert,
             seating: seating,
             chatCount: chatCount,
@@ -665,7 +724,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Determine if we can search (if From is empty but we have GPS, that's valid now)
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && 
                            _toStation != null && 
                            !_isLoadingRoute;
@@ -719,11 +777,13 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // FIX 1: Added Padding at bottom to prevent obstruction by Ticket Sheet
   Widget _buildSearchView(bool canSearch, bool isDark) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
     return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 100), // PADDING ADDED HERE
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -755,7 +815,7 @@ class _RoutesTabState extends State<RoutesTab> {
                   
                   const SizedBox(height: 20),
 
-                  // TIME & DATE SELECTION (New Feature)
+                  // TIME & DATE SELECTION
                   Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
                   const SizedBox(height: 8),
                   Container(
@@ -787,8 +847,22 @@ class _RoutesTabState extends State<RoutesTab> {
                         Expanded(
                           child: GestureDetector(
                             onTap: () async {
-                              await _pickDate();
-                              if (_selectedDate != null) _pickTime();
+                              final now = DateTime.now();
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: _selectedDate ?? now,
+                                firstDate: now.subtract(const Duration(days: 30)),
+                                lastDate: now.add(const Duration(days: 90)),
+                              );
+                              if (picked != null) {
+                                setState(() {
+                                  _selectedDate = picked;
+                                  _selectedTime ??= TimeOfDay.now();
+                                });
+                                // Chain Time Picker
+                                final t = await showTimePicker(context: context, initialTime: _selectedTime!);
+                                if (t != null) setState(() => _selectedTime = t);
+                              }
                             },
                             child: Row(
                               children: [
@@ -805,7 +879,7 @@ class _RoutesTabState extends State<RoutesTab> {
                           ),
                         ),
 
-                        // Clear Button (Reset to Now)
+                        // Clear Button
                         if (_selectedDate != null)
                           IconButton(
                             icon: const Icon(Icons.close, size: 16),
@@ -917,11 +991,23 @@ class _RoutesTabState extends State<RoutesTab> {
               itemCount: _suggestions.length,
               separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
               itemBuilder: (ctx, idx) {
-                final station = _suggestions[idx];
+                final item = _suggestions[idx];
+                
+                // Render differently if it's a Favorite or a Station
+                if (item is Favorite) {
+                   return ListTile(
+                    leading: const Icon(Icons.star, size: 16, color: Colors.orange),
+                    title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                    subtitle: Text(item.type == 'station' ? (item.station?.name ?? '') : 'Friend', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    onTap: () => _selectItem(item),
+                  );
+                }
+
+                final station = item as Station;
                 return ListTile(
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey),
                   title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)),
-                  onTap: () => _selectStation(station),
+                  onTap: () => _selectItem(station),
                 );
               },
             ),
@@ -959,12 +1045,13 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // FIX 1 & 5: Added Padding to bottom & Displaying Times
   Widget _buildActiveRouteView(RouteTab route) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // BOTTOM PADDING ADDED
       children: [
         Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
         Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
@@ -983,8 +1070,16 @@ class _RoutesTabState extends State<RoutesTab> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
-              Text(step.line, style: const TextStyle(color: Colors.grey)),
+              // FIX 5: SHOW TIMES
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
+                  Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)),
               if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
               
               Padding(
