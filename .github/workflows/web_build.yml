@@ -29,7 +29,7 @@ jobs:
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
       - name: Build Web Release
-        run: flutter build web --release --web-renderer canvaskit
+        run: flutter build web --release
 
       - name: Archive Web Build
         uses: actions/upload-artifact@v4
