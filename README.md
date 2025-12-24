@@ -1,159 +1,156 @@
-# TRANS APP ⚡️
+# Flutter Travel Companion
 
-A next-generation transportation app built with Flutter. "Trans" fills the gaps left by current market leaders by integrating social features, smart routine monitoring, and granular journey details like seating suggestions and station guides.
+[![Flutter](https://img.shields.io/badge/Flutter-3.0%2B-blue?logo=flutter)](https://flutter.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20Android%20%7C%20Web%20%7C%20Desktop-lightgrey)]()
 
----
+A comprehensive, cross-platform travel and transit application built with **Flutter**. Designed to streamline your daily commute and long-distance journeys, this app integrates digital ticketing, intelligent route planning, and social location features into a seamless user experience.
 
-## 🚀 FEATURES
-
-### 1. Smart Alternatives 🔄
-Don't just stick to the plan. The app actively lists available connections other than the current one from your transfer stop. 
-* **Example:** If your Bus A is 5 minutes away, but Bus C (which also goes to your destination) is arriving now, the app suggests taking Bus C instead.
-
-### 2. Seating Strategy 💺
-Know where to sit before you board.
-* **Function:** Suggests whether to sit in the **Back** (more space) or **Front** (quick exit) of the bus/train based on your next transfer or exit direction.
-
-### 3. Tabbed Navigation 📑
-Never lose your place.
-* **Function:** Routes open as distinct tabs. You can have multiple active journeys running simultaneously and switch back and forth between them without losing your search state.
-
-### 4. Social Commute (Friends) 📍
-See your friends' live transit status.
-* **Function:** Add friends and see exactly which bus or train line they are on (if they opt-in). It operates like a map-based social status for commuters.
-
-### 5. Haptic Wake-Up 📳
-Sleep safely on your commute.
-* **Function:** The app vibrates your device when you need to get off at the next stop.
-
-### 6. Routine Monitor 🔔
-Set it and forget it.
-* **Function:** Automatically detects routine transfers (e.g., Home ↔ Work). If a connection is delayed or cancelled, it notifies you immediately—even when you aren't using the app.
-
-### 7. Station Guides 📸
-Never get lost in a complex station.
-* **Function:** Provides exact directions for difficult-to-find stations, including mock-ups of visual guides/pictures for specific platforms and exits.
-
-### 8. Live Transit Chat 💬
-Connect with your fellow commuters.
-* **Function:** Automatically enters a chat room for the specific transportation vehicle you are in. Ask others if the bus is crowded or if the AC is working.
+Whether you are commuting to work or exploring a new city, Travel Companion ensures you have your tickets, route, and friends just a tap away.
 
 ---
 
-## 📖 TUTORIAL
+## ✨ Features
 
-### Getting Started
-1.  **Launch the App:** Open the app to see the dashboard.
-2.  **Location:** Allow location permissions to see nearby stops immediately.
+### 🎫 Digital Ticket Wallet
+Never fumble for a paper ticket again. The **persistent bottom sheet** allows for a quick swipe-up gesture to access your active QR codes, NFC passes, or barcode tickets.
+- **Offline Access:** Tickets are cached locally for access without internet.
+- **Smart Sorting:** Active tickets appear first; expired tickets are archived automatically.
 
-### Planning a Journey
-1.  Tap the **Search Icon** (or use the main input fields).
-2.  Enter your **From** and **To** stations.
-3.  Tap **Find Routes**.
-4.  The route will open in a **New Tab** at the top of the screen.
+### ⭐ Dynamic Favorites
+Save time by bookmarking your most frequented locations.
+- **"Stations":** One-tap navigation to fixed locations like Home, Work, or your favorite gym.
+- **"Friends":** Securely share locations with friends to navigate directly to their current live location (permission-based).
 
-### During the Trip
-* **Check Alternatives:** In the route view, look for the "Alternatives" chip on specific steps to see other departures.
-* **Wake Me Up:** Tap the **Vibration Icon** on a step to set a proximity alarm for that stop.
-* **Chat:** Tap the **Chat Button** (e.g., "Chat (12)") to open the live room for that line.
-* **Station Guide:** If available for your stop, tap **Guide** to see visual walking instructions.
+### ⏳ Time Travel Planning
+A unique interface that allows you to "travel in time" to see transit conditions.
+- **Future Planning:** Schedule trips for next week and see predicted traffic/transit delays.
+- **Past Routes:** Review previous journeys to analyze travel time and cost.
 
----
+### 📍 Smart Location Defaults
+Streamlined input fields for faster booking.
+- If the "From" field is left empty, the app intelligently defaults to your **current GPS location**.
+- Adjusts automatically based on the context of your "Favorites" selection.
 
-## 💻 TERMINAL COMMANDS
+### 🛡️ Privacy Controls
+Your location data belongs to you.
+- **Ghost Mode:** completely hide your location from all friends.
+- **Block List:** Specific controls to block individual users from seeing your live status.
+- **Granular Permissions:** Choose to share "Precise" or "Approximate" location.
 
-### 📦 Dependency Management
+### 📳 Customizable Haptics & UI
+- **Haptic Feedback:** Fine-tune the vibration strength for success, error, and warning states in `Settings > Haptics`.
+- **Themes:** Supports System Light/Dark mode and custom high-contrast themes for accessibility.
 
-#### Standard Setup
-Install all required packages (http, geolocator, vibration, flutter_local_notifications):
-```bash
-flutter pub get
-```
-
-#### Nix / Flake Setup
-If you are using Nix, use these commands to handle the environment:
-```bash
-# Enter the development environment (installs SDK & tools)
-nix develop
-
-# Build the default package (usually the Linux release)
-nix build
-```
+### 🌍 Web Support (PWA)
+Full Progressive Web App support means you can install this app on your desktop or mobile browser without an app store.
 
 ---
 
-### ▶️ Run Commands
+## 🚀 Getting Started
 
-#### General (Auto-detect)
-Start the app on your currently connected emulator or physical device:
-```bash
-flutter run
-```
+### Prerequisites
+Ensure you have the following installed on your local machine:
+- [Flutter SDK](https://flutter.dev/docs/get-started/install) (Version 3.10.0 or higher recommended)
+- [Dart SDK](https://dart.dev/get-dart)
+- Xcode (for iOS/macOS development)
+- Android Studio (for Android development)
+- Visual Studio (for Windows desktop development)
 
-#### Web (Chrome)
-Run the app in the Chrome browser (requires Chrome installed):
-```bash
-flutter run -d chrome
-```
+### Installation
 
-#### Desktop Platforms
-Run the app natively on your operating system:
-```bash
-# Linux
-flutter run -d linux
+1. **Clone the repository**
+   ```bash
+   git clone [https://github.com/yourusername/flutter-travel-companion.git](https://github.com/yourusername/flutter-travel-companion.git)
+   cd flutter-travel-companion
+   ```
 
-# macOS
-flutter run -d macos
+2. **Install dependencies**
+   ```bash
+   flutter pub get
+   ```
 
-# Windows
-flutter run -d windows
-```
+3. **Setup Environment Variables**
+   Create a `.env` file in the root directory and add your API keys (e.g., Google Maps, Backend URL):
+   ```env
+   GOOGLE_MAPS_API_KEY=your_api_key_here
+   API_BASE_URL=[https://api.example.com](https://api.example.com)
+   ```
+
+4. **Run the app**
+   ```bash
+   flutter run
+   ```
 
 ---
 
-### 🔨 Build Commands
+## 🏗 Building the App
 
-#### Mobile
-Generate release bundles for mobile devices:
+To build the application for release on various platforms, use the specific build commands below.
+
+### Desktop & Web
 ```bash
-# Android APK
+# macOS (creates a .app bundle)
+flutter build macos --release
+
+# Windows (creates an .exe)
+flutter build windows --release
+
+# Web (creates a generic HTML/JS build in /build/web)
+flutter build web --release --web-renderer canvaskit
+```
+
+### Mobile
+```bash
+# Android (App Bundle for Play Store)
+flutter build appbundle
+
+# Android (APK)
 flutter build apk
 
-# iOS Archive (requires macOS and Xcode)
+# iOS (Requires Xcode signing)
 flutter build ios
 ```
 
-#### Web
-Build a production-ready web application (outputs to build/web):
-```bash
-flutter build web
-```
-
-#### Desktop
-Build standalone executables for desktop:
-```bash
-# Linux
-flutter build linux
-
-# macOS
-flutter build macos
-
-# Windows
-flutter build windows
-```
-
 ---
 
-### 🛠 Maintenance & Quality
+## 🛠 Maintenance & Quality
 
-#### Analyze Code
-Check for linting errors, type issues, or style violations:
+### Code Formatting & Analysis
+We enforce strict linting rules to ensure code quality.
+
+**Analyze Code:**
+Check for linting errors, type issues, or style violations before committing.
 ```bash
 flutter analyze
 ```
 
-#### Clean Build
-If you encounter strange caching errors or build artifacts, run this to reset:
+**Format Code:**
+Automatically format your Dart code to standard conventions.
+```bash
+dart format .
+```
+
+### Cleaning the Build
+If you encounter strange caching errors, asset loading issues, or build artifacts, run this to reset the build environment.
 ```bash
 flutter clean
+flutter pub get
 ```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these steps:
+1. Fork the project.
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4. Push to the branch (`git push origin feature/AmazingFeature`).
+5. Open a Pull Request.
+
+---
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
