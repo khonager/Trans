@@ -1,14 +1,15 @@
 class JourneyStep {
-  final String type; // 'walk', 'ride', 'wait'
+  final String type; // 'walk', 'ride'
   final String line;
   final String instruction;
   final String duration;
   final String departureTime;
-  final String? alert; 
+  final String arrivalTime; // NEW field
+  final String? alert;
   final String? seating;
   final int? chatCount;
-  final String? startStationId; 
-  final String? platform; // NEW: Platform/Track info
+  final String? startStationId;
+  final String? platform;
 
   JourneyStep({
     required this.type,
@@ -16,6 +17,7 @@ class JourneyStep {
     required this.instruction,
     required this.duration,
     required this.departureTime,
+    required this.arrivalTime,
     this.alert,
     this.seating,
     this.chatCount,

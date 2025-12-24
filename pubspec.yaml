@@ -1,3 +1,6 @@
+type: uploaded file
+fileName: khonager/trans/khonager-Trans-7b0266fd36c2a9ce69f0b06eca88fca7ad535531/pubspec.yaml
+fullContent:
 name: trans
 description: "A new Flutter project."
 publish_to: 'none'
@@ -12,44 +15,35 @@ dependencies:
     sdk: flutter
   
   http: ^1.1.0
-  # Geolocation for finding nearby stations
   geolocator: ^13.0.0
   cupertino_icons: ^1.0.2
 
-  # NEW FEATURES DEPENDENCIES
-  # For "vibrate when you have to get out"
-  # FIX: Updated to 3.1.0 to support Android v2 embedding
   vibration: ^3.1.0 
-  # For "automatically notice routine transfers... even when not using the app" (Local alerts)
   flutter_local_notifications: ^18.0.0
-  # Timezone helper for scheduling notifications
   timezone: ^0.9.2
 
-  # Persistence for Settings & Recent Searches
   shared_preferences: ^2.2.0
+  path_provider: ^2.1.1
 
-  # Backend & Database
   supabase_flutter: ^2.0.0
+  image_picker: ^1.0.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
   flutter_launcher_icons: ^0.13.1
-
-# FIX: Removed the geolocator override as it forces old versions.
-# If you run into resolution errors, run `flutter pub upgrade` or `flutter pub outdated`.
-# dependency_overrides:
-#   geolocator_android: 4.6.1
+  peanut: ^5.0.0
 
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
-  image_path: "assets/icon.png"
-  min_sdk_android: 21 # essential for modern android icons
+  image_path: "lib/assets/logo.png" # CHANGED from assets/icon.png
+  min_sdk_android: 21
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/
+    - lib/assets/

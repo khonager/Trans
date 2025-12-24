@@ -9,7 +9,6 @@ class TransportApi {
   // HELPER: Appends filters to exclude high-speed trains if Nahverkehr is requested
   static String _addFilters(String url, bool useNahverkehrOnly) {
     if (useNahverkehrOnly) {
-      // nationalExpress = ICE, national = IC/EC. Setting false enables "Deutschlandticket" mode.
       return '$url&nationalExpress=false&national=false';
     }
     return url;
@@ -49,9 +48,29 @@ class TransportApi {
     return [];
   }
 
-  static Future<Map<String, dynamic>?> searchJourney(String fromId, String toId, {bool nahverkehrOnly = false}) async {
+  // UPDATED: Added support for time and arrival mode
+  static Future<Map<String, dynamic>?> searchJourney(
+    String fromId, 
+    String toId, 
+    {
+      bool nahverkehrOnly = false,
+      DateTime? when,      // Specific date/time
+      bool isArrival = false // true = "Arrive By", false = "Depart At"
+    }
+  ) async {
     try {
       String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3';
+      
+      // Append time parameter if provided
+      if (when != null) {
+        final iso = when.toIso8601String();
+        if (isArrival) {
+          url += '&arrival=$iso';
+        } else {
+          url += '&departure=$iso';
+        }
+      }
+
       // Apply the filter
       url = _addFilters(url, nahverkehrOnly);
       
@@ -71,7 +90,6 @@ class TransportApi {
   static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false}) async {
     try {
       String url = '$_baseUrl/stops/$stationId/departures?results=10&duration=60';
-      // Apply the filter
       url = _addFilters(url, nahverkehrOnly);
 
       final response = await http.get(Uri.parse(url));

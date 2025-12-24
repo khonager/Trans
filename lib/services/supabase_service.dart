@@ -3,15 +3,17 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 
 class SupabaseService {
-  static final SupabaseClient client = Supabase.instance.client;
-
-  // --- AUTH ---
+  static SupabaseClient get client => Supabase.instance.client;
+  // --- AUTH & PROFILE ---
   static User? get currentUser => client.auth.currentUser;
-
   static Stream<AuthState> get authStateChanges => client.auth.onAuthStateChange;
 
   static Future<void> signUp(String email, String password, String username) async {
-    final response = await client.auth.signUp(email: email, password: password, data: {'username': username});
+    final response = await client.auth.signUp(
+      email: email, 
+      password: password, 
+      data: {'username': username}
+    );
     if (response.user != null) {
       await client.from('profiles').upsert({
         'id': response.user!.id,
@@ -28,9 +30,64 @@ class SupabaseService {
     await client.auth.signOut();
   }
 
-  // --- PROFILE & FRIENDS (NEW) ---
-  
-  // Get current user's profile
+  static Future<void> updatePassword(String newPassword) async {
+    await client.auth.updateUser(UserAttributes(password: newPassword));
+  }
+
+  static Future<void> updateEmail(String newEmail) async {
+    await client.auth.updateUser(UserAttributes(email: newEmail));
+  }
+
+  static Future<void> updateUsername(String newUsername) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
+    await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
+  }
+
+  static Future<String?> uploadAvatar(File imageFile) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileExt = imageFile.path.split('.').last;
+    final fileName = '${user.id}/avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    try {
+      await client.storage.from('avatars').upload(fileName, imageFile);
+      final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
+      await client.from('profiles').update({'avatar_url': imageUrl}).eq('id', user.id);
+      return imageUrl;
+    } catch (e) {
+      print("Upload error: $e");
+      return null;
+    }
+  }
+
+  // --- TICKET FEATURES ---
+  static Future<String?> uploadTicket(File imageFile) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileExt = imageFile.path.split('.').last;
+    final fileName = '${user.id}/ticket.$fileExt';
+    try {
+      await client.storage.from('tickets').upload(fileName, imageFile, fileOptions: const FileOptions(upsert: true));
+      final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
+      await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
+      return imageUrl;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<String?> getTicketUrl() async {
+    final user = currentUser;
+    if (user == null) return null;
+    try {
+      final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
+      return data?['ticket_url'] as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
     if (user == null) return null;
@@ -41,14 +98,13 @@ class SupabaseService {
     }
   }
 
-  // Search for users by username
+  // --- FRIENDS & BLOCKING ---
   static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     if (query.length < 3) return [];
     try {
-      // 'ilike' is case-insensitive search
       final response = await client
           .from('profiles')
-          .select('id, username')
+          .select('id, username, avatar_url')
           .ilike('username', '%$query%')
           .limit(10);
       return List<Map<String, dynamic>>.from(response);
@@ -57,16 +113,11 @@ class SupabaseService {
     }
   }
 
-  // Add a user as a friend
   static Future<void> addFriend(String friendId) async {
     final user = currentUser;
     if (user == null) throw "Not logged in";
     if (user.id == friendId) throw "You cannot add yourself";
-
-    await client.from('friends').insert({
-      'user_id': user.id,
-      'friend_id': friendId,
-    });
+    await client.from('friends').insert({'user_id': user.id, 'friend_id': friendId});
   }
 
   static Future<String?> getUsername(String userId) async {
@@ -78,11 +129,48 @@ class SupabaseService {
     }
   }
 
-  // --- LOCATION ---
+  // NEW: Blocking Logic
+  static Future<void> blockUser(String userIdToBlock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').insert({
+      'blocker_id': user.id,
+      'blocked_id': userIdToBlock,
+    });
+  }
+
+  static Future<void> unblockUser(String userIdToUnblock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').delete().match({
+      'blocker_id': user.id,
+      'blocked_id': userIdToUnblock,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
+    final user = currentUser;
+    if (user == null) return [];
+    try {
+      // 1. Get IDs blocked by current user
+      final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
+      final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
+      
+      if (blockedIds.isEmpty) return [];
+
+      // 2. Fetch profiles for those IDs
+      // FIXED: Replaced .in_() with .filter('id', 'in', list)
+      final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
+      return List<Map<String, dynamic>>.from(profiles);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // --- LOCATION & CHAT ---
   static Future<void> updateLocation(Position pos) async {
     final user = currentUser;
     if (user == null) return;
-    
     await client.from('user_locations').upsert({
       'user_id': user.id,
       'latitude': pos.latitude,
@@ -92,35 +180,19 @@ class SupabaseService {
   }
 
   static Stream<List<Map<String, dynamic>>> streamUsersLocations() {
-    return client
-        .from('user_locations')
-        .stream(primaryKey: ['user_id'])
-        .map((data) => List<Map<String, dynamic>>.from(data));
+    return client.from('user_locations').stream(primaryKey: ['user_id']).map((data) => List<Map<String, dynamic>>.from(data));
   }
 
-  // --- CHAT ---
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
-    return client
-        .from('messages')
-        .stream(primaryKey: ['id'])
-        .eq('line_id', lineId)
-        .order('created_at', ascending: true)
-        .limit(50) 
-        .map((data) => List<Map<String, dynamic>>.from(data));
+    return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).map((data) => List<Map<String, dynamic>>.from(data));
   }
 
   static Future<void> sendMessage(String lineId, String content) async {
     final user = currentUser;
     if (user == null) return;
-
-    await client.from('messages').insert({
-      'line_id': lineId,
-      'user_id': user.id,
-      'content': content,
-    });
+    await client.from('messages').insert({'line_id': lineId, 'user_id': user.id, 'content': content});
   }
 
-  // --- IMAGES ---
   static Future<String?> getStationImage(String stationId) async {
     try {
       final data = await client.from('station_images').select('image_url').eq('station_id', stationId).maybeSingle();
@@ -128,21 +200,5 @@ class SupabaseService {
     } catch (e) {
       return null;
     }
-  }
-
-  static Future<void> uploadStationImage(String stationId, File imageFile) async {
-    final user = currentUser;
-    if (user == null) return;
-
-    final fileName = '${stationId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    await client.storage.from('station_guides').upload(fileName, imageFile);
-    
-    final publicUrl = client.storage.from('station_guides').getPublicUrl(fileName);
-    
-    await client.from('station_images').insert({
-      'station_id': stationId,
-      'image_url': publicUrl,
-      'user_id': user.id,
-    });
   }
 }
