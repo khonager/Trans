@@ -27,6 +27,7 @@ dependencies:
 
   supabase_flutter: ^2.0.0
   image_picker: ^1.0.7
+  flutter_dotenv: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -47,3 +48,4 @@ flutter:
   assets:
     - assets/
     - lib/assets/
+    - .env
