@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart'; // REQUIRED for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -240,18 +241,15 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
-  // REWRITTEN: Completely decoupled dialog logic.
-  // 1. We wait for the dialog to return a result (true = reload).
-  // 2. We do NOT pass callbacks that trigger setState on the parent.
   void _showEditFavoriteDialog(Favorite fav) async {
     final bool? shouldReload = await showDialog<bool>(
       context: context,
-      barrierDismissible: false, // Require explicit cancel/save
+      barrierDismissible: false,
       builder: (ctx) => _EditFavoriteDialog(favorite: fav),
     );
 
     if (shouldReload == true && mounted) {
-      _loadFavorites(); // Rebuild parent only AFTER dialog is gone
+      _loadFavorites();
     }
   }
   
@@ -514,6 +512,9 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _triggerVibration() async {
+    // FIX: Check kIsWeb to prevent crash
+    if (kIsWeb) return; 
+
     if (await Vibration.hasVibrator() ?? false) {
       final prefs = await SharedPreferences.getInstance();
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
@@ -740,8 +741,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // REPLACED AlertDialog + SingleChildScrollView with Simple Dialog Structure
-    // to avoid "hit test" errors during keyboard resize.
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       backgroundColor: Theme.of(context).cardColor,
@@ -767,7 +766,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             
             const SizedBox(height: 10),
 
-            // CONTENT AREA (Flexible to allow list growth without scroll conflict)
+            // CONTENT AREA 
             if (_currentType == 'station') ...[
               if (_selectedStation != null)
                 ListTile(
@@ -782,7 +781,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                   decoration: InputDecoration(
                     labelText: "Search Station Name",
                     prefixIcon: const Icon(Icons.search),
-                    // Stable Suffix prevents layout jump
                     suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null),
                   ),
                   onChanged: (val) {
@@ -803,7 +801,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                     });
                   },
                 ),
-                // RESULTS LIST - Constrained height
                 if (_suggestions.isNotEmpty)
                   Container(
                     height: 150,

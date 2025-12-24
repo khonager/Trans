@@ -1,5 +1,5 @@
-// lib/widgets/ticket_panel.dart
-import 'dart:io';
+import 'dart:io' show File; // Only import File for mobile checks
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,7 +16,9 @@ class TicketPanel extends StatefulWidget {
 
 class _TicketPanelState extends State<TicketPanel> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
-  File? _localTicketFile;
+  
+  // We use String path instead of File object to be web-safe
+  String? _localTicketPath; 
   bool _isLoading = false;
 
   @override
@@ -32,30 +34,27 @@ class _TicketPanelState extends State<TicketPanel> {
     super.dispose();
   }
 
-  // Toggle between closed (min) and open (max)
   void _toggleSheet() {
     if (_sheetController.size > 0.3) {
-      _sheetController.animateTo(
-        0.08, // Close
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     } else {
-      _sheetController.animateTo(
-        0.85, // Open
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     }
   }
 
   Future<void> _loadLocalTicket() async {
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString('local_ticket_path');
+    
     if (path != null) {
-      final file = File(path);
-      if (await file.exists()) {
-        setState(() => _localTicketFile = file);
+      if (kIsWeb) {
+        // On web, path is just the URL/blob
+        setState(() => _localTicketPath = path);
+      } else {
+        // On mobile, check if file exists
+        if (await File(path).exists()) {
+          setState(() => _localTicketPath = path);
+        }
       }
     }
   }
@@ -68,46 +67,78 @@ class _TicketPanelState extends State<TicketPanel> {
     final prefs = await SharedPreferences.getInstance();
     final lastUrl = prefs.getString('remote_ticket_url');
 
-    if (remoteUrl != null && remoteUrl != lastUrl) {
-      try {
-        final response = await http.get(Uri.parse(remoteUrl));
-        if (response.statusCode == 200) {
-          final dir = await getApplicationDocumentsDirectory();
-          final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          final file = File('${dir.path}/$filename');
-          await file.writeAsBytes(response.bodyBytes);
+    if (remoteUrl != null) {
+      // On Web, we just use the remote URL directly, no "download to file" needed
+      if (kIsWeb) {
+        await prefs.setString('local_ticket_path', remoteUrl);
+        setState(() => _localTicketPath = remoteUrl);
+        return;
+      }
 
-          await prefs.setString('local_ticket_path', file.path);
-          await prefs.setString('remote_ticket_url', remoteUrl);
+      // On Mobile: Download file if changed
+      if (remoteUrl != lastUrl) {
+        try {
+          final response = await http.get(Uri.parse(remoteUrl));
+          if (response.statusCode == 200) {
+            final dir = await getApplicationDocumentsDirectory();
+            final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
+            final file = File('${dir.path}/$filename');
+            await file.writeAsBytes(response.bodyBytes);
 
-          setState(() => _localTicketFile = file);
+            await prefs.setString('local_ticket_path', file.path);
+            await prefs.setString('remote_ticket_url', remoteUrl);
+
+            setState(() => _localTicketPath = file.path);
+          }
+        } catch (e) {
+          print("Error syncing ticket: $e");
         }
-      } catch (e) {
-        print("Error syncing ticket: $e");
       }
     }
   }
 
   Future<void> _pickAndUploadTicket() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
+    final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
     
     if (picked != null) {
       setState(() => _isLoading = true);
       
       try {
-        final dir = await getApplicationDocumentsDirectory();
-        final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final savedFile = await File(picked.path).copy('${dir.path}/$filename');
+        if (kIsWeb) {
+          // Web: Just upload bytes directly
+          final bytes = await picked.readAsBytes();
+          // Note: Supabase Flutter web upload might need a Blob or specific handling, 
+          // but for now we assume standard upload works or we rely on the URL update.
+          // Since Supabase `upload` expects a File object which doesn't exist on web,
+          // we use uploadBinary if available or skip local caching logic for now.
+          
+          // *Correction*: To make this 100% web safe without complex binary upload logic 
+          // in the service right now, we will skip the upload implementation for Web in this snippet
+          // unless you update SupabaseService to support `uploadBinary`.
+          // For now, we will just show it locally.
+          
+          setState(() => _localTicketPath = picked.path); // picked.path on web is a blob URL
+          
+          // On Web, standard File upload won't work with dart:io File. 
+          // You would need to update SupabaseService to take Uint8List.
+          
+        } else {
+          // Mobile Logic
+          final dir = await getApplicationDocumentsDirectory();
+          final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final savedFile = await File(picked.path).copy('${dir.path}/$filename');
 
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('local_ticket_path', savedFile.path);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('local_ticket_path', savedFile.path);
 
-        setState(() => _localTicketFile = savedFile);
+          setState(() => _localTicketPath = savedFile.path);
 
-        final url = await SupabaseService.uploadTicket(savedFile);
-        if (url != null) {
-          await prefs.setString('remote_ticket_url', url);
+          // Upload
+          final url = await SupabaseService.uploadTicket(savedFile);
+          if (url != null) {
+            await prefs.setString('remote_ticket_url', url);
+          }
         }
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
@@ -126,7 +157,7 @@ class _TicketPanelState extends State<TicketPanel> {
       initialChildSize: 0.08,
       minChildSize: 0.08,
       maxChildSize: 0.85,
-      snap: true, // Helps the sheet snap to open/closed positions
+      snap: true, 
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
@@ -142,19 +173,16 @@ class _TicketPanelState extends State<TicketPanel> {
           ),
           child: ListView(
             controller: scrollController,
-            // CRITICAL: AlwaysScrollableScrollPhysics ensures drag gestures work even when content is short
-            physics: const AlwaysScrollableScrollPhysics(),
+            physics: const ClampingScrollPhysics(),
             padding: EdgeInsets.zero,
             children: [
-              // 1. The "Handle" Area - Now Tappable!
               GestureDetector(
                 onTap: _toggleSheet,
-                behavior: HitTestBehavior.opaque, // Ensures the entire area catches the tap
+                behavior: HitTestBehavior.opaque, 
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     children: [
-                      // Visual Handle Bar
                       Container(
                         width: 40,
                         height: 4,
@@ -164,7 +192,6 @@ class _TicketPanelState extends State<TicketPanel> {
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      // Header Text
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -187,12 +214,11 @@ class _TicketPanelState extends State<TicketPanel> {
               
               const SizedBox(height: 10),
 
-              // 2. The Content
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _isLoading
                   ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-                  : _localTicketFile != null
+                  : _localTicketPath != null
                     ? Column(
                         children: [
                           Container(
@@ -203,7 +229,10 @@ class _TicketPanelState extends State<TicketPanel> {
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(16),
-                              child: Image.file(_localTicketFile!),
+                              // WEB SAFE IMAGE LOADING
+                              child: kIsWeb 
+                                ? Image.network(_localTicketPath!) 
+                                : Image.file(File(_localTicketPath!)),
                             ),
                           ),
                           const SizedBox(height: 20),
