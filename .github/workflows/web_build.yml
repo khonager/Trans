@@ -1,13 +1,17 @@
-name: Build Web App
+name: Build & Deploy Web App
 
 on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
 
+# Grant permission to push to the gh-pages branch
+permissions:
+  contents: write
+
 jobs:
-  build:
-    name: Build Web
+  build-and-deploy:
+    name: Build & Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -22,18 +26,20 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      # Create .env file so the app can read keys at runtime
       - name: Create .env file
         run: |
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
+      # Builds the web app
+      # --base-href is CRITICAL for GitHub Pages project sites. 
+      # It tells Flutter the app is running at /your-repo-name/ instead of root.
       - name: Build Web Release
-        run: flutter build web --release
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 
-      - name: Archive Web Build
-        uses: actions/upload-artifact@v4
+      # Deploys the build/web folder to the 'gh-pages' branch
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          name: web-build
-          path: build/web
-          retention-days: 7
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
