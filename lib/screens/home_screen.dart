@@ -7,6 +7,7 @@ import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../services/supabase_service.dart';
+import '../widgets/ticket_panel.dart'; // Import the new widget
 
 class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
@@ -134,23 +135,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2))),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
+      body: Stack(
         children: [
-          // ROUTES TAB
-          RoutesTab(
-            currentPosition: _currentPosition,
-            onlyNahverkehr: _onlyNahverkehr,
+          // Main Content Layer
+          IndexedStack(
+            index: _currentIndex,
+            children: [
+              // ROUTES TAB
+              RoutesTab(
+                currentPosition: _currentPosition,
+                onlyNahverkehr: _onlyNahverkehr,
+              ),
+              // FRIENDS TAB
+              FriendsTab(currentPosition: _currentPosition),
+              // SETTINGS TAB
+              SettingsTab(
+                isDarkMode: widget.isDarkMode,
+                onThemeChanged: widget.onThemeChanged,
+                onlyNahverkehr: _onlyNahverkehr,
+                onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
+              ),
+            ],
           ),
-          // FRIENDS TAB
-          FriendsTab(currentPosition: _currentPosition),
-          // SETTINGS TAB
-          SettingsTab(
-            isDarkMode: widget.isDarkMode,
-            onThemeChanged: widget.onThemeChanged,
-            onlyNahverkehr: _onlyNahverkehr,
-            onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
-          ),
+
+          // Ticket Layer (Floating above content, anchored to bottom of body)
+          const TicketPanel(),
         ],
       ),
       // RESTORED: Bottom Nav Styling
