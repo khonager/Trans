@@ -8,11 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/station.dart';
 import '../../models/journey.dart';
-import '../../models/favorite.dart'; // Import Favorite
+import '../../models/favorite.dart';
 import '../../services/transport_api.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
-import '../../services/favorites_manager.dart'; // Import Favorites Manager
+import '../../services/favorites_manager.dart';
 
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
@@ -44,6 +44,11 @@ class _RoutesTabState extends State<RoutesTab> {
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
   
+  // Time Planning State
+  DateTime? _selectedDate; // If null, "Now"
+  TimeOfDay? _selectedTime;
+  bool _isArrival = false; // false = Depart at, true = Arrive by
+
   // Haptics
   bool _isWakeAlarmSet = false;
 
@@ -107,7 +112,7 @@ class _RoutesTabState extends State<RoutesTab> {
       if (query.length > 2) {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
-        // Use other station as reference if set
+        
         if (field == 'to' && _fromStation != null) {
           refLat = _fromStation!.latitude;
           refLng = _fromStation!.longitude;
@@ -137,24 +142,54 @@ class _RoutesTabState extends State<RoutesTab> {
     FocusScope.of(context).unfocus();
   }
 
+  // --- TIME PICKER HELPERS ---
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now,
+      firstDate: now.subtract(const Duration(days: 30)), // Past trips
+      lastDate: now.add(const Duration(days: 90)), // Future trips
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+        // If time wasn't selected, default to current time
+        _selectedTime ??= TimeOfDay.now();
+      });
+    }
+  }
+
+  Future<void> _pickTime() async {
+    final now = TimeOfDay.now();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? now,
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedTime = picked;
+        // If date wasn't selected, default to today
+        _selectedDate ??= DateTime.now();
+      });
+    }
+  }
+
   // --- FAVORITE LOGIC ---
 
   Future<void> _onFavoriteTap(Favorite fav) async {
-    // 1. Determine Target Station
     Station? target;
 
     if (fav.type == 'station') {
       target = fav.station;
       if (target == null) {
-        // Needs setup
         _showEditFavoriteDialog(fav);
         return;
       }
     } else if (fav.type == 'friend' && fav.friendId != null) {
-      // Find friend location
       setState(() => _isLoadingRoute = true);
       try {
-        // We use a simple select for the single user location
         final data = await SupabaseService.client
             .from('user_locations')
             .select()
@@ -165,7 +200,6 @@ class _RoutesTabState extends State<RoutesTab> {
           final lat = data['latitude'] as double;
           final lng = data['longitude'] as double;
           
-          // Find nearest station to friend
           final stops = await TransportApi.getNearbyStops(lat, lng);
           if (stops.isNotEmpty) {
             target = stops.first;
@@ -184,7 +218,6 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     if (target != null) {
-      // Apply to UI - default to "To" unless "From" is focused or empty
       setState(() {
         if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
           _fromStation = target;
@@ -201,7 +234,7 @@ class _RoutesTabState extends State<RoutesTab> {
     final labelCtrl = TextEditingController(text: fav.label);
     Station? selectedStation = fav.station;
     String? selectedFriendId = fav.friendId;
-    String currentType = fav.type; // 'station' or 'friend'
+    String currentType = fav.type;
 
     showDialog(
       context: context,
@@ -219,8 +252,6 @@ class _RoutesTabState extends State<RoutesTab> {
                     decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)"),
                   ),
                   const SizedBox(height: 16),
-                  
-                  // Type Selector
                   Row(
                     children: [
                       Expanded(
@@ -243,8 +274,6 @@ class _RoutesTabState extends State<RoutesTab> {
                       ),
                     ],
                   ),
-
-                  // Station Picker
                   if (currentType == 'station') ...[
                     if (selectedStation != null)
                       ListTile(
@@ -257,18 +286,6 @@ class _RoutesTabState extends State<RoutesTab> {
                         ),
                       )
                     else
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.search),
-                        label: const Text("Search Station"),
-                        onPressed: () async {
-                           // Simple workaround: Close dialog, focus search, select, then re-open? 
-                           // Better: Just tell user to search in main UI.
-                           // OR: Simple search dialog on top.
-                           // For MVP: Let's assume they search by name string here.
-                        }, 
-                      ),
-                      // NOTE: For simplicity in this turn, we allow them to Paste a station ID or 
-                      // actually, let's just make them pick from History or Search inside the dialog.
                       TextField(
                         decoration: const InputDecoration(labelText: "Search Station Name"),
                         onSubmitted: (val) async {
@@ -279,30 +296,21 @@ class _RoutesTabState extends State<RoutesTab> {
                         },
                       ),
                   ],
-
-                  // Friend Picker
                   if (currentType == 'friend') ...[
-                     FutureBuilder<List<Map<String, dynamic>>>(
-                       future: SupabaseService.searchUsers(""), // Search all/recent friends logic needed?
-                       // Actually, let's just fetch friends table.
-                       // We don't have a getFriends method yet, let's simulate or use search.
-                       builder: (context, snap) {
-                         return TextField(
-                            decoration: const InputDecoration(labelText: "Search Friend Username"),
-                            onSubmitted: (val) async {
-                              final res = await SupabaseService.searchUsers(val);
-                              if (res.isNotEmpty) {
-                                setDialogState(() => selectedFriendId = res.first['id']);
-                                if (labelCtrl.text.isEmpty || labelCtrl.text == fav.label) {
-                                   labelCtrl.text = res.first['username'];
-                                }
-                              }
-                            },
-                         );
-                       },
+                     TextField(
+                        decoration: const InputDecoration(labelText: "Search Friend Username"),
+                        onSubmitted: (val) async {
+                          final res = await SupabaseService.searchUsers(val);
+                          if (res.isNotEmpty) {
+                            setDialogState(() => selectedFriendId = res.first['id']);
+                            if (labelCtrl.text.isEmpty || labelCtrl.text == fav.label) {
+                               labelCtrl.text = res.first['username'];
+                            }
+                          }
+                        },
                      ),
                      if (selectedFriendId != null) 
-                       Padding(padding: const EdgeInsets.only(top: 8), child: Text("Selected Friend ID: ...${selectedFriendId!.substring(0,6)}", style: const TextStyle(color: Colors.green))),
+                       Padding(padding: const EdgeInsets.only(top: 8), child: Text("Friend Selected", style: const TextStyle(color: Colors.green))),
                   ]
                 ],
               ),
@@ -320,7 +328,7 @@ class _RoutesTabState extends State<RoutesTab> {
                 onPressed: () async {
                   if (labelCtrl.text.isNotEmpty) {
                     final newFav = Favorite(
-                      id: fav.id, // Keep ID
+                      id: fav.id,
                       label: labelCtrl.text,
                       type: currentType,
                       station: selectedStation,
@@ -341,21 +349,62 @@ class _RoutesTabState extends State<RoutesTab> {
   }
   
   void _addNewFavorite() {
-    // Generate ID
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC (Keep existing _findRoutes etc) ---
+  // --- ROUTE LOGIC ---
+
   Future<void> _findRoutes() async {
-    if (_fromStation == null || _toStation == null) return;
+    Station? from = _fromStation;
+    
+    // Default location logic
+    if (from == null && widget.currentPosition != null) {
+       setState(() => _isLoadingRoute = true); 
+       try {
+         final nearby = await TransportApi.getNearbyStops(
+           widget.currentPosition!.latitude, 
+           widget.currentPosition!.longitude
+         );
+         if (nearby.isNotEmpty) {
+           from = nearby.first;
+         } else {
+           setState(() => _isLoadingRoute = false);
+           if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No nearby stations found.")));
+           return;
+         }
+       } catch (e) {
+         setState(() => _isLoadingRoute = false);
+         return;
+       }
+    }
+
+    if (from == null || _toStation == null) {
+      setState(() => _isLoadingRoute = false);
+      return;
+    }
+    
     setState(() => _isLoadingRoute = true);
+
+    // Build Timestamp
+    DateTime? searchTime;
+    if (_selectedDate != null && _selectedTime != null) {
+      searchTime = DateTime(
+        _selectedDate!.year, 
+        _selectedDate!.month, 
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute
+      );
+    }
 
     try {
       final journeyData = await TransportApi.searchJourney(
-          _fromStation!.id, 
+          from.id, 
           _toStation!.id, 
-          nahverkehrOnly: widget.onlyNahverkehr
+          nahverkehrOnly: widget.onlyNahverkehr,
+          when: searchTime, // Updated
+          isArrival: _isArrival // Updated
       );
 
       if (journeyData != null && journeyData['legs'] != null) {
@@ -436,7 +485,7 @@ class _RoutesTabState extends State<RoutesTab> {
         final newTab = RouteTab(
           id: newTabId,
           title: _toStation!.name,
-          subtitle: "${_fromStation!.name} → ${_toStation!.name}",
+          subtitle: "${from.name} → ${_toStation!.name}",
           eta: eta,
           steps: steps,
         );
@@ -469,7 +518,7 @@ class _RoutesTabState extends State<RoutesTab> {
     });
   }
 
-  // --- OVERLAYS (Chat, Guide, etc - Keep existing) ---
+  // --- OVERLAYS ---
   void _showChat(BuildContext context, String lineName) {
     final msgController = TextEditingController();
     showModalBottomSheet(
@@ -616,10 +665,16 @@ class _RoutesTabState extends State<RoutesTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Determine if we can search (if From is empty but we have GPS, that's valid now)
+    final bool canSearch = (_fromStation != null || widget.currentPosition != null) && 
+                           _toStation != null && 
+                           !_isLoadingRoute;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Column(
       children: [
         const SizedBox(height: 100),
-        // Horizontal Tab List
         if (_tabs.isNotEmpty)
           SizedBox(
             height: 50,
@@ -657,14 +712,14 @@ class _RoutesTabState extends State<RoutesTab> {
         
         Expanded(
           child: _activeTabId == null 
-              ? _buildSearchView() 
+              ? _buildSearchView(canSearch, isDark) 
               : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId)),
         ),
       ],
     );
   }
 
-  Widget _buildSearchView() {
+  Widget _buildSearchView(bool canSearch, bool isDark) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -681,14 +736,91 @@ class _RoutesTabState extends State<RoutesTab> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
                   const SizedBox(height: 20),
-                  _buildTextField("From", _fromController, _fromStation != null, 'from'),
+                  
+                  // FROM Field
+                  _buildTextField(
+                    "From", 
+                    _fromController, 
+                    _fromStation != null, 
+                    'from',
+                    hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."
+                  ),
+                  
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
                   const SizedBox(height: 12),
+                  
+                  // TO Field
                   _buildTextField("To", _toController, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
-                  const SizedBox(height: 20),
                   
-                  // NEW: Favorites Section
+                  const SizedBox(height: 20),
+
+                  // TIME & DATE SELECTION (New Feature)
+                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(16)
+                    ),
+                    child: Row(
+                      children: [
+                        // Dep/Arr Toggle
+                        GestureDetector(
+                          onTap: () => setState(() => _isArrival = !_isArrival),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.indigoAccent,
+                              borderRadius: BorderRadius.circular(12)
+                            ),
+                            child: Text(
+                              _isArrival ? "Arrive by" : "Depart at",
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        
+                        // Time Display/Picker
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () async {
+                              await _pickDate();
+                              if (_selectedDate != null) _pickTime();
+                            },
+                            child: Row(
+                              children: [
+                                Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _selectedDate == null 
+                                    ? "Now" 
+                                    : "${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}",
+                                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        // Clear Button (Reset to Now)
+                        if (_selectedDate != null)
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () => setState(() {
+                              _selectedDate = null;
+                              _selectedTime = null;
+                            }),
+                          )
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // FAVORITES
                   Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
                   const SizedBox(height: 8),
                   SizedBox(
@@ -699,7 +831,6 @@ class _RoutesTabState extends State<RoutesTab> {
                       separatorBuilder: (_,__) => const SizedBox(width: 12),
                       itemBuilder: (ctx, idx) {
                          if (idx == _favorites.length) {
-                           // Add Button
                            return GestureDetector(
                              onTap: _addNewFavorite,
                              child: Column(
@@ -729,7 +860,6 @@ class _RoutesTabState extends State<RoutesTab> {
                                  decoration: BoxDecoration(
                                     color: (isFriend ? Colors.green : Colors.indigo).withOpacity(0.1), 
                                     shape: BoxShape.circle,
-                                    border: fav.station == null && fav.friendId == null ? Border.all(color: Colors.red) : null
                                  ),
                                  child: Icon(
                                    isFriend ? Icons.person : (fav.label.toLowerCase() == 'home' ? Icons.home : (fav.label.toLowerCase() == 'work' ? Icons.work : Icons.star)),
@@ -751,9 +881,11 @@ class _RoutesTabState extends State<RoutesTab> {
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: (_fromStation != null && _toStation != null && !_isLoadingRoute) ? _findRoutes : null,
+                      onPressed: canSearch ? _findRoutes : null,
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-                      child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      child: _isLoadingRoute 
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
+                        : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   )
                 ],
@@ -799,8 +931,13 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey) {
+  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    Color iconColor = Colors.grey;
+    if (isSelected) iconColor = Colors.greenAccent;
+    else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -810,8 +947,11 @@ class _RoutesTabState extends State<RoutesTab> {
           style: TextStyle(color: isDark ? Colors.white : Colors.black),
           decoration: InputDecoration(
             filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200,
-            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: isSelected ? Colors.greenAccent : Colors.grey, size: 20),
-            hintText: "Station...",
+            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20),
+            hintText: hint,
+            hintStyle: TextStyle(
+              color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : Colors.grey
+            ),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
           ),
         ),
