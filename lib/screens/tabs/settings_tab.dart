@@ -46,7 +46,7 @@ class _SettingsTabState extends State<SettingsTab> {
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
       await SupabaseService.uploadAvatar(File(picked.path));
-      _loadProfile(); // Refresh
+      _loadProfile();
     }
   }
 
@@ -72,7 +72,7 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
             SwitchListTile(
               title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)),
-              subtitle: const Text("Only local/regional transport"),
+              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)),
               value: widget.onlyNahverkehr,
               onChanged: widget.onNahverkehrChanged,
             ),
@@ -81,7 +81,7 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 20),
           
           if (user == null)
-            _buildAuthForm(context)
+            _buildAuthForm(context, textColor)
           else
             _buildProfileSection(context, user, textColor),
         ],
@@ -173,16 +173,20 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  Widget _buildAuthForm(BuildContext context) {
+  Widget _buildAuthForm(BuildContext context, Color? textColor) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
       child: Column(
         children: [
-          const Text("Login / Sign Up", style: TextStyle(fontWeight: FontWeight.bold)),
+          Text("Login / Sign Up", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
           TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: "Email")),
+          const SizedBox(height: 10),
           TextField(controller: _usernameCtrl, decoration: const InputDecoration(hintText: "Username (Sign Up)")),
+          const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
+          const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
