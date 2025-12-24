@@ -33,9 +33,9 @@ jobs:
       - name: Build macOS Release
         run: flutter build macos --release
 
-      # Compress the .app bundle
+      # Changed 'flutter_travel_companion.app' to 'Runner.app' (the default Flutter output name)
       - name: Compress Build
-        run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/flutter_travel_companion.app macos-release.zip
+        run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Runner.app macos-release.zip
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
