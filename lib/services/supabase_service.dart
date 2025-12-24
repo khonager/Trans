@@ -14,8 +14,6 @@ class SupabaseService {
       password: password, 
       data: {'username': username}
     );
-    // Note: Profile creation is usually handled by a Supabase Trigger, 
-    // but if you do it manually:
     if (response.user != null) {
       await client.from('profiles').upsert({
         'id': response.user!.id,
@@ -71,6 +69,42 @@ class SupabaseService {
       return imageUrl;
     } catch (e) {
       print("Upload error: $e");
+      return null;
+    }
+  }
+
+  // --- TICKET FEATURES ---
+  static Future<String?> uploadTicket(File imageFile) async {
+    final user = currentUser;
+    if (user == null) return null;
+
+    // We use a fixed name 'ticket' so it overwrites the old one
+    final fileExt = imageFile.path.split('.').last;
+    final fileName = '${user.id}/ticket.$fileExt';
+
+    try {
+      // Upsert: Overwrite if exists
+      await client.storage.from('tickets').upload(fileName, imageFile, fileOptions: const FileOptions(upsert: true));
+      
+      // Get URL with a timestamp query param to bust cache
+      final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
+      
+      // Save this URL to the profile so we can sync it across devices
+      await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
+      return imageUrl;
+    } catch (e) {
+      print("Ticket Upload error: $e");
+      return null;
+    }
+  }
+
+  static Future<String?> getTicketUrl() async {
+    final user = currentUser;
+    if (user == null) return null;
+    try {
+      final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
+      return data?['ticket_url'] as String?;
+    } catch (e) {
       return null;
     }
   }
