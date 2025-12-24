@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ] # Trigger on tags like v1.0, v2.0.1
+
+permissions:
+  contents: write # Required to create releases
 
 jobs:
   build:
@@ -33,13 +37,20 @@ jobs:
       - name: Build macOS Release
         run: flutter build macos --release
 
-      # Changed 'flutter_travel_companion.app' to 'Runner.app' (the default Flutter output name)
       - name: Compress Build
         run: ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/Runner.app macos-release.zip
 
+      # Uploads to the Action run artifacts (temporary)
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
           path: macos-release.zip
           retention-days: 7
+
+      # NEW: Uploads to GitHub Releases Page
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: macos-release.zip
