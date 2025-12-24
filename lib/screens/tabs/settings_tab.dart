@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import '../../services/supabase_service.dart';
+import '../../services/history_manager.dart'; // Import History Manager
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
@@ -33,8 +34,8 @@ class _SettingsTabState extends State<SettingsTab> {
   Map<String, dynamic>? _profile;
 
   // Vibration Settings
-  String _vibrationPattern = 'standard'; // standard, heartbeat, tick
-  int _vibrationIntensity = 128; // 1-255
+  String _vibrationPattern = 'standard'; 
+  int _vibrationIntensity = 128; 
 
   @override
   void initState() {
@@ -68,8 +69,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _testVibration() async {
     if (await Vibration.hasVibrator() ?? false) {
-      // Create pattern based on selection
-      List<int> pattern = [0, 500]; // default
+      List<int> pattern = [0, 500]; 
       if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
       if (_vibrationPattern == 'tick') pattern = [0, 50];
 
@@ -87,6 +87,33 @@ class _SettingsTabState extends State<SettingsTab> {
     if (picked != null) {
       await SupabaseService.uploadAvatar(File(picked.path));
       _loadProfile();
+    }
+  }
+
+  // NEW: Clear History Dialog
+  Future<void> _clearHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Theme.of(ctx).cardColor,
+        title: Text("Clear History", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
+        content: const Text("Are you sure you want to delete your recent search history?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false), 
+            child: const Text("Cancel")
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true), 
+            child: const Text("Delete", style: TextStyle(color: Colors.red))
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await SearchHistoryManager.clearHistory();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Search history cleared.")));
     }
   }
 
@@ -145,14 +172,22 @@ class _SettingsTabState extends State<SettingsTab> {
                  min: 1, max: 255,
                  activeColor: Theme.of(context).primaryColor,
                  onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()),
-                 onChangeEnd: (_) => _testVibration(), // Test on release
+                 onChangeEnd: (_) => _testVibration(),
                ),
              ),
-             ListTile(
-               title: Text("Test Vibration", style: TextStyle(color: Theme.of(context).primaryColor)),
-               leading: Icon(Icons.touch_app, color: Theme.of(context).primaryColor),
-               onTap: _testVibration,
-             ),
+          ]),
+
+          const SizedBox(height: 20),
+
+          // NEW: Data & Privacy Section
+          Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          const SizedBox(height: 8),
+          _buildSection(context, [
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text("Clear Search History", style: TextStyle(color: Colors.red)),
+              onTap: _clearHistory,
+            ),
           ]),
 
           const SizedBox(height: 20),
@@ -162,7 +197,7 @@ class _SettingsTabState extends State<SettingsTab> {
           else
             _buildProfileSection(context, user, textColor),
           
-          const SizedBox(height: 100), // Spacing for bottom nav
+          const SizedBox(height: 100),
         ],
       ),
     );
@@ -172,7 +207,6 @@ class _SettingsTabState extends State<SettingsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // NEW LAYOUT: Profile Picture LEFT of "Profile" text
         Row(
           children: [
             GestureDetector(
