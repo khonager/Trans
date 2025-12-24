@@ -15,24 +15,16 @@ dependencies:
     sdk: flutter
   
   http: ^1.1.0
-  # Geolocation for finding nearby stations
   geolocator: ^13.0.0
   cupertino_icons: ^1.0.2
 
-  # NEW FEATURES DEPENDENCIES
-  # For "vibrate when you have to get out"
   vibration: ^3.1.0 
-  # For "automatically notice routine transfers... even when not using the app" (Local alerts)
   flutter_local_notifications: ^18.0.0
-  # Timezone helper for scheduling notifications
   timezone: ^0.9.2
 
-  # Persistence for Settings & Recent Searches
   shared_preferences: ^2.2.0
-  # For saving tickets offline
   path_provider: ^2.1.1
 
-  # Backend & Database
   supabase_flutter: ^2.0.0
   image_picker: ^1.0.7
 
@@ -45,7 +37,7 @@ dev_dependencies:
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
-  image_path: "assets/icon.png"
+  image_path: "lib/assets/logo.png" # CHANGED from assets/icon.png
   min_sdk_android: 21
 
 flutter:
@@ -53,3 +45,4 @@ flutter:
 
   assets:
     - assets/
+    - lib/assets/
