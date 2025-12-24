@@ -4,13 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Added import
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/station.dart';
 import '../../models/journey.dart';
+import '../../models/favorite.dart'; // Import Favorite
 import '../../services/transport_api.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
+import '../../services/favorites_manager.dart'; // Import Favorites Manager
 
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
@@ -45,10 +47,14 @@ class _RoutesTabState extends State<RoutesTab> {
   // Haptics
   bool _isWakeAlarmSet = false;
 
+  // Favorites
+  List<Favorite> _favorites = [];
+
   @override
   void initState() {
     super.initState();
     _fetchSuggestions(forceHistory: true);
+    _loadFavorites();
   }
 
   @override
@@ -57,6 +63,11 @@ class _RoutesTabState extends State<RoutesTab> {
     _toController.dispose();
     _debounce?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadFavorites() async {
+    final favs = await FavoritesManager.getFavorites();
+    if (mounted) setState(() => _favorites = favs);
   }
 
   // --- LOGIC ---
@@ -126,6 +137,216 @@ class _RoutesTabState extends State<RoutesTab> {
     FocusScope.of(context).unfocus();
   }
 
+  // --- FAVORITE LOGIC ---
+
+  Future<void> _onFavoriteTap(Favorite fav) async {
+    // 1. Determine Target Station
+    Station? target;
+
+    if (fav.type == 'station') {
+      target = fav.station;
+      if (target == null) {
+        // Needs setup
+        _showEditFavoriteDialog(fav);
+        return;
+      }
+    } else if (fav.type == 'friend' && fav.friendId != null) {
+      // Find friend location
+      setState(() => _isLoadingRoute = true);
+      try {
+        // We use a simple select for the single user location
+        final data = await SupabaseService.client
+            .from('user_locations')
+            .select()
+            .eq('user_id', fav.friendId!)
+            .maybeSingle();
+        
+        if (data != null) {
+          final lat = data['latitude'] as double;
+          final lng = data['longitude'] as double;
+          
+          // Find nearest station to friend
+          final stops = await TransportApi.getNearbyStops(lat, lng);
+          if (stops.isNotEmpty) {
+            target = stops.first;
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
+          } else {
+            throw "No stations found near friend.";
+          }
+        } else {
+          throw "Friend's location not found.";
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      } finally {
+        setState(() => _isLoadingRoute = false);
+      }
+    }
+
+    if (target != null) {
+      // Apply to UI - default to "To" unless "From" is focused or empty
+      setState(() {
+        if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
+          _fromStation = target;
+          _fromController.text = target!.name;
+        } else {
+          _toStation = target;
+          _toController.text = target!.name;
+        }
+      });
+    }
+  }
+
+  void _showEditFavoriteDialog(Favorite fav) {
+    final labelCtrl = TextEditingController(text: fav.label);
+    Station? selectedStation = fav.station;
+    String? selectedFriendId = fav.friendId;
+    String currentType = fav.type; // 'station' or 'friend'
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: Theme.of(context).cardColor,
+            title: Text("Edit Favorite", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: labelCtrl,
+                    decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)"),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Type Selector
+                  Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<String>(
+                          title: const Text("Station"),
+                          value: 'station',
+                          groupValue: currentType,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setDialogState(() => currentType = val!),
+                        ),
+                      ),
+                      Expanded(
+                        child: RadioListTile<String>(
+                          title: const Text("Friend"),
+                          value: 'friend',
+                          groupValue: currentType,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setDialogState(() => currentType = val!),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // Station Picker
+                  if (currentType == 'station') ...[
+                    if (selectedStation != null)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.train),
+                        title: Text(selectedStation!.name),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setDialogState(() => selectedStation = null),
+                        ),
+                      )
+                    else
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.search),
+                        label: const Text("Search Station"),
+                        onPressed: () async {
+                           // Simple workaround: Close dialog, focus search, select, then re-open? 
+                           // Better: Just tell user to search in main UI.
+                           // OR: Simple search dialog on top.
+                           // For MVP: Let's assume they search by name string here.
+                        }, 
+                      ),
+                      // NOTE: For simplicity in this turn, we allow them to Paste a station ID or 
+                      // actually, let's just make them pick from History or Search inside the dialog.
+                      TextField(
+                        decoration: const InputDecoration(labelText: "Search Station Name"),
+                        onSubmitted: (val) async {
+                          final res = await TransportApi.searchStations(val);
+                          if (res.isNotEmpty) {
+                            setDialogState(() => selectedStation = res.first);
+                          }
+                        },
+                      ),
+                  ],
+
+                  // Friend Picker
+                  if (currentType == 'friend') ...[
+                     FutureBuilder<List<Map<String, dynamic>>>(
+                       future: SupabaseService.searchUsers(""), // Search all/recent friends logic needed?
+                       // Actually, let's just fetch friends table.
+                       // We don't have a getFriends method yet, let's simulate or use search.
+                       builder: (context, snap) {
+                         return TextField(
+                            decoration: const InputDecoration(labelText: "Search Friend Username"),
+                            onSubmitted: (val) async {
+                              final res = await SupabaseService.searchUsers(val);
+                              if (res.isNotEmpty) {
+                                setDialogState(() => selectedFriendId = res.first['id']);
+                                if (labelCtrl.text.isEmpty || labelCtrl.text == fav.label) {
+                                   labelCtrl.text = res.first['username'];
+                                }
+                              }
+                            },
+                         );
+                       },
+                     ),
+                     if (selectedFriendId != null) 
+                       Padding(padding: const EdgeInsets.only(top: 8), child: Text("Selected Friend ID: ...${selectedFriendId!.substring(0,6)}", style: const TextStyle(color: Colors.green))),
+                  ]
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await FavoritesManager.deleteFavorite(fav.id);
+                  _loadFavorites();
+                  Navigator.pop(context);
+                },
+                child: const Text("Delete", style: TextStyle(color: Colors.red)),
+              ),
+              TextButton(
+                onPressed: () async {
+                  if (labelCtrl.text.isNotEmpty) {
+                    final newFav = Favorite(
+                      id: fav.id, // Keep ID
+                      label: labelCtrl.text,
+                      type: currentType,
+                      station: selectedStation,
+                      friendId: selectedFriendId
+                    );
+                    await FavoritesManager.saveFavorite(newFav);
+                    _loadFavorites();
+                    Navigator.pop(context);
+                  }
+                },
+                child: const Text("Save"),
+              )
+            ],
+          );
+        },
+      ),
+    );
+  }
+  
+  void _addNewFavorite() {
+    // Generate ID
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
+  }
+
+  // --- ROUTE LOGIC (Keep existing _findRoutes etc) ---
   Future<void> _findRoutes() async {
     if (_fromStation == null || _toStation == null) return;
     setState(() => _isLoadingRoute = true);
@@ -248,8 +469,7 @@ class _RoutesTabState extends State<RoutesTab> {
     });
   }
 
-  // --- OVERLAYS (Chat, Guide, etc) ---
-
+  // --- OVERLAYS (Chat, Guide, etc - Keep existing) ---
   void _showChat(BuildContext context, String lineName) {
     final msgController = TextEditingController();
     showModalBottomSheet(
@@ -374,7 +594,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // MODIFIED: Uses settings for pattern
   Future<void> _triggerVibration() async {
     if (await Vibration.hasVibrator() ?? false) {
       final prefs = await SharedPreferences.getInstance();
@@ -400,7 +619,7 @@ class _RoutesTabState extends State<RoutesTab> {
     return Column(
       children: [
         const SizedBox(height: 100),
-        // RESTORED: Horizontal Tab List
+        // Horizontal Tab List
         if (_tabs.isNotEmpty)
           SizedBox(
             height: 50,
@@ -454,7 +673,6 @@ class _RoutesTabState extends State<RoutesTab> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // RESTORED: Styled Search Card
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(color: cardColor.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
@@ -468,6 +686,66 @@ class _RoutesTabState extends State<RoutesTab> {
                   const SizedBox(height: 12),
                   _buildTextField("To", _toController, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
+                  const SizedBox(height: 20),
+                  
+                  // NEW: Favorites Section
+                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 80,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _favorites.length + 1,
+                      separatorBuilder: (_,__) => const SizedBox(width: 12),
+                      itemBuilder: (ctx, idx) {
+                         if (idx == _favorites.length) {
+                           // Add Button
+                           return GestureDetector(
+                             onTap: _addNewFavorite,
+                             child: Column(
+                               mainAxisAlignment: MainAxisAlignment.center,
+                               children: [
+                                 Container(
+                                   width: 48, height: 48,
+                                   decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle),
+                                   child: const Icon(Icons.add, color: Colors.blue),
+                                 ),
+                                 const SizedBox(height: 4),
+                                 const Text("Add", style: TextStyle(fontSize: 10))
+                               ],
+                             ),
+                           );
+                         }
+                         final fav = _favorites[idx];
+                         final isFriend = fav.type == 'friend';
+                         return GestureDetector(
+                           onTap: () => _onFavoriteTap(fav),
+                           onLongPress: () => _showEditFavoriteDialog(fav),
+                           child: Column(
+                             mainAxisAlignment: MainAxisAlignment.center,
+                             children: [
+                               Container(
+                                 width: 48, height: 48,
+                                 decoration: BoxDecoration(
+                                    color: (isFriend ? Colors.green : Colors.indigo).withOpacity(0.1), 
+                                    shape: BoxShape.circle,
+                                    border: fav.station == null && fav.friendId == null ? Border.all(color: Colors.red) : null
+                                 ),
+                                 child: Icon(
+                                   isFriend ? Icons.person : (fav.label.toLowerCase() == 'home' ? Icons.home : (fav.label.toLowerCase() == 'work' ? Icons.work : Icons.star)),
+                                   color: isFriend ? Colors.green : Colors.indigo,
+                                   size: 20,
+                                 ),
+                               ),
+                               const SizedBox(height: 4),
+                               Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))
+                             ],
+                           ),
+                         );
+                      },
+                    ),
+                  ),
+
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
@@ -569,7 +847,6 @@ class _RoutesTabState extends State<RoutesTab> {
               Text(step.line, style: const TextStyle(color: Colors.grey)),
               if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
               
-              // RESTORED: Action Chips (Chat, Guide, Wake Me, Alternatives)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: SingleChildScrollView(
@@ -588,10 +865,8 @@ class _RoutesTabState extends State<RoutesTab> {
                         ),
                         const SizedBox(width: 8),
                       ],
-                      // FIXED: Removed immediate timer. Now toggles state and notifies user.
                       GestureDetector(
                         onTap: () {
-                          // Toggle logic
                           setState(() => _isWakeAlarmSet = !_isWakeAlarmSet);
                           ScaffoldMessenger.of(context).clearSnackBars();
                           ScaffoldMessenger.of(context).showSnackBar(
