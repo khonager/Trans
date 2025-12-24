@@ -1,21 +1,19 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/app_config.dart';
-import 'screens/main_screen.dart';
+import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    await Supabase.initialize(
-      url: AppConfig.supabaseUrl,
-      anonKey: AppConfig.supabaseAnonKey,
-    );
-  } catch (e) {
-    debugPrint("Supabase init failed: $e");
-  }
+  // REMOVED try-catch: Now if this fails, we will see the REAL error in the console
+  await Supabase.initialize(
+    url: AppConfig.supabaseUrl,
+    anonKey: AppConfig.supabaseAnonKey,
+  );
 
   runApp(const TransApp());
 }
@@ -80,7 +78,7 @@ class _TransAppState extends State<TransApp> {
             foregroundColor: Colors.white,
           )
       ),
-      home: MainScreen(
+      home: HomeScreen(
         onThemeChanged: _toggleTheme,
         isDarkMode: _themeMode == ThemeMode.dark,
       ),
