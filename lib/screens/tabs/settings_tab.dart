@@ -4,7 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import '../../services/supabase_service.dart';
-import '../../services/history_manager.dart'; // Import History Manager
+import '../../services/history_manager.dart';
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
@@ -90,7 +90,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  // NEW: Clear History Dialog
   Future<void> _clearHistory() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -115,6 +114,58 @@ class _SettingsTabState extends State<SettingsTab> {
       await SearchHistoryManager.clearHistory();
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Search history cleared.")));
     }
+  }
+
+  // NEW: Manage Blocked Users
+  void _showBlockedUsers() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => FutureBuilder<List<Map<String, dynamic>>>(
+        future: SupabaseService.getBlockedUsers(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          
+          final users = snapshot.data ?? [];
+          return Container(
+            padding: const EdgeInsets.all(20),
+            height: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                const SizedBox(height: 16),
+                if (users.isEmpty)
+                  const Expanded(child: Center(child: Text("No blocked users"))),
+                if (users.isNotEmpty)
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: users.length,
+                      separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                      itemBuilder: (ctx, idx) {
+                        final u = users[idx];
+                        return ListTile(
+                          leading: CircleAvatar(backgroundImage: u['avatar_url'] != null ? NetworkImage(u['avatar_url']) : null, child: u['avatar_url'] == null ? const Icon(Icons.person) : null),
+                          title: Text(u['username'] ?? "Unknown", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                          trailing: TextButton(
+                            onPressed: () async {
+                              await SupabaseService.unblockUser(u['id']);
+                              Navigator.pop(context); // Close to refresh
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Unblocked ${u['username']}")));
+                            },
+                            child: const Text("Unblock"),
+                          ),
+                        );
+                      },
+                    ),
+                  )
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -183,6 +234,13 @@ class _SettingsTabState extends State<SettingsTab> {
           Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
+            ListTile(
+              leading: const Icon(Icons.block, color: Colors.orange),
+              title: Text("Blocked Users", style: TextStyle(color: textColor)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _showBlockedUsers,
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text("Clear Search History", style: TextStyle(color: Colors.red)),

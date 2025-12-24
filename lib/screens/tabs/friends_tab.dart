@@ -128,6 +128,28 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
+  void _blockUser(BuildContext context, String userId, String username) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Theme.of(ctx).cardColor,
+        title: Text("Block @$username?", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
+        content: const Text("They will no longer see your location or profile. This action can be undone in Settings."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await SupabaseService.blockUser(userId);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked @$username")));
+            },
+            child: const Text("Block", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
@@ -167,12 +189,14 @@ class _FriendsTabState extends State<FriendsTab> {
                 itemBuilder: (ctx, idx) {
                   final loc = locations[idx];
                   final userId = loc['user_id'];
+                  // Don't show myself
+                  if (userId == SupabaseService.currentUser?.id) return const SizedBox.shrink();
+
                   double dist = 0;
                   if (widget.currentPosition != null) {
                     dist = Geolocator.distanceBetween(widget.currentPosition!.latitude, widget.currentPosition!.longitude, loc['latitude'], loc['longitude']);
                   }
 
-                  // RESTORED: Styled Container for friends
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12),
                     padding: const EdgeInsets.all(16),
@@ -185,17 +209,36 @@ class _FriendsTabState extends State<FriendsTab> {
                       children: [
                         Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle), child: const Center(child: Icon(Icons.person, color: Colors.blue))),
                         const SizedBox(width: 16),
-                        FutureBuilder<String?>(
-                          future: SupabaseService.getUsername(userId),
-                          builder: (context, snap) {
-                            final name = snap.data ?? "User ${userId.toString().substring(0,4)}";
-                            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
-                              const SizedBox(height: 2), 
-                              Text("${(dist/1000).toStringAsFixed(1)} km away", style: const TextStyle(fontSize: 12, color: Colors.grey))
-                            ]);
-                          }
+                        Expanded(
+                          child: FutureBuilder<String?>(
+                            future: SupabaseService.getUsername(userId),
+                            builder: (context, snap) {
+                              final name = snap.data ?? "User ${userId.toString().substring(0,4)}";
+                              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text(name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
+                                const SizedBox(height: 2), 
+                                Text("${(dist/1000).toStringAsFixed(1)} km away", style: const TextStyle(fontSize: 12, color: Colors.grey))
+                              ]);
+                            }
+                          ),
                         ),
+                        // NEW: More Options (Block)
+                        PopupMenuButton<String>(
+                          icon: Icon(Icons.more_vert, color: textColor),
+                          color: Theme.of(context).cardColor,
+                          onSelected: (val) async {
+                             if (val == 'block') {
+                               final name = await SupabaseService.getUsername(userId) ?? "User";
+                               if (mounted) _blockUser(context, userId, name);
+                             }
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'block',
+                              child: Row(children: [Icon(Icons.block, color: Colors.red, size: 18), SizedBox(width: 8), Text("Block", style: TextStyle(color: Colors.red))]),
+                            )
+                          ],
+                        )
                       ],
                     ),
                   );

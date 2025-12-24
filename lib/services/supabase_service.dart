@@ -30,41 +30,29 @@ class SupabaseService {
     await client.auth.signOut();
   }
 
-  // UPDATE: Change Password
   static Future<void> updatePassword(String newPassword) async {
     await client.auth.updateUser(UserAttributes(password: newPassword));
   }
 
-  // UPDATE: Change Email
   static Future<void> updateEmail(String newEmail) async {
     await client.auth.updateUser(UserAttributes(email: newEmail));
   }
 
-  // UPDATE: Change Username (Metadata & Profile Table)
   static Future<void> updateUsername(String newUsername) async {
     final user = currentUser;
     if (user == null) return;
-
-    // Update Auth Metadata
     await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
-    
-    // Update Public Profile
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
 
-  // UPDATE: Upload & Set Avatar
   static Future<String?> uploadAvatar(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
-
     final fileExt = imageFile.path.split('.').last;
     final fileName = '${user.id}/avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-
     try {
       await client.storage.from('avatars').upload(fileName, imageFile);
       final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
-      
-      // Update profile with new avatar URL
       await client.from('profiles').update({'avatar_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
@@ -77,23 +65,14 @@ class SupabaseService {
   static Future<String?> uploadTicket(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
-
-    // We use a fixed name 'ticket' so it overwrites the old one
     final fileExt = imageFile.path.split('.').last;
     final fileName = '${user.id}/ticket.$fileExt';
-
     try {
-      // Upsert: Overwrite if exists
       await client.storage.from('tickets').upload(fileName, imageFile, fileOptions: const FileOptions(upsert: true));
-      
-      // Get URL with a timestamp query param to bust cache
       final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
-      
-      // Save this URL to the profile so we can sync it across devices
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
-      print("Ticket Upload error: $e");
       return null;
     }
   }
@@ -119,7 +98,7 @@ class SupabaseService {
     }
   }
 
-  // --- FRIENDS & SEARCH ---
+  // --- FRIENDS & BLOCKING ---
   static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     if (query.length < 3) return [];
     try {
@@ -138,11 +117,7 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) throw "Not logged in";
     if (user.id == friendId) throw "You cannot add yourself";
-
-    await client.from('friends').insert({
-      'user_id': user.id,
-      'friend_id': friendId,
-    });
+    await client.from('friends').insert({'user_id': user.id, 'friend_id': friendId});
   }
 
   static Future<String?> getUsername(String userId) async {
@@ -154,7 +129,45 @@ class SupabaseService {
     }
   }
 
-  // --- LOCATION & CHAT (Unchanged mainly) ---
+  // NEW: Blocking Logic
+  static Future<void> blockUser(String userIdToBlock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').insert({
+      'blocker_id': user.id,
+      'blocked_id': userIdToBlock,
+    });
+  }
+
+  static Future<void> unblockUser(String userIdToUnblock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').delete().match({
+      'blocker_id': user.id,
+      'blocked_id': userIdToUnblock,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
+    final user = currentUser;
+    if (user == null) return [];
+    try {
+      // 1. Get IDs blocked by current user
+      final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
+      final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
+      
+      if (blockedIds.isEmpty) return [];
+
+      // 2. Fetch profiles for those IDs
+      // FIXED: Replaced .in_() with .filter('id', 'in', list)
+      final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
+      return List<Map<String, dynamic>>.from(profiles);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // --- LOCATION & CHAT ---
   static Future<void> updateLocation(Position pos) async {
     final user = currentUser;
     if (user == null) return;
