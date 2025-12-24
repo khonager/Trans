@@ -29,4 +29,10 @@ class SearchHistoryManager {
     final list = prefs.getStringList(_key) ?? [];
     return list.map((item) => Station.fromJson(json.decode(item))).toList();
   }
+
+  // NEW: Clear history
+  static Future<void> clearHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }
