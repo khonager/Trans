@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart'; // REQUIRED
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -68,6 +69,9 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _testVibration() async {
+    // FIX: Check kIsWeb
+    if (kIsWeb) return;
+
     if (await Vibration.hasVibrator() ?? false) {
       List<int> pattern = [0, 500]; 
       if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
@@ -116,7 +120,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  // NEW: Manage Blocked Users
   void _showBlockedUsers() {
     showModalBottomSheet(
       context: context,
