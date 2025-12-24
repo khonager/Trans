@@ -38,7 +38,10 @@ class _RoutesTabState extends State<RoutesTab> {
   final TextEditingController _toController = TextEditingController();
   Station? _fromStation;
   Station? _toStation;
-  List<dynamic> _suggestions = []; // Changed to dynamic to hold Stations OR Favorites
+  
+  // Suggestions now hold either Station objects or Favorite objects
+  List<dynamic> _suggestions = []; 
+  
   String _activeSearchField = '';
   Timer? _debounce;
   bool _isLoadingRoute = false;
@@ -75,44 +78,42 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- LOGIC ---
+  // --- SEARCH LOGIC ---
 
-  // FIX 3: Include Favorites in Search Suggestions
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
-      // Add Favorites to history view as well? 
-      // For now, let's keep history pure, but mixing favorites in search is the key.
       if (mounted) setState(() => _suggestions = history);
       return;
     }
 
     setState(() => _isSuggestionsLoading = true);
     List<dynamic> results = [];
-
-    // 1. Add matching favorites first
     final query = _activeSearchField == 'from' ? _fromController.text : _toController.text;
+
+    // 1. Add matching favorites (Fix 3: Typing favorite name works like station)
     if (query.isNotEmpty) {
       final matchingFavs = _favorites.where((f) => f.label.toLowerCase().contains(query.toLowerCase())).toList();
       results.addAll(matchingFavs);
     }
 
-    // 2. Add history
+    // 2. Add history (filtered by query if present)
     final history = await SearchHistoryManager.getHistory();
     if (history.isNotEmpty) {
-       // Filter history if we have a query
        if (query.isNotEmpty) {
+         // Avoid duplicates if favorite matches history item (simple name check)
          results.addAll(history.where((s) => s.name.toLowerCase().contains(query.toLowerCase())));
        } else {
          results.addAll(history);
        }
     }
 
-    // 3. Add Nearby if "From" and empty query
+    // 3. Add Nearby if "From" is focused and empty
     if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
       final nearby = await TransportApi.getNearbyStops(
           widget.currentPosition!.latitude, widget.currentPosition!.longitude);
       for (var s in nearby) {
+        // Prevent duplicates from history
         if (!results.any((h) => h is Station && h.id == s.id)) results.insert(0, s);
       }
     }
@@ -144,10 +145,15 @@ class _RoutesTabState extends State<RoutesTab> {
         
         if (mounted) {
           setState(() { 
-            // Merge API results, avoiding duplicates from history/favorites (simplified check)
+            // Append API results to existing local suggestions
+            // Simple check to avoid duplicates with existing items
             for (var s in apiResults) {
-               // Just adding to end
-               _suggestions.add(s);
+               bool exists = _suggestions.any((existing) {
+                 if (existing is Station) return existing.id == s.id;
+                 if (existing is Favorite) return existing.station?.id == s.id;
+                 return false;
+               });
+               if (!exists) _suggestions.add(s);
             }
             _isSuggestionsLoading = false; 
           });
@@ -185,7 +191,7 @@ class _RoutesTabState extends State<RoutesTab> {
   // --- FAVORITE LOGIC ---
 
   Future<void> _onFavoriteTap(Favorite fav) async {
-    // Clear suggestions if we tapped a favorite from the list
+    // Hide suggestions
     setState(() {
       _suggestions = [];
       _activeSearchField = '';
@@ -243,14 +249,19 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
-  // FIX 2: Proper Search in Edit Dialog
+  // FIX 2: Enhanced Edit Favorite Dialog
   void _showEditFavoriteDialog(Favorite fav) {
     final labelCtrl = TextEditingController(text: fav.label);
+    
+    // We use a dedicated controller for the search field in the dialog
+    // to prevent state loss on rebuilds
+    final searchCtrl = TextEditingController();
+    
     Station? selectedStation = fav.station;
     String? selectedFriendId = fav.friendId;
     String currentType = fav.type;
     
-    // Search State for Dialog
+    // Dialog Search State
     List<Station> dialogSuggestions = [];
     Timer? dialogDebounce;
     bool dialogLoading = false;
@@ -302,12 +313,16 @@ class _RoutesTabState extends State<RoutesTab> {
                         title: Text(selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                         trailing: IconButton(
                           icon: const Icon(Icons.close),
-                          onPressed: () => setDialogState(() => selectedStation = null),
+                          onPressed: () => setDialogState(() {
+                            selectedStation = null;
+                            searchCtrl.clear(); // Clear search so we can type again
+                          }),
                         ),
                       )
                     else ...[
-                      // SEARCH FIELD INSIDE DIALOG
+                      // SEARCH FIELD
                       TextField(
+                        controller: searchCtrl, // Added Controller
                         decoration: InputDecoration(
                           labelText: "Search Station Name",
                           prefixIcon: const Icon(Icons.search),
@@ -315,6 +330,10 @@ class _RoutesTabState extends State<RoutesTab> {
                         ),
                         onChanged: (val) {
                            if (dialogDebounce?.isActive ?? false) dialogDebounce!.cancel();
+                           if (val.isEmpty) {
+                             setDialogState(() => dialogSuggestions = []);
+                             return;
+                           }
                            dialogDebounce = Timer(const Duration(milliseconds: 400), () async {
                              setDialogState(() => dialogLoading = true);
                              final res = await TransportApi.searchStations(val);
@@ -325,7 +344,7 @@ class _RoutesTabState extends State<RoutesTab> {
                            });
                         },
                       ),
-                      // SUGGESTIONS LIST INSIDE DIALOG
+                      // SUGGESTIONS LIST
                       if (dialogSuggestions.isNotEmpty)
                         Container(
                           height: 150,
@@ -497,8 +516,8 @@ class _RoutesTabState extends State<RoutesTab> {
           DateTime dep = DateTime.parse(depStr);
           DateTime arr = DateTime.parse(arrStr);
           int durationMin = arr.difference(dep).inMinutes;
-          
-          // FIX 5: Format times
+
+          // Format times for display
           String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
           String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
 
