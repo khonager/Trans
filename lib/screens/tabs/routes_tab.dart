@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Added import
 
 import '../../models/station.dart';
 import '../../models/journey.dart';
@@ -40,6 +41,9 @@ class _RoutesTabState extends State<RoutesTab> {
   Timer? _debounce;
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
+  
+  // Haptics
+  bool _isWakeAlarmSet = false;
 
   @override
   void initState() {
@@ -370,9 +374,22 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // MODIFIED: Uses settings for pattern
   Future<void> _triggerVibration() async {
     if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(pattern: [500, 1000, 500, 1000]);
+      final prefs = await SharedPreferences.getInstance();
+      final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+      final intensity = prefs.getInt('vibration_intensity') ?? 128;
+
+      List<int> pattern = [0, 500, 200, 500];
+      if (patternName == 'heartbeat') pattern = [0, 200, 100, 200];
+      if (patternName == 'tick') pattern = [0, 50];
+
+      if (await Vibration.hasAmplitudeControl() ?? false) {
+        Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => intensity).toList());
+      } else {
+        Vibration.vibrate(pattern: pattern);
+      }
     }
   }
 
@@ -571,12 +588,30 @@ class _RoutesTabState extends State<RoutesTab> {
                         ),
                         const SizedBox(width: 8),
                       ],
+                      // FIXED: Removed immediate timer. Now toggles state and notifies user.
                       GestureDetector(
                         onTap: () {
-                          Timer(const Duration(seconds: 2), _triggerVibration);
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake alarm set for next stop!")));
+                          // Toggle logic
+                          setState(() => _isWakeAlarmSet = !_isWakeAlarmSet);
+                          ScaffoldMessenger.of(context).clearSnackBars();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(_isWakeAlarmSet 
+                                ? "Alarm ON. We will vibrate when you are close." 
+                                : "Alarm OFF."
+                              ),
+                              action: _isWakeAlarmSet ? SnackBarAction(
+                                label: "TEST",
+                                onPressed: _triggerVibration,
+                              ) : null,
+                            )
+                          );
                         },
-                        child: _buildActionChip(Icons.vibration, "Wake Me"),
+                        child: _buildActionChip(
+                          Icons.vibration, 
+                          _isWakeAlarmSet ? "Alarm ON" : "Wake Me",
+                          isActive: _isWakeAlarmSet
+                        ),
                       ),
                       const SizedBox(width: 8),
                       if (step.startStationId != null)
@@ -595,11 +630,18 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  Widget _buildActionChip(IconData icon, String label) {
+  Widget _buildActionChip(IconData icon, String label, {bool isActive = false}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
-      child: Row(children: [Icon(icon, size: 14, color: Colors.grey), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12))]),
+      decoration: BoxDecoration(
+        color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), 
+        borderRadius: BorderRadius.circular(20)
+      ),
+      child: Row(children: [
+        Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), 
+        const SizedBox(width: 6), 
+        Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))
+      ]),
     );
   }
 }
