@@ -1,0 +1,51 @@
+name: Build Linux Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Install Linux requirements for Flutter
+      - name: Install Linux Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Enable Linux Desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Create .env file
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+
+      - name: Build Linux Release
+        run: flutter build linux --release
+
+      # Compress the output (the executable + 'data' folder are both needed)
+      - name: Compress Build
+        run: tar -czvf linux-release.tar.gz -C build/linux/x64/release/bundle .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: linux-release.tar.gz
+          retention-days: 7
