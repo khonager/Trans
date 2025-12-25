@@ -335,14 +335,17 @@ class _RoutesTabState extends State<RoutesTab> {
           if (routeStart == null) routeStart = dep;
           routeEnd = arr;
 
-          int durationMin = arr.difference(dep).inMinutes;
+          int legDurationMin = arr.difference(dep).inMinutes;
           
           String lineName = 'Transport';
           String instruction = '';
           String type = 'ride';
 
           String destName = 'Destination';
-          if (leg['destination'] != null && leg['destination']['name'] != null) {
+          // Use direction/headsign as the main "Destination" visible on bus front
+          if (leg['direction'] != null) {
+            destName = leg['direction'].toString();
+          } else if (leg['destination'] != null && leg['destination']['name'] != null) {
             destName = leg['destination']['name'].toString();
           }
           
@@ -351,35 +354,60 @@ class _RoutesTabState extends State<RoutesTab> {
             originName = leg['origin']['name'].toString();
           }
 
+          // RIDE LOGIC
           if (leg['line'] != null && leg['line']['name'] != null) {
             lineName = leg['line']['name'].toString();
-            instruction = "$lineName to $destName";
+            // Show "Departing X" and "Bus Name"
+            instruction = "$lineName → $destName"; 
           } else {
-             // Handle Transfers/Walking/Waits
+             // TRANSFERS / WALKING / WAITS
              if (mode == 'walking') {
-               type = 'walk';
-               lineName = 'Walk';
-               instruction = "Walk to $destName";
+               type = 'wait'; // Use 'wait' type to give it ORANGE border
+               lineName = 'Walk'; // This will be updated below if we detect a wait
+               
+               // Calculate WAIT time (Gap until NEXT leg starts)
+               int waitMin = 0;
+               if (i + 1 < legs.length) {
+                 var nextLeg = legs[i+1];
+                 if (nextLeg['departure'] != null) {
+                   DateTime nextDep = DateTime.parse(nextLeg['departure']);
+                   // The gap is: Next Leg Departure - Current Leg Arrival
+                   waitMin = nextDep.difference(arr).inMinutes;
+                 }
+               }
+
+               if (waitMin > 0) {
+                 // It is a Transfer + Wait
+                 lineName = "Transfer";
+                 // Show breakdown
+                 instruction = "$legDurationMin min walk • $waitMin min wait";
+               } else {
+                 // Just a walk (e.g. final walk to destination)
+                 lineName = "Walk";
+                 instruction = "Walk to $destName";
+               }
+
              } else {
-               // Logic to detect "Wait" vs "Train"
+               // Logic to detect "Wait" vs "Train" (Same origin/dest usually means wait)
                if (originName == destName) {
                  type = 'wait';
                  lineName = 'Wait';
                  instruction = "Wait at $originName";
                  
-                 // FIX: Calculate actual wait time by looking at the next leg
+                 // Look ahead for explicit wait duration
                  if (i + 1 < legs.length) {
                    var nextLeg = legs[i+1];
                    if (nextLeg['departure'] != null) {
                      DateTime nextDep = DateTime.parse(nextLeg['departure']);
-                     int waitMin = nextDep.difference(arr).inMinutes; // arr is arrival of THIS leg (wait leg)
-                     if (waitMin > 0) durationMin = waitMin;
+                     int nextWait = nextDep.difference(arr).inMinutes;
+                     if (nextWait > 0) legDurationMin = nextWait;
                    }
                  }
                } else {
-                  // Fallback
+                  // Fallback for unknown transport
                   String rawMode = mode.toString().toUpperCase();
                   if (rawMode == 'TRANSPORT') {
+                     type = 'wait'; // Treat unknown transfers as waits
                      lineName = 'Transfer';
                      instruction = 'Transfer to $destName';
                   } else {
@@ -403,10 +431,10 @@ class _RoutesTabState extends State<RoutesTab> {
           String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
 
           // Format duration better
-          String durationDisplay = "$durationMin min";
-          if (durationMin > 60) {
-            int h = durationMin ~/ 60;
-            int m = durationMin % 60;
+          String durationDisplay = "$legDurationMin min";
+          if (legDurationMin > 60) {
+            int h = legDurationMin ~/ 60;
+            int m = legDurationMin % 60;
             durationDisplay = "${h}h ${m}min";
           }
 
@@ -831,13 +859,15 @@ class _RoutesTabState extends State<RoutesTab> {
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), 
-                // HIDE TIME for wait steps
+                Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
+                // HIDE TIME for wait/transfer steps
                 if (!isWait)
                   Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
               ]),
               const SizedBox(height: 4),
+              // If it's a transfer, show "line" (Walk/Transfer) and special combined duration
               Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
+              
               if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
               
               if (!isWait)
