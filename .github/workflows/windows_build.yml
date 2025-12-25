@@ -3,7 +3,7 @@ name: Build Windows Desktop
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ "stable" ]
     tags: [ "v*" ]
 
 permissions:

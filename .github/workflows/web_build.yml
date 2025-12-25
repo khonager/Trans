@@ -3,7 +3,7 @@ name: Build & Deploy Web App
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ "stable" ]
 
 # Grant permission to push to the gh-pages branch
 permissions:
