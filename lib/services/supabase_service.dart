@@ -63,22 +63,17 @@ class SupabaseService {
   }
 
   // --- TICKET FEATURES ---
+  
+  // Mobile Upload (Timestamped)
   static Future<String?> uploadTicket(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
     final fileExt = imageFile.path.split('.').last;
-    
-    // CHANGE: Use timestamped filename instead of fixed 'ticket.$fileExt'
+    // Timestamped filename to prevent caching issues
     final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    
     try {
-      // Remove 'upsert: true' as it's a new file anyway, but keeping it doesn't hurt.
       await client.storage.from('tickets').upload(fileName, imageFile);
-      
-      // We don't strictly need the ?t= anymore since the filename is unique, 
-      // but keeping it is fine.
       final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-      
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
@@ -86,19 +81,14 @@ class SupabaseService {
     }
   }
 
-  // 2. UPDATE WEB UPLOAD
+  // Web Upload (Timestamped)
   static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
     final user = currentUser;
     if (user == null) return null;
-    
-    // CHANGE: Use timestamped filename here too
     final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    
     try {
       await client.storage.from('tickets').uploadBinary(fileName, bytes);
-      
       final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-      
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
@@ -115,6 +105,33 @@ class SupabaseService {
       return data?['ticket_url'] as String?;
     } catch (e) {
       return null;
+    }
+  }
+
+  // NEW: Get list of all tickets for the user
+  static Future<List<FileObject>> getTicketHistory() async {
+    final user = currentUser;
+    if (user == null) return [];
+    try {
+      // List all files in the user's folder
+      final List<FileObject> objects = await client.storage.from('tickets').list(path: user.id);
+      // Sort by creation time (newest first)
+      objects.sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
+      return objects;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // NEW: Delete a specific ticket file
+  static Future<void> deleteTicket(String fileName) async {
+    final user = currentUser;
+    if (user == null) return;
+    try {
+      // fileName comes from list() which is just the name, but remove() needs "folder/name"
+      await client.storage.from('tickets').remove(['${user.id}/$fileName']);
+    } catch (e) {
+      print("Delete error: $e");
     }
   }
 
