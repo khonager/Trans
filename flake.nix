@@ -12,6 +12,7 @@
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
+          config.android_sdk.accept_license = true;
         };
         
         # Libraries required for Flutter Linux Desktop
@@ -32,7 +33,7 @@
           libxkbcommon
           dbus
           at-spi2-core
-          epoxy
+          libepoxy # Changed from 'epoxy' to 'libepoxy' which is the standard name in nixpkgs
           
           # NEW: Required for Supabase Auth & Shared Preferences
           libsecret 

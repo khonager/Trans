@@ -20,7 +20,6 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   void initState() {
     super.initState();
-    // Trigger the "Cache -> Network" fetch
     _userRepo.fetchProfile();
   }
 
@@ -34,18 +33,15 @@ class _SettingsTabState extends State<SettingsTab> {
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 600, // Compress slightly for speed
+        maxWidth: 600,
         imageQuality: 80,
       );
       
       if (image == null) return;
 
       setState(() => _isLoading = true);
-
-      // 1. Upload Image
       final publicUrl = await _userRepo.uploadAvatar(image);
 
-      // 2. Update Profile with new URL
       if (publicUrl != null) {
         await _userRepo.updateProfile(avatarUrl: publicUrl);
         if (mounted) {
@@ -90,7 +86,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _signOut() async {
     await Supabase.instance.client.auth.signOut();
-    // App should redirect to login via AuthStateChange in main.dart
   }
 
   @override
@@ -104,7 +99,6 @@ class _SettingsTabState extends State<SettingsTab> {
           final avatarUrl = profile?['avatar_url'] as String?;
           final fullName = profile?['full_name'] as String? ?? 'Traveler';
 
-          // Update controller only if user isn't typing
           if (profile != null && 
               _nameController.text.isEmpty && 
               !_nameController.selection.isValid) {
@@ -171,9 +165,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 40),
-                _buildSectionHeader("Account"),
                 _buildSettingsTile(
                   icon: Icons.logout,
                   title: "Log Out",
@@ -184,21 +176,6 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildSectionHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Text(
-        title.toUpperCase(),
-        style: GoogleFonts.inter(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: Colors.grey[500],
-          letterSpacing: 1.2,
-        ),
       ),
     );
   }
@@ -214,23 +191,11 @@ class _SettingsTabState extends State<SettingsTab> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2))],
       ),
       child: ListTile(
         leading: Icon(icon, color: color),
-        title: Text(
-          title,
-          style: GoogleFonts.inter(
-            fontWeight: FontWeight.w500,
-            color: color,
-          ),
-        ),
+        title: Text(title, style: GoogleFonts.inter(fontWeight: FontWeight.w500, color: color)),
         trailing: const Icon(Icons.chevron_right, color: Colors.grey),
         onTap: onTap,
       ),
