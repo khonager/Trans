@@ -276,6 +276,8 @@ class _SettingsTabState extends State<SettingsTab> {
       children: [
         Row(
           children: [
+            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
+            const SizedBox(width: 16),
             GestureDetector(
               onTap: _pickAvatar,
               child: Container(
@@ -300,8 +302,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ),
             ),
-            const SizedBox(width: 16),
-            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
           ],
         ),
         const SizedBox(height: 10),
