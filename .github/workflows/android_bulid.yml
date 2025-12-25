@@ -1,19 +1,20 @@
-name: Build Android APK
+name: Android Release
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-  # Also builds on every push to main (optional, you can remove this)
+  # Triggers when you push a tag like 'v1.0.0'
   push:
-    branches: [ "stable" ]
+    tags:
+      - 'v*'
+  # Allows you to run this manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build APK
+    name: Build & Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -27,24 +28,29 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Install Dependencies
+      - name: Get Dependencies
         run: flutter pub get
 
-      # Creates the .env file using secrets from your GitHub Repo settings
-      # Go to Settings > Secrets and variables > Actions to add these.
-      - name: Create .env file
-        run: |
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
-
-      - name: Build Release APK
-        # Note: If you haven't set up signing config in android/app/build.gradle,
-        # this will produce an unsigned or debug-signed release APK.
+      - name: Build APK
         run: flutter build apk --release
 
-      - name: Upload APK to Artifacts
-        uses: actions/upload-artifact@v4
+      # This step signs the APK so your phone accepts updates
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
         with:
-          name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 7
+          releaseDirectory: build/app/outputs/flutter-apk
+          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ steps.sign_app.outputs.signedReleaseFile }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
