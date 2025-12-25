@@ -1,73 +1,61 @@
 {
-  description = "Trans App Development Environment";
+  description = "Flutter Travel Companion Development Environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    android-nixpkgs = {
-      url = "github:tadfisher/android-nixpkgs";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, android-nixpkgs }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          config = {
-            android_sdk.accept_license = true;
-            allowUnfree = true;
-          };
+          config.allowUnfree = true;
         };
-
-        androidSdk = android-nixpkgs.sdk.${system} (sdkPkgs: with sdkPkgs; [
-          cmdline-tools-latest
-          build-tools-35-0-0
-          platform-tools
+        
+        # Libraries required for Flutter Linux Desktop
+        buildLibs = with pkgs; [
+          pkg-config
+          cmake
+          ninja
+          gtk3
+          glib
+          pcre
+          util-linux
+          libselinux
+          libsepol
+          libthai
+          libdatrie
+          xorg.libXdmcp
+          xorg.libXtst
+          libxkbcommon
+          dbus
+          at-spi2-core
+          epoxy
           
-          # Platforms
-          platforms-android-36
-          platforms-android-35
-          platforms-android-34
-          platforms-android-33
-          
-          # Native tools
-          ndk-27-0-12077973
-          cmake-3-22-1
-          
-          emulator
-        ]);
-
-        fhs = pkgs.buildFHSEnv {
-          name = "flutter-dev-env";
-          targetPkgs = pkgs: (with pkgs; [
-            androidSdk
-            flutter
-            jdk17
-            
-            # Common libraries needed by unpatched binaries (like aapt2)
-            glibc
-            zlib
-            ncurses5
-            stdenv.cc.cc.lib  # FIX: Replaces 'stdcxx'
-            openssl
-            expat
-          ]);
-          
-          runScript = "bash";
-
-          profile = ''
-            export ANDROID_HOME="${androidSdk}/share/android-sdk"
-            export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
-            export JAVA_HOME="${pkgs.jdk17}"
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}"
-          '';
-        };
-
+          # NEW: Required for Supabase Auth & Shared Preferences
+          libsecret 
+          jsoncpp
+        ];
       in
       {
-        devShells.default = fhs.env;
+        devShells.default = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            flutter
+            jdk17
+            git
+          ] ++ buildLibs;
+
+          # Critical: Set LD_LIBRARY_PATH so the compiled app can find libsecret at runtime
+          shellHook = ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildLibs}:$LD_LIBRARY_PATH
+            export CHROME_EXECUTABLE="${pkgs.chromium}/bin/chromium"
+            
+            echo "Flutter Dev Shell Entered."
+            echo "Dependencies (libsecret, jsoncpp) added to LD_LIBRARY_PATH."
+          '';
+        };
       }
     );
 }
