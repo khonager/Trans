@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   # Also builds on every push to main (optional, you can remove this)
   push:
-    branches: [ "main" ]
+    branches: [ "stable" ]
 
 jobs:
   build:
