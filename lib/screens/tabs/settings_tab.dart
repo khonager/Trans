@@ -87,7 +87,13 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
+    // CHANGED: Added resize and quality settings to keep file size low
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 80,
+    );
     if (picked != null) {
       await SupabaseService.uploadAvatar(File(picked.path));
       _loadProfile();
@@ -270,21 +276,32 @@ class _SettingsTabState extends State<SettingsTab> {
       children: [
         Row(
           children: [
+            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
+            const SizedBox(width: 16),
             GestureDetector(
               onTap: _pickAvatar,
-              child: CircleAvatar(
-                radius: 24,
-                backgroundColor: Colors.indigo,
-                backgroundImage: _profile?['avatar_url'] != null 
-                    ? NetworkImage(_profile!['avatar_url']) 
-                    : null,
-                child: _profile?['avatar_url'] == null 
-                    ? const Icon(Icons.camera_alt, size: 20, color: Colors.white) 
-                    : null,
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: const BoxDecoration(
+                  color: Colors.indigo,
+                  shape: BoxShape.circle,
+                ),
+                child: ClipOval(
+                  child: _profile?['avatar_url'] != null
+                    ? Image.network(
+                        _profile!['avatar_url'],
+                        fit: BoxFit.cover,
+                        // CHANGED: Added loading indicator
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white));
+                        },
+                      )
+                    : const Icon(Icons.camera_alt, size: 20, color: Colors.white),
+                ),
               ),
             ),
-            const SizedBox(width: 16),
-            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
           ],
         ),
         const SizedBox(height: 10),

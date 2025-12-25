@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:flutter/foundation.dart'; // REQUIRED for kIsWeb
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../models/station.dart';
 import '../../models/journey.dart';
@@ -260,6 +262,120 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- ROUTE LOGIC ---
 
+  // Helper method to process raw API legs into UI JourneySteps
+  List<JourneyStep> _processLegs(List legs) {
+    final List<JourneyStep> steps = [];
+    final random = Random();
+
+    print("--- processing ${legs.length} legs ---"); 
+
+    for (int i = 0; i < legs.length; i++) {
+      var leg = legs[i];
+      final mode = leg['mode']; 
+      
+      final depStr = leg['departure'] as String?;
+      final arrStr = leg['arrival'] as String?;
+      if (depStr == null || arrStr == null) continue;
+
+      DateTime dep = DateTime.parse(depStr);
+      DateTime arr = DateTime.parse(arrStr);
+      
+      int legDurationMin = arr.difference(dep).inMinutes;
+      
+      String lineName = 'Transport';
+      String instruction = '';
+      String type = 'ride';
+
+      String destName = 'Destination';
+      if (leg['direction'] != null) {
+        destName = leg['direction'].toString();
+      } else if (leg['destination'] != null && leg['destination']['name'] != null) {
+        destName = leg['destination']['name'].toString();
+      }
+      
+      String originName = '';
+      if (leg['origin'] != null && leg['origin']['name'] != null) {
+        originName = leg['origin']['name'].toString();
+      }
+
+      String durationDisplay = "$legDurationMin min";
+      if (legDurationMin > 60) {
+        int h = legDurationMin ~/ 60;
+        int m = legDurationMin % 60;
+        durationDisplay = "${h}h ${m}min";
+      }
+
+      // === LOGIC BRANCHING ===
+      if (leg['line'] != null && leg['line']['name'] != null) {
+        // --- IT IS A RIDE ---
+        lineName = leg['line']['name'].toString();
+        instruction = "$lineName → $destName"; 
+      } else {
+        // --- IT IS AN ORANGE CARD (Wait/Transfer) ---
+        type = 'wait'; // triggers orange border
+        lineName = 'Wait'; // always show "Wait" on left
+        
+        bool isSameStation = (originName == destName);
+
+        // 1. CALCULATE GAP TO NEXT LEG (Wait Time)
+        int waitMin = 0;
+        if (i + 1 < legs.length) {
+          var nextLeg = legs[i+1];
+          String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
+          if (nextDepStr != null) {
+            DateTime nextDep = DateTime.parse(nextDepStr);
+            waitMin = nextDep.difference(arr).inMinutes;
+            print("Leg $i ($mode): Gap to next leg = $waitMin min");
+          }
+        }
+        if (waitMin < 0) waitMin = 0;
+
+        // 2. CONSTRUCT DISPLAY TEXT
+        if (isSameStation) {
+          // PURE WAIT
+          instruction = "Wait at $originName";
+          durationDisplay = "Wait • $waitMin min";
+          // If we calculated 0 wait but it's a pure wait, we trust the gap calculation
+          // Sometimes legDurationMin contains the scheduled wait
+          if (legDurationMin > waitMin) {
+             // Fallback if gap calculation failed or leg duration is more accurate for stationary waits
+             durationDisplay = "Wait • $legDurationMin min";
+          }
+        } else {
+          // TRANSFER (Movement between A and B)
+          instruction = "Transfer to $destName";
+          // Always show: Transfer X min . Wait Y min
+          durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
+        }
+      }
+
+      String? platform;
+      if (leg['platform'] != null) platform = "Plat ${leg['platform']}";
+      else if (leg['departurePlatform'] != null) platform = "Plat ${leg['departurePlatform']}";
+
+      String? startStationId;
+      if (leg['origin'] != null && leg['origin']['id'] != null) {
+        startStationId = leg['origin']['id'];
+      }
+
+      String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
+      String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+
+      steps.add(JourneyStep(
+        type: type,
+        line: lineName,
+        instruction: instruction,
+        duration: durationDisplay,
+        departureTime: depTime,
+        arrivalTime: arrTime,
+        chatCount: (type == 'ride') ? random.nextInt(15) + 1 : null,
+        startStationId: startStationId,
+        platform: platform,
+      ));
+    }
+    return steps;
+  }
+
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     
@@ -312,55 +428,25 @@ class _RoutesTabState extends State<RoutesTab> {
 
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = [];
-        final random = Random();
-
-        for (var leg in legs) {
-          final mode = leg['mode'] ?? 'transport';
-          String lineName = 'Transport';
-          if (leg['line'] != null && leg['line']['name'] != null) {
-            lineName = leg['line']['name'].toString();
-          } else {
-            String rawMode = mode.toString().toUpperCase();
-            lineName = rawMode == 'TRANSPORT' ? 'Train' : rawMode;
-          }
-
-          String destName = 'Destination';
-          if (leg['destination'] != null && leg['destination']['name'] != null) {
-            destName = leg['destination']['name'].toString();
-          }
-
-          String? platform;
-          if (leg['platform'] != null) platform = "Plat ${leg['platform']}";
-          else if (leg['departurePlatform'] != null) platform = "Plat ${leg['departurePlatform']}";
-
-          String? startStationId;
-          if (leg['origin'] != null && leg['origin']['id'] != null) {
-            startStationId = leg['origin']['id'];
-          }
-
-          final depStr = leg['departure'] as String?;
-          final arrStr = leg['arrival'] as String?;
-          if (depStr == null || arrStr == null) continue;
-
-          DateTime dep = DateTime.parse(depStr);
-          DateTime arr = DateTime.parse(arrStr);
-          int durationMin = arr.difference(dep).inMinutes;
-
-          String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
-          String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-
-          steps.add(JourneyStep(
-            type: (mode == 'walking') ? 'walk' : 'ride',
-            line: lineName,
-            instruction: (mode == 'walking') ? "Walk to $destName" : "$lineName to $destName",
-            duration: "$durationMin min",
-            departureTime: depTime,
-            arrivalTime: arrTime,
-            chatCount: (mode != 'walking') ? random.nextInt(15) + 1 : null,
-            startStationId: startStationId,
-            platform: platform,
-          ));
+        final List<JourneyStep> steps = _processLegs(legs);
+        
+        // Calculate Total Duration
+        String totalDurationStr = "";
+        if (legs.isNotEmpty) {
+           var firstLeg = legs.first;
+           var lastLeg = legs.last;
+           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+             DateTime routeStart = DateTime.parse(firstLeg['departure']);
+             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+             int totalMin = routeEnd.difference(routeStart).inMinutes;
+             int hrs = totalMin ~/ 60;
+             int mins = totalMin % 60;
+             if (hrs > 0) {
+               totalDurationStr = "${hrs}h ${mins}min";
+             } else {
+               totalDurationStr = "${mins}min";
+             }
+           }
         }
 
         final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -375,6 +461,8 @@ class _RoutesTabState extends State<RoutesTab> {
           title: _toStation!.name,
           subtitle: "${from.name} → ${_toStation!.name}",
           eta: eta,
+          totalDuration: totalDurationStr, 
+          destinationId: _toStation!.id, 
           steps: steps,
         );
 
@@ -394,6 +482,80 @@ class _RoutesTabState extends State<RoutesTab> {
     } catch (e) {
       setState(() => _isLoadingRoute = false);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
+    }
+  }
+
+  // UPDATED: Opens a NEW tab instead of updating inline
+  Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
+    Navigator.pop(context); // Close alternatives sheet first
+    setState(() => _isLoadingRoute = true);
+    
+    try {
+      final journeyData = await TransportApi.searchJourney(
+        startStationId,
+        finalDestId,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: newDepartureTime,
+        isArrival: false
+      );
+
+      if (journeyData != null && journeyData['legs'] != null) {
+        final List legs = journeyData['legs'];
+        final List<JourneyStep> steps = _processLegs(legs);
+        
+        String totalDurationStr = "";
+        if (legs.isNotEmpty) {
+           var firstLeg = legs.first;
+           var lastLeg = legs.last;
+           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+             DateTime routeStart = DateTime.parse(firstLeg['departure']);
+             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+             int totalMin = routeEnd.difference(routeStart).inMinutes;
+             int hrs = totalMin ~/ 60;
+             int mins = totalMin % 60;
+             totalDurationStr = hrs > 0 ? "${hrs}h ${mins}min" : "${mins}min";
+           }
+        }
+
+        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
+        String eta = "--:--";
+        if (journeyData['arrival'] != null) {
+          final arr = DateTime.parse(journeyData['arrival']);
+          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+        }
+        
+        String title = "Alternative Route";
+        if (_toStation != null && _toStation!.id == finalDestId) {
+          title = _toStation!.name;
+        }
+
+        final newTab = RouteTab(
+          id: newTabId,
+          title: title, 
+          subtitle: "Alternative from ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}",
+          eta: eta,
+          totalDuration: totalDurationStr, 
+          destinationId: finalDestId, 
+          steps: steps,
+        );
+
+        setState(() {
+          _tabs.add(newTab);
+          _activeTabId = newTabId;
+          _isLoadingRoute = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Alternative route opened in new tab")));
+        }
+
+      } else {
+        setState(() => _isLoadingRoute = false);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find route from selected departure.")));
+      }
+    } catch (e) {
+      setState(() => _isLoadingRoute = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to open alternative: $e")));
     }
   }
 
@@ -465,25 +627,77 @@ class _RoutesTabState extends State<RoutesTab> {
     if (startStationId == null) return;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(ctx).cardColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-        content: FutureBuilder<String?>(
-          future: SupabaseService.getStationImage(startStationId),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
-            final imageUrl = snapshot.data;
-            if (imageUrl == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]);
-            return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(imageUrl, fit: BoxFit.cover, height: 200));
-          },
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            backgroundColor: Theme.of(ctx).cardColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
+                IconButton(
+                  icon: const Icon(Icons.add_a_photo, color: Colors.blue),
+                  onPressed: () async {
+                    final picker = ImagePicker();
+                    final picked = await picker.pickImage(
+                      source: ImageSource.camera,
+                      maxWidth: 1024,
+                      maxHeight: 1024,
+                      imageQuality: 80,
+                    );
+                    
+                    if (picked != null) {
+                       try {
+                         dynamic imageFile;
+                         if (kIsWeb) {
+                           imageFile = await picked.readAsBytes();
+                         } else {
+                           imageFile = File(picked.path);
+                         }
+                         
+                         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Uploading...")));
+                         
+                         await SupabaseService.uploadStationImage(imageFile, startStationId);
+                         
+                         setStateDialog(() {}); 
+                         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Guide updated!")));
+                       } catch (e) {
+                         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                       }
+                    }
+                  },
+                )
+              ],
+            ),
+            content: FutureBuilder<String?>(
+              future: SupabaseService.getStationImage(startStationId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
+                final imageUrl = snapshot.data;
+                if (imageUrl == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]);
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(16), 
+                  child: Image.network(
+                    imageUrl, 
+                    fit: BoxFit.cover, 
+                    height: 200,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()));
+                    },
+                  ),
+                );
+              },
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
+          );
+        }
       ),
     );
   }
 
-  void _showAlternatives(BuildContext context, String stationId) {
+  void _showAlternatives(BuildContext context, String stationId, int stepIndex, String finalDestinationId) {
      showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).cardColor,
@@ -493,6 +707,7 @@ class _RoutesTabState extends State<RoutesTab> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
+            
             return ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: snapshot.data!.length,
@@ -502,7 +717,15 @@ class _RoutesTabState extends State<RoutesTab> {
                 final dir = dep['direction'] ?? 'Unknown';
                 final planned = DateTime.parse(dep['plannedWhen']);
                 final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time));
+                
+                return ListTile(
+                  leading: const Icon(Icons.directions_bus), 
+                  title: Text("$line to $dir"), 
+                  trailing: Text(time),
+                  onTap: () {
+                    _openNewRouteTab(planned, stationId, finalDestinationId);
+                  },
+                );
               },
             );
           },
@@ -512,9 +735,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _triggerVibration() async {
-    // FIX: Check kIsWeb to prevent crash
     if (kIsWeb) return; 
-
     if (await Vibration.hasVibrator() ?? false) {
       final prefs = await SharedPreferences.getInstance();
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
@@ -591,7 +812,7 @@ class _RoutesTabState extends State<RoutesTab> {
                       children: [
                         GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
                         const SizedBox(width: 12),
-                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text(_selectedDate == null ? "Now" : "${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]))),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
                       ],
                     ),
@@ -669,30 +890,75 @@ class _RoutesTabState extends State<RoutesTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       children: [
-        Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
-        Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
+                  Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+              child: Row(
+                children: [
+                   const Icon(Icons.timer_outlined, size: 16, color: Colors.green),
+                   const SizedBox(width: 4),
+                   Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            )
+          ],
+        ),
         const SizedBox(height: 20),
-        ...route.steps.map((step) {
-          return Container(
-            margin: const EdgeInsets.only(bottom: 16),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
-              const SizedBox(height: 4),
-              Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)),
-              if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
-              Padding(padding: const EdgeInsets.only(top: 12), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-                GestureDetector(onTap: () => _showChat(context, step.line), child: _buildActionChip(Icons.chat_bubble_outline, "Chat")),
-                const SizedBox(width: 8),
-                if (!step.line.toLowerCase().contains('bus')) ...[GestureDetector(onTap: () => _showGuide(context, step.startStationId), child: _buildActionChip(Icons.camera_alt_outlined, "Guide")), const SizedBox(width: 8)],
-                GestureDetector(onTap: () { setState(() => _isWakeAlarmSet = !_isWakeAlarmSet); ScaffoldMessenger.of(context).clearSnackBars(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isWakeAlarmSet ? "Alarm ON" : "Alarm OFF"), action: _isWakeAlarmSet ? SnackBarAction(label: "TEST", onPressed: _triggerVibration) : null)); }, child: _buildActionChip(Icons.vibration, _isWakeAlarmSet ? "Alarm ON" : "Wake Me", isActive: _isWakeAlarmSet)),
-                const SizedBox(width: 8),
-                if (step.startStationId != null) GestureDetector(onTap: () => _showAlternatives(context, step.startStationId!), child: _buildActionChip(Icons.alt_route, "Alternatives")),
-              ])))
-            ]),
-          );
-        }).toList()
+        
+        for (int i = 0; i < route.steps.length; i++) ...[
+          (() {
+            final step = route.steps[i];
+            final isWait = step.type == 'wait';
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isWait ? Colors.orange.withOpacity(0.1) : cardColor, 
+                borderRadius: BorderRadius.circular(16),
+                border: isWait ? Border.all(color: Colors.orange.withOpacity(0.3)) : null
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
+                  // HIDE TIME for wait/transfer steps
+                  if (!isWait)
+                    Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
+                ]),
+                const SizedBox(height: 4),
+                
+                // Show duration subtitle
+                if (step.line == 'Wait' && isWait)
+                  Text(step.duration, style: const TextStyle(color: Colors.orange))
+                else
+                  Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
+                
+                if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                
+                if (!isWait)
+                  Padding(padding: const EdgeInsets.only(top: 12), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
+                    GestureDetector(onTap: () => _showChat(context, step.line), child: _buildActionChip(Icons.chat_bubble_outline, "Chat")),
+                    const SizedBox(width: 8),
+                    if (!step.line.toLowerCase().contains('bus')) ...[GestureDetector(onTap: () => _showGuide(context, step.startStationId), child: _buildActionChip(Icons.camera_alt_outlined, "Guide")), const SizedBox(width: 8)],
+                    GestureDetector(onTap: () { setState(() => _isWakeAlarmSet = !_isWakeAlarmSet); ScaffoldMessenger.of(context).clearSnackBars(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isWakeAlarmSet ? "Alarm ON" : "Alarm OFF"), action: _isWakeAlarmSet ? SnackBarAction(label: "TEST", onPressed: _triggerVibration) : null)); }, child: _buildActionChip(Icons.vibration, _isWakeAlarmSet ? "Alarm ON" : "Wake Me", isActive: _isWakeAlarmSet)),
+                    const SizedBox(width: 8),
+                    if (step.startStationId != null) GestureDetector(onTap: () => _showAlternatives(context, step.startStationId!, i, route.destinationId), child: _buildActionChip(Icons.alt_route, "Alternatives")),
+                  ])))
+              ]),
+            );
+          }())
+        ]
       ],
     );
   }
@@ -702,7 +968,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
-// --- COMPLETELY SEPARATE & ROBUST DIALOG ---
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
