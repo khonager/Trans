@@ -37,7 +37,7 @@ jobs:
       - name: Build macOS Release
         run: flutter build macos --release
 
-      # UPDATED: Dynamically finds the .app file instead of guessing the name
+      # Dynamically finds the .app file instead of guessing the name
       - name: Compress Build
         run: |
           APP_PATH=$(find build/macos/Build/Products/Release -name "*.app" -maxdepth 1 | head -n 1)
