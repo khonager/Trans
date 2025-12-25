@@ -33,15 +33,25 @@
           libxkbcommon
           dbus
           at-spi2-core
-          libepoxy # Changed from 'epoxy' to 'libepoxy' which is the standard name in nixpkgs
+          libepoxy
           
           # NEW: Required for Supabase Auth & Shared Preferences
           libsecret 
           jsoncpp
+          
+          # Fix for "sysprof-capture-4 not found" error
+          sysprof
         ];
       in
       {
         devShells.default = pkgs.mkShell {
+          # nativeBuildInputs is often better for tools like pkg-config
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            cmake
+            ninja
+          ];
+
           buildInputs = with pkgs; [
             flutter
             jdk17
@@ -53,8 +63,12 @@
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildLibs}:$LD_LIBRARY_PATH
             export CHROME_EXECUTABLE="${pkgs.chromium}/bin/chromium"
             
+            # Explicitly add PKG_CONFIG_PATH for sysprof to avoid the build error
+            # We add both lib/pkgconfig and share/pkgconfig just in case
+            export PKG_CONFIG_PATH=${pkgs.sysprof}/lib/pkgconfig:${pkgs.sysprof}/share/pkgconfig:$PKG_CONFIG_PATH
+            
             echo "Flutter Dev Shell Entered."
-            echo "Dependencies (libsecret, jsoncpp) added to LD_LIBRARY_PATH."
+            echo "Dependencies (libsecret, jsoncpp, sysprof) added to LD_LIBRARY_PATH."
           '';
         };
       }
