@@ -31,7 +31,8 @@ class RouteTab {
   final String title;
   final String subtitle;
   final String eta;
-  final String totalDuration; // NEW: Total time
+  final String totalDuration;
+  final String destinationId; // NEW: Needed for recalculation
   final List<JourneyStep> steps;
 
   RouteTab({
@@ -40,6 +41,7 @@ class RouteTab {
     required this.subtitle,
     required this.eta,
     required this.totalDuration,
+    required this.destinationId,
     required this.steps,
   });
 }

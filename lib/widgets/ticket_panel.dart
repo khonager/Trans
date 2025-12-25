@@ -115,8 +115,23 @@ class _TicketPanelState extends State<TicketPanel> {
     if (newName != null && newName.isNotEmpty) {
       try {
         final dir = file.parent;
-        // Keep unique ID or add timestamp to avoid conflict if user types same name
         final newPath = '${dir.path}/$newName.jpg';
+        
+        // NEW: Check for collision
+        if (await File(newPath).exists()) {
+          if (mounted) {
+            await showDialog(
+              context: context, 
+              builder: (ctx) => AlertDialog(
+                title: const Text("Name Exists"),
+                content: Text("A ticket named '$newName' already exists. Please choose a different name."),
+                actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
+              )
+            );
+          }
+          return; // Stop here
+        }
+
         await file.rename(newPath);
         refreshCallback();
       } catch (e) {
@@ -279,7 +294,6 @@ class _TicketPanelState extends State<TicketPanel> {
                           final date = file.lastModifiedSync();
                           final dateStr = "${date.day}/${date.month}/${date.year}";
 
-                          // Display custom name if user renamed it, otherwise standard
                           String displayName = filename.startsWith("hist_") ? "Ticket ${files.length - idx}" : filename;
 
                           return ListTile(
