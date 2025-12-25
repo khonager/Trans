@@ -1,88 +1,98 @@
-// lib/main.dart
-import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import 'config/app_config.dart';
-import 'screens/home_screen.dart';
+class UserRepository {
+  final SupabaseClient _supabase = Supabase.instance.client;
+  
+  // Stream controller to broadcast profile updates to your UI
+  final _profileController = StreamController<Map<String, dynamic>>.broadcast();
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
-  // REMOVED try-catch: Now if this fails, we will see the REAL error in the console
-  await Supabase.initialize(
-    url: AppConfig.supabaseUrl,
-    anonKey: AppConfig.supabaseAnonKey,
-  );
+  // Expose the stream so your UI can listen to it (using StreamBuilder)
+  Stream<Map<String, dynamic>> get profileStream => _profileController.stream;
 
-  runApp(const TransApp());
-}
+  /// The main function to call when the app starts or the profile screen loads.
+  /// 
+  /// Strategy: 
+  /// 1. Load from Local Storage immediately (Fast, works offline).
+  /// 2. Fetch from Supabase (Slow, requires internet).
+  /// 3. If Supabase succeeds, update Local Storage + UI.
+  Future<void> fetchProfile() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
 
-class TransApp extends StatefulWidget {
-  const TransApp({super.key});
+    // 1. Try to load local cache first
+    await _loadFromLocalCache();
 
-  @override
-  State<TransApp> createState() => _TransAppState();
-}
+    // 2. Fetch from network
+    try {
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .single();
 
-class _TransAppState extends State<TransApp> {
-  ThemeMode _themeMode = ThemeMode.dark;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTheme();
+      // 3. If successful, save to cache and emit new data
+      if (data != null) {
+        await _saveToLocalCache(data);
+        _profileController.add(data);
+      }
+    } catch (e) {
+      // If network fails, we just rely on the local data we already emitted.
+      print('Network fetch failed, using offline data: $e');
+    }
   }
 
-  Future<void> _loadTheme() async {
+  /// Updates the profile.
+  /// 
+  /// Strategy:
+  /// 1. Update Supabase (Cloud).
+  /// 2. If successful, update Local Cache immediately.
+  Future<void> updateProfile({String? fullName, String? avatarUrl}) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
+
+    final updates = {
+      'id': user.id,
+      'updated_at': DateTime.now().toIso8601String(),
+      if (fullName != null) 'full_name': fullName,
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
+    };
+
+    // 1. Push to Cloud
+    // This will throw an error if offline, which is good (user knows update failed)
+    final response = await _supabase
+        .from('profiles')
+        .upsert(updates)
+        .select()
+        .single();
+
+    // 2. Update Local Cache with the response from server
+    await _saveToLocalCache(response);
+    
+    // 3. Update the stream so UI refreshes
+    _profileController.add(response);
+  }
+
+  // --- Helper Methods ---
+
+  Future<void> _saveToLocalCache(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
-    final isDark = prefs.getBool('isDark') ?? true;
-    setState(() {
-      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    });
+    await prefs.setString('cached_profile', jsonEncode(data));
   }
 
-  Future<void> _toggleTheme(bool isDark) async {
+  Future<void> _loadFromLocalCache() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isDark', isDark);
-    setState(() {
-      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Trans',
-      debugShowCheckedModeBanner: false,
-      themeMode: _themeMode,
-      theme: ThemeData(
-          brightness: Brightness.light,
-          scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: Colors.white,
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-          )
-      ),
-      darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF000000),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: const Color(0xFF111827),
-          useMaterial3: true,
-          appBarTheme: AppBarTheme(
-            backgroundColor: Colors.black.withOpacity(0.7),
-            foregroundColor: Colors.white,
-          )
-      ),
-      home: HomeScreen(
-        onThemeChanged: _toggleTheme,
-        isDarkMode: _themeMode == ThemeMode.dark,
-      ),
-    );
+    final jsonString = prefs.getString('cached_profile');
+    
+    if (jsonString != null) {
+      try {
+        final data = jsonDecode(jsonString);
+        _profileController.add(data);
+      } catch (e) {
+        print('Error parsing local cache: $e');
+      }
+    }
   }
 }
