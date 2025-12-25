@@ -262,7 +262,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- ROUTE LOGIC ---
 
-  // Helper method to process raw API legs into UI JourneySteps
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -309,32 +308,31 @@ class _RoutesTabState extends State<RoutesTab> {
       } else {
           // Handle Transfers/Walking/Waits
           if (mode == 'walking') {
-            type = 'wait'; 
-            lineName = 'Wait'; // Triggers orange card styling
+            type = 'wait'; // Using 'wait' type for orange border
+            lineName = 'Wait'; // "Wait" appears on left
             
             // Calculate WAIT time (Gap until NEXT leg starts)
             int waitMin = 0;
             if (i + 1 < legs.length) {
               var nextLeg = legs[i+1];
-              // Try 'departure' first (real-time), fallback to 'plannedDeparture' (schedule)
+              // Fallback priority: real departure -> planned departure -> arrival
               String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
               
               if (nextDepStr != null) {
                 DateTime nextDep = DateTime.parse(nextDepStr);
-                // The wait is: Next Vehicle Departure - Current Walk Arrival
-                int diff = nextDep.difference(arr).inMinutes;
-                if (diff > 0) waitMin = diff;
+                // Difference between next leg departure and current leg arrival
+                waitMin = nextDep.difference(arr).inMinutes;
               }
             }
+            
+            // Ensure wait time is non-negative
+            if (waitMin < 0) waitMin = 0;
 
             instruction = "Transfer to $destName";
             
-            if (waitMin > 0) {
-              // Exact format requested: "Transfer 3 min • Wait 6 min"
-              durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
-            } else {
-              durationDisplay = "Transfer $legDurationMin min";
-            }
+            // "Transfer 3 min • Wait 6 min"
+            durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
+            
           } else {
             // Pure Wait logic (Origin == Dest)
             if (originName == destName) {
@@ -342,14 +340,12 @@ class _RoutesTabState extends State<RoutesTab> {
               lineName = 'Wait';
               instruction = "Wait at $originName";
               
-              // Recalculate duration if possible from next leg
               if (i + 1 < legs.length) {
                 var nextLeg = legs[i+1];
                 String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
                 if (nextDepStr != null) {
                   DateTime nextDep = DateTime.parse(nextDepStr);
                   int nextWait = nextDep.difference(arr).inMinutes;
-                  // Exact format: "Wait • 12 min"
                   if (nextWait > 0) durationDisplay = "Wait • $nextWait min";
                 }
               }
@@ -503,21 +499,11 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
-  // New method to update a specific leg of the journey and recalculate
-  Future<void> _updateRouteFromStep(int stepIndex, DateTime newDepartureTime, String startStationId, String finalDestId) async {
-    // 1. Find active tab
-    final currentTab = _tabs.firstWhere((t) => t.id == _activeTabId);
-    if (currentTab == null) return;
-
-    // 2. Keep previous steps
-    List<JourneyStep> keptSteps = [];
-    if (stepIndex > 0) {
-      keptSteps = currentTab.steps.sublist(0, stepIndex);
-    }
-
+  // UPDATED: Opens a NEW tab instead of updating inline
+  Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
+    Navigator.pop(context); // Close alternatives sheet first
     setState(() => _isLoadingRoute = true);
     
-    // 3. Re-query API from the new point
     try {
       final journeyData = await TransportApi.searchJourney(
         startStationId,
@@ -529,42 +515,55 @@ class _RoutesTabState extends State<RoutesTab> {
 
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
-        final List<JourneyStep> newSteps = _processLegs(legs);
+        final List<JourneyStep> steps = _processLegs(legs);
         
-        // 4. Merge
-        List<JourneyStep> finalSteps = [...keptSteps, ...newSteps];
-
-        // 5. Recalculate Totals
-        String totalDurationStr = currentTab.totalDuration; 
-        String eta = currentTab.eta;
-
-        if (finalSteps.isNotEmpty) {
-           final lastStep = finalSteps.last;
-           eta = lastStep.arrivalTime;
+        String totalDurationStr = "";
+        if (legs.isNotEmpty) {
+           var firstLeg = legs.first;
+           var lastLeg = legs.last;
+           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+             DateTime routeStart = DateTime.parse(firstLeg['departure']);
+             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+             int totalMin = routeEnd.difference(routeStart).inMinutes;
+             int hrs = totalMin ~/ 60;
+             int mins = totalMin % 60;
+             totalDurationStr = hrs > 0 ? "${hrs}h ${mins}min" : "${mins}min";
+           }
         }
 
-        // 6. Replace Tab
-        final updatedTab = RouteTab(
-          id: currentTab.id,
-          title: currentTab.title,
-          subtitle: currentTab.subtitle,
+        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
+        String eta = "--:--";
+        if (journeyData['arrival'] != null) {
+          final arr = DateTime.parse(journeyData['arrival']);
+          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+        }
+        
+        // Find destination name properly (this assumes we know the ID, name lookup would be better but ID works for logic)
+        // For title, we can try to fetch name or just use "New Route" if name unavailable instantly
+        // A clean way is to re-use _toStation name if ID matches, or just "Alternative"
+        String title = "Alternative Route";
+        if (_toStation != null && _toStation!.id == finalDestId) {
+          title = _toStation!.name;
+        }
+
+        final newTab = RouteTab(
+          id: newTabId,
+          title: title, 
+          subtitle: "Alternative from ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}",
           eta: eta,
           totalDuration: totalDurationStr, 
-          destinationId: currentTab.destinationId,
-          steps: finalSteps,
+          destinationId: finalDestId, 
+          steps: steps,
         );
 
         setState(() {
-          int idx = _tabs.indexWhere((t) => t.id == currentTab.id);
-          if (idx != -1) {
-            _tabs[idx] = updatedTab;
-          }
+          _tabs.add(newTab);
+          _activeTabId = newTabId;
           _isLoadingRoute = false;
         });
         
         if (mounted) {
-          Navigator.pop(context); // Close sheet
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Route updated")));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Alternative route opened in new tab")));
         }
 
       } else {
@@ -573,7 +572,7 @@ class _RoutesTabState extends State<RoutesTab> {
       }
     } catch (e) {
       setState(() => _isLoadingRoute = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Update failed: $e")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to open alternative: $e")));
     }
   }
 
@@ -741,7 +740,8 @@ class _RoutesTabState extends State<RoutesTab> {
                   title: Text("$line to $dir"), 
                   trailing: Text(time),
                   onTap: () {
-                    _updateRouteFromStep(stepIndex, planned, stationId, finalDestinationId);
+                    // NEW: Open new tab instead of update
+                    _openNewRouteTab(planned, stationId, finalDestinationId);
                   },
                 );
               },
