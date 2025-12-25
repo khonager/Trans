@@ -262,13 +262,16 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- ROUTE LOGIC ---
 
+  // Helper method to process raw API legs into UI JourneySteps
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
 
+    print("--- processing ${legs.length} legs ---"); 
+
     for (int i = 0; i < legs.length; i++) {
       var leg = legs[i];
-      final mode = leg['mode'] ?? 'transport';
+      final mode = leg['mode']; 
       
       final depStr = leg['departure'] as String?;
       final arrStr = leg['arrival'] as String?;
@@ -302,65 +305,48 @@ class _RoutesTabState extends State<RoutesTab> {
         durationDisplay = "${h}h ${m}min";
       }
 
+      // === LOGIC BRANCHING ===
       if (leg['line'] != null && leg['line']['name'] != null) {
+        // --- IT IS A RIDE ---
         lineName = leg['line']['name'].toString();
         instruction = "$lineName → $destName"; 
       } else {
-          // Handle Transfers/Walking/Waits
-          if (mode == 'walking') {
-            type = 'wait'; // Using 'wait' type for orange border
-            lineName = 'Wait'; // "Wait" appears on left
-            
-            // Calculate WAIT time (Gap until NEXT leg starts)
-            int waitMin = 0;
-            if (i + 1 < legs.length) {
-              var nextLeg = legs[i+1];
-              // Fallback priority: real departure -> planned departure -> arrival
-              String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
-              
-              if (nextDepStr != null) {
-                DateTime nextDep = DateTime.parse(nextDepStr);
-                // Difference between next leg departure and current leg arrival
-                waitMin = nextDep.difference(arr).inMinutes;
-              }
-            }
-            
-            // Ensure wait time is non-negative
-            if (waitMin < 0) waitMin = 0;
+        // --- IT IS AN ORANGE CARD (Wait/Transfer) ---
+        type = 'wait'; // triggers orange border
+        lineName = 'Wait'; // always show "Wait" on left
+        
+        bool isSameStation = (originName == destName);
 
-            instruction = "Transfer to $destName";
-            
-            // "Transfer 3 min • Wait 6 min"
-            durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
-            
-          } else {
-            // Pure Wait logic (Origin == Dest)
-            if (originName == destName) {
-              type = 'wait';
-              lineName = 'Wait';
-              instruction = "Wait at $originName";
-              
-              if (i + 1 < legs.length) {
-                var nextLeg = legs[i+1];
-                String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
-                if (nextDepStr != null) {
-                  DateTime nextDep = DateTime.parse(nextDepStr);
-                  int nextWait = nextDep.difference(arr).inMinutes;
-                  if (nextWait > 0) durationDisplay = "Wait • $nextWait min";
-                }
-              }
-            } else {
-              String rawMode = mode.toString().toUpperCase();
-              if (rawMode == 'TRANSPORT') {
-                  type = 'wait'; 
-                  lineName = 'Transfer';
-                  instruction = 'Transfer to $destName';
-              } else {
-                  lineName = rawMode;
-                  instruction = "$lineName to $destName";
-              }
-            }
+        // 1. CALCULATE GAP TO NEXT LEG (Wait Time)
+        int waitMin = 0;
+        if (i + 1 < legs.length) {
+          var nextLeg = legs[i+1];
+          String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
+          if (nextDepStr != null) {
+            DateTime nextDep = DateTime.parse(nextDepStr);
+            waitMin = nextDep.difference(arr).inMinutes;
+            print("Leg $i ($mode): Gap to next leg = $waitMin min");
           }
+        }
+        if (waitMin < 0) waitMin = 0;
+
+        // 2. CONSTRUCT DISPLAY TEXT
+        if (isSameStation) {
+          // PURE WAIT
+          instruction = "Wait at $originName";
+          durationDisplay = "Wait • $waitMin min";
+          // If we calculated 0 wait but it's a pure wait, we trust the gap calculation
+          // Sometimes legDurationMin contains the scheduled wait
+          if (legDurationMin > waitMin) {
+             // Fallback if gap calculation failed or leg duration is more accurate for stationary waits
+             durationDisplay = "Wait • $legDurationMin min";
+          }
+        } else {
+          // TRANSFER (Movement between A and B)
+          instruction = "Transfer to $destName";
+          // Always show: Transfer X min . Wait Y min
+          durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
+        }
       }
 
       String? platform;
@@ -538,9 +524,6 @@ class _RoutesTabState extends State<RoutesTab> {
           eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
         }
         
-        // Find destination name properly (this assumes we know the ID, name lookup would be better but ID works for logic)
-        // For title, we can try to fetch name or just use "New Route" if name unavailable instantly
-        // A clean way is to re-use _toStation name if ID matches, or just "Alternative"
         String title = "Alternative Route";
         if (_toStation != null && _toStation!.id == finalDestId) {
           title = _toStation!.name;
@@ -740,7 +723,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   title: Text("$line to $dir"), 
                   trailing: Text(time),
                   onTap: () {
-                    // NEW: Open new tab instead of update
                     _openNewRouteTab(planned, stationId, finalDestinationId);
                   },
                 );
