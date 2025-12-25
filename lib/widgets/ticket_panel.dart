@@ -1,11 +1,11 @@
-import 'dart:io' show File; // Only import File for mobile checks
+import 'dart:io' show File;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'package:supabase_flutter/supabase_flutter.dart'; // For FileObject
+import 'package:supabase_flutter/supabase_flutter.dart'; 
 import '../services/supabase_service.dart';
 
 class TicketPanel extends StatefulWidget {
@@ -18,7 +18,6 @@ class TicketPanel extends StatefulWidget {
 class _TicketPanelState extends State<TicketPanel> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   
-  // We use String path instead of File object to be web-safe
   String? _localTicketPath; 
   bool _isLoading = false;
 
@@ -78,7 +77,6 @@ class _TicketPanelState extends State<TicketPanel> {
           final response = await http.get(Uri.parse(remoteUrl));
           if (response.statusCode == 200) {
             final dir = await getApplicationDocumentsDirectory();
-            // Use timestamp to ensure unique filename
             final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
             final file = File('${dir.path}/$filename');
             await file.writeAsBytes(response.bodyBytes);
@@ -97,7 +95,13 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<void> _pickAndUploadTicket() async {
     final picker = ImagePicker();
-    final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
+    // Resizing image to prevent massive uploads
+    final XFile? picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 80,
+    );
     
     if (picked != null) {
       setState(() => _isLoading = true);
@@ -138,9 +142,9 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // --- NEW FEATURE: Full Screen View ---
-  void _showFullImage() {
-    if (_localTicketPath == null) return;
+  void _showFullImage({String? overridePath}) {
+    final path = overridePath ?? _localTicketPath;
+    if (path == null) return;
     
     showDialog(
       context: context,
@@ -152,9 +156,15 @@ class _TicketPanelState extends State<TicketPanel> {
           children: [
             InteractiveViewer(
               maxScale: 4.0,
-              child: kIsWeb
-                ? Image.network(_localTicketPath!)
-                : Image.file(File(_localTicketPath!)),
+              child: (kIsWeb || path.startsWith('http'))
+                ? Image.network(
+                    path,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(child: CircularProgressIndicator(color: Colors.white));
+                    },
+                  )
+                : Image.file(File(path)),
             ),
             Positioned(
               top: 40,
@@ -170,7 +180,6 @@ class _TicketPanelState extends State<TicketPanel> {
     );
   }
 
-  // --- NEW FEATURE: Manage Old Tickets ---
   void _manageTicketHistory() {
     showModalBottomSheet(
       context: context,
@@ -186,7 +195,7 @@ class _TicketPanelState extends State<TicketPanel> {
               children: [
                 Text("Ticket History", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
                 const SizedBox(height: 8),
-                const Text("Long press on your ticket to view this menu.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const Text("Tap to view, delete to remove.", style: TextStyle(fontSize: 12, color: Colors.grey)),
                 const SizedBox(height: 16),
                 Expanded(
                   child: FutureBuilder<List<FileObject>>(
@@ -202,10 +211,8 @@ class _TicketPanelState extends State<TicketPanel> {
                         separatorBuilder: (_,__) => const Divider(color: Colors.white10),
                         itemBuilder: (ctx, idx) {
                           final file = files[idx];
-                          // Parse Timestamp from filename (ticket_1708....jpg)
                           String dateStr = file.createdAt ?? "Unknown Date";
                           try {
-                            // Extract numbers from filename if possible
                             final nameParts = file.name.split('_');
                             if (nameParts.length > 1) {
                               final tsString = nameParts[1].split('.')[0];
@@ -221,6 +228,10 @@ class _TicketPanelState extends State<TicketPanel> {
                             leading: const Icon(Icons.airplane_ticket),
                             title: Text(file.name, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
                             subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)),
+                            onTap: () {
+                              final url = SupabaseService.getTicketPublicUrl(file.name);
+                              _showFullImage(overridePath: url);
+                            },
                             trailing: IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
                               onPressed: () async {
@@ -238,7 +249,7 @@ class _TicketPanelState extends State<TicketPanel> {
                                 
                                 if (confirm == true) {
                                   await SupabaseService.deleteTicket(file.name);
-                                  setModalState(() {}); // Refresh list
+                                  setModalState(() {}); 
                                 }
                               },
                             ),
@@ -330,8 +341,8 @@ class _TicketPanelState extends State<TicketPanel> {
                     ? Column(
                         children: [
                           GestureDetector(
-                            onTap: _showFullImage, // Single Tap -> Full Screen
-                            onLongPress: _manageTicketHistory, // Long Press -> Delete/History
+                            onTap: () => _showFullImage(), 
+                            onLongPress: _manageTicketHistory, 
                             child: Container(
                               constraints: const BoxConstraints(maxHeight: 500),
                               decoration: BoxDecoration(
@@ -341,7 +352,16 @@ class _TicketPanelState extends State<TicketPanel> {
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(16),
                                 child: kIsWeb 
-                                  ? Image.network(_localTicketPath!) 
+                                  ? Image.network(
+                                      _localTicketPath!,
+                                      loadingBuilder: (context, child, loadingProgress) {
+                                         if (loadingProgress == null) return child;
+                                         return const SizedBox(
+                                           height: 200,
+                                           child: Center(child: CircularProgressIndicator())
+                                         );
+                                      },
+                                    ) 
                                   : Image.file(File(_localTicketPath!)),
                               ),
                             ),
