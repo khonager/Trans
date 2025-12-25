@@ -309,40 +309,48 @@ class _RoutesTabState extends State<RoutesTab> {
       } else {
           // Handle Transfers/Walking/Waits
           if (mode == 'walking') {
-            type = 'wait'; // Using 'wait' type for orange border
-            lineName = 'Transfer';
+            type = 'wait'; 
+            lineName = 'Wait'; // Triggers orange card styling
             
-            // Calculate actual WAIT time (Gap until NEXT leg starts)
+            // Calculate WAIT time (Gap until NEXT leg starts)
             int waitMin = 0;
             if (i + 1 < legs.length) {
               var nextLeg = legs[i+1];
-              if (nextLeg['departure'] != null) {
-                DateTime nextDep = DateTime.parse(nextLeg['departure']);
-                waitMin = nextDep.difference(arr).inMinutes;
+              // Try 'departure' first (real-time), fallback to 'plannedDeparture' (schedule)
+              String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
+              
+              if (nextDepStr != null) {
+                DateTime nextDep = DateTime.parse(nextDepStr);
+                // The wait is: Next Vehicle Departure - Current Walk Arrival
+                int diff = nextDep.difference(arr).inMinutes;
+                if (diff > 0) waitMin = diff;
               }
             }
 
+            instruction = "Transfer to $destName";
+            
             if (waitMin > 0) {
-              instruction = "Transfer to $destName";
-              // Fixed: "X min Walk . Y min Wait"
-              durationDisplay = "$legDurationMin min Walk • $waitMin min Wait";
+              // Exact format requested: "Transfer 3 min • Wait 6 min"
+              durationDisplay = "Transfer $legDurationMin min • Wait $waitMin min";
             } else {
-              instruction = "Walk to $destName";
-              durationDisplay = "$legDurationMin min Walk";
+              durationDisplay = "Transfer $legDurationMin min";
             }
           } else {
+            // Pure Wait logic (Origin == Dest)
             if (originName == destName) {
               type = 'wait';
               lineName = 'Wait';
               instruction = "Wait at $originName";
               
+              // Recalculate duration if possible from next leg
               if (i + 1 < legs.length) {
                 var nextLeg = legs[i+1];
-                if (nextLeg['departure'] != null) {
-                  DateTime nextDep = DateTime.parse(nextLeg['departure']);
+                String? nextDepStr = nextLeg['departure'] ?? nextLeg['plannedDeparture'];
+                if (nextDepStr != null) {
+                  DateTime nextDep = DateTime.parse(nextDepStr);
                   int nextWait = nextDep.difference(arr).inMinutes;
-                  // Fixed: Only display the time, no extra "Wait" text to avoid "Wait . 12 min Wait"
-                  if (nextWait > 0) durationDisplay = "$nextWait min";
+                  // Exact format: "Wait • 12 min"
+                  if (nextWait > 0) durationDisplay = "Wait • $nextWait min";
                 }
               }
             } else {
@@ -527,7 +535,7 @@ class _RoutesTabState extends State<RoutesTab> {
         List<JourneyStep> finalSteps = [...keptSteps, ...newSteps];
 
         // 5. Recalculate Totals
-        String totalDurationStr = currentTab.totalDuration; // Fallback
+        String totalDurationStr = currentTab.totalDuration; 
         String eta = currentTab.eta;
 
         if (finalSteps.isNotEmpty) {
@@ -541,7 +549,7 @@ class _RoutesTabState extends State<RoutesTab> {
           title: currentTab.title,
           subtitle: currentTab.subtitle,
           eta: eta,
-          totalDuration: totalDurationStr, // Keep orig or approx
+          totalDuration: totalDurationStr, 
           destinationId: currentTab.destinationId,
           steps: finalSteps,
         );
@@ -942,12 +950,17 @@ class _RoutesTabState extends State<RoutesTab> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
+                  // HIDE TIME for wait/transfer steps
                   if (!isWait)
                     Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
                 ]),
                 const SizedBox(height: 4),
                 
-                Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
+                // Show duration subtitle
+                if (step.line == 'Wait' && isWait)
+                  Text(step.duration, style: const TextStyle(color: Colors.orange))
+                else
+                  Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
                 
                 if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
                 
