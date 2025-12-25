@@ -366,6 +366,16 @@ class _RoutesTabState extends State<RoutesTab> {
                  type = 'wait';
                  lineName = 'Wait';
                  instruction = "Wait at $originName";
+                 
+                 // FIX: Calculate actual wait time by looking at the next leg
+                 if (i + 1 < legs.length) {
+                   var nextLeg = legs[i+1];
+                   if (nextLeg['departure'] != null) {
+                     DateTime nextDep = DateTime.parse(nextLeg['departure']);
+                     int waitMin = nextDep.difference(arr).inMinutes; // arr is arrival of THIS leg (wait leg)
+                     if (waitMin > 0) durationMin = waitMin;
+                   }
+                 }
                } else {
                   // Fallback
                   String rawMode = mode.toString().toUpperCase();
@@ -392,11 +402,19 @@ class _RoutesTabState extends State<RoutesTab> {
           String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
           String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
 
+          // Format duration better
+          String durationDisplay = "$durationMin min";
+          if (durationMin > 60) {
+            int h = durationMin ~/ 60;
+            int m = durationMin % 60;
+            durationDisplay = "${h}h ${m}min";
+          }
+
           steps.add(JourneyStep(
             type: type,
             line: lineName,
             instruction: instruction,
-            duration: "$durationMin min",
+            duration: durationDisplay,
             departureTime: depTime,
             arrivalTime: arrTime,
             chatCount: (type == 'ride') ? random.nextInt(15) + 1 : null,
@@ -697,7 +715,7 @@ class _RoutesTabState extends State<RoutesTab> {
                       children: [
                         GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
                         const SizedBox(width: 12),
-                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text(_selectedDate == null ? "Now" : "${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]))),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
                       ],
                     ),
@@ -812,7 +830,12 @@ class _RoutesTabState extends State<RoutesTab> {
               border: isWait ? Border.all(color: Colors.orange.withOpacity(0.3)) : null
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), 
+                // HIDE TIME for wait steps
+                if (!isWait)
+                  Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
+              ]),
               const SizedBox(height: 4),
               Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
               if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),

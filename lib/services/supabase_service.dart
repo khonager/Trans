@@ -64,12 +64,15 @@ class SupabaseService {
 
   // --- TICKET FEATURES ---
   
-  // Mobile Upload (Timestamped)
+  // Mobile Upload (Timestamped) with cleanup
   static Future<String?> uploadTicket(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
+    
+    // NEW: Clean up old tickets so only the latest remains in cloud
+    await _deleteOldTickets(user.id);
+
     final fileExt = imageFile.path.split('.').last;
-    // Timestamped filename to prevent caching issues
     final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
     try {
       await client.storage.from('tickets').upload(fileName, imageFile);
@@ -81,10 +84,14 @@ class SupabaseService {
     }
   }
 
-  // Web Upload (Timestamped)
+  // Web Upload (Timestamped) with cleanup
   static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
     final user = currentUser;
     if (user == null) return null;
+
+    // NEW: Clean up old tickets
+    await _deleteOldTickets(user.id);
+
     final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
     try {
       await client.storage.from('tickets').uploadBinary(fileName, bytes);
@@ -94,6 +101,19 @@ class SupabaseService {
     } catch (e) {
       print("Web upload error: $e");
       return null;
+    }
+  }
+  
+  // Helper to delete old tickets from the user's folder
+  static Future<void> _deleteOldTickets(String userId) async {
+    try {
+      final List<FileObject> objects = await client.storage.from('tickets').list(path: userId);
+      if (objects.isNotEmpty) {
+        final List<String> pathsToDelete = objects.map((f) => '$userId/${f.name}').toList();
+        await client.storage.from('tickets').remove(pathsToDelete);
+      }
+    } catch (e) {
+      print("Error cleaning old tickets: $e");
     }
   }
 
@@ -108,14 +128,12 @@ class SupabaseService {
     }
   }
 
-  // Get list of all tickets for the user
+  // Get list of all tickets for the user (from Cloud)
   static Future<List<FileObject>> getTicketHistory() async {
     final user = currentUser;
     if (user == null) return [];
     try {
-      // List all files in the user's folder
       final List<FileObject> objects = await client.storage.from('tickets').list(path: user.id);
-      // Sort by creation time (newest first)
       objects.sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
       return objects;
     } catch (e) {
@@ -123,19 +141,16 @@ class SupabaseService {
     }
   }
   
-  // NEW: Helper to get public URL for a specific file in history
   static String getTicketPublicUrl(String fileName) {
     final user = currentUser;
     if (user == null) return "";
     return client.storage.from('tickets').getPublicUrl('${user.id}/$fileName');
   }
 
-  // Delete a specific ticket file
   static Future<void> deleteTicket(String fileName) async {
     final user = currentUser;
     if (user == null) return;
     try {
-      // fileName comes from list() which is just the name, but remove() needs "folder/name"
       await client.storage.from('tickets').remove(['${user.id}/$fileName']);
     } catch (e) {
       print("Delete error: $e");
@@ -252,12 +267,10 @@ class SupabaseService {
     }
   }
   
-  // NEW: Upload Station Image
   static Future<void> uploadStationImage(dynamic imageFile, String stationId) async {
     final user = currentUser;
     if (user == null) return;
     
-    // Create a unique filename
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = '$stationId/$timestamp.jpg';
 
@@ -273,7 +286,6 @@ class SupabaseService {
       publicUrl = client.storage.from('station_guides').getPublicUrl(fileName);
       
       if (publicUrl != null) {
-        // Upsert into station_images table
         await client.from('station_images').upsert({
           'station_id': stationId,
           'image_url': publicUrl,
