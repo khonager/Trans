@@ -262,6 +262,130 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- ROUTE LOGIC ---
 
+  // Helper method to process raw API legs into UI JourneySteps
+  // Extracted to be reused by _findRoutes and _updateRouteFromStep
+  List<JourneyStep> _processLegs(List legs) {
+    final List<JourneyStep> steps = [];
+    final random = Random();
+
+    for (int i = 0; i < legs.length; i++) {
+      var leg = legs[i];
+      final mode = leg['mode'] ?? 'transport';
+      
+      final depStr = leg['departure'] as String?;
+      final arrStr = leg['arrival'] as String?;
+      if (depStr == null || arrStr == null) continue;
+
+      DateTime dep = DateTime.parse(depStr);
+      DateTime arr = DateTime.parse(arrStr);
+      
+      int legDurationMin = arr.difference(dep).inMinutes;
+      
+      String lineName = 'Transport';
+      String instruction = '';
+      String type = 'ride';
+
+      String destName = 'Destination';
+      if (leg['direction'] != null) {
+        destName = leg['direction'].toString();
+      } else if (leg['destination'] != null && leg['destination']['name'] != null) {
+        destName = leg['destination']['name'].toString();
+      }
+      
+      String originName = '';
+      if (leg['origin'] != null && leg['origin']['name'] != null) {
+        originName = leg['origin']['name'].toString();
+      }
+
+      String durationDisplay = "$legDurationMin min";
+      if (legDurationMin > 60) {
+        int h = legDurationMin ~/ 60;
+        int m = legDurationMin % 60;
+        durationDisplay = "${h}h ${m}min";
+      }
+
+      if (leg['line'] != null && leg['line']['name'] != null) {
+        lineName = leg['line']['name'].toString();
+        instruction = "$lineName → $destName"; 
+      } else {
+          // Handle Transfers/Walking/Waits
+          if (mode == 'walking') {
+            type = 'wait'; // Using 'wait' type for orange border
+            lineName = 'Transfer';
+            
+            // Calculate actual WAIT time (Gap until NEXT leg starts)
+            int waitMin = 0;
+            if (i + 1 < legs.length) {
+              var nextLeg = legs[i+1];
+              if (nextLeg['departure'] != null) {
+                DateTime nextDep = DateTime.parse(nextLeg['departure']);
+                waitMin = nextDep.difference(arr).inMinutes;
+              }
+            }
+
+            if (waitMin > 0) {
+              instruction = "Transfer to $destName";
+              // Explicitly format the duration string: First Walk, Then Wait
+              durationDisplay = "$legDurationMin min Walk • $waitMin min Wait";
+            } else {
+              instruction = "Walk to $destName";
+              durationDisplay = "$legDurationMin min Walk";
+            }
+          } else {
+            if (originName == destName) {
+              type = 'wait';
+              lineName = 'Wait';
+              instruction = "Wait at $originName";
+              
+              if (i + 1 < legs.length) {
+                var nextLeg = legs[i+1];
+                if (nextLeg['departure'] != null) {
+                  DateTime nextDep = DateTime.parse(nextLeg['departure']);
+                  int nextWait = nextDep.difference(arr).inMinutes;
+                  if (nextWait > 0) durationDisplay = "$nextWait min Wait";
+                }
+              }
+            } else {
+              String rawMode = mode.toString().toUpperCase();
+              if (rawMode == 'TRANSPORT') {
+                  type = 'wait'; 
+                  lineName = 'Transfer';
+                  instruction = 'Transfer to $destName';
+              } else {
+                  lineName = rawMode;
+                  instruction = "$lineName to $destName";
+              }
+            }
+          }
+      }
+
+      String? platform;
+      if (leg['platform'] != null) platform = "Plat ${leg['platform']}";
+      else if (leg['departurePlatform'] != null) platform = "Plat ${leg['departurePlatform']}";
+
+      String? startStationId;
+      if (leg['origin'] != null && leg['origin']['id'] != null) {
+        startStationId = leg['origin']['id'];
+      }
+
+      String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
+      String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+
+      steps.add(JourneyStep(
+        type: type,
+        line: lineName,
+        instruction: instruction,
+        duration: durationDisplay,
+        departureTime: depTime,
+        arrivalTime: arrTime,
+        chatCount: (type == 'ride') ? random.nextInt(15) + 1 : null,
+        startStationId: startStationId,
+        platform: platform,
+      ));
+    }
+    return steps;
+  }
+
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     
@@ -314,154 +438,25 @@ class _RoutesTabState extends State<RoutesTab> {
 
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = [];
-        final random = Random();
-        
-        DateTime? routeStart;
-        DateTime? routeEnd;
-
-        for (int i = 0; i < legs.length; i++) {
-          var leg = legs[i];
-          final mode = leg['mode'] ?? 'transport';
-          
-          final depStr = leg['departure'] as String?;
-          final arrStr = leg['arrival'] as String?;
-          if (depStr == null || arrStr == null) continue;
-
-          DateTime dep = DateTime.parse(depStr);
-          DateTime arr = DateTime.parse(arrStr);
-          
-          // Capture start/end for total duration
-          if (routeStart == null) routeStart = dep;
-          routeEnd = arr;
-
-          int legDurationMin = arr.difference(dep).inMinutes;
-          
-          String lineName = 'Transport';
-          String instruction = '';
-          String type = 'ride';
-
-          String destName = 'Destination';
-          // Use direction/headsign as the main "Destination" visible on bus front
-          if (leg['direction'] != null) {
-            destName = leg['direction'].toString();
-          } else if (leg['destination'] != null && leg['destination']['name'] != null) {
-            destName = leg['destination']['name'].toString();
-          }
-          
-          String originName = '';
-          if (leg['origin'] != null && leg['origin']['name'] != null) {
-            originName = leg['origin']['name'].toString();
-          }
-
-          // RIDE LOGIC
-          if (leg['line'] != null && leg['line']['name'] != null) {
-            lineName = leg['line']['name'].toString();
-            // Show "Departing X" and "Bus Name"
-            instruction = "$lineName → $destName"; 
-          } else {
-             // TRANSFERS / WALKING / WAITS
-             if (mode == 'walking') {
-               type = 'wait'; // Use 'wait' type to give it ORANGE border
-               lineName = 'Walk'; // This will be updated below if we detect a wait
-               
-               // Calculate WAIT time (Gap until NEXT leg starts)
-               int waitMin = 0;
-               if (i + 1 < legs.length) {
-                 var nextLeg = legs[i+1];
-                 if (nextLeg['departure'] != null) {
-                   DateTime nextDep = DateTime.parse(nextLeg['departure']);
-                   // The gap is: Next Leg Departure - Current Leg Arrival
-                   waitMin = nextDep.difference(arr).inMinutes;
-                 }
-               }
-
-               if (waitMin > 0) {
-                 // It is a Transfer + Wait
-                 lineName = "Transfer";
-                 // Show breakdown
-                 instruction = "$legDurationMin min walk • $waitMin min wait";
-               } else {
-                 // Just a walk (e.g. final walk to destination)
-                 lineName = "Walk";
-                 instruction = "Walk to $destName";
-               }
-
-             } else {
-               // Logic to detect "Wait" vs "Train" (Same origin/dest usually means wait)
-               if (originName == destName) {
-                 type = 'wait';
-                 lineName = 'Wait';
-                 instruction = "Wait at $originName";
-                 
-                 // Look ahead for explicit wait duration
-                 if (i + 1 < legs.length) {
-                   var nextLeg = legs[i+1];
-                   if (nextLeg['departure'] != null) {
-                     DateTime nextDep = DateTime.parse(nextLeg['departure']);
-                     int nextWait = nextDep.difference(arr).inMinutes;
-                     if (nextWait > 0) legDurationMin = nextWait;
-                   }
-                 }
-               } else {
-                  // Fallback for unknown transport
-                  String rawMode = mode.toString().toUpperCase();
-                  if (rawMode == 'TRANSPORT') {
-                     type = 'wait'; // Treat unknown transfers as waits
-                     lineName = 'Transfer';
-                     instruction = 'Transfer to $destName';
-                  } else {
-                     lineName = rawMode;
-                     instruction = "$lineName to $destName";
-                  }
-               }
-             }
-          }
-
-          String? platform;
-          if (leg['platform'] != null) platform = "Plat ${leg['platform']}";
-          else if (leg['departurePlatform'] != null) platform = "Plat ${leg['departurePlatform']}";
-
-          String? startStationId;
-          if (leg['origin'] != null && leg['origin']['id'] != null) {
-            startStationId = leg['origin']['id'];
-          }
-
-          String depTime = "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}";
-          String arrTime = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-
-          // Format duration better
-          String durationDisplay = "$legDurationMin min";
-          if (legDurationMin > 60) {
-            int h = legDurationMin ~/ 60;
-            int m = legDurationMin % 60;
-            durationDisplay = "${h}h ${m}min";
-          }
-
-          steps.add(JourneyStep(
-            type: type,
-            line: lineName,
-            instruction: instruction,
-            duration: durationDisplay,
-            departureTime: depTime,
-            arrivalTime: arrTime,
-            chatCount: (type == 'ride') ? random.nextInt(15) + 1 : null,
-            startStationId: startStationId,
-            platform: platform,
-          ));
-        }
+        final List<JourneyStep> steps = _processLegs(legs);
         
         // Calculate Total Duration
         String totalDurationStr = "";
-        if (routeStart != null && routeEnd != null) {
-          int totalMin = routeEnd.difference(routeStart).inMinutes;
-          int hrs = totalMin ~/ 60;
-          int mins = totalMin % 60;
-          if (hrs > 0) {
-            totalDurationStr = "${hrs}h ${mins}min";
-          } else {
-            totalDurationStr = "${mins}min";
-          }
+        if (legs.isNotEmpty) {
+           var firstLeg = legs.first;
+           var lastLeg = legs.last;
+           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+             DateTime routeStart = DateTime.parse(firstLeg['departure']);
+             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+             int totalMin = routeEnd.difference(routeStart).inMinutes;
+             int hrs = totalMin ~/ 60;
+             int mins = totalMin % 60;
+             if (hrs > 0) {
+               totalDurationStr = "${hrs}h ${mins}min";
+             } else {
+               totalDurationStr = "${mins}min";
+             }
+           }
         }
 
         final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -477,6 +472,7 @@ class _RoutesTabState extends State<RoutesTab> {
           subtitle: "${from.name} → ${_toStation!.name}",
           eta: eta,
           totalDuration: totalDurationStr, 
+          destinationId: _toStation!.id, // Store destination ID
           steps: steps,
         );
 
@@ -499,6 +495,86 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
+  // New method to update a specific leg of the journey and recalculate
+  Future<void> _updateRouteFromStep(int stepIndex, DateTime newDepartureTime, String startStationId, String finalDestId) async {
+    // 1. Find active tab
+    final currentTab = _tabs.firstWhere((t) => t.id == _activeTabId);
+    if (currentTab == null) return;
+
+    // 2. Keep previous steps
+    List<JourneyStep> keptSteps = [];
+    if (stepIndex > 0) {
+      keptSteps = currentTab.steps.sublist(0, stepIndex);
+    }
+
+    setState(() => _isLoadingRoute = true);
+    
+    // 3. Re-query API from the new point
+    try {
+      final journeyData = await TransportApi.searchJourney(
+        startStationId,
+        finalDestId,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: newDepartureTime,
+        isArrival: false
+      );
+
+      if (journeyData != null && journeyData['legs'] != null) {
+        final List legs = journeyData['legs'];
+        final List<JourneyStep> newSteps = _processLegs(legs);
+        
+        // 4. Merge
+        List<JourneyStep> finalSteps = [...keptSteps, ...newSteps];
+
+        // 5. Recalculate Totals
+        // (Using raw departure of first step and arrival of last step)
+        String totalDurationStr = currentTab.totalDuration; // Fallback
+        String eta = currentTab.eta;
+
+        if (finalSteps.isNotEmpty) {
+           // We need to parse times from strings back to calculate diff, 
+           // or we rely on the API result for the *new* segment and add it to the old.
+           // Simplification: Just update ETA based on new last step
+           final lastStep = finalSteps.last;
+           // The date part is missing in 'HH:mm', so accurate duration recalc is hard without full Date objects.
+           // However, for the user experience, just updating the list is the key request.
+           eta = lastStep.arrivalTime;
+        }
+
+        // 6. Replace Tab
+        final updatedTab = RouteTab(
+          id: currentTab.id,
+          title: currentTab.title,
+          subtitle: currentTab.subtitle,
+          eta: eta,
+          totalDuration: totalDurationStr, // Keep orig or approx
+          destinationId: currentTab.destinationId,
+          steps: finalSteps,
+        );
+
+        setState(() {
+          int idx = _tabs.indexWhere((t) => t.id == currentTab.id);
+          if (idx != -1) {
+            _tabs[idx] = updatedTab;
+          }
+          _isLoadingRoute = false;
+        });
+        
+        if (mounted) {
+          Navigator.pop(context); // Close sheet
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Route updated")));
+        }
+
+      } else {
+        setState(() => _isLoadingRoute = false);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find route from selected departure.")));
+      }
+    } catch (e) {
+      setState(() => _isLoadingRoute = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Update failed: $e")));
+    }
+  }
+
   void _closeTab(String id) {
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
@@ -509,6 +585,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
+    // ... (Existing chat logic)
     final msgController = TextEditingController();
     showModalBottomSheet(
       context: context,
@@ -637,7 +714,8 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  void _showAlternatives(BuildContext context, String stationId) {
+  // Updated to support picking an alternative to change the route
+  void _showAlternatives(BuildContext context, String stationId, int stepIndex, String finalDestinationId) {
      showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).cardColor,
@@ -647,6 +725,7 @@ class _RoutesTabState extends State<RoutesTab> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return Center(child: Text("No alternatives found.", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)));
+            
             return ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: snapshot.data!.length,
@@ -656,7 +735,16 @@ class _RoutesTabState extends State<RoutesTab> {
                 final dir = dep['direction'] ?? 'Unknown';
                 final planned = DateTime.parse(dep['plannedWhen']);
                 final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time));
+                
+                return ListTile(
+                  leading: const Icon(Icons.directions_bus), 
+                  title: Text("$line to $dir"), 
+                  trailing: Text(time),
+                  onTap: () {
+                    // Trigger Route Update
+                    _updateRouteFromStep(stepIndex, planned, stationId, finalDestinationId);
+                  },
+                );
               },
             );
           },
@@ -847,41 +935,50 @@ class _RoutesTabState extends State<RoutesTab> {
           ],
         ),
         const SizedBox(height: 20),
-        ...route.steps.map((step) {
-          final isWait = step.type == 'wait';
-          return Container(
-            margin: const EdgeInsets.only(bottom: 16),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isWait ? Colors.orange.withOpacity(0.1) : cardColor, 
-              borderRadius: BorderRadius.circular(16),
-              border: isWait ? Border.all(color: Colors.orange.withOpacity(0.3)) : null
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
-                // HIDE TIME for wait/transfer steps
+        
+        // Loop with index to access step logic
+        for (int i = 0; i < route.steps.length; i++) ...[
+          (() {
+            final step = route.steps[i];
+            final isWait = step.type == 'wait';
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isWait ? Colors.orange.withOpacity(0.1) : cardColor, 
+                borderRadius: BorderRadius.circular(16),
+                border: isWait ? Border.all(color: Colors.orange.withOpacity(0.3)) : null
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
+                  // HIDE TIME for wait/transfer steps
+                  if (!isWait)
+                    Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
+                ]),
+                const SizedBox(height: 4),
+                
+                // Show duration subtitle
+                if (step.line == 'Transfer' && isWait)
+                  Text(step.duration, style: const TextStyle(color: Colors.orange))
+                else
+                  Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
+                
+                if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
+                
                 if (!isWait)
-                  Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
+                  Padding(padding: const EdgeInsets.only(top: 12), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
+                    GestureDetector(onTap: () => _showChat(context, step.line), child: _buildActionChip(Icons.chat_bubble_outline, "Chat")),
+                    const SizedBox(width: 8),
+                    if (!step.line.toLowerCase().contains('bus')) ...[GestureDetector(onTap: () => _showGuide(context, step.startStationId), child: _buildActionChip(Icons.camera_alt_outlined, "Guide")), const SizedBox(width: 8)],
+                    GestureDetector(onTap: () { setState(() => _isWakeAlarmSet = !_isWakeAlarmSet); ScaffoldMessenger.of(context).clearSnackBars(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isWakeAlarmSet ? "Alarm ON" : "Alarm OFF"), action: _isWakeAlarmSet ? SnackBarAction(label: "TEST", onPressed: _triggerVibration) : null)); }, child: _buildActionChip(Icons.vibration, _isWakeAlarmSet ? "Alarm ON" : "Wake Me", isActive: _isWakeAlarmSet)),
+                    const SizedBox(width: 8),
+                    if (step.startStationId != null) GestureDetector(onTap: () => _showAlternatives(context, step.startStationId!, i, route.destinationId), child: _buildActionChip(Icons.alt_route, "Alternatives")),
+                  ])))
               ]),
-              const SizedBox(height: 4),
-              // If it's a transfer, show "line" (Walk/Transfer) and special combined duration
-              Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
-              
-              if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
-              
-              if (!isWait)
-                Padding(padding: const EdgeInsets.only(top: 12), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-                  GestureDetector(onTap: () => _showChat(context, step.line), child: _buildActionChip(Icons.chat_bubble_outline, "Chat")),
-                  const SizedBox(width: 8),
-                  if (!step.line.toLowerCase().contains('bus')) ...[GestureDetector(onTap: () => _showGuide(context, step.startStationId), child: _buildActionChip(Icons.camera_alt_outlined, "Guide")), const SizedBox(width: 8)],
-                  GestureDetector(onTap: () { setState(() => _isWakeAlarmSet = !_isWakeAlarmSet); ScaffoldMessenger.of(context).clearSnackBars(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isWakeAlarmSet ? "Alarm ON" : "Alarm OFF"), action: _isWakeAlarmSet ? SnackBarAction(label: "TEST", onPressed: _triggerVibration) : null)); }, child: _buildActionChip(Icons.vibration, _isWakeAlarmSet ? "Alarm ON" : "Wake Me", isActive: _isWakeAlarmSet)),
-                  const SizedBox(width: 8),
-                  if (step.startStationId != null) GestureDetector(onTap: () => _showAlternatives(context, step.startStationId!), child: _buildActionChip(Icons.alt_route, "Alternatives")),
-                ])))
-            ]),
-          );
-        }).toList()
+            );
+          }())
+        ]
       ],
     );
   }
