@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data'; // Required for Uint8List
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -62,6 +63,8 @@ class SupabaseService {
   }
 
   // --- TICKET FEATURES ---
+  
+  // Original method for Mobile (uses File)
   static Future<String?> uploadTicket(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
@@ -73,6 +76,23 @@ class SupabaseService {
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
+      return null;
+    }
+  }
+
+  // NEW: Method for Web (uses Bytes)
+  static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileName = '${user.id}/ticket.$fileExt';
+    try {
+      // Use uploadBinary for web
+      await client.storage.from('tickets').uploadBinary(fileName, bytes, fileOptions: const FileOptions(upsert: true));
+      final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
+      await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
+      return imageUrl;
+    } catch (e) {
+      print("Web upload error: $e");
       return null;
     }
   }
@@ -129,7 +149,6 @@ class SupabaseService {
     }
   }
 
-  // NEW: Blocking Logic
   static Future<void> blockUser(String userIdToBlock) async {
     final user = currentUser;
     if (user == null) return;
@@ -152,14 +171,11 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
     try {
-      // 1. Get IDs blocked by current user
       final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
       final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
       
       if (blockedIds.isEmpty) return [];
 
-      // 2. Fetch profiles for those IDs
-      // FIXED: Replaced .in_() with .filter('id', 'in', list)
       final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
       return List<Map<String, dynamic>>.from(profiles);
     } catch (e) {
