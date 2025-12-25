@@ -106,25 +106,29 @@ class _TicketPanelState extends State<TicketPanel> {
       
       try {
         if (kIsWeb) {
-          // Web: Just upload bytes directly
+          // --- WEB LOGIC ---
+          // 1. Read bytes directly
           final bytes = await picked.readAsBytes();
-          // Note: Supabase Flutter web upload might need a Blob or specific handling, 
-          // but for now we assume standard upload works or we rely on the URL update.
-          // Since Supabase `upload` expects a File object which doesn't exist on web,
-          // we use uploadBinary if available or skip local caching logic for now.
           
-          // *Correction*: To make this 100% web safe without complex binary upload logic 
-          // in the service right now, we will skip the upload implementation for Web in this snippet
-          // unless you update SupabaseService to support `uploadBinary`.
-          // For now, we will just show it locally.
+          // 2. Determine extension (fallback to jpg if missing)
+          final ext = picked.name.contains('.') ? picked.name.split('.').last : 'jpg';
+
+          // 3. Set local path for immediate display (picked.path is a blob URL on web)
+          setState(() => _localTicketPath = picked.path);
           
-          setState(() => _localTicketPath = picked.path); // picked.path on web is a blob URL
+          // 4. Upload using the new Bytes method
+          final url = await SupabaseService.uploadTicketBytes(bytes, ext);
           
-          // On Web, standard File upload won't work with dart:io File. 
-          // You would need to update SupabaseService to take Uint8List.
+          if (url != null) {
+             final prefs = await SharedPreferences.getInstance();
+             await prefs.setString('remote_ticket_url', url);
+             // Note: On web we can leave _localTicketPath as the blob URL or update to remote URL.
+             // Leaving it as-is gives instant feedback.
+          }
           
         } else {
-          // Mobile Logic
+          // --- MOBILE LOGIC ---
+          // Keep exactly as before to preserve offline capability
           final dir = await getApplicationDocumentsDirectory();
           final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
           final savedFile = await File(picked.path).copy('${dir.path}/$filename');
