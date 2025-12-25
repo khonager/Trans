@@ -1,10 +1,10 @@
 class JourneyStep {
-  final String type; // 'walk', 'ride'
+  final String type; // 'walk', 'ride', 'wait'
   final String line;
   final String instruction;
   final String duration;
   final String departureTime;
-  final String arrivalTime; // NEW field
+  final String arrivalTime; 
   final String? alert;
   final String? seating;
   final int? chatCount;
@@ -31,6 +31,7 @@ class RouteTab {
   final String title;
   final String subtitle;
   final String eta;
+  final String totalDuration; // NEW: Total time
   final List<JourneyStep> steps;
 
   RouteTab({
@@ -38,6 +39,7 @@ class RouteTab {
     required this.title,
     required this.subtitle,
     required this.eta,
+    required this.totalDuration,
     required this.steps,
   });
 }

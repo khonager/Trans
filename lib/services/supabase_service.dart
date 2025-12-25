@@ -108,7 +108,7 @@ class SupabaseService {
     }
   }
 
-  // NEW: Get list of all tickets for the user
+  // Get list of all tickets for the user
   static Future<List<FileObject>> getTicketHistory() async {
     final user = currentUser;
     if (user == null) return [];
@@ -122,8 +122,15 @@ class SupabaseService {
       return [];
     }
   }
+  
+  // NEW: Helper to get public URL for a specific file in history
+  static String getTicketPublicUrl(String fileName) {
+    final user = currentUser;
+    if (user == null) return "";
+    return client.storage.from('tickets').getPublicUrl('${user.id}/$fileName');
+  }
 
-  // NEW: Delete a specific ticket file
+  // Delete a specific ticket file
   static Future<void> deleteTicket(String fileName) async {
     final user = currentUser;
     if (user == null) return;
@@ -242,6 +249,41 @@ class SupabaseService {
       return data?['image_url'] as String?;
     } catch (e) {
       return null;
+    }
+  }
+  
+  // NEW: Upload Station Image
+  static Future<void> uploadStationImage(dynamic imageFile, String stationId) async {
+    final user = currentUser;
+    if (user == null) return;
+    
+    // Create a unique filename
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = '$stationId/$timestamp.jpg';
+
+    String? publicUrl;
+    
+    try {
+      if (imageFile is File) {
+         await client.storage.from('station_guides').upload(fileName, imageFile);
+      } else if (imageFile is Uint8List) {
+         await client.storage.from('station_guides').uploadBinary(fileName, imageFile);
+      }
+      
+      publicUrl = client.storage.from('station_guides').getPublicUrl(fileName);
+      
+      if (publicUrl != null) {
+        // Upsert into station_images table
+        await client.from('station_images').upsert({
+          'station_id': stationId,
+          'image_url': publicUrl,
+          'uploaded_by': user.id,
+          'updated_at': DateTime.now().toIso8601String()
+        });
+      }
+    } catch (e) {
+      print("Station upload error: $e");
+      rethrow;
     }
   }
 }
