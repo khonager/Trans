@@ -1,4 +1,4 @@
-import 'dart:io'; // CHANGED: Removed "show File" to allow Directory usage
+import 'dart:io'; 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -93,6 +93,35 @@ class _TicketPanelState extends State<TicketPanel> {
       return files;
     } catch (e) {
       return [];
+    }
+  }
+
+  Future<void> _renameHistoryItem(File file, String currentName, Function refreshCallback) async {
+    final nameCtrl = TextEditingController(text: currentName.replaceAll(".jpg", "").replaceAll("hist_", "Ticket "));
+    
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        title: const Text("Rename Ticket"),
+        content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename")),
+        ],
+      )
+    );
+
+    if (newName != null && newName.isNotEmpty) {
+      try {
+        final dir = file.parent;
+        // Keep unique ID or add timestamp to avoid conflict if user types same name
+        final newPath = '${dir.path}/$newName.jpg';
+        await file.rename(newPath);
+        refreshCallback();
+      } catch (e) {
+        print("Rename error: $e");
+      }
     }
   }
 
@@ -246,20 +275,33 @@ class _TicketPanelState extends State<TicketPanel> {
                         separatorBuilder: (_,__) => const Divider(color: Colors.white10),
                         itemBuilder: (ctx, idx) {
                           final file = files[idx];
+                          final filename = file.path.split('/').last.replaceAll(".jpg", "");
                           final date = file.lastModifiedSync();
-                          final dateStr = "${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute}";
+                          final dateStr = "${date.day}/${date.month}/${date.year}";
+
+                          // Display custom name if user renamed it, otherwise standard
+                          String displayName = filename.startsWith("hist_") ? "Ticket ${files.length - idx}" : filename;
 
                           return ListTile(
                             leading: const Icon(Icons.airplane_ticket),
-                            title: Text("Ticket ${files.length - idx}", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                            title: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
                             subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)),
                             onTap: () => _showFullImage(overridePath: file.path),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () async {
-                                await file.delete();
-                                setModalState(() {}); 
-                              },
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue),
+                                  onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){})),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () async {
+                                    await file.delete();
+                                    setModalState(() {}); 
+                                  },
+                                ),
+                              ],
                             ),
                           );
                         },
