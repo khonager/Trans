@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart'; // For FileObject
 import '../services/supabase_service.dart';
 
 class TicketPanel extends StatefulWidget {
@@ -48,10 +49,8 @@ class _TicketPanelState extends State<TicketPanel> {
     
     if (path != null) {
       if (kIsWeb) {
-        // On web, path is just the URL/blob
         setState(() => _localTicketPath = path);
       } else {
-        // On mobile, check if file exists
         if (await File(path).exists()) {
           setState(() => _localTicketPath = path);
         }
@@ -68,19 +67,18 @@ class _TicketPanelState extends State<TicketPanel> {
     final lastUrl = prefs.getString('remote_ticket_url');
 
     if (remoteUrl != null) {
-      // On Web, we just use the remote URL directly, no "download to file" needed
       if (kIsWeb) {
         await prefs.setString('local_ticket_path', remoteUrl);
         setState(() => _localTicketPath = remoteUrl);
         return;
       }
 
-      // On Mobile: Download file if changed
       if (remoteUrl != lastUrl) {
         try {
           final response = await http.get(Uri.parse(remoteUrl));
           if (response.statusCode == 200) {
             final dir = await getApplicationDocumentsDirectory();
+            // Use timestamp to ensure unique filename
             final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
             final file = File('${dir.path}/$filename');
             await file.writeAsBytes(response.bodyBytes);
@@ -106,29 +104,18 @@ class _TicketPanelState extends State<TicketPanel> {
       
       try {
         if (kIsWeb) {
-          // --- WEB LOGIC ---
-          // 1. Read bytes directly
           final bytes = await picked.readAsBytes();
-          
-          // 2. Determine extension (fallback to jpg if missing)
           final ext = picked.name.contains('.') ? picked.name.split('.').last : 'jpg';
 
-          // 3. Set local path for immediate display (picked.path is a blob URL on web)
           setState(() => _localTicketPath = picked.path);
           
-          // 4. Upload using the new Bytes method
           final url = await SupabaseService.uploadTicketBytes(bytes, ext);
-          
           if (url != null) {
              final prefs = await SharedPreferences.getInstance();
              await prefs.setString('remote_ticket_url', url);
-             // Note: On web we can leave _localTicketPath as the blob URL or update to remote URL.
-             // Leaving it as-is gives instant feedback.
           }
           
         } else {
-          // --- MOBILE LOGIC ---
-          // Keep exactly as before to preserve offline capability
           final dir = await getApplicationDocumentsDirectory();
           final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
           final savedFile = await File(picked.path).copy('${dir.path}/$filename');
@@ -138,7 +125,6 @@ class _TicketPanelState extends State<TicketPanel> {
 
           setState(() => _localTicketPath = savedFile.path);
 
-          // Upload
           final url = await SupabaseService.uploadTicket(savedFile);
           if (url != null) {
             await prefs.setString('remote_ticket_url', url);
@@ -150,6 +136,124 @@ class _TicketPanelState extends State<TicketPanel> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  // --- NEW FEATURE: Full Screen View ---
+  void _showFullImage() {
+    if (_localTicketPath == null) return;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            InteractiveViewer(
+              maxScale: 4.0,
+              child: kIsWeb
+                ? Image.network(_localTicketPath!)
+                : Image.file(File(_localTicketPath!)),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- NEW FEATURE: Manage Old Tickets ---
+  void _manageTicketHistory() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            padding: const EdgeInsets.all(20),
+            height: 500,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Ticket History", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                const SizedBox(height: 8),
+                const Text("Long press on your ticket to view this menu.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: FutureBuilder<List<FileObject>>(
+                    future: SupabaseService.getTicketHistory(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                      final files = snapshot.data ?? [];
+                      
+                      if (files.isEmpty) return const Center(child: Text("No tickets found on server."));
+
+                      return ListView.separated(
+                        itemCount: files.length,
+                        separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                        itemBuilder: (ctx, idx) {
+                          final file = files[idx];
+                          // Parse Timestamp from filename (ticket_1708....jpg)
+                          String dateStr = file.createdAt ?? "Unknown Date";
+                          try {
+                            // Extract numbers from filename if possible
+                            final nameParts = file.name.split('_');
+                            if (nameParts.length > 1) {
+                              final tsString = nameParts[1].split('.')[0];
+                              final ts = int.tryParse(tsString);
+                              if (ts != null) {
+                                final date = DateTime.fromMillisecondsSinceEpoch(ts);
+                                dateStr = "${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute}";
+                              }
+                            }
+                          } catch (_) {}
+
+                          return ListTile(
+                            leading: const Icon(Icons.airplane_ticket),
+                            title: Text(file.name, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                            subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () async {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (dCtx) => AlertDialog(
+                                    title: const Text("Delete Ticket"),
+                                    content: const Text("Are you sure? This cannot be undone."),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text("Cancel")),
+                                      TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
+                                    ],
+                                  )
+                                );
+                                
+                                if (confirm == true) {
+                                  await SupabaseService.deleteTicket(file.name);
+                                  setModalState(() {}); // Refresh list
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                )
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -225,18 +329,21 @@ class _TicketPanelState extends State<TicketPanel> {
                   : _localTicketPath != null
                     ? Column(
                         children: [
-                          Container(
-                            constraints: const BoxConstraints(maxHeight: 500),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.grey.withOpacity(0.2)),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              // WEB SAFE IMAGE LOADING
-                              child: kIsWeb 
-                                ? Image.network(_localTicketPath!) 
-                                : Image.file(File(_localTicketPath!)),
+                          GestureDetector(
+                            onTap: _showFullImage, // Single Tap -> Full Screen
+                            onLongPress: _manageTicketHistory, // Long Press -> Delete/History
+                            child: Container(
+                              constraints: const BoxConstraints(maxHeight: 500),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: kIsWeb 
+                                  ? Image.network(_localTicketPath!) 
+                                  : Image.file(File(_localTicketPath!)),
+                              ),
                             ),
                           ),
                           const SizedBox(height: 20),
