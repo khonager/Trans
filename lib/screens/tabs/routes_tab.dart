@@ -263,7 +263,6 @@ class _RoutesTabState extends State<RoutesTab> {
   // --- ROUTE LOGIC ---
 
   // Helper method to process raw API legs into UI JourneySteps
-  // Extracted to be reused by _findRoutes and _updateRouteFromStep
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -325,7 +324,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
             if (waitMin > 0) {
               instruction = "Transfer to $destName";
-              // Explicitly format the duration string: First Walk, Then Wait
+              // Fixed: "X min Walk . Y min Wait"
               durationDisplay = "$legDurationMin min Walk • $waitMin min Wait";
             } else {
               instruction = "Walk to $destName";
@@ -342,7 +341,8 @@ class _RoutesTabState extends State<RoutesTab> {
                 if (nextLeg['departure'] != null) {
                   DateTime nextDep = DateTime.parse(nextLeg['departure']);
                   int nextWait = nextDep.difference(arr).inMinutes;
-                  if (nextWait > 0) durationDisplay = "$nextWait min Wait";
+                  // Fixed: Only display the time, no extra "Wait" text to avoid "Wait . 12 min Wait"
+                  if (nextWait > 0) durationDisplay = "$nextWait min";
                 }
               }
             } else {
@@ -472,7 +472,7 @@ class _RoutesTabState extends State<RoutesTab> {
           subtitle: "${from.name} → ${_toStation!.name}",
           eta: eta,
           totalDuration: totalDurationStr, 
-          destinationId: _toStation!.id, // Store destination ID
+          destinationId: _toStation!.id, 
           steps: steps,
         );
 
@@ -527,17 +527,11 @@ class _RoutesTabState extends State<RoutesTab> {
         List<JourneyStep> finalSteps = [...keptSteps, ...newSteps];
 
         // 5. Recalculate Totals
-        // (Using raw departure of first step and arrival of last step)
         String totalDurationStr = currentTab.totalDuration; // Fallback
         String eta = currentTab.eta;
 
         if (finalSteps.isNotEmpty) {
-           // We need to parse times from strings back to calculate diff, 
-           // or we rely on the API result for the *new* segment and add it to the old.
-           // Simplification: Just update ETA based on new last step
            final lastStep = finalSteps.last;
-           // The date part is missing in 'HH:mm', so accurate duration recalc is hard without full Date objects.
-           // However, for the user experience, just updating the list is the key request.
            eta = lastStep.arrivalTime;
         }
 
@@ -585,7 +579,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
-    // ... (Existing chat logic)
     final msgController = TextEditingController();
     showModalBottomSheet(
       context: context,
@@ -714,7 +707,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // Updated to support picking an alternative to change the route
   void _showAlternatives(BuildContext context, String stationId, int stepIndex, String finalDestinationId) {
      showModalBottomSheet(
       context: context,
@@ -741,7 +733,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   title: Text("$line to $dir"), 
                   trailing: Text(time),
                   onTap: () {
-                    // Trigger Route Update
                     _updateRouteFromStep(stepIndex, planned, stationId, finalDestinationId);
                   },
                 );
@@ -936,7 +927,6 @@ class _RoutesTabState extends State<RoutesTab> {
         ),
         const SizedBox(height: 20),
         
-        // Loop with index to access step logic
         for (int i = 0; i < route.steps.length; i++) ...[
           (() {
             final step = route.steps[i];
@@ -952,17 +942,12 @@ class _RoutesTabState extends State<RoutesTab> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), 
-                  // HIDE TIME for wait/transfer steps
                   if (!isWait)
                     Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))
                 ]),
                 const SizedBox(height: 4),
                 
-                // Show duration subtitle
-                if (step.line == 'Transfer' && isWait)
-                  Text(step.duration, style: const TextStyle(color: Colors.orange))
-                else
-                  Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
+                Text("${step.line} • ${step.duration}", style: TextStyle(color: isWait ? Colors.orange : Colors.grey)),
                 
                 if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
                 

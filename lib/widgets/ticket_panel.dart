@@ -117,14 +117,15 @@ class _TicketPanelState extends State<TicketPanel> {
         final dir = file.parent;
         final newPath = '${dir.path}/$newName.jpg';
         
-        // NEW: Check for collision
+        // CHECK FOR CONFLICT
         if (await File(newPath).exists()) {
           if (mounted) {
             await showDialog(
               context: context, 
               builder: (ctx) => AlertDialog(
-                title: const Text("Name Exists"),
-                content: Text("A ticket named '$newName' already exists. Please choose a different name."),
+                backgroundColor: Theme.of(context).cardColor,
+                title: const Text("Name Unavailable"),
+                content: const Text("A ticket with this name already exists."),
                 actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
               )
             );
