@@ -63,16 +63,22 @@ class SupabaseService {
   }
 
   // --- TICKET FEATURES ---
-  
-  // Original method for Mobile (uses File)
   static Future<String?> uploadTicket(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
     final fileExt = imageFile.path.split('.').last;
-    final fileName = '${user.id}/ticket.$fileExt';
+    
+    // CHANGE: Use timestamped filename instead of fixed 'ticket.$fileExt'
+    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    
     try {
-      await client.storage.from('tickets').upload(fileName, imageFile, fileOptions: const FileOptions(upsert: true));
-      final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
+      // Remove 'upsert: true' as it's a new file anyway, but keeping it doesn't hurt.
+      await client.storage.from('tickets').upload(fileName, imageFile);
+      
+      // We don't strictly need the ?t= anymore since the filename is unique, 
+      // but keeping it is fine.
+      final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
+      
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
@@ -80,15 +86,19 @@ class SupabaseService {
     }
   }
 
-  // NEW: Method for Web (uses Bytes)
+  // 2. UPDATE WEB UPLOAD
   static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
     final user = currentUser;
     if (user == null) return null;
-    final fileName = '${user.id}/ticket.$fileExt';
+    
+    // CHANGE: Use timestamped filename here too
+    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    
     try {
-      // Use uploadBinary for web
-      await client.storage.from('tickets').uploadBinary(fileName, bytes, fileOptions: const FileOptions(upsert: true));
-      final imageUrl = "${client.storage.from('tickets').getPublicUrl(fileName)}?t=${DateTime.now().millisecondsSinceEpoch}";
+      await client.storage.from('tickets').uploadBinary(fileName, bytes);
+      
+      final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
+      
       await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
