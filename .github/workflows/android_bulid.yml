@@ -29,22 +29,20 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      # FIX: Inject secrets safely into AppConfig to prevent build crashes
+      # FIX 1: Inject secrets safely into AppConfig (prevents build crashes)
       - name: Inject Secrets
         run: |
-          # 1. Create a dummy .env file so dotenv.load() doesn't crash at runtime
           touch .env
-
-          # 2. Read secrets into shell variables
+          
+          # Read secrets
           URL="${{ secrets.SUPABASE_URL }}"
           KEY="${{ secrets.SUPABASE_ANON_KEY }}"
           
-          # 3. Sanitize: Remove newlines to prevent syntax errors in Dart
+          # Sanitize: Remove newlines
           URL=$(echo "$URL" | tr -d '\n' | xargs)
           KEY=$(echo "$KEY" | tr -d '\n' | xargs)
 
-          # 4. Overwrite lib/config/app_config.dart with the real keys
-          # We use Raw Strings (r"...") to handle special characters safely
+          # Write AppConfig
           cat <<EOF > lib/config/app_config.dart
           import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -74,10 +72,11 @@ jobs:
             exit 1
           fi
           
-          # Load secrets into variables
-          KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-          KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-          KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          # FIX 2: Load AND SANITIZE secrets (Remove trailing newlines)
+          # This fixes the "entry does not contain a key" error
+          KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
+          KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
+          KEY_PASS=$(echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | tr -d '\r' | tr -d '\n')
 
           # Sign APK
           $BUILD_TOOLS_PATH/apksigner sign \
