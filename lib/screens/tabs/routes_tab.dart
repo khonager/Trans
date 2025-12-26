@@ -8,7 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart'; // Ensure you have intl or use custom formatter
+import 'package:intl/intl.dart';
 
 import '../../models/station.dart';
 import '../../models/journey.dart';
@@ -74,7 +74,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- SEARCH LOGIC (unchanged) ---
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -249,14 +249,12 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC (UPDATED FOR ISSUES 4, 5, 6) ---
+  // --- ROUTE LOGIC ---
 
-  // REFACTORED: Consolidates legs to fix "bunch of transfers" (Issue 4)
+  // Merges Walk+Wait+Walk into Transfer, and Splits into Single Rides
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
-    
-    // Buffer to hold consecutive "non-ride" legs (Walk, Wait)
     List<dynamic> transferBuffer = [];
 
     void flushTransferBuffer() {
@@ -275,7 +273,6 @@ class _RoutesTabState extends State<RoutesTab> {
         if (leg['destination'] != null) lastDest = leg['destination']['name'] ?? '';
       }
       
-      // Heuristic: If origin == dest, it's a pure wait. If different, it's a transfer/walk.
       String instruction = "Transfer";
       if (firstOrigin == lastDest && firstOrigin.isNotEmpty) {
         instruction = "Wait at $firstOrigin";
@@ -283,16 +280,13 @@ class _RoutesTabState extends State<RoutesTab> {
         instruction = "Transfer to $lastDest";
       }
 
-      String durationDisplay = "$totalMinutes min";
-      if (totalMinutes == 0) durationDisplay = "< 1 min";
-      
-      // Determine timestamps from first leg start to last leg end
+      String durationDisplay = totalMinutes == 0 ? "< 1 min" : "$totalMinutes min";
       final startTime = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
       final endTime = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
       
       steps.add(JourneyStep(
         type: 'transfer',
-        line: 'Transfer', // Generic name
+        line: 'Transfer',
         instruction: instruction,
         duration: durationDisplay,
         departureTime: "${startTime.hour.toString().padLeft(2,'0')}:${startTime.minute.toString().padLeft(2,'0')}",
@@ -305,49 +299,30 @@ class _RoutesTabState extends State<RoutesTab> {
 
     for (int i = 0; i < legs.length; i++) {
       var leg = legs[i];
-      // Check if it's a Ride
       bool isRide = (leg['line'] != null && leg['line']['name'] != null);
       
       if (!isRide) {
         transferBuffer.add(leg);
       } else {
-        // FLUSH any pending transfers/walks before this ride
         flushTransferBuffer();
-
         final String lineName = leg['line']['name'].toString();
         final String destName = leg['direction'] ?? leg['destination']['name'] ?? 'Unknown';
         final String startStationId = leg['origin']?['id'];
         final String? platform = leg['platform'] ?? leg['departurePlatform'];
-        
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
-        // ISSUE 4: Merge Split Legs (International trains often split into 2 legs with same line name)
         if (steps.isNotEmpty && steps.last.line == lineName) {
-           // It's the same train! Merge with previous step.
-           // Update the previous step's arrival time and append stopovers.
            var last = steps.removeLast();
-           
-           // Merge stopovers
            List<dynamic> mergedStops = [];
            if (last.stopovers != null) mergedStops.addAll(last.stopovers!);
-           // We might want to add the intermediate station (where the split happened) as a stop
-           // But usually 'stopovers' in the API covers it.
            if (leg['stopovers'] != null) mergedStops.addAll(leg['stopovers']);
 
-           // Calculate new duration
-           final startT = DateFormat("HH:mm").parse(last.departureTime); // Rough parse, better to keep DateTimes in model but string is what we have
-           // To keep it simple, we just create a new step with the old start and new end.
-           
-           int durMin = arr.difference(dep).inMinutes + int.parse(last.duration.split(' ')[0]); // Approx
-           // Better: we don't store DateTime in JourneyStep, so let's rely on the formatted strings for display
-           // and just update the 'Arrival' and 'Stopovers'.
-           
            steps.add(JourneyStep(
              type: 'ride',
              line: lineName,
-             instruction: last.instruction, // Keep original destination or update? Usually direction stays same.
-             duration: "Updated", // We'd need to recalc, effectively we hide duration or just say "Long ride"
+             instruction: last.instruction, 
+             duration: "Updated", 
              departureTime: last.departureTime,
              arrivalTime: "${arr.hour.toString().padLeft(2,'0')}:${arr.minute.toString().padLeft(2,'0')}",
              stopovers: mergedStops,
@@ -358,12 +333,8 @@ class _RoutesTabState extends State<RoutesTab> {
            continue;
         }
 
-        // Standard Ride Step
         int legDurationMin = arr.difference(dep).inMinutes;
-        String durationDisplay = "$legDurationMin min";
-        if (legDurationMin > 60) {
-          durationDisplay = "${legDurationMin ~/ 60}h ${legDurationMin % 60}min";
-        }
+        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
 
         steps.add(JourneyStep(
           type: 'ride',
@@ -375,30 +346,22 @@ class _RoutesTabState extends State<RoutesTab> {
           chatCount: random.nextInt(15) + 1,
           startStationId: startStationId,
           platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'], // Save stopovers for Issue 5
+          stopovers: leg['stopovers'],
         ));
       }
     }
-    
-    // Flush any trailing walks (e.g. Walk to destination)
     flushTransferBuffer();
-
     return steps;
   }
 
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
-    
     if (from == null && widget.currentPosition != null) {
        setState(() => _isLoadingRoute = true); 
        try {
-         final nearby = await TransportApi.getNearbyStops(
-           widget.currentPosition!.latitude, 
-           widget.currentPosition!.longitude
-         );
-         if (nearby.isNotEmpty) {
-           from = nearby.first;
-         } else {
+         final nearby = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+         if (nearby.isNotEmpty) from = nearby.first;
+         else {
            setState(() => _isLoadingRoute = false);
            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No nearby stations found.")));
            return;
@@ -418,13 +381,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
     DateTime? searchTime;
     if (_selectedDate != null && _selectedTime != null) {
-      searchTime = DateTime(
-        _selectedDate!.year, 
-        _selectedDate!.month, 
-        _selectedDate!.day,
-        _selectedTime!.hour,
-        _selectedTime!.minute
-      );
+      searchTime = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime!.hour, _selectedTime!.minute);
     }
 
     try {
@@ -489,9 +446,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
-    // If called from sheet, sheet is already closed by logic below
     setState(() => _isLoadingRoute = true);
-    
     try {
       final journeyData = await TransportApi.searchJourney(
         startStationId,
@@ -504,9 +459,7 @@ class _RoutesTabState extends State<RoutesTab> {
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
         final List<JourneyStep> steps = _processLegs(legs);
-        
-        // ... (Similar duration logic) ...
-        String totalDurationStr = "Recalculated"; // simplified for brevity
+        String totalDurationStr = "Recalculated"; 
 
         final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
         String eta = "--:--";
@@ -550,14 +503,62 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
-    // ... (Existing implementation) ...
-    // Placeholder to save space, logic same as before
-    final msgController = TextEditingController();
-    showModalBottomSheet(context: context, builder: (_) => Container(height: 300, child: const Center(child: Text("Chat Placeholder"))));
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => ChatSheet(lineId: lineName, title: lineName),
+    );
   }
 
   void _showGuide(BuildContext context, String? startStationId) {
-    // ... (Existing implementation) ...
+    if (startStationId == null) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            backgroundColor: Theme.of(ctx).cardColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
+                IconButton(
+                  icon: const Icon(Icons.add_a_photo, color: Colors.blue),
+                  onPressed: () async {
+                    final picker = ImagePicker();
+                    final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024);
+                    if (picked != null) {
+                       try {
+                         dynamic imageFile;
+                         if (kIsWeb) imageFile = await picked.readAsBytes();
+                         else imageFile = File(picked.path);
+                         
+                         await SupabaseService.uploadStationImage(imageFile, startStationId);
+                         setStateDialog(() {}); 
+                       } catch (e) {
+                         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                       }
+                    }
+                  },
+                )
+              ],
+            ),
+            content: FutureBuilder<String?>(
+              future: SupabaseService.getStationImage(startStationId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
+                if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]);
+                return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200));
+              },
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
+          );
+        }
+      ),
+    );
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
@@ -568,9 +569,7 @@ class _RoutesTabState extends State<RoutesTab> {
         return FutureBuilder<List<Map<String, dynamic>>>(
           future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr),
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
-            
             return ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: snapshot.data!.length,
@@ -580,15 +579,9 @@ class _RoutesTabState extends State<RoutesTab> {
                 final dir = dep['direction'] ?? 'Unknown';
                 final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
                 final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                
                 return ListTile(
-                  leading: const Icon(Icons.directions_bus), 
-                  title: Text("$line to $dir"), 
-                  trailing: Text(time),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openNewRouteTab(planned, stationId, finalDestinationId);
-                  },
+                  leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time),
+                  onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); },
                 );
               },
             );
@@ -600,14 +593,11 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(duration: 500);
-    }
+    if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
   }
 
   @override
   Widget build(BuildContext context) {
-    // ... (Existing Build method structure) ...
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -643,55 +633,123 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, bool isDark) {
-    // ... (Same as previous provided code, omitted for brevity) ...
-    // You can copy the exact _buildSearchView from previous artifact, no changes needed there.
-    return SingleChildScrollView(child: Text("Search View Placeholder (Same as before)")); 
-  }
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final cardColor = Theme.of(context).cardColor;
 
-  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
-      // ... (Same as before) ...
-      return Container(); 
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 100),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(color: cardColor.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
+                  const SizedBox(height: 20),
+                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
+                  if (_activeSearchField == 'from') _buildSuggestionsList(),
+                  const SizedBox(height: 12),
+                  _buildTextField("To", _toController, _toStation != null, 'to'),
+                  if (_activeSearchField == 'to') _buildSuggestionsList(),
+                  const SizedBox(height: 20),
+                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, borderRadius: BorderRadius.circular(16)),
+                    child: Row(
+                      children: [
+                        GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
+                        const SizedBox(width: 12),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
+                        if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 80,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _favorites.length + 1,
+                      separatorBuilder: (_,__) => const SizedBox(width: 12),
+                      itemBuilder: (ctx, idx) {
+                         if (idx == _favorites.length) {
+                           return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
+                         }
+                         final fav = _favorites[idx];
+                         return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(fav.type == 'friend' ? Icons.person : (fav.label.toLowerCase() == 'home' ? Icons.home : (fav.label.toLowerCase() == 'work' ? Icons.work : Icons.star)), color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildSuggestionsList() {
-     // ... (Same as before) ...
-     return Container();
+    if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final cardColor = Theme.of(context).cardColor;
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 250),
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: _suggestions.length,
+              separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
+              itemBuilder: (ctx, idx) {
+                final item = _suggestions[idx];
+                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
+                final station = item as Station;
+                return ListTile(leading: const Icon(Icons.place, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), onTap: () => _selectItem(station));
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  // UPDATED: Uses _StepCard to support Expansion (Issue 5)
+  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    Color iconColor = Colors.grey;
+    if (isSelected) iconColor = Colors.greenAccent; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: isDark ? Colors.white : Colors.black), decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+  }
+
   Widget _buildActiveRouteView(RouteTab route) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
-                  Text(route.subtitle, style: const TextStyle(color: Colors.grey)),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-              child: Row(
-                children: [
-                   const Icon(Icons.timer_outlined, size: 16, color: Colors.green),
-                   const SizedBox(width: 4),
-                   Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            )
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)), Text(route.subtitle, style: const TextStyle(color: Colors.grey))])),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
           ],
         ),
         const SizedBox(height: 20),
-        
         for (int i = 0; i < route.steps.length; i++)
           _StepCard(
             step: route.steps[i], 
@@ -707,7 +765,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
-// NEW Widget to handle Issue 5 & 6 (Expansion and Stops)
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final String finalDestinationId;
@@ -717,15 +774,7 @@ class _StepCard extends StatelessWidget {
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
 
-  const _StepCard({
-    required this.step,
-    required this.finalDestinationId,
-    required this.onOpenAlternatives,
-    required this.onChat,
-    required this.onGuide,
-    required this.onAlarmToggle,
-    required this.isAlarmSet,
-  });
+  const _StepCard({required this.step, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet});
 
   @override
   Widget build(BuildContext context) {
@@ -733,35 +782,15 @@ class _StepCard extends StatelessWidget {
     final cardColor = Theme.of(context).cardColor;
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
 
-    // TRANSFER CARD (Non-expandable)
     if (isTransfer) {
       return Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.orange.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.orange.withOpacity(0.3))
-        ),
-        child: Row(
-          children: [
-             const Icon(Icons.directions_walk, color: Colors.orange),
-             const SizedBox(width: 16),
-             Expanded(
-               child: Column(
-                 crossAxisAlignment: CrossAxisAlignment.start,
-                 children: [
-                   Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
-                   Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12)),
-                 ],
-               ),
-             )
-          ],
-        ),
+        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.withOpacity(0.3))),
+        child: Row(children: [const Icon(Icons.directions_walk, color: Colors.orange), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12))]))]),
       );
     }
 
-    // RIDE CARD (Expandable for Issue 5)
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -771,34 +800,9 @@ class _StepCard extends StatelessWidget {
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))),
-              Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent)),
-            ],
-          ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 4),
-              Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)),
-              if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)),
-              const SizedBox(height: 8),
-              // ACTION CHIPS (Visible when collapsed too)
-              SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-                    _buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)),
-                    const SizedBox(width: 8),
-                    if (step.startStationId != null) ...[
-                      _buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), 
-                      const SizedBox(width: 8)
-                    ],
-                    _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle),
-              ]))
-            ],
-          ),
+          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
           children: [
-            // EXPANDED STOPS LIST (Issue 5)
             if (step.stopovers != null && step.stopovers!.isNotEmpty)
               Container(
                 decoration: BoxDecoration(color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.5)),
@@ -810,54 +814,24 @@ class _StepCard extends StatelessWidget {
                     final stop = step.stopovers![idx];
                     final name = stop['stop']['name'];
                     final stopId = stop['stop']['id'];
-                    
-                    // Time Logic
                     final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival'];
                     final actualDep = stop['departure'] ?? stop['arrival'];
-                    
                     String timeStr = "--:--";
                     Color timeColor = Colors.grey;
-                    
                     if (plannedDep != null) {
                       final p = DateTime.parse(plannedDep);
                       timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}";
-                      
                       if (actualDep != null) {
                         final a = DateTime.parse(actualDep);
                         final delay = a.difference(p).inMinutes;
-                        if (delay > 2) {
-                          timeStr += " (+${delay}')";
-                          timeColor = Colors.red;
-                        } else {
-                          timeColor = Colors.green;
-                        }
+                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = Colors.red; } else { timeColor = Colors.green; }
                       }
                     }
-
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                      leading: const Icon(Icons.circle, size: 8, color: Colors.grey),
-                      title: Text(name, style: TextStyle(color: textColor, fontSize: 13)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)),
-                          const SizedBox(width: 8),
-                          // ALTERNATIVE BUTTON (Issue 6)
-                          IconButton(
-                            icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue),
-                            onPressed: () => onOpenAlternatives(stopId),
-                            tooltip: "Alternatives from here",
-                          )
-                        ],
-                      ),
-                    );
+                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: textColor, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
                   },
                 ),
               )
-            else
-              const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
+            else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
           ],
         ),
       ),
@@ -865,14 +839,7 @@ class _StepCard extends StatelessWidget {
   }
 
   Widget _buildActionChip(IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), 
-        decoration: BoxDecoration(color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), 
-        child: Row(children: [Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))])
-      ),
-    );
+    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))])));
   }
 }
 
@@ -881,7 +848,70 @@ class _EditFavoriteDialog extends StatelessWidget {
   const _EditFavoriteDialog({required this.favorite});
   @override
   Widget build(BuildContext context) {
-    // Keep your existing dialog code here, omitted for brevity as it didn't change logic.
-    return const Dialog(child: Text("Dialog Placeholder"));
+    return AlertDialog(title: const Text("Edit Favorite"), content: const Text("Hold favorite to edit feature coming soon."), actions: [TextButton(onPressed: ()=>Navigator.pop(context), child: const Text("OK"))]);
   }
+}
+
+// --- CHAT SHEET CLASS ---
+class ChatSheet extends StatefulWidget {
+  final String lineId;
+  final String title;
+  const ChatSheet({super.key, required this.lineId, required this.title});
+  @override
+  State<ChatSheet> createState() => _ChatSheetState();
+}
+
+class _ChatSheetState extends State<ChatSheet> {
+  final TextEditingController _msgCtrl = TextEditingController();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 600,
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        children: [
+          Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
+          Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Row(children: [const CircleAvatar(backgroundColor: Colors.indigo, child: Icon(Icons.directions_bus, color: Colors.white)), const SizedBox(width: 12), Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color))])),
+          const Divider(),
+          Expanded(
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: SupabaseService.getMessages(widget.lineId),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                final msgs = snapshot.data!;
+                if (msgs.isEmpty) return const Center(child: Text("No messages yet.", style: TextStyle(color: Colors.grey)));
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: msgs.length,
+                  itemBuilder: (ctx, idx) {
+                    final msg = msgs[idx];
+                    final isMe = msg['user_id'] == SupabaseService.currentUser?.id;
+                    final username = msg['username'] ?? 'Unknown';
+                    final avatar = msg['avatar_url'];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (!isMe) CircleAvatar(radius: 16, backgroundImage: avatar != null ? NetworkImage(avatar) : null, child: avatar == null ? Text(username[0].toUpperCase()) : null),
+                          const SizedBox(width: 8),
+                          Column(crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
+                            if (!isMe) Padding(padding: const EdgeInsets.only(left: 4, bottom: 2), child: Text(username, style: const TextStyle(fontSize: 10, color: Colors.grey))),
+                            Container(constraints: const BoxConstraints(maxWidth: 240), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isMe ? Colors.blue : Theme.of(context).cardColor, borderRadius: BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: isMe ? const Radius.circular(16) : Radius.zero, bottomRight: isMe ? Radius.zero : const Radius.circular(16)), border: isMe ? null : Border.all(color: Colors.white10)), child: Text(msg['content'], style: TextStyle(color: isMe ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color)))
+                          ])
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(padding: const EdgeInsets.all(16), child: Row(children: [Expanded(child: TextField(controller: _msgCtrl, decoration: InputDecoration(hintText: "Say something...", filled: true, fillColor: Theme.of(context).cardColor, border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 20)), onSubmitted: (_) => _send())), const SizedBox(width: 8), CircleAvatar(backgroundColor: Colors.blue, child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _send))]))
+        ],
+      ),
+    );
+  }
+  void _send() { if (_msgCtrl.text.trim().isEmpty) return; SupabaseService.sendMessage(widget.lineId, _msgCtrl.text.trim()); _msgCtrl.clear(); }
 }
