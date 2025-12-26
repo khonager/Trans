@@ -48,20 +48,20 @@ class TransportApi {
     return [];
   }
 
-  // UPDATED: Added support for time and arrival mode
+  // UPDATED: Added &stopovers=true to URL
   static Future<Map<String, dynamic>?> searchJourney(
     String fromId, 
     String toId, 
     {
       bool nahverkehrOnly = false,
-      DateTime? when,      // Specific date/time
-      bool isArrival = false // true = "Arrive By", false = "Depart At"
+      DateTime? when,      
+      bool isArrival = false 
     }
   ) async {
     try {
-      String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3';
+      // NEW: stopovers=true ensures we get the list of stops for Issue 5
+      String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3&stopovers=true';
       
-      // Append time parameter if provided
       if (when != null) {
         final iso = when.toIso8601String();
         if (isArrival) {
@@ -71,7 +71,6 @@ class TransportApi {
         }
       }
 
-      // Apply the filter
       url = _addFilters(url, nahverkehrOnly);
       
       final response = await http.get(Uri.parse(url));
