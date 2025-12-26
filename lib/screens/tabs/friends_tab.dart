@@ -30,7 +30,7 @@ class _FriendsTabState extends State<FriendsTab> {
           return Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
-              height: 500,
+              height: 600, // Increased height for requests
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -65,6 +65,61 @@ class _FriendsTabState extends State<FriendsTab> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // PENDING REQUESTS SECTION
+                  Text("Friend Requests", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<Map<String, dynamic>>>(
+                    future: SupabaseService.getPendingRequests(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 20.0),
+                          child: Text("No pending requests.", style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+                        );
+                      }
+                      return Container(
+                        height: 100, // Fixed height for requests list
+                        margin: const EdgeInsets.only(bottom: 20),
+                        child: ListView.builder(
+                          itemCount: snapshot.data!.length,
+                          itemBuilder: (ctx, idx) {
+                            final reqUser = snapshot.data![idx];
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: CircleAvatar(
+                                backgroundImage: reqUser['avatar_url'] != null ? NetworkImage(reqUser['avatar_url']) : null,
+                                child: reqUser['avatar_url'] == null ? Text(reqUser['username'][0].toUpperCase()) : null,
+                              ),
+                              title: Text(reqUser['username'], style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.check, color: Colors.green),
+                                    onPressed: () async {
+                                      await SupabaseService.acceptFriendRequest(reqUser['id']);
+                                      if (context.mounted) {
+                                        setSheetState(() {}); // Refresh
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Accepted ${reqUser['username']}!")));
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, color: Colors.red),
+                                    onPressed: () async {
+                                      await SupabaseService.rejectFriendRequest(reqUser['id']);
+                                      if (context.mounted) setSheetState(() {}); // Refresh
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
                   
                   // SEARCH SECTION
                   TextField(
@@ -97,6 +152,9 @@ class _FriendsTabState extends State<FriendsTab> {
                       separatorBuilder: (_,__) => const Divider(color: Colors.white10),
                       itemBuilder: (ctx, idx) {
                         final user = searchResults[idx];
+                        // Don't show myself
+                        if (user['id'] == SupabaseService.currentUser?.id) return const SizedBox.shrink();
+                        
                         return ListTile(
                           leading: CircleAvatar(
                              backgroundImage: user['avatar_url'] != null ? NetworkImage(user['avatar_url']) : null,
@@ -104,14 +162,16 @@ class _FriendsTabState extends State<FriendsTab> {
                           ),
                           title: Text(user['username'], style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
                           trailing: IconButton(
-                            icon: const Icon(Icons.person_add, color: Colors.green),
+                            icon: const Icon(Icons.person_add_alt_1, color: Colors.blue),
                             onPressed: () async {
                               try {
-                                await SupabaseService.addFriend(user['id']);
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Added @${user['username']}!")));
+                                await SupabaseService.sendFriendRequest(user['id']);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Request sent to @${user['username']}!")));
+                                  Navigator.pop(context);
+                                }
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
                               }
                             },
                           ),
@@ -222,7 +282,7 @@ class _FriendsTabState extends State<FriendsTab> {
                             }
                           ),
                         ),
-                        // NEW: More Options (Block)
+                        // More Options (Block)
                         PopupMenuButton<String>(
                           icon: Icon(Icons.more_vert, color: textColor),
                           color: Theme.of(context).cardColor,
