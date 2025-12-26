@@ -1,3 +1,4 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,31 +10,18 @@ import 'screens/home_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Try to load .env, but don't crash if it fails (because we might be using dart-define)
+  // SAFELY load .env. If it's missing (Release mode), we ignore the error
+  // because AppConfig already has the keys injected by GitHub Actions.
   try {
     await dotenv.load(fileName: ".env");
   } catch (e) {
-    print("Note: .env file not found or could not be loaded. Relying on --dart-define.");
+    // Silent error: File missing is expected in Release builds
   }
 
-  final url = AppConfig.supabaseUrl;
-  final key = AppConfig.supabaseAnonKey;
-
-  // SAFETY CHECK: If keys are missing, show an error screen instead of crashing
-  if (url.isEmpty || key.isEmpty) {
-    runApp(const MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text("Error: Supabase Keys are missing.\nPlease check AppConfig."),
-        ),
-      ),
-    ));
-    return;
-  }
-
+  // Initialize Supabase with the keys from AppConfig
   await Supabase.initialize(
-    url: url,
-    anonKey: key,
+    url: AppConfig.supabaseUrl,
+    anonKey: AppConfig.supabaseAnonKey,
   );
 
   runApp(const TransApp());

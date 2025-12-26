@@ -2,35 +2,22 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class AppConfig {
   static String get supabaseUrl {
-    // 1. Try to get from --dart-define (Release build)
-    const envUrl = String.fromEnvironment('SUPABASE_URL');
-    if (envUrl.isNotEmpty) {
-      return envUrl;
+    // 1. Try finding it in .env (Local Dev)
+    final url = dotenv.env['SUPABASE_URL'];
+    if (url != null && url.isNotEmpty) {
+      return url;
     }
-
-    // 2. Fallback to .env file (Local Debug)
-    final fileUrl = dotenv.env['SUPABASE_URL'];
-    if (fileUrl != null && fileUrl.isNotEmpty) {
-      return fileUrl;
-    }
-    
-    // Return empty so main.dart can handle the error gracefully instead of crashing here
+    // 2. If this code is running in the CI/CD build, this file 
+    //    will be overwritten, so we should return an empty string 
+    //    here locally if .env is missing.
     return '';
   }
 
   static String get supabaseAnonKey {
-    // 1. Try to get from --dart-define (Release build)
-    const envKey = String.fromEnvironment('SUPABASE_ANON_KEY');
-    if (envKey.isNotEmpty) {
-      return envKey;
+    final key = dotenv.env['SUPABASE_ANON_KEY'];
+    if (key != null && key.isNotEmpty) {
+      return key;
     }
-
-    // 2. Fallback to .env file (Local Debug)
-    final fileKey = dotenv.env['SUPABASE_ANON_KEY'];
-    if (fileKey != null && fileKey.isNotEmpty) {
-      return fileKey;
-    }
-
     return '';
   }
 }
