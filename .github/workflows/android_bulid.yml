@@ -29,7 +29,7 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      # FIX 1: Create .env using the secrets you actually have
+      # Create .env file from secrets
       - name: Create .env file
         run: |
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
@@ -38,30 +38,44 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
-      # FIX 2: Manually sign the APK (Fixes the deprecation warning)
       - name: Decode Keystore
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release-keystore.jks
 
+      # UPDATED STEP: Finds the APK automatically before signing
       - name: Sign APK
+        id: sign_apk
         run: |
-          # Find the latest build-tools version installed on the runner
+          # Find the build tools
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
-          
           echo "Using Build Tools: $BUILD_TOOLS_PATH"
+
+          # Find the APK file (looks for any -release.apk in the build folder)
+          APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           
+          if [ -z "$APK_PATH" ]; then
+            echo "Error: Could not find any release APK in build/app/outputs"
+            ls -R build/app/outputs
+            exit 1
+          fi
+
+          echo "Found APK at: $APK_PATH"
+
           # Sign the APK
           $BUILD_TOOLS_PATH/apksigner sign \
             --ks release-keystore.jks \
             --ks-key-alias ${{ secrets.ANDROID_KEY_ALIAS }} \
             --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
             --key-pass pass:${{ secrets.ANDROID_KEY_PASSWORD }} \
-            build/app/outputs/flutter-apk/app-release.apk
+            "$APK_PATH"
+          
+          # Save the path to use in the next step
+          echo "SIGNED_APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: ${{ env.SIGNED_APK_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
