@@ -50,26 +50,20 @@ jobs:
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
           echo "Using Build Tools: $BUILD_TOOLS_PATH"
 
-          # Find the APK file (looks for any -release.apk in the build folder)
+          # Find the APK file
           APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
             echo "Error: Could not find any release APK in build/app/outputs"
-            ls -R build/app/outputs
             exit 1
           fi
 
           echo "Found APK at: $APK_PATH"
 
-          # Sign the APK
-          $BUILD_TOOLS_PATH/apksigner sign \
-            --ks release-keystore.jks \
-            --ks-key-alias ${{ secrets.ANDROID_KEY_ALIAS }} \
-            --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
-            --key-pass pass:${{ secrets.ANDROID_KEY_PASSWORD }} \
-            "$APK_PATH"
+          # Sign the APK (Single line command to prevent syntax errors)
+          $BUILD_TOOLS_PATH/apksigner sign --ks release-keystore.jks --ks-key-alias ${{ secrets.ANDROID_KEY_ALIAS }} --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} --key-pass pass:${{ secrets.ANDROID_KEY_PASSWORD }} "$APK_PATH"
           
-          # Save the path to use in the next step
+          # Save the path
           echo "SIGNED_APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Create GitHub Release
