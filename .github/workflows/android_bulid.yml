@@ -11,6 +11,10 @@ jobs:
     name: Build & Release APK
     runs-on: ubuntu-latest
 
+    # FIX: Grant permission to create Releases and upload files
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,16 +33,15 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      # FIX 1: Inject secrets safely into AppConfig (prevents build crashes)
+      # 1. Inject Secrets Safely
       - name: Inject Secrets
         run: |
           touch .env
           
-          # Read secrets
           URL="${{ secrets.SUPABASE_URL }}"
           KEY="${{ secrets.SUPABASE_ANON_KEY }}"
           
-          # Sanitize: Remove newlines
+          # Sanitize
           URL=$(echo "$URL" | tr -d '\n' | xargs)
           KEY=$(echo "$KEY" | tr -d '\n' | xargs)
 
@@ -62,23 +65,19 @@ jobs:
       - name: Sign APK
         id: sign_apk
         run: |
-          # Find build tools
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
           
-          # Find APK
           APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
           fi
           
-          # FIX 2: Load AND SANITIZE secrets (Remove trailing newlines)
-          # This fixes the "entry does not contain a key" error
+          # 2. Sanitize Signing Keys (Remove hidden newlines)
           KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
           KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
           KEY_PASS=$(echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | tr -d '\r' | tr -d '\n')
 
-          # Sign APK
           $BUILD_TOOLS_PATH/apksigner sign \
             --ks release-keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \
