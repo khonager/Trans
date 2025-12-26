@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,11 +8,32 @@ import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
-  // REMOVED try-catch: Now if this fails, we will see the REAL error in the console
+
+  // Try to load .env, but don't crash if it fails (because we might be using dart-define)
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    print("Note: .env file not found or could not be loaded. Relying on --dart-define.");
+  }
+
+  final url = AppConfig.supabaseUrl;
+  final key = AppConfig.supabaseAnonKey;
+
+  // SAFETY CHECK: If keys are missing, show an error screen instead of crashing
+  if (url.isEmpty || key.isEmpty) {
+    runApp(const MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Text("Error: Supabase Keys are missing.\nPlease check AppConfig."),
+        ),
+      ),
+    ));
+    return;
+  }
+
   await Supabase.initialize(
-    url: AppConfig.supabaseUrl,
-    anonKey: AppConfig.supabaseAnonKey,
+    url: url,
+    anonKey: key,
   );
 
   runApp(const TransApp());
