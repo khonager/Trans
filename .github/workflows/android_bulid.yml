@@ -29,14 +29,33 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      # NOTE: We can skip creating the .env file now because we pass keys directly below
+      # FIX: Inject secrets safely into AppConfig to prevent build crashes
+      - name: Inject Secrets
+        run: |
+          # 1. Create a dummy .env file so dotenv.load() doesn't crash at runtime
+          touch .env
+
+          # 2. Read secrets into shell variables
+          URL="${{ secrets.SUPABASE_URL }}"
+          KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+          
+          # 3. Sanitize: Remove newlines to prevent syntax errors in Dart
+          URL=$(echo "$URL" | tr -d '\n' | xargs)
+          KEY=$(echo "$KEY" | tr -d '\n' | xargs)
+
+          # 4. Overwrite lib/config/app_config.dart with the real keys
+          # We use Raw Strings (r"...") to handle special characters safely
+          cat <<EOF > lib/config/app_config.dart
+          import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+          class AppConfig {
+            static String get supabaseUrl => r"$URL";
+            static String get supabaseAnonKey => r"$KEY";
+          }
+          EOF
 
       - name: Build APK
-        # UPDATED: We inject the secrets directly into the build command here
-        run: |
-          flutter build apk --release \
-            --dart-define=SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
-            --dart-define=SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+        run: flutter build apk --release
 
       - name: Decode Keystore
         run: |
@@ -45,23 +64,22 @@ jobs:
       - name: Sign APK
         id: sign_apk
         run: |
-          # 1. Find the build tools
+          # Find build tools
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
           
-          # 2. Find the APK file
+          # Find APK
           APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
           fi
-          echo "Found APK: $APK_PATH"
-
-          # 3. Load secrets into variables
+          
+          # Load secrets into variables
           KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
           KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
           KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
 
-          # 4. Sign the APK
+          # Sign APK
           $BUILD_TOOLS_PATH/apksigner sign \
             --ks release-keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \
@@ -69,7 +87,6 @@ jobs:
             --key-pass "pass:$KEY_PASS" \
             "$APK_PATH"
 
-          # 5. Save path
           echo "SIGNED_APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Create GitHub Release
