@@ -1,28 +1,26 @@
 import 'dart:io';
-import 'dart:typed_data'; // Required for Uint8List
+import 'dart:typed_data'; 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
-  // --- AUTH & PROFILE ---
   static User? get currentUser => client.auth.currentUser;
-  static Stream<AuthState> get authStateChanges => client.auth.onAuthStateChange;
 
+  // --- AUTH ---
   static Future<void> signUp(String email, String password, String username) async {
-    // UPDATED: Added emailRedirectTo to help fix localhost redirect issues.
-    // Ensure you configured this URL in Supabase Dashboard > Auth > URL Configuration.
+    // Web needs null to use Site URL, Mobile needs deep link
+    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
+    
     final response = await client.auth.signUp(
       email: email, 
       password: password, 
       data: {'username': username},
-      emailRedirectTo: 'io.supabase.trans://login-callback', 
+      emailRedirectTo: redirectUrl, 
     );
     if (response.user != null) {
-      await client.from('profiles').upsert({
-        'id': response.user!.id,
-        'username': username,
-      });
+      await client.from('profiles').upsert({'id': response.user!.id, 'username': username});
     }
   }
 
@@ -34,19 +32,24 @@ class SupabaseService {
     await client.auth.signOut();
   }
 
-  static Future<void> updatePassword(String newPassword) async {
-    await client.auth.updateUser(UserAttributes(password: newPassword));
-  }
-
-  static Future<void> updateEmail(String newEmail) async {
-    await client.auth.updateUser(UserAttributes(email: newEmail));
-  }
-
-  static Future<void> updateUsername(String newUsername) async {
+  // --- PROFILES ---
+  static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
-    if (user == null) return;
-    await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
-    await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
+    if (user == null) return null;
+    try {
+      return await client.from('profiles').select().eq('id', user.id).single();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<String?> getUsername(String userId) async {
+    try {
+      final data = await client.from('profiles').select('username').eq('id', userId).maybeSingle();
+      return data?['username'] as String?;
+    } catch (e) {
+      return null;
+    }
   }
 
   static Future<String?> uploadAvatar(File imageFile) async {
@@ -60,138 +63,27 @@ class SupabaseService {
       await client.from('profiles').update({'avatar_url': imageUrl}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
-      print("Upload error: $e");
       return null;
     }
   }
 
-  // --- TICKET FEATURES ---
-  
-  static Future<String?> uploadTicket(File imageFile) async {
-    final user = currentUser;
-    if (user == null) return null;
-    await _deleteOldTickets(user.id);
-    final fileExt = imageFile.path.split('.').last;
-    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    try {
-      await client.storage.from('tickets').upload(fileName, imageFile);
-      final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-      await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
-      return imageUrl;
-    } catch (e) {
-      return null;
-    }
-  }
+  // --- FRIENDS SYSTEM ---
 
-  static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
-    final user = currentUser;
-    if (user == null) return null;
-    await _deleteOldTickets(user.id);
-    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    try {
-      await client.storage.from('tickets').uploadBinary(fileName, bytes);
-      final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-      await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
-      return imageUrl;
-    } catch (e) {
-      print("Web upload error: $e");
-      return null;
-    }
-  }
-  
-  static Future<void> _deleteOldTickets(String userId) async {
-    try {
-      final List<FileObject> objects = await client.storage.from('tickets').list(path: userId);
-      if (objects.isNotEmpty) {
-        final List<String> pathsToDelete = objects.map((f) => '$userId/${f.name}').toList();
-        await client.storage.from('tickets').remove(pathsToDelete);
-      }
-    } catch (e) {
-      print("Error cleaning old tickets: $e");
-    }
-  }
-
-  static Future<String?> getTicketUrl() async {
-    final user = currentUser;
-    if (user == null) return null;
-    try {
-      final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
-      return data?['ticket_url'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  static Future<List<FileObject>> getTicketHistory() async {
-    final user = currentUser;
-    if (user == null) return [];
-    try {
-      final List<FileObject> objects = await client.storage.from('tickets').list(path: user.id);
-      objects.sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
-      return objects;
-    } catch (e) {
-      return [];
-    }
-  }
-  
-  static String getTicketPublicUrl(String fileName) {
-    final user = currentUser;
-    if (user == null) return "";
-    return client.storage.from('tickets').getPublicUrl('${user.id}/$fileName');
-  }
-
-  static Future<void> deleteTicket(String fileName) async {
-    final user = currentUser;
-    if (user == null) return;
-    try {
-      await client.storage.from('tickets').remove(['${user.id}/$fileName']);
-    } catch (e) {
-      print("Delete error: $e");
-    }
-  }
-
-  static Future<Map<String, dynamic>?> getCurrentProfile() async {
-    final user = currentUser;
-    if (user == null) return null;
-    try {
-      return await client.from('profiles').select().eq('id', user.id).single();
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // --- FRIENDS & BLOCKING & REQUESTS ---
-  
-  // UPDATED: Now returns friend status to help UI
-  static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
-    if (query.length < 3) return [];
-    try {
-      final user = currentUser;
-      final response = await client
-          .from('profiles')
-          .select('id, username, avatar_url')
-          .ilike('username', '%$query%')
-          .limit(10);
-      
-      // In a real app, you might want to join 'friends' or 'friend_requests' here
-      // to see if you already requested them. For now we just return profiles.
-      return List<Map<String, dynamic>>.from(response);
-    } catch (e) {
-      return [];
-    }
-  }
-
-  // NEW: Send Friend Request instead of direct add
   static Future<void> sendFriendRequest(String targetUserId) async {
     final user = currentUser;
     if (user == null) throw "Not logged in";
     if (user.id == targetUserId) throw "You cannot add yourself";
 
-    // Check if already friends
-    final check = await client.from('friends').select().match({'user_id': user.id, 'friend_id': targetUserId}).maybeSingle();
-    if (check != null) throw "Already friends!";
+    final checkFriend = await client.from('friends').select().match({'user_id': user.id, 'friend_id': targetUserId}).maybeSingle();
+    if (checkFriend != null) throw "Already friends!";
 
-    // Insert Request
+    // Check if request already exists (either direction)
+    final checkReq = await client.from('friend_requests').select()
+      .or('and(sender_id.eq.${user.id},receiver_id.eq.$targetUserId),and(sender_id.eq.$targetUserId,receiver_id.eq.${user.id})')
+      .maybeSingle();
+      
+    if (checkReq != null) throw "Request already pending!";
+
     await client.from('friend_requests').insert({
       'sender_id': user.id,
       'receiver_id': targetUserId, 
@@ -199,33 +91,21 @@ class SupabaseService {
     });
   }
 
-  // NEW: Get Pending Requests
-  static Future<List<Map<String, dynamic>>> getPendingRequests() async {
+  // FIXED: Removed second .eq() to prevent "method not defined" error
+  static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
     final user = currentUser;
-    if (user == null) return [];
-    try {
-      // 1. Get requests where I am the receiver
-      final requests = await client
-          .from('friend_requests')
-          .select()
-          .eq('receiver_id', user.id)
-          .eq('status', 'pending');
-          
-      if (requests.isEmpty) return [];
-
-      // 2. Fetch profiles for these senders manually
-      final senderIds = (requests as List).map((r) => r['sender_id']).toList();
-      final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
-
-      // 3. Merge data
-      return profiles.map((p) => p as Map<String, dynamic>).toList();
-    } catch (e) {
-      print("Error fetching requests: $e");
-      return [];
-    }
+    if (user == null) return const Stream.empty();
+    
+    return client.from('friend_requests')
+        .stream(primaryKey: ['id'])
+        .eq('receiver_id', user.id) // Only ONE filter allowed here
+        .map((data) {
+           // Filter 'pending' manually in Dart
+           final pending = data.where((r) => r['status'] == 'pending').toList();
+           return List<Map<String, dynamic>>.from(pending);
+        });
   }
 
-  // NEW: Accept Request (Uses Postgres Function for atomicity/security)
   static Future<void> acceptFriendRequest(String senderId) async {
     await client.rpc('accept_friend_request', params: {'request_sender_id': senderId});
   }
@@ -239,50 +119,18 @@ class SupabaseService {
     });
   }
 
-  static Future<String?> getUsername(String userId) async {
+  static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
+    if (query.length < 3) return [];
     try {
-      final data = await client.from('profiles').select('username').eq('id', userId).maybeSingle();
-      return data?['username'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  static Future<void> blockUser(String userIdToBlock) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('user_blocks').insert({
-      'blocker_id': user.id,
-      'blocked_id': userIdToBlock,
-    });
-  }
-
-  static Future<void> unblockUser(String userIdToUnblock) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('user_blocks').delete().match({
-      'blocker_id': user.id,
-      'blocked_id': userIdToUnblock,
-    });
-  }
-
-  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
-    final user = currentUser;
-    if (user == null) return [];
-    try {
-      final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
-      final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
-      
-      if (blockedIds.isEmpty) return [];
-
-      final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
-      return List<Map<String, dynamic>>.from(profiles);
+      final response = await client.from('profiles').select().ilike('username', '%$query%').limit(10);
+      return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       return [];
     }
   }
 
-  // --- LOCATION & CHAT ---
+  // --- LOCATION & ACTIVE FRIENDS ---
+  
   static Future<void> updateLocation(Position pos) async {
     final user = currentUser;
     if (user == null) return;
@@ -294,21 +142,91 @@ class SupabaseService {
     });
   }
 
-  static Stream<List<Map<String, dynamic>>> streamUsersLocations() {
-    // Note: This only shows people who are in your 'friends' table.
-    // If you haven't accepted their request, you won't see them if RLS is set up correctly.
-    return client.from('user_locations').stream(primaryKey: ['user_id']).map((data) => List<Map<String, dynamic>>.from(data));
+  static Stream<List<Map<String, dynamic>>> streamFriendsWithLocation() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+
+    // Stream all locations, then filter/enrich in Dart
+    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((locations) async {
+       List<Map<String, dynamic>> enriched = [];
+       
+       for (var loc in locations) {
+         if (loc['user_id'] == user.id) continue;
+         
+         // In a real app, check 'friends' table here to ensure they are actually friends
+         
+         final profile = await client.from('profiles').select('username, avatar_url').eq('id', loc['user_id']).maybeSingle();
+         
+         if (profile != null) {
+           final Map<String, dynamic> data = Map.from(loc);
+           data['username'] = profile['username'];
+           data['avatar_url'] = profile['avatar_url'];
+           enriched.add(data);
+         }
+       }
+       
+       // Sort by Active (<12h) then by Name
+       final now = DateTime.now();
+       enriched.sort((a, b) {
+         final dateA = DateTime.tryParse(a['updated_at'].toString()) ?? DateTime(2000);
+         final dateB = DateTime.tryParse(b['updated_at'].toString()) ?? DateTime(2000);
+         
+         final isActiveA = now.difference(dateA).inHours < 12;
+         final isActiveB = now.difference(dateB).inHours < 12;
+         
+         if (isActiveA && !isActiveB) return -1;
+         if (!isActiveA && isActiveB) return 1;
+         
+         final nameA = (a['username'] as String).toLowerCase();
+         final nameB = (b['username'] as String).toLowerCase();
+         return nameA.compareTo(nameB);
+       });
+
+       return enriched;
+    });
   }
 
+  // --- CHAT ---
+
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
-    return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).map((data) => List<Map<String, dynamic>>.from(data));
+    return client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('line_id', lineId)
+        .order('created_at', ascending: true)
+        .asyncMap((List<Map<String, dynamic>> messages) async {
+          if (messages.isEmpty) return [];
+
+          // Collect User IDs to fetch profiles
+          final userIds = messages.map((m) => m['user_id'] as String).toSet().toList();
+          
+          // Fetch Profiles
+          final profiles = await client.from('profiles').select().filter('id', 'in', userIds);
+          final profileMap = {for (var p in profiles) p['id']: p};
+
+          // Merge Data
+          return messages.map((m) {
+            final sender = profileMap[m['user_id']];
+            return {
+              ...m,
+              'username': sender?['username'] ?? 'Unknown',
+              'avatar_url': sender?['avatar_url'],
+            };
+          }).toList();
+        });
   }
 
   static Future<void> sendMessage(String lineId, String content) async {
     final user = currentUser;
     if (user == null) return;
-    await client.from('messages').insert({'line_id': lineId, 'user_id': user.id, 'content': content});
+    await client.from('messages').insert({
+      'line_id': lineId, 
+      'user_id': user.id, 
+      'content': content
+    });
   }
+
+  // --- STATION IMAGES ---
 
   static Future<String?> getStationImage(String stationId) async {
     try {
@@ -327,16 +245,13 @@ class SupabaseService {
     final fileName = '$stationId/$timestamp.jpg';
 
     String? publicUrl;
-    
     try {
       if (imageFile is File) {
          await client.storage.from('station_guides').upload(fileName, imageFile);
       } else if (imageFile is Uint8List) {
          await client.storage.from('station_guides').uploadBinary(fileName, imageFile);
       }
-      
       publicUrl = client.storage.from('station_guides').getPublicUrl(fileName);
-      
       if (publicUrl != null) {
         await client.from('station_images').upsert({
           'station_id': stationId,
@@ -346,8 +261,27 @@ class SupabaseService {
         });
       }
     } catch (e) {
-      print("Station upload error: $e");
       rethrow;
     }
+  }
+  
+  // --- BLOCKING ---
+  
+  static Future<void> blockUser(String userIdToBlock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').insert({
+      'blocker_id': user.id,
+      'blocked_id': userIdToBlock,
+    });
+  }
+
+  static Future<void> unblockUser(String userIdToUnblock) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').delete().match({
+      'blocker_id': user.id,
+      'blocked_id': userIdToUnblock,
+    });
   }
 }
