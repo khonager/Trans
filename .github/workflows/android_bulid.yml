@@ -55,12 +55,12 @@ jobs:
           fi
           echo "Found APK: $APK_PATH"
 
-          # 3. Load secrets into variables (Prevents line-break errors)
+          # 3. Load secrets into variables
           KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
           KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
           KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
 
-          # 4. Sign the APK (Short command now)
+          # 4. Sign the APK
           $BUILD_TOOLS_PATH/apksigner sign \
             --ks release-keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \
@@ -71,8 +71,9 @@ jobs:
           # 5. Save path
           echo "SIGNED_APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
+      # FIX: Updated to v2 to remove deprecation warnings
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: ${{ env.SIGNED_APK_PATH }}
