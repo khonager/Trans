@@ -9,8 +9,16 @@ import 'screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
-  // REMOVED try-catch: Now if this fails, we will see the REAL error in the console
+
+  // SAFELY load .env. If it's missing (Release mode), we ignore the error
+  // because AppConfig already has the keys injected by GitHub Actions.
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    // Silent error: File missing is expected in Release builds
+  }
+
+  // Initialize Supabase with the keys from AppConfig
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
