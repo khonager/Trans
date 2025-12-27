@@ -251,7 +251,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- ROUTE LOGIC ---
 
-  // Merges Walk+Wait+Walk into Transfer, and Splits into Single Rides
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -260,38 +259,61 @@ class _RoutesTabState extends State<RoutesTab> {
     void flushTransferBuffer() {
       if (transferBuffer.isEmpty) return;
       
-      int totalMinutes = 0;
-      String lastDest = "";
-      String firstOrigin = "";
+      final startTime = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
+      final endTime = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
+      int totalMinutes = endTime.difference(startTime).inMinutes;
+      if (totalMinutes < 0) totalMinutes = 0;
+
+      // Analyze instructions
+      int walkTime = 0;
+      int waitTime = 0;
       
       for (var leg in transferBuffer) {
         final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
         final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
-        totalMinutes += arr.difference(dep).inMinutes;
+        int dur = arr.difference(dep).inMinutes;
         
-        if (firstOrigin.isEmpty && leg['origin'] != null) firstOrigin = leg['origin']['name'] ?? '';
-        if (leg['destination'] != null) lastDest = leg['destination']['name'] ?? '';
+        final origin = leg['origin']?['name'];
+        final dest = leg['destination']?['name'];
+        
+        // FIX: If origin/dest are missing, default to Walk. 
+        // Previously, missing names caused time to be ignored.
+        if (origin != null && dest != null && origin == dest) {
+          waitTime += dur;
+        } else {
+          walkTime += dur;
+        }
       }
+
+      // Build Instruction String
+      List<String> parts = [];
+      if (walkTime > 0) parts.add("Walk ${walkTime}min");
+      if (waitTime > 0) parts.add("Wait ${waitTime}min");
       
-      String instruction = "Transfer";
-      if (firstOrigin == lastDest && firstOrigin.isNotEmpty) {
-        instruction = "Wait at $firstOrigin";
-      } else if (lastDest.isNotEmpty) {
-        instruction = "Transfer to $lastDest";
+      String instruction = parts.join(" • ");
+      if (instruction.isEmpty) {
+        // Fallback: If calculation failed but we have total time, call it Transfer
+        if (totalMinutes > 0) {
+           instruction = "Transfer ${totalMinutes}min";
+        } else {
+           instruction = "Transfer"; 
+        }
       }
 
       String durationDisplay = totalMinutes == 0 ? "< 1 min" : "$totalMinutes min";
-      final startTime = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
-      final endTime = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
       
+      // Determine Type for Icon
+      String type = (walkTime > 0 || totalMinutes > 0) ? 'walk' : 'wait';
+      if (walkTime == 0 && waitTime > 0) type = 'wait';
+
       steps.add(JourneyStep(
-        type: 'transfer',
+        type: type,
         line: 'Transfer',
         instruction: instruction,
         duration: durationDisplay,
         departureTime: "${startTime.hour.toString().padLeft(2,'0')}:${startTime.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${endTime.hour.toString().padLeft(2,'0')}:${endTime.minute.toString().padLeft(2,'0')}",
-        isWalking: true,
+        isWalking: type == 'walk',
       ));
       
       transferBuffer.clear();
@@ -299,6 +321,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
     for (int i = 0; i < legs.length; i++) {
       var leg = legs[i];
+      // Check if it's a Ride (has a line name)
       bool isRide = (leg['line'] != null && leg['line']['name'] != null);
       
       if (!isRide) {
@@ -312,6 +335,7 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
+        // Merge Logic
         if (steps.isNotEmpty && steps.last.line == lineName) {
            var last = steps.removeLast();
            List<dynamic> mergedStops = [];
@@ -459,7 +483,23 @@ class _RoutesTabState extends State<RoutesTab> {
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
         final List<JourneyStep> steps = _processLegs(legs);
-        String totalDurationStr = "Recalculated"; 
+        
+        // FIX: Calculate actual duration from LEGS (Fail-safe)
+        String totalDurationStr = "0 min";
+        if (legs.isNotEmpty) {
+           var firstLeg = legs.first;
+           var lastLeg = legs.last;
+           // Ensure we have valid timestamps
+           String? startStr = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
+           String? endStr = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
+           
+           if (startStr != null && endStr != null) {
+             DateTime routeStart = DateTime.parse(startStr);
+             DateTime routeEnd = DateTime.parse(endStr);
+             int totalMin = routeEnd.difference(routeStart).inMinutes;
+             totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
+           }
+        }
 
         final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
         String eta = "--:--";
@@ -470,7 +510,7 @@ class _RoutesTabState extends State<RoutesTab> {
         
         final newTab = RouteTab(
           id: newTabId,
-          title: "Alternative Route", 
+          title: "Alternative", 
           subtitle: "From ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}",
           eta: eta,
           totalDuration: totalDurationStr, 
@@ -633,6 +673,8 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, bool isDark) {
+    // ... (Existing code from previous turn, unchanged) ...
+    // Keeping this concise. The main logic fixes are above in _processLegs and _openNewRouteTab
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -699,6 +741,7 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // ... (Suggestions list and other methods unchanged) ...
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
@@ -740,19 +783,24 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildActiveRouteView(RouteTab route) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      // FIX 3: Adjusted Padding (0 top, 8 vertical on header) to close the gap
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)), Text(route.subtitle, style: const TextStyle(color: Colors.grey))])),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
-          ],
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0), // Reduced from 16.0
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)), Text(route.subtitle, style: const TextStyle(color: Colors.grey))])),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
+            ],
+          ),
         ),
-        const SizedBox(height: 20),
+        
         for (int i = 0; i < route.steps.length; i++)
           _StepCard(
             step: route.steps[i], 
+            isFirst: i == 0,
             finalDestinationId: route.destinationId,
             onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId),
             onChat: (line) => _showChat(context, line),
@@ -767,6 +815,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
+  final bool isFirst;
   final String finalDestinationId;
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
@@ -774,25 +823,28 @@ class _StepCard extends StatelessWidget {
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
 
-  const _StepCard({required this.step, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet});
 
   @override
   Widget build(BuildContext context) {
-    final isTransfer = step.type == 'transfer' || step.type == 'wait';
+    final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
     final cardColor = Theme.of(context).cardColor;
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
 
     if (isTransfer) {
+      Widget iconWidget = const Icon(Icons.directions_walk, color: Colors.orange);
+      if (step.type == 'wait') iconWidget = const Icon(Icons.man, color: Colors.orange);
+
       return Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.withOpacity(0.3))),
-        child: Row(children: [const Icon(Icons.directions_walk, color: Colors.orange), const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12))]))]),
+        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12))]))]),
       );
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 0,
       color: cardColor,
@@ -801,7 +853,7 @@ class _StepCard extends StatelessWidget {
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
-          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8), _buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
           children: [
             if (step.stopovers != null && step.stopovers!.isNotEmpty)
               Container(
@@ -852,7 +904,6 @@ class _EditFavoriteDialog extends StatelessWidget {
   }
 }
 
-// --- CHAT SHEET CLASS ---
 class ChatSheet extends StatefulWidget {
   final String lineId;
   final String title;
