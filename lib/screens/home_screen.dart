@@ -1,6 +1,4 @@
-// lib/screens/home_screen.dart
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -14,10 +12,9 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
   final bool isDarkMode;
   
-  // NEW
-  final Function(Color, bool) onColorChanged;
+  // NEW: Accept current color to pass around
+  final Function(Color) onColorChanged;
   final Color currentColor;
-  final bool useMaterialYou;
 
   const HomeScreen({
     super.key, 
@@ -25,7 +22,6 @@ class HomeScreen extends StatefulWidget {
     required this.isDarkMode,
     required this.onColorChanged,
     required this.currentColor,
-    required this.useMaterialYou,
   });
 
   @override
@@ -81,6 +77,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // Use the active theme color
+    final primaryColor = Theme.of(context).colorScheme.primary;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -93,8 +91,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                      colors: [Theme.of(context).primaryColor, Theme.of(context).primaryColorDark]),
+                  // FIX: Use active theme color
+                  color: primaryColor,
                   borderRadius: BorderRadius.circular(8)),
               child: Image.asset('assets/icon.png', width: 24, height: 24, errorBuilder: (_,__,___) => const Icon(Icons.directions_transit, size: 24, color: Colors.white)),
             ),
@@ -109,7 +107,8 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train,
-                color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey),
+                // FIX: Use active theme color
+                color: _onlyNahverkehr ? primaryColor : Colors.grey),
             tooltip: _onlyNahverkehr ? "Deutschlandticket Mode (On)" : "All Trains",
             onPressed: () {
               setState(() => _onlyNahverkehr = !_onlyNahverkehr);
@@ -139,7 +138,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          selectedItemColor: Theme.of(context).primaryColor,
+          // FIX: Use active theme color for active tab
+          selectedItemColor: primaryColor,
           unselectedItemColor: Colors.grey,
           currentIndex: _currentIndex,
           onTap: (idx) => setState(() => _currentIndex = idx),
@@ -167,7 +167,6 @@ class _HomeScreenState extends State<HomeScreen> {
           onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
           currentColor: widget.currentColor,
           onColorChanged: widget.onColorChanged,
-          useMaterialYou: widget.useMaterialYou,
         );
       default:
         return const SizedBox.shrink();

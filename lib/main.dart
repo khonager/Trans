@@ -1,5 +1,3 @@
-// lib/main.dart
-import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'config/app_config.dart';
 import 'screens/home_screen.dart';
+import 'services/supabase_service.dart'; // Import service to save color
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,28 +33,52 @@ class TransApp extends StatefulWidget {
 
 class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.dark;
-  Color _seedColor = const Color(0xFF4F46E5); // Default indigo
-  bool _useMaterialYou = false;
+  // Default Indigo
+  Color _seedColor = const Color(0xFF4F46E5); 
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _listenToAuthChanges();
+  }
+
+  void _listenToAuthChanges() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn) {
+        _syncThemeFromCloud();
+      }
+    });
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final isDark = prefs.getBool('isDark') ?? true;
-    final colorValue = prefs.getInt('themeColor');
-    final useMaterialYou = prefs.getBool('useMaterialYou') ?? false;
-
+    final colorVal = prefs.getInt('themeColor');
+    
     setState(() {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-      if (colorValue != null) {
-        _seedColor = Color(colorValue);
+      if (colorVal != null) {
+        _seedColor = Color(colorVal);
       }
-      _useMaterialYou = useMaterialYou;
     });
+    
+    // Attempt cloud sync if logged in
+    if (SupabaseService.currentUser != null) {
+      _syncThemeFromCloud();
+    }
+  }
+
+  Future<void> _syncThemeFromCloud() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (profile != null && profile['theme_color'] != null) {
+      final colorVal = profile['theme_color'] as int;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('themeColor', colorVal);
+      if (mounted) {
+        setState(() => _seedColor = Color(colorVal));
+      }
+    }
   }
 
   Future<void> _toggleTheme(bool isDark) async {
@@ -66,72 +89,48 @@ class _TransAppState extends State<TransApp> {
     });
   }
 
-  Future<void> _updateColorTheme(Color color, bool useMaterialYou) async {
+  Future<void> _updateColor(Color color) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('themeColor', color.value);
-    await prefs.setBool('useMaterialYou', useMaterialYou);
-    setState(() {
-      _seedColor = color;
-      _useMaterialYou = useMaterialYou;
-    });
+    
+    setState(() => _seedColor = color);
+
+    // Sync to Cloud
+    await SupabaseService.updateThemeColor(color.value);
   }
 
   @override
   Widget build(BuildContext context) {
-    return DynamicColorBuilder(
-      builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
-        ColorScheme lightScheme;
-        ColorScheme darkScheme;
-
-        if (lightDynamic != null && darkDynamic != null && _useMaterialYou) {
-          // Use Material You (Android 12+)
-          lightScheme = lightDynamic.harmonized();
-          darkScheme = darkDynamic.harmonized();
-        } else {
-          // Use Custom Seed Color
-          lightScheme = ColorScheme.fromSeed(
-            seedColor: _seedColor,
-            brightness: Brightness.light,
-          );
-          darkScheme = ColorScheme.fromSeed(
-            seedColor: _seedColor,
-            brightness: Brightness.dark,
-          );
-        }
-
-        return MaterialApp(
-          title: 'Trans',
-          debugShowCheckedModeBanner: false,
-          themeMode: _themeMode,
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: lightScheme,
-            scaffoldBackgroundColor: lightScheme.surface,
-            cardColor: lightScheme.surfaceContainerLow,
-            appBarTheme: AppBarTheme(
-              backgroundColor: lightScheme.surface,
-              foregroundColor: lightScheme.onSurface,
-            ),
-          ),
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            colorScheme: darkScheme,
-            scaffoldBackgroundColor: Colors.black, // Keep pure black for OLED preference? Or use darkScheme.surface
-            cardColor: const Color(0xFF111827),
-            appBarTheme: AppBarTheme(
-              backgroundColor: Colors.black.withOpacity(0.7),
-              foregroundColor: Colors.white,
-            ),
-          ),
-          home: HomeScreen(
-            onThemeChanged: _toggleTheme,
-            onColorChanged: _updateColorTheme,
-            isDarkMode: _themeMode == ThemeMode.dark,
-            currentColor: _seedColor,
-            useMaterialYou: _useMaterialYou,
-          ),
-        );
-      },
+    return MaterialApp(
+      title: 'Trans',
+      debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
+      theme: ThemeData(
+          brightness: Brightness.light,
+          scaffoldBackgroundColor: const Color(0xFFF3F4F6),
+          colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.light),
+          useMaterial3: true,
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+          )
+      ),
+      darkTheme: ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: const Color(0xFF000000),
+          colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.dark),
+          useMaterial3: true,
+          appBarTheme: AppBarTheme(
+            backgroundColor: Colors.black.withOpacity(0.7),
+            foregroundColor: Colors.white,
+          )
+      ),
+      home: HomeScreen(
+        onThemeChanged: _toggleTheme,
+        isDarkMode: _themeMode == ThemeMode.dark,
+        onColorChanged: _updateColor,
+        currentColor: _seedColor,
+      ),
     );
   }
 }
