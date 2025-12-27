@@ -25,17 +25,17 @@
           cmdline-tools-latest
           build-tools-35-0-0
           platform-tools
-          
+
           # Platforms
           platforms-android-36
           platforms-android-35
           platforms-android-34
           platforms-android-33
-          
+
           # Native tools
           ndk-27-0-12077973
           cmake-3-22-1
-          
+
           emulator
         ]);
 
@@ -45,16 +45,17 @@
             androidSdk
             flutter
             jdk17
-            
+
             # Common libraries needed by unpatched binaries (like aapt2)
             glibc
             zlib
             ncurses5
-            stdenv.cc.cc.lib  # FIX: Replaces 'stdcxx'
+            stdenv.cc.cc.lib # FIX: Replaces 'stdcxx'
             openssl
             expat
+            chromium # Added chromium for web support
           ]);
-          
+
           runScript = "bash";
 
           profile = ''
@@ -62,6 +63,7 @@
             export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
             export JAVA_HOME="${pkgs.jdk17}"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}"
+            export CHROME_EXECUTABLE="chromium" # Tell Flutter where to find the browser
           '';
         };
 
