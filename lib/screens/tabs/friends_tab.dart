@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:rxdart/rxdart.dart'; // Ensure you have this or use StreamGroup
 import '../../services/supabase_service.dart';
 
 class FriendsTab extends StatefulWidget {
@@ -13,8 +13,53 @@ class FriendsTab extends StatefulWidget {
 }
 
 class _FriendsTabState extends State<FriendsTab> {
-  
-  // --- ADD FRIEND SHEET ---
+  List<Map<String, dynamic>> _friends = [];
+  List<Map<String, dynamic>> _requests = [];
+  bool _isLoading = true;
+
+  StreamSubscription? _friendsSub;
+  StreamSubscription? _requestsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initData();
+  }
+
+  @override
+  void dispose() {
+    _friendsSub?.cancel();
+    _requestsSub?.cancel();
+    super.dispose();
+  }
+
+  void _initData() async {
+    // 1. FAST INITIAL FETCH (Removes spinner immediately)
+    try {
+      final friends = await SupabaseService.getFriendsWithLocation();
+      final requests = await SupabaseService.getPendingRequests();
+      if (mounted) {
+        setState(() {
+          _friends = friends;
+          _requests = requests;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print("Initial friends fetch failed: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
+
+    // 2. LISTEN FOR LIVE UPDATES
+    _friendsSub = SupabaseService.streamFriendsWithLocation().listen((data) {
+      if (mounted) setState(() => _friends = data);
+    });
+
+    _requestsSub = SupabaseService.streamPendingRequests().listen((data) {
+      if (mounted) setState(() => _requests = data);
+    });
+  }
+
   void _showAddFriendSheet(BuildContext context) async {
     final searchCtrl = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
@@ -105,6 +150,27 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
+    // --- SORTING LOGIC ---
+    final now = DateTime.now();
+    final activeFriends = <Map<String, dynamic>>[];
+    final inactiveFriends = <Map<String, dynamic>>[];
+
+    for (var f in _friends) {
+      final updated = DateTime.tryParse(f['updated_at'] ?? '') ?? DateTime(2000);
+      final isActive = now.difference(updated).inHours < 12;
+      if (isActive) {
+        activeFriends.add(f);
+      } else {
+        inactiveFriends.add(f);
+      }
+    }
+
+    activeFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
+    _requests.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
+    inactiveFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
+
+    final combinedList = [...activeFriends, ..._requests, ...inactiveFriends];
+
     return Column(
       children: [
         const SizedBox(height: 100),
@@ -122,81 +188,26 @@ class _FriendsTabState extends State<FriendsTab> {
           ),
         ),
         
-        // COMBINED LIST
         Expanded(
-          child: StreamBuilder<List<dynamic>>(
-            // Combine both streams using RxDart or just handle snapshot logic
-            // Since we need to merge them, StreamBuilder on a merged stream or checking both is needed.
-            // Simplified approach: StreamBuilder on Friends, inner StreamBuilder on Requests is messy.
-            // Better: CombineLatest from RxDart if available, or just nest builders.
-            // Since I cannot guarantee RxDart is added, I will nest StreamBuilders.
-            stream: SupabaseService.streamFriendsWithLocation(),
-            builder: (context, friendSnap) {
-              
-              return StreamBuilder<List<Map<String, dynamic>>>(
-                stream: SupabaseService.streamPendingRequests(),
-                builder: (context, reqSnap) {
-                  if (!friendSnap.hasData && !reqSnap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final friends = friendSnap.data ?? [];
-                  final requests = reqSnap.data ?? [];
-
-                  // 1. Separate Active vs Inactive Friends
-                  final now = DateTime.now();
-                  final activeFriends = <Map<String, dynamic>>[];
-                  final inactiveFriends = <Map<String, dynamic>>[];
-
-                  for (var f in friends) {
-                    final updated = DateTime.tryParse(f['updated_at'] ?? '') ?? DateTime(2000);
-                    final isActive = now.difference(updated).inHours < 12;
-                    if (isActive) {
-                      activeFriends.add(f);
-                    } else {
-                      inactiveFriends.add(f);
-                    }
-                  }
-
-                  // 2. Sort Each Group
-                  // Active: By Name
-                  activeFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
-                  
-                  // Requests: By Recency (Newest First)
-                  requests.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
-
-                  // Inactive: By Name
-                  inactiveFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
-
-                  // 3. Merge
-                  final combinedList = [...activeFriends, ...requests, ...inactiveFriends];
-
-                  if (combinedList.isEmpty) {
-                     return Center(child: Text("No friends yet.", style: TextStyle(color: Colors.grey.shade600)));
-                  }
-
-                  return ListView.builder(
+          child: _isLoading 
+            ? const Center(child: CircularProgressIndicator()) 
+            : combinedList.isEmpty 
+                ? Center(child: Text("No friends yet.", style: TextStyle(color: Colors.grey.shade600)))
+                : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: combinedList.length,
                     itemBuilder: (ctx, idx) {
                       final item = combinedList[idx];
-                      
-                      // Check if it is a Request (has 'sender_id') or Friend (has 'user_id')
                       final bool isRequest = item.containsKey('sender_id');
 
                       if (isRequest) {
                         return _buildRequestCard(item, textColor);
                       } else {
-                        // Is Friend
                         final bool isActive = activeFriends.contains(item);
                         return _buildFriendCard(item, isActive, textColor);
                       }
                     },
-                  );
-                }
-              );
-            },
-          ),
+                  ),
         ),
       ],
     );
@@ -215,14 +226,14 @@ class _FriendsTabState extends State<FriendsTab> {
         children: [
           CircleAvatar(
             backgroundImage: req['sender_avatar'] != null ? NetworkImage(req['sender_avatar']) : null,
-            child: req['sender_avatar'] == null ? Text(req['sender_username'][0].toUpperCase()) : null,
+            child: req['sender_avatar'] == null ? Text((req['sender_username'] ?? "?")[0].toUpperCase()) : null,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(req['sender_username'], style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
+                Text(req['sender_username'] ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
                 const Text("Sent a friend request", style: TextStyle(fontSize: 12, color: Colors.grey)),
               ],
             ),
@@ -241,7 +252,7 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildFriendCard(Map<String, dynamic> friend, bool isActive, Color? textColor) {
-    final String? currentLine = friend['current_line']; // Assuming this field exists now
+    final String? currentLine = friend['current_line'];
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -257,7 +268,7 @@ class _FriendsTabState extends State<FriendsTab> {
             children: [
               CircleAvatar(
                 backgroundImage: friend['avatar_url'] != null ? NetworkImage(friend['avatar_url']) : null,
-                child: friend['avatar_url'] == null ? Text(friend['username'][0].toUpperCase()) : null,
+                child: friend['avatar_url'] == null ? Text((friend['username'] ?? "?")[0].toUpperCase()) : null,
               ),
               if (isActive)
                 Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).cardColor, width: 2))))
@@ -268,10 +279,8 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, 
               children: [
-                Text(friend['username'], style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
+                Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
                 const SizedBox(height: 2), 
-                
-                // Show Last Line or Active status
                 if (currentLine != null && currentLine.isNotEmpty && isActive)
                   Row(
                     children: [
