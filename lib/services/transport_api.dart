@@ -6,14 +6,10 @@ import '../models/station.dart';
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
 
-  // --- HELPER: Handle Web vs Native Requests ---
   static Future<dynamic> _get(String endpoint, {Map<String, String>? queryParams}) async {
-    // Construct the standard URL
     final uri = Uri.parse('$_baseUrl$endpoint').replace(queryParameters: queryParams);
-    
     Uri finalUri = uri;
     
-    // FIX: Routing through proxy on Web to avoid CORS/Localhost blocking
     if (kIsWeb) {
       final String encodedUrl = Uri.encodeComponent(uri.toString());
       finalUri = Uri.parse('https://corsproxy.io/?$encodedUrl');
@@ -22,7 +18,6 @@ class TransportApi {
     try {
       final response = await http.get(
         finalUri,
-        // FIX: Add User-Agent. The API blocks requests without one.
         headers: {
           'User-Agent': 'TransApp/1.0 (flutter-web)',
           'Content-Type': 'application/json',
@@ -30,11 +25,10 @@ class TransportApi {
       );
 
       if (response.statusCode == 200) {
-        // Explicitly decode UTF-8 to handle German characters (ä, ö, ß)
         return json.decode(utf8.decode(response.bodyBytes));
       } else {
         debugPrint("Server returned ${response.statusCode}: ${response.body}");
-        return []; // Return empty list instead of throwing to prevent UI crash
+        return []; 
       }
     } catch (e) {
       debugPrint("API Error on $endpoint: $e");
@@ -106,6 +100,7 @@ class TransportApi {
       'results': '3', 
       'language': 'en',
       'transfers': '5',
+      'stopovers': 'true', // FIX: Crucial for fetching intermediate stops!
     };
 
     if (nahverkehrOnly) {
