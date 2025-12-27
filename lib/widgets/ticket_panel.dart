@@ -43,15 +43,9 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // Helper to force close on swipe
-  void _forceCloseSheet() {
-    _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-  }
-
   Future<void> _loadLocalTicket() async {
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString('local_ticket_path');
-    
     if (path != null) {
       if (kIsWeb) {
         setState(() => _localTicketPath = path);
@@ -217,30 +211,50 @@ class _TicketPanelState extends State<TicketPanel> {
               )
             ],
           ),
-          // FIX: Enable Mouse Dragging for the entire list
           child: ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {
-                PointerDeviceKind.touch,
-                PointerDeviceKind.mouse, // This enables "Swipe" with mouse
-              },
+              dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
             ),
             child: ListView(
               controller: scrollController,
               physics: const ClampingScrollPhysics(),
               padding: EdgeInsets.zero,
               children: [
-                // Header Area - Also explicitly draggable
+                // FIX: Manual Swipe Handling for the Header on Desktop
                 GestureDetector(
                   onTap: _toggleSheet,
-                  // Listen for swipe down on the header handle explicitly
-                  onVerticalDragUpdate: (_) {}, // Consume gesture to avoid conflict
+                  behavior: HitTestBehavior.opaque, // Ensures the entire header area is grabbable
+                  onVerticalDragUpdate: (details) {
+                    // Manually update sheet size based on drag distance
+                    final double screenHeight = MediaQuery.of(context).size.height;
+                    final double delta = details.delta.dy;
+                    final double currentSize = _sheetController.size;
+                    
+                    // Subtract delta because dragging UP (negative) means increasing size
+                    double newSize = currentSize - (delta / screenHeight);
+                    
+                    // Clamp limits (must match sheet limits)
+                    if (newSize < 0.08) newSize = 0.08;
+                    if (newSize > 0.85) newSize = 0.85;
+                    
+                    _sheetController.jumpTo(newSize);
+                  },
                   onVerticalDragEnd: (details) {
-                    if (details.primaryVelocity! > 0) { // Dragged Down
-                      _forceCloseSheet();
+                    // Snap logic on release
+                    final double velocity = details.primaryVelocity ?? 0;
+                    if (velocity < -500) { // Fast swipe UP
+                      _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+                    } else if (velocity > 500) { // Fast swipe DOWN
+                      _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+                    } else {
+                      // Snap to nearest half
+                      if (_sheetController.size > 0.4) {
+                        _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+                      } else {
+                        _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+                      }
                     }
                   },
-                  behavior: HitTestBehavior.opaque, 
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
