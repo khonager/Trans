@@ -19,6 +19,14 @@ import '../../services/history_manager.dart';
 import '../../services/favorites_manager.dart';
 import '../../widgets/chat_sheet.dart';
 
+// FIX: Define available icons as a constant list for tree-shaking compatibility
+const List<IconData> kAvailableIcons = [
+  Icons.star, Icons.home, Icons.work, Icons.favorite, 
+  Icons.train, Icons.directions_bus, Icons.school, 
+  Icons.person, Icons.location_on, Icons.shopping_cart, 
+  Icons.fitness_center, Icons.local_cafe, Icons.local_airport
+];
+
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -657,7 +665,14 @@ class _RoutesTabState extends State<RoutesTab> {
                           if (fav.type == 'friend') icon = Icons.person;
                           else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
                           else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
-                          if (fav.iconCode != null) icon = IconData(fav.iconCode!, fontFamily: 'MaterialIcons');
+                          
+                          // FIX: Use lookup instead of dynamic IconData creation to satisfy tree-shaker
+                          if (fav.iconCode != null) {
+                            icon = kAvailableIcons.firstWhere(
+                              (i) => i.codePoint == fav.iconCode,
+                              orElse: () => Icons.star // Fallback safely
+                            );
+                          }
 
                           return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
                       },
@@ -700,7 +715,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
                   title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
                   onTap: () => _selectItem(station),
-                  // ADDED: Hold to Add Favorite logic
                   onLongPress: () {
                     final newFav = Favorite(
                       id: DateTime.now().millisecondsSinceEpoch.toString(), 
@@ -840,7 +854,6 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-// --- UPDATED EDIT DIALOG with ICON PICKER ---
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
@@ -861,12 +874,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Timer? _debounce;
   bool _isLoading = false;
 
-  final List<IconData> _availableIcons = [
-    Icons.star, Icons.home, Icons.work, Icons.favorite, 
-    Icons.train, Icons.directions_bus, Icons.school, 
-    Icons.person, Icons.location_on, Icons.shopping_cart, 
-    Icons.fitness_center, Icons.local_cafe, Icons.local_airport
-  ];
+  // Use kAvailableIcons instead of local definition
 
   @override
   void initState() {
@@ -903,24 +911,21 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
             const SizedBox(height: 20),
             
-            // LABEL INPUT
             TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
             const SizedBox(height: 10),
             
-            // TYPE SELECTOR
             Row(children: [
               Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
               Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
             ]),
             
-            // ICON PICKER
             const SizedBox(height: 10),
             const Text("Pick Icon", style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: _availableIcons.map((icon) {
+                children: kAvailableIcons.map((icon) {
                   final isSelected = _selectedIconCode == icon.codePoint;
                   return GestureDetector(
                     onTap: () => setState(() => _selectedIconCode = icon.codePoint),
@@ -939,7 +944,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             ),
             const SizedBox(height: 10),
 
-            // CONTENT AREA 
             if (_currentType == 'station') ...[
               if (_selectedStation != null)
                 ListTile(
@@ -1021,7 +1025,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
 
             const SizedBox(height: 20),
             
-            // ACTION BUTTONS
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
