@@ -11,7 +11,7 @@ class TransportApi {
     final uri = Uri.parse('$_baseUrl$endpoint').replace(queryParameters: queryParams);
     Uri finalUri = uri;
     
-    // Routing through proxy on Web to avoid CORS blocking
+    // FIX: Routing through proxy on Web to avoid CORS/Localhost blocking
     if (kIsWeb) {
       final String encodedUrl = Uri.encodeComponent(uri.toString());
       finalUri = Uri.parse('https://corsproxy.io/?$encodedUrl');
@@ -102,7 +102,7 @@ class TransportApi {
       'results': '3', 
       'language': 'en',
       'transfers': '5',
-      'stopovers': 'true', 
+      'stopovers': 'true', // FIX: Added this to fetch intermediate stops
     };
 
     if (nahverkehrOnly) {
@@ -129,11 +129,11 @@ class TransportApi {
   }
 
   // 4. Get Departures (Alternatives)
-  // UPDATED: Added 'when' parameter for scrolling
+  // UPDATED: Added pagination via 'when'
   static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false, DateTime? when}) async {
     final params = {
       'duration': '60', 
-      'results': '20', // Increased results for better scrolling
+      'results': '20',
       'language': 'en',
     };
 
@@ -142,7 +142,7 @@ class TransportApi {
       params['national'] = 'false';
     }
     
-    // FIX: Pass time for pagination
+    // FIX: Use 'when' for pagination
     if (when != null) {
       params['when'] = when.toIso8601String();
     }
