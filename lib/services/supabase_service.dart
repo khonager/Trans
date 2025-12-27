@@ -82,6 +82,7 @@ class SupabaseService {
 
   // --- FRIENDS SYSTEM ---
 
+  // 1. Send Request
   static Future<void> sendFriendRequest(String targetUserId) async {
     final user = currentUser;
     if (user == null) throw "Not logged in";
@@ -103,7 +104,7 @@ class SupabaseService {
     });
   }
 
-  // NEW: Fetch Requests ONCE (for fast load)
+  // 2. Fetch Requests
   static Future<List<Map<String, dynamic>>> getPendingRequests() async {
     final user = currentUser;
     if (user == null) return [];
@@ -114,31 +115,13 @@ class SupabaseService {
         .eq('status', 'pending');
     
     if (data.isEmpty) return [];
-    return _enrichRequests(List<Map<String, dynamic>>.from(data));
-  }
-
-  // Stream Requests (for live updates)
-  static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
     
-    return client.from('friend_requests')
-        .stream(primaryKey: ['id'])
-        .eq('receiver_id', user.id)
-        .asyncMap((data) async {
-           final pending = data.where((r) => r['status'] == 'pending').toList();
-           return _enrichRequests(List<Map<String, dynamic>>.from(pending));
-        });
-  }
-
-  // Helper to attach profiles to requests
-  static Future<List<Map<String, dynamic>>> _enrichRequests(List<Map<String, dynamic>> requests) async {
-    if (requests.isEmpty) return [];
-    final senderIds = requests.map((r) => r['sender_id']).toList();
+    // Enrich with Sender Profiles
+    final senderIds = (data as List).map((r) => r['sender_id']).toList();
     final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
-    return requests.map((req) {
+    return data.map((req) {
       final sender = profileMap[req['sender_id']];
       return {
         ...req,
@@ -148,6 +131,61 @@ class SupabaseService {
     }).toList();
   }
 
+  static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    // Re-use logic: Stream IDs, fetch details
+    return client.from('friend_requests').stream(primaryKey: ['id']).eq('receiver_id', user.id).asyncMap((_) => getPendingRequests());
+  }
+
+  // 3. Fetch Friends (ROBUST: Friends Table -> Profiles + Locations)
+  static Future<List<Map<String, dynamic>>> getFriends() async {
+    final user = currentUser;
+    if (user == null) return [];
+
+    // A. Get Friend IDs from 'friends' table
+    final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
+    if (friendsRelation.isEmpty) return [];
+
+    final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
+
+    // B. Get Profiles (Name, Avatar)
+    final profiles = await client.from('profiles').select().filter('id', 'in', friendIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    // C. Get Locations (Lat, Long, Line) - might be empty for some
+    final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
+    final locationMap = {for (var l in locations) l['user_id']: l};
+
+    // D. Merge
+    List<Map<String, dynamic>> result = [];
+    for (var id in friendIds) {
+      final profile = profileMap[id];
+      if (profile == null) continue; // Should not happen
+
+      final loc = locationMap[id];
+      result.add({
+        'id': id,
+        'username': profile['username'] ?? 'Unknown',
+        'avatar_url': profile['avatar_url'],
+        'latitude': loc?['latitude'],
+        'longitude': loc?['longitude'],
+        'updated_at': loc?['updated_at'], // Needed for "Active" check
+        'current_line': loc?['current_line'],
+      });
+    }
+    return result;
+  }
+
+  // Stream Friends (Listens to LOCATION updates to keep "Active" status live)
+  static Stream<List<Map<String, dynamic>>> streamFriends() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    
+    // We listen to user_locations so we update when friends move
+    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((_) => getFriends());
+  }
+
   static Future<void> acceptFriendRequest(String senderId) async {
     await client.rpc('accept_friend_request', params: {'request_sender_id': senderId});
   }
@@ -155,10 +193,7 @@ class SupabaseService {
   static Future<void> rejectFriendRequest(String senderId) async {
     final user = currentUser;
     if (user == null) return;
-    await client.from('friend_requests').delete().match({
-      'sender_id': senderId,
-      'receiver_id': user.id
-    });
+    await client.from('friend_requests').delete().match({'sender_id': senderId, 'receiver_id': user.id});
   }
 
   static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
@@ -171,8 +206,7 @@ class SupabaseService {
     }
   }
 
-  // --- LOCATION & ACTIVE FRIENDS ---
-  
+  // --- LOCATION ---
   static Future<void> updateLocation(Position pos, {String? currentLine}) async {
     final user = currentUser;
     if (user == null) return;
@@ -188,52 +222,7 @@ class SupabaseService {
     await client.from('user_locations').upsert(updateData);
   }
 
-  // NEW: Fetch Friends ONCE (Fast Load)
-  static Future<List<Map<String, dynamic>>> getFriendsWithLocation() async {
-    final user = currentUser;
-    if (user == null) return [];
-
-    final locations = await client.from('user_locations').select();
-    return _enrichLocations(List<Map<String, dynamic>>.from(locations), user.id);
-  }
-
-  // Stream Friends (Live Updates)
-  static Stream<List<Map<String, dynamic>>> streamFriendsWithLocation() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-
-    return client.from('user_locations')
-        .stream(primaryKey: ['user_id'])
-        .asyncMap((locations) => _enrichLocations(List<Map<String, dynamic>>.from(locations), user.id));
-  }
-
-  // Helper to attach profiles to locations (Batch Fetch Optimized)
-  static Future<List<Map<String, dynamic>>> _enrichLocations(List<Map<String, dynamic>> locations, String myUserId) async {
-    // Filter out myself
-    final friendLocs = locations.where((l) => l['user_id'] != myUserId).toList();
-    if (friendLocs.isEmpty) return [];
-
-    // Batch fetch profiles
-    final userIds = friendLocs.map((l) => l['user_id']).toList();
-    final profiles = await client.from('profiles').select('id, username, avatar_url').filter('id', 'in', userIds);
-    final profileMap = {for (var p in profiles) p['id']: p};
-
-    List<Map<String, dynamic>> result = [];
-    for (var loc in friendLocs) {
-      final profile = profileMap[loc['user_id']];
-      if (profile != null) {
-        result.add({
-          ...loc,
-          'username': profile['username'],
-          'avatar_url': profile['avatar_url'],
-        });
-      }
-    }
-    return result;
-  }
-
   // --- CHAT & TICKET ---
-
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
     return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).asyncMap((List<Map<String, dynamic>> messages) async {
           if (messages.isEmpty) return [];
@@ -260,6 +249,7 @@ class SupabaseService {
   static Future<String?> getTicketUrl() async {
     final user = currentUser;
     if (user == null) return null;
+    // This previously crashed if column didn't exist. Fixed by SQL above.
     final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
     return data?['ticket_url'] as String?;
   }

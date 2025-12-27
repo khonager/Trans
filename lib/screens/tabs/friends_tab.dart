@@ -34,9 +34,9 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   void _initData() async {
-    // 1. FAST INITIAL FETCH (Removes spinner immediately)
+    // 1. Initial Fetch
     try {
-      final friends = await SupabaseService.getFriendsWithLocation();
+      final friends = await SupabaseService.getFriends(); // Use updated method
       final requests = await SupabaseService.getPendingRequests();
       if (mounted) {
         setState(() {
@@ -46,12 +46,12 @@ class _FriendsTabState extends State<FriendsTab> {
         });
       }
     } catch (e) {
-      print("Initial friends fetch failed: $e");
+      debugPrint("Friends init error: $e");
       if (mounted) setState(() => _isLoading = false);
     }
 
-    // 2. LISTEN FOR LIVE UPDATES
-    _friendsSub = SupabaseService.streamFriendsWithLocation().listen((data) {
+    // 2. Streams for updates
+    _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
     });
 
@@ -150,19 +150,22 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
-    // --- SORTING LOGIC ---
+    // SORTING
     final now = DateTime.now();
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
 
     for (var f in _friends) {
-      final updated = DateTime.tryParse(f['updated_at'] ?? '') ?? DateTime(2000);
-      final isActive = now.difference(updated).inHours < 12;
-      if (isActive) {
-        activeFriends.add(f);
-      } else {
-        inactiveFriends.add(f);
+      // Check if location data exists and is recent
+      if (f['updated_at'] != null) {
+        final updated = DateTime.tryParse(f['updated_at']) ?? DateTime(2000);
+        final isActive = now.difference(updated).inHours < 12;
+        if (isActive) {
+          activeFriends.add(f);
+          continue;
+        }
       }
+      inactiveFriends.add(f);
     }
 
     activeFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
@@ -252,7 +255,7 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildFriendCard(Map<String, dynamic> friend, bool isActive, Color? textColor) {
-    final String? currentLine = friend['current_line'];
+    final String? currentLine = friend['current_line']; 
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -281,6 +284,7 @@ class _FriendsTabState extends State<FriendsTab> {
               children: [
                 Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
                 const SizedBox(height: 2), 
+                
                 if (currentLine != null && currentLine.isNotEmpty && isActive)
                   Row(
                     children: [
