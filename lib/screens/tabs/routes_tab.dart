@@ -249,70 +249,78 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC ---
+  // --- ROUTE LOGIC (FIXED) ---
 
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
+    DateTime? lastArrival; // Track arrival of previous train to calculate wait times
 
-    void flushTransferBuffer() {
-      if (transferBuffer.isEmpty) return;
-      
-      final startTime = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
-      final endTime = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
-      int totalMinutes = endTime.difference(startTime).inMinutes;
-      if (totalMinutes < 0) totalMinutes = 0;
+    // Helper to flush buffer into a Transfer Step
+    void flushTransferBuffer(DateTime? nextRideDeparture) {
+      // If we have no buffer and no gap to bridge, do nothing
+      if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
-      // Analyze instructions
-      int walkTime = 0;
-      int waitTime = 0;
-      
+      // 1. Determine Time Block
+      // Start = Last arrival (or start of first walk)
+      DateTime blockStart;
+      if (lastArrival != null) {
+        blockStart = lastArrival!;
+      } else if (transferBuffer.isNotEmpty) {
+        blockStart = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
+      } else {
+        return; // Should not happen
+      }
+
+      // End = Next ride departure (or end of last walk)
+      DateTime blockEnd;
+      if (nextRideDeparture != null) {
+        blockEnd = nextRideDeparture;
+      } else if (transferBuffer.isNotEmpty) {
+        blockEnd = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
+      } else {
+        blockEnd = blockStart;
+      }
+
+      // 2. Calculate explicit Walk Time from buffer
+      int walkMinutes = 0;
       for (var leg in transferBuffer) {
         final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
         final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
         int dur = arr.difference(dep).inMinutes;
-        
-        final origin = leg['origin']?['name'];
-        final dest = leg['destination']?['name'];
-        
-        // FIX: If origin/dest are missing, default to Walk. 
-        // Previously, missing names caused time to be ignored.
-        if (origin != null && dest != null && origin == dest) {
-          waitTime += dur;
-        } else {
-          walkTime += dur;
-        }
+        if (dur < 0) dur = 0;
+        walkMinutes += dur;
       }
 
-      // Build Instruction String
+      // 3. Calculate Total Gap & Derived Wait
+      int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
+      if (totalGapMinutes < 0) totalGapMinutes = 0;
+
+      // Wait = Total Gap - Walking Time
+      int waitMinutes = totalGapMinutes - walkMinutes;
+      if (waitMinutes < 1) waitMinutes = 0; // Fix negative or tiny waits
+
+      // 4. Construct Strings & Icons
       List<String> parts = [];
-      if (walkTime > 0) parts.add("Walk ${walkTime}min");
-      if (waitTime > 0) parts.add("Wait ${waitTime}min");
+      if (walkMinutes > 0) parts.add("Walk $walkMinutes min");
+      if (waitMinutes > 0) parts.add("Wait $waitMinutes min");
       
       String instruction = parts.join(" • ");
-      if (instruction.isEmpty) {
-        // Fallback: If calculation failed but we have total time, call it Transfer
-        if (totalMinutes > 0) {
-           instruction = "Transfer ${totalMinutes}min";
-        } else {
-           instruction = "Transfer"; 
-        }
-      }
+      if (instruction.isEmpty) instruction = "Transfer";
 
-      String durationDisplay = totalMinutes == 0 ? "< 1 min" : "$totalMinutes min";
+      String durationDisplay = "$totalGapMinutes min";
       
-      // Determine Type for Icon
-      String type = (walkTime > 0 || totalMinutes > 0) ? 'walk' : 'wait';
-      if (walkTime == 0 && waitTime > 0) type = 'wait';
+      // Icon Logic: Walk icon if walking involved, otherwise Man icon (Standing)
+      String type = (walkMinutes > 0) ? 'walk' : 'wait';
 
       steps.add(JourneyStep(
         type: type,
         line: 'Transfer',
         instruction: instruction,
         duration: durationDisplay,
-        departureTime: "${startTime.hour.toString().padLeft(2,'0')}:${startTime.minute.toString().padLeft(2,'0')}",
-        arrivalTime: "${endTime.hour.toString().padLeft(2,'0')}:${endTime.minute.toString().padLeft(2,'0')}",
+        departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
+        arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: type == 'walk',
       ));
       
@@ -321,13 +329,18 @@ class _RoutesTabState extends State<RoutesTab> {
 
     for (int i = 0; i < legs.length; i++) {
       var leg = legs[i];
-      // Check if it's a Ride (has a line name)
+      // Check if leg is a ride
       bool isRide = (leg['line'] != null && leg['line']['name'] != null);
       
       if (!isRide) {
         transferBuffer.add(leg);
       } else {
-        flushTransferBuffer();
+        // It is a ride.
+        // 1. Flush any gap/transfers BEFORE this ride starts
+        DateTime currentRideDeparture = DateTime.parse(leg['departure']);
+        flushTransferBuffer(currentRideDeparture);
+
+        // 2. Process Ride
         final String lineName = leg['line']['name'].toString();
         final String destName = leg['direction'] ?? leg['destination']['name'] ?? 'Unknown';
         final String startStationId = leg['origin']?['id'];
@@ -335,8 +348,8 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
-        // Merge Logic
-        if (steps.isNotEmpty && steps.last.line == lineName) {
+        // Merge with previous leg if same train (split leg)
+        if (steps.isNotEmpty && steps.last.line == lineName && steps.last.type == 'ride') {
            var last = steps.removeLast();
            List<dynamic> mergedStops = [];
            if (last.stopovers != null) mergedStops.addAll(last.stopovers!);
@@ -354,27 +367,32 @@ class _RoutesTabState extends State<RoutesTab> {
              startStationId: last.startStationId,
              platform: last.platform,
            ));
-           continue;
+        } else {
+          int legDurationMin = arr.difference(dep).inMinutes;
+          String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
+
+          steps.add(JourneyStep(
+            type: 'ride',
+            line: lineName,
+            instruction: "$lineName → $destName",
+            duration: durationDisplay,
+            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+            arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
+            chatCount: random.nextInt(15) + 1,
+            startStationId: startStationId,
+            platform: platform != null ? "Plat $platform" : null,
+            stopovers: leg['stopovers'],
+          ));
         }
-
-        int legDurationMin = arr.difference(dep).inMinutes;
-        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
-
-        steps.add(JourneyStep(
-          type: 'ride',
-          line: lineName,
-          instruction: "$lineName → $destName",
-          duration: durationDisplay,
-          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-          arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
-          chatCount: random.nextInt(15) + 1,
-          startStationId: startStationId,
-          platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'],
-        ));
+        
+        // Update last arrival to this ride's arrival
+        lastArrival = arr;
       }
     }
-    flushTransferBuffer();
+    
+    // Flush trail (e.g. Walk from station to home)
+    flushTransferBuffer(null);
+
     return steps;
   }
 
@@ -484,12 +502,12 @@ class _RoutesTabState extends State<RoutesTab> {
         final List legs = journeyData['legs'];
         final List<JourneyStep> steps = _processLegs(legs);
         
-        // FIX: Calculate actual duration from LEGS (Fail-safe)
+        // FIX: Reliable Duration Calc using First Departure -> Last Arrival
         String totalDurationStr = "0 min";
         if (legs.isNotEmpty) {
            var firstLeg = legs.first;
            var lastLeg = legs.last;
-           // Ensure we have valid timestamps
+           
            String? startStr = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
            String? endStr = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
            
@@ -673,8 +691,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, bool isDark) {
-    // ... (Existing code from previous turn, unchanged) ...
-    // Keeping this concise. The main logic fixes are above in _processLegs and _openNewRouteTab
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -741,7 +757,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // ... (Suggestions list and other methods unchanged) ...
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
@@ -783,11 +798,12 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildActiveRouteView(RouteTab route) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     return ListView(
-      // FIX 3: Adjusted Padding (0 top, 8 vertical on header) to close the gap
+      // FIX: Removed extra top padding to close the gap
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
       children: [
+        // Header
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0), // Reduced from 16.0
+          padding: const EdgeInsets.symmetric(vertical: 8.0), 
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -832,8 +848,9 @@ class _StepCard extends StatelessWidget {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
 
     if (isTransfer) {
+      // FIX: Proper Icon Logic
       Widget iconWidget = const Icon(Icons.directions_walk, color: Colors.orange);
-      if (step.type == 'wait') iconWidget = const Icon(Icons.man, color: Colors.orange);
+      if (step.type == 'wait') iconWidget = const Icon(Icons.man, color: Colors.orange); // Standing Man for pure wait
 
       return Container(
         margin: const EdgeInsets.only(bottom: 16),
