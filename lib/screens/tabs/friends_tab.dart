@@ -34,9 +34,8 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   void _initData() async {
-    // 1. FAST INITIAL FETCH (Removes spinner immediately)
     try {
-      final friends = await SupabaseService.getFriendsWithLocation();
+      final friends = await SupabaseService.getFriends();
       final requests = await SupabaseService.getPendingRequests();
       if (mounted) {
         setState(() {
@@ -46,12 +45,11 @@ class _FriendsTabState extends State<FriendsTab> {
         });
       }
     } catch (e) {
-      print("Initial friends fetch failed: $e");
+      debugPrint("Friends init error: $e");
       if (mounted) setState(() => _isLoading = false);
     }
 
-    // 2. LISTEN FOR LIVE UPDATES
-    _friendsSub = SupabaseService.streamFriendsWithLocation().listen((data) {
+    _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
     });
 
@@ -60,7 +58,7 @@ class _FriendsTabState extends State<FriendsTab> {
     });
   }
 
-  void _showAddFriendSheet(BuildContext context) async {
+  void _showAddFriendSheet(BuildContext context) {
     final searchCtrl = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
 
@@ -114,10 +112,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         if (user['id'] == SupabaseService.currentUser?.id) return const SizedBox.shrink();
                         
                         return ListTile(
-                          leading: CircleAvatar(
-                             backgroundImage: user['avatar_url'] != null ? NetworkImage(user['avatar_url']) : null,
-                             child: user['avatar_url'] == null ? Text(user['username'][0].toUpperCase()) : null
-                          ),
+                          leading: _buildAvatarHelper(user),
                           title: Text(user['username']),
                           trailing: IconButton(
                             icon: const Icon(Icons.person_add, color: Colors.blue),
@@ -150,19 +145,21 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
-    // --- SORTING LOGIC ---
-    final now = DateTime.now();
+    // Sorting Logic
+    final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
 
     for (var f in _friends) {
-      final updated = DateTime.tryParse(f['updated_at'] ?? '') ?? DateTime(2000);
-      final isActive = now.difference(updated).inHours < 12;
-      if (isActive) {
-        activeFriends.add(f);
-      } else {
-        inactiveFriends.add(f);
+      if (f['updated_at'] != null) {
+        final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
+        final isActive = now.difference(updated).inHours < 12;
+        if (isActive) {
+          activeFriends.add(f);
+          continue;
+        }
       }
+      inactiveFriends.add(f);
     }
 
     activeFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
@@ -213,6 +210,30 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
+  Widget _buildAvatarHelper(Map<String, dynamic> userData, {double radius = 20}) {
+    final emoji = userData['avatar_emoji'] ?? userData['sender_emoji'];
+    final url = userData['avatar_url'] ?? userData['sender_avatar'];
+    final username = userData['username'] ?? userData['sender_username'] ?? "?";
+    
+    // Theme color logic
+    final colorVal = userData['theme_color'];
+    final Color bgColor = colorVal != null ? Color(colorVal) : Colors.indigo;
+
+    if (emoji != null && emoji.isNotEmpty) {
+       return CircleAvatar(
+         radius: radius,
+         backgroundColor: bgColor,
+         child: Text(emoji, style: TextStyle(fontSize: radius * 1.2)),
+       );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: bgColor,
+      backgroundImage: url != null ? NetworkImage(url) : null,
+      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?", style: const TextStyle(color: Colors.white)) : null,
+    );
+  }
+
   Widget _buildRequestCard(Map<String, dynamic> req, Color? textColor) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -224,10 +245,7 @@ class _FriendsTabState extends State<FriendsTab> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundImage: req['sender_avatar'] != null ? NetworkImage(req['sender_avatar']) : null,
-            child: req['sender_avatar'] == null ? Text((req['sender_username'] ?? "?")[0].toUpperCase()) : null,
-          ),
+          _buildAvatarHelper(req),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -252,7 +270,7 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   Widget _buildFriendCard(Map<String, dynamic> friend, bool isActive, Color? textColor) {
-    final String? currentLine = friend['current_line'];
+    final String? currentLine = friend['current_line']; 
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -266,10 +284,7 @@ class _FriendsTabState extends State<FriendsTab> {
         children: [
           Stack(
             children: [
-              CircleAvatar(
-                backgroundImage: friend['avatar_url'] != null ? NetworkImage(friend['avatar_url']) : null,
-                child: friend['avatar_url'] == null ? Text((friend['username'] ?? "?")[0].toUpperCase()) : null,
-              ),
+              _buildAvatarHelper(friend),
               if (isActive)
                 Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).cardColor, width: 2))))
             ],
@@ -281,6 +296,7 @@ class _FriendsTabState extends State<FriendsTab> {
               children: [
                 Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
                 const SizedBox(height: 2), 
+                
                 if (currentLine != null && currentLine.isNotEmpty && isActive)
                   Row(
                     children: [

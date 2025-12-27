@@ -17,6 +17,15 @@ import '../../services/transport_api.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 import '../../services/favorites_manager.dart';
+import '../../widgets/chat_sheet.dart';
+
+// FIX: Define available icons as a constant list for tree-shaking compatibility
+const List<IconData> kAvailableIcons = [
+  Icons.star, Icons.home, Icons.work, Icons.favorite, 
+  Icons.train, Icons.directions_bus, Icons.school, 
+  Icons.person, Icons.location_on, Icons.shopping_cart, 
+  Icons.fitness_center, Icons.local_cafe, Icons.local_airport
+];
 
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
@@ -247,10 +256,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   // --- ROUTE LOGIC ---
-  // (Same as before, omitted for brevity but required in full file)
   List<JourneyStep> _processLegs(List legs) {
-    // Paste the same _processLegs logic from previous turn here
-    // For completeness in this artifact I will include it
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
@@ -399,9 +405,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
     return steps;
   }
-
-  // ... (Rest of methods: _findRoutes, _openNewRouteTab, _closeTab, _showChat, _showGuide, _showAlternatives, _triggerVibration)
-  // They are identical to the previous file version. I will include _findRoutes and _openNewRouteTab for context.
   
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
@@ -549,7 +552,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
+      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
@@ -654,17 +657,24 @@ class _RoutesTabState extends State<RoutesTab> {
                       itemCount: _favorites.length + 1,
                       separatorBuilder: (_,__) => const SizedBox(width: 12),
                       itemBuilder: (ctx, idx) {
-                         if (idx == _favorites.length) {
-                           return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
-                         }
-                         final fav = _favorites[idx];
-                         IconData icon = Icons.star;
-                         if (fav.type == 'friend') icon = Icons.person;
-                         else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
-                         else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
-                         if (fav.iconCode != null) icon = IconData(fav.iconCode!, fontFamily: 'MaterialIcons');
+                          if (idx == _favorites.length) {
+                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
+                          }
+                          final fav = _favorites[idx];
+                          IconData icon = Icons.star;
+                          if (fav.type == 'friend') icon = Icons.person;
+                          else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
+                          else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
+                          
+                          // FIX: Use lookup instead of dynamic IconData creation to satisfy tree-shaker
+                          if (fav.iconCode != null) {
+                            icon = kAvailableIcons.firstWhere(
+                              (i) => i.codePoint == fav.iconCode,
+                              orElse: () => Icons.star // Fallback safely
+                            );
+                          }
 
-                         return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
+                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
                       },
                     ),
                   ),
@@ -705,7 +715,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
                   title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
                   onTap: () => _selectItem(station),
-                  // ADDED: Hold to Add Favorite logic
                   onLongPress: () {
                     final newFav = Favorite(
                       id: DateTime.now().millisecondsSinceEpoch.toString(), 
@@ -724,8 +733,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // ... (TextField, ActiveRouteView, StepCard - kept identical to ensure compatibility) ...
-  // Included to make file complete and copy-paste ready
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     Color iconColor = Colors.grey;
@@ -847,7 +854,6 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-// --- UPDATED EDIT DIALOG with ICON PICKER ---
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
@@ -868,12 +874,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Timer? _debounce;
   bool _isLoading = false;
 
-  final List<IconData> _availableIcons = [
-    Icons.star, Icons.home, Icons.work, Icons.favorite, 
-    Icons.train, Icons.directions_bus, Icons.school, 
-    Icons.person, Icons.location_on, Icons.shopping_cart, 
-    Icons.fitness_center, Icons.local_cafe, Icons.local_airport
-  ];
+  // Use kAvailableIcons instead of local definition
 
   @override
   void initState() {
@@ -910,24 +911,21 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
             const SizedBox(height: 20),
             
-            // LABEL INPUT
             TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
             const SizedBox(height: 10),
             
-            // TYPE SELECTOR
             Row(children: [
               Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
               Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
             ]),
             
-            // ICON PICKER
             const SizedBox(height: 10),
             const Text("Pick Icon", style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: _availableIcons.map((icon) {
+                children: kAvailableIcons.map((icon) {
                   final isSelected = _selectedIconCode == icon.codePoint;
                   return GestureDetector(
                     onTap: () => setState(() => _selectedIconCode = icon.codePoint),
@@ -946,7 +944,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             ),
             const SizedBox(height: 10),
 
-            // CONTENT AREA 
             if (_currentType == 'station') ...[
               if (_selectedStation != null)
                 ListTile(
@@ -1010,25 +1007,24 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             
             if (_currentType == 'friend') ...[
                TextField(
-                  decoration: const InputDecoration(labelText: "Search Friend Username"),
-                  onSubmitted: (val) async {
-                    final res = await SupabaseService.searchUsers(val);
-                    if (res.isNotEmpty && mounted) {
-                      setState(() {
-                        _selectedFriendId = res.first['id'];
-                        if (_labelCtrl.text.isEmpty) {
-                           _labelCtrl.text = res.first['username'];
-                        }
-                      });
-                    }
-                  },
+                 decoration: const InputDecoration(labelText: "Search Friend Username"),
+                 onSubmitted: (val) async {
+                   final res = await SupabaseService.searchUsers(val);
+                   if (res.isNotEmpty && mounted) {
+                     setState(() {
+                       _selectedFriendId = res.first['id'];
+                       if (_labelCtrl.text.isEmpty) {
+                          _labelCtrl.text = res.first['username'];
+                       }
+                     });
+                   }
+                 },
                ),
                if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text("Friend Selected", style: TextStyle(color: Colors.green))),
             ],
 
             const SizedBox(height: 20),
             
-            // ACTION BUTTONS
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -1069,67 +1065,4 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
       ),
     );
   }
-}
-
-class ChatSheet extends StatefulWidget {
-  final String lineId;
-  final String title;
-  const ChatSheet({super.key, required this.lineId, required this.title});
-  @override
-  State<ChatSheet> createState() => _ChatSheetState();
-}
-
-class _ChatSheetState extends State<ChatSheet> {
-  final TextEditingController _msgCtrl = TextEditingController();
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 600,
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Column(
-        children: [
-          Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Row(children: [const CircleAvatar(backgroundColor: Colors.indigo, child: Icon(Icons.directions_bus, color: Colors.white)), const SizedBox(width: 12), Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color))])),
-          const Divider(),
-          Expanded(
-            child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: SupabaseService.getMessages(widget.lineId),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                final msgs = snapshot.data!;
-                if (msgs.isEmpty) return const Center(child: Text("No messages yet.", style: TextStyle(color: Colors.grey)));
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: msgs.length,
-                  itemBuilder: (ctx, idx) {
-                    final msg = msgs[idx];
-                    final isMe = msg['user_id'] == SupabaseService.currentUser?.id;
-                    final username = msg['username'] ?? 'Unknown';
-                    final avatar = msg['avatar_url'];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!isMe) CircleAvatar(radius: 16, backgroundImage: avatar != null ? NetworkImage(avatar) : null, child: avatar == null ? Text(username[0].toUpperCase()) : null),
-                          const SizedBox(width: 8),
-                          Column(crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
-                            if (!isMe) Padding(padding: const EdgeInsets.only(left: 4, bottom: 2), child: Text(username, style: const TextStyle(fontSize: 10, color: Colors.grey))),
-                            Container(constraints: const BoxConstraints(maxWidth: 240), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isMe ? Colors.blue : Theme.of(context).cardColor, borderRadius: BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: isMe ? const Radius.circular(16) : Radius.zero, bottomRight: isMe ? Radius.zero : const Radius.circular(16)), border: isMe ? null : Border.all(color: Colors.white10)), child: Text(msg['content'], style: TextStyle(color: isMe ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color)))
-                          ])
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          Padding(padding: const EdgeInsets.all(16), child: Row(children: [Expanded(child: TextField(controller: _msgCtrl, decoration: InputDecoration(hintText: "Say something...", filled: true, fillColor: Theme.of(context).cardColor, border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 20)), onSubmitted: (_) => _send())), const SizedBox(width: 8), CircleAvatar(backgroundColor: Colors.blue, child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _send))]))
-        ],
-      ),
-    );
-  }
-  void _send() { if (_msgCtrl.text.trim().isEmpty) return; SupabaseService.sendMessage(widget.lineId, _msgCtrl.text.trim()); _msgCtrl.clear(); }
 }

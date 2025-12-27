@@ -48,7 +48,6 @@ class TransportApi {
     return [];
   }
 
-  // UPDATED: Added &stopovers=true to URL
   static Future<Map<String, dynamic>?> searchJourney(
     String fromId, 
     String toId, 
@@ -59,7 +58,7 @@ class TransportApi {
     }
   ) async {
     try {
-      // NEW: stopovers=true ensures we get the list of stops for Issue 5
+      // Added stopovers=true to get the list of stops
       String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3&stopovers=true';
       
       if (when != null) {
