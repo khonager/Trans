@@ -7,7 +7,7 @@ import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../services/supabase_service.dart';
-import '../widgets/ticket_panel.dart';
+import '../widgets/ticket_panel.dart'; 
 
 class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
@@ -24,12 +24,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Position? _currentPosition;
   bool _onlyNahverkehr = true;
   Timer? _locationTimer;
-  bool _gettingLocation = true;
+  bool _gettingLocation = true; // This controls the spinner
 
   @override
   void initState() {
     super.initState();
-    _determinePosition();
+    
+    // Slight delay to allow UI to render first
+    Future.delayed(const Duration(seconds: 1), () {
+      _determinePosition();
+    });
+
+    // Auto-update location every 2 minutes
     _locationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       if (_currentPosition != null) SupabaseService.updateLocation(_currentPosition!);
     });
@@ -44,34 +50,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _determinePosition() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() => _gettingLocation = false);
-        return;
-      }
+      if (!serviceEnabled) return;
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-           setState(() => _gettingLocation = false);
-           return;
-        }
+        if (permission == LocationPermission.denied) return;
       }
 
-      if (permission == LocationPermission.deniedForever) {
-         setState(() => _gettingLocation = false);
-         return;
-      }
+      if (permission == LocationPermission.deniedForever) return;
 
       final pos = await Geolocator.getCurrentPosition();
       if (mounted) {
-        setState(() {
-          _currentPosition = pos;
-          _gettingLocation = false;
-        });
+        setState(() => _currentPosition = pos);
         SupabaseService.updateLocation(pos);
       }
     } catch (e) {
+      debugPrint("Location error: $e");
+    } finally {
+      // FIX: Always turn off spinner, success or fail
       if (mounted) setState(() => _gettingLocation = false);
     }
   }
@@ -85,10 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         elevation: 0,
-        flexibleSpace: ClipRect(
-            child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(color: Colors.transparent))),
+        backgroundColor: (isDark ? Colors.black : Colors.white).withOpacity(0.8),
         title: Row(
           children: [
             Container(
@@ -122,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       : "All Trains Allowed")));
             },
           ),
+          // Only show this spinner if actually loading
           if (_gettingLocation)
             const Padding(
                 padding: EdgeInsets.only(right: 16),
@@ -133,22 +128,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Stack(
         children: [
-          IndexedStack(
-            index: _currentIndex,
-            children: [
-              RoutesTab(
-                currentPosition: _currentPosition,
-                onlyNahverkehr: _onlyNahverkehr,
-              ),
-              FriendsTab(currentPosition: _currentPosition),
-              SettingsTab(
-                isDarkMode: widget.isDarkMode,
-                onThemeChanged: widget.onThemeChanged,
-                onlyNahverkehr: _onlyNahverkehr,
-                onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
-              ),
-            ],
-          ),
+          _buildCurrentTab(),
           const TicketPanel(),
         ],
       ),
@@ -174,5 +154,26 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildCurrentTab() {
+    switch (_currentIndex) {
+      case 0:
+        return RoutesTab(
+          currentPosition: _currentPosition,
+          onlyNahverkehr: _onlyNahverkehr,
+        );
+      case 1:
+        return FriendsTab(currentPosition: _currentPosition);
+      case 2:
+        return SettingsTab(
+          isDarkMode: widget.isDarkMode,
+          onThemeChanged: widget.onThemeChanged,
+          onlyNahverkehr: _onlyNahverkehr,
+          onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
   }
 }
