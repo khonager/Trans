@@ -7,7 +7,7 @@ import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../services/supabase_service.dart';
-import '../widgets/ticket_panel.dart'; // Import the new widget
+import '../widgets/ticket_panel.dart';
 
 class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
@@ -30,7 +30,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _determinePosition();
-    // Update location every 2 mins
     _locationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       if (_currentPosition != null) SupabaseService.updateLocation(_currentPosition!);
     });
@@ -83,17 +82,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       extendBodyBehindAppBar: true,
-      resizeToAvoidBottomInset: false, // Prevents bottom nav from jumping up
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         elevation: 0,
-        // RESTORED: Blur effect
         flexibleSpace: ClipRect(
             child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                 child: Container(color: Colors.transparent))),
         title: Row(
           children: [
-            // RESTORED: Gradient Logo
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
@@ -111,7 +108,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          // RESTORED: Deutschlandticket Toggle in AppBar
           IconButton(
             icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train,
                 color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey),
@@ -137,18 +133,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Stack(
         children: [
-          // Main Content Layer
           IndexedStack(
             index: _currentIndex,
             children: [
-              // ROUTES TAB
               RoutesTab(
                 currentPosition: _currentPosition,
                 onlyNahverkehr: _onlyNahverkehr,
               ),
-              // FRIENDS TAB
               FriendsTab(currentPosition: _currentPosition),
-              // SETTINGS TAB
               SettingsTab(
                 isDarkMode: widget.isDarkMode,
                 onThemeChanged: widget.onThemeChanged,
@@ -157,12 +149,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-
-          // Ticket Layer (Floating above content, anchored to bottom of body)
           const TicketPanel(),
         ],
       ),
-      // RESTORED: Bottom Nav Styling
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
             border: const Border(top: BorderSide(color: Colors.white10)),
