@@ -1,160 +1,105 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart'; // For kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/station.dart';
 
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
 
-  // --- HELPER: Handle Web vs Native Requests ---
-  static Future<dynamic> _get(String endpoint, {Map<String, String>? queryParams}) async {
-    final uri = Uri.parse('$_baseUrl$endpoint').replace(queryParameters: queryParams);
-    Uri finalUri = uri;
-    
-    // FIX: Routing through proxy on Web to avoid CORS/Localhost blocking
-    if (kIsWeb) {
-      final String encodedUrl = Uri.encodeComponent(uri.toString());
-      finalUri = Uri.parse('https://corsproxy.io/?$encodedUrl');
+  // HELPER: Appends filters to exclude high-speed trains if Nahverkehr is requested
+  static String _addFilters(String url, bool useNahverkehrOnly) {
+    if (useNahverkehrOnly) {
+      return '$url&nationalExpress=false&national=false';
     }
-
-    try {
-      final response = await http.get(
-        finalUri,
-        headers: {
-          'User-Agent': 'TransApp/1.0 (flutter-web)',
-          'Content-Type': 'application/json',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        return json.decode(utf8.decode(response.bodyBytes));
-      } else {
-        debugPrint("Server returned ${response.statusCode}: ${response.body}");
-        return []; 
-      }
-    } catch (e) {
-      debugPrint("API Error on $endpoint: $e");
-      return []; 
-    }
+    return url;
   }
 
-  // 1. Search Stations
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
-    if (query.trim().isEmpty) return [];
-
-    final params = {
-      'query': query,
-      'results': '10', 
-      'language': 'en',
-    };
-
-    if (lat != null && lng != null) {
-      params['latitude'] = lat.toString();
-      params['longitude'] = lng.toString();
-      params['distance'] = '2000';
-    }
-
+    if (query.length < 2) return [];
     try {
-      final data = await _get('/locations', queryParams: params);
-      if (data is List) {
+      String url = '$_baseUrl/locations?query=${Uri.encodeComponent(query)}&results=10';
+      if (lat != null && lng != null) {
+        url += '&latitude=$lat&longitude=$lng';
+      }
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final List data = json.decode(response.body);
         return data
-            .where((item) => item['type'] == 'stop' || item['type'] == 'station')
+            .where((d) => d['type'] == 'station' || d['type'] == 'stop')
             .map((json) => Station.fromJson(json))
             .toList();
       }
-      return [];
     } catch (e) {
-      return [];
+      debugPrint("Error fetching stations: $e");
     }
+    return [];
   }
 
-  // 2. Get Nearby Stops (GPS)
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
-    final params = {
-      'latitude': lat.toString(),
-      'longitude': lng.toString(),
-      'distance': '1500', 
-      'results': '5',
-      'stops': 'true',
-      'linesOfStops': 'true',
-    };
-
     try {
-      final data = await _get('/stops/nearby', queryParams: params);
-      if (data is List) {
+      final response = await http.get(Uri.parse('$_baseUrl/stops/nearby?latitude=$lat&longitude=$lng&results=5'));
+      if (response.statusCode == 200) {
+        final List data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
       }
-      return [];
     } catch (e) {
-      return [];
+      debugPrint("Error fetching nearby: $e");
     }
+    return [];
   }
 
-  // 3. Search Journey (Routes)
-  static Future<Map<String, dynamic>?> searchJourney(String fromId, String toId, {
-    bool nahverkehrOnly = false,
-    DateTime? when,
-    bool isArrival = false,
-  }) async {
-    final params = {
-      'from': fromId,
-      'to': toId,
-      'results': '3', 
-      'language': 'en',
-      'transfers': '5',
-      'stopovers': 'true', // FIX: Added this to fetch intermediate stops
-    };
-
-    if (nahverkehrOnly) {
-      params['nationalExpress'] = 'false';
-      params['national'] = 'false';
+  static Future<Map<String, dynamic>?> searchJourney(
+    String fromId, 
+    String toId, 
+    {
+      bool nahverkehrOnly = false,
+      DateTime? when,      
+      bool isArrival = false 
     }
-
-    if (when != null) {
-      params[isArrival ? 'arrival' : 'departure'] = when.toIso8601String();
-    }
-
+  ) async {
     try {
-      final data = await _get('/journeys', queryParams: params);
-      if (data is Map<String, dynamic> && data.containsKey('journeys')) {
-        final List journeys = data['journeys'];
-        if (journeys.isNotEmpty) {
-          return journeys.first; 
+      // Added stopovers=true to get the list of stops
+      String url = '$_baseUrl/journeys?from=$fromId&to=$toId&results=3&stopovers=true';
+      
+      if (when != null) {
+        final iso = when.toIso8601String();
+        if (isArrival) {
+          url += '&arrival=$iso';
+        } else {
+          url += '&departure=$iso';
         }
       }
-      return null;
+
+      url = _addFilters(url, nahverkehrOnly);
+      
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['journeys'] != null && (data['journeys'] as List).isNotEmpty) {
+          return data['journeys'][0];
+        }
+      }
     } catch (e) {
-      return null;
+      debugPrint("Error fetching journey: $e");
     }
+    return null;
   }
 
-  // 4. Get Departures (Alternatives)
-  // UPDATED: Added pagination via 'when'
-  static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false, DateTime? when}) async {
-    final params = {
-      'duration': '60', 
-      'results': '20',
-      'language': 'en',
-    };
-
-    if (nahverkehrOnly) {
-      params['nationalExpress'] = 'false';
-      params['national'] = 'false';
-    }
-    
-    // FIX: Use 'when' for pagination
-    if (when != null) {
-      params['when'] = when.toIso8601String();
-    }
-
+  static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false}) async {
     try {
-      final data = await _get('/stops/$stationId/departures', queryParams: params);
-      if (data is List) {
-        return data.where((d) => d['line'] != null).map((d) => d as Map<String, dynamic>).toList();
+      String url = '$_baseUrl/stops/$stationId/departures?results=10&duration=60';
+      url = _addFilters(url, nahverkehrOnly);
+
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['departures'] != null) {
+          return List<Map<String, dynamic>>.from(data['departures']);
+        }
       }
-      return [];
     } catch (e) {
-      return [];
+      debugPrint("Error fetching departures: $e");
     }
+    return [];
   }
 }
