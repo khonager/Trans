@@ -87,7 +87,7 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  // UPDATED: No more image picker, just open Emoji picker directly
+  // DIRECTLY OPEN EMOJI PICKER
   void _pickAvatar() {
     showModalBottomSheet(
       context: context,
@@ -190,7 +190,7 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget build(BuildContext context) {
     final user = SupabaseService.currentUser;
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    final primaryColor = Theme.of(context).primaryColor; // Gets the active theme color
+    final primaryColor = Theme.of(context).primaryColor;
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -296,7 +296,7 @@ class _SettingsTabState extends State<SettingsTab> {
             onTap: _pickAvatar, 
             child: Container(
               width: 48, height: 48, 
-              // FIX: Use current theme color for profile background
+              // Uses current theme color background
               decoration: BoxDecoration(color: widget.currentColor, shape: BoxShape.circle), 
               child: ClipOval(
                 child: (emoji != null) 
@@ -307,7 +307,6 @@ class _SettingsTabState extends State<SettingsTab> {
           )
         ]),
         const SizedBox(height: 10),
-        // ... rest of profile code remains the same ...
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),

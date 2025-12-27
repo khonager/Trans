@@ -5,7 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'config/app_config.dart';
 import 'screens/home_screen.dart';
-import 'services/supabase_service.dart'; // Import service to save color
+import 'services/supabase_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,8 +33,7 @@ class TransApp extends StatefulWidget {
 
 class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.dark;
-  // Default Indigo
-  Color _seedColor = const Color(0xFF4F46E5); 
+  Color _seedColor = const Color(0xFF4F46E5); // Default Indigo
 
   @override
   void initState() {
@@ -63,7 +62,6 @@ class _TransAppState extends State<TransApp> {
       }
     });
     
-    // Attempt cloud sync if logged in
     if (SupabaseService.currentUser != null) {
       _syncThemeFromCloud();
     }
@@ -94,13 +92,24 @@ class _TransAppState extends State<TransApp> {
     await prefs.setInt('themeColor', color.value);
     
     setState(() => _seedColor = color);
-
-    // Sync to Cloud
     await SupabaseService.updateThemeColor(color.value);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Generate base schemes
+    final lightScheme = ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.light);
+    
+    // For Dark Mode: We manually override 'primary' to be the saturated seed color
+    // instead of the default pastel version. This ensures high contrast for White icons.
+    final darkBase = ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.dark);
+    final darkScheme = darkBase.copyWith(
+      primary: _seedColor, 
+      onPrimary: Colors.white, // Ensure icons on top are white
+      primaryContainer: _seedColor.withOpacity(0.3),
+      onPrimaryContainer: Colors.white,
+    );
+
     return MaterialApp(
       title: 'Trans',
       debugShowCheckedModeBanner: false,
@@ -108,7 +117,7 @@ class _TransAppState extends State<TransApp> {
       theme: ThemeData(
           brightness: Brightness.light,
           scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-          colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.light),
+          colorScheme: lightScheme,
           useMaterial3: true,
           appBarTheme: const AppBarTheme(
             backgroundColor: Colors.white,
@@ -118,11 +127,26 @@ class _TransAppState extends State<TransApp> {
       darkTheme: ThemeData(
           brightness: Brightness.dark,
           scaffoldBackgroundColor: const Color(0xFF000000),
-          colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.dark),
+          colorScheme: darkScheme,
           useMaterial3: true,
           appBarTheme: AppBarTheme(
             backgroundColor: Colors.black.withOpacity(0.7),
             foregroundColor: Colors.white,
+          ),
+          // Ensure sliders and switches pop
+          sliderTheme: SliderThemeData(
+            activeTrackColor: _seedColor,
+            thumbColor: Colors.white,
+          ),
+          switchTheme: SwitchThemeData(
+            thumbColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) return Colors.white;
+              return null;
+            }),
+            trackColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) return _seedColor;
+              return null;
+            }),
           )
       ),
       home: HomeScreen(
