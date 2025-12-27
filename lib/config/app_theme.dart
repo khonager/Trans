@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// --------------------------------------------------------------------------
-/// 1. AVAILABLE THEME COLORS
-/// Add or remove colors here to update the picker in Settings.
-/// --------------------------------------------------------------------------
 const List<Color> appThemeColors = [
   Color(0xFF4F46E5), // Indigo (Default)
   Colors.blue,
@@ -14,15 +10,12 @@ const List<Color> appThemeColors = [
   Colors.purple,
   Colors.pink,
   Colors.amber,
-  Color(0xFF000000), // Pure Black/White
+  Color(0xFF000000), // Pure Black
 ];
 
-/// --------------------------------------------------------------------------
-/// 2. CUSTOM COMPONENT COLORS (CSS-like classes)
-/// --------------------------------------------------------------------------
 @immutable
 class TransColors extends ThemeExtension<TransColors> {
-  // Search Bar
+  // Search
   final Color searchBarFill;
   final Color searchIcon;
   final Color searchHintText;
@@ -37,7 +30,7 @@ class TransColors extends ThemeExtension<TransColors> {
   final Color favAddIcon;
   final Color favText;
 
-  // Timeline (Intermediate Stops)
+  // Timeline
   final Color timelineLine;
   final Color timelineDot;
   final Color timelineTextMain;
@@ -46,7 +39,7 @@ class TransColors extends ThemeExtension<TransColors> {
   final Color timelineTextDelay;
   final Color timelineTextOnTime;
 
-  // Chips & Buttons
+  // Chips
   final Color chipBg;
   final Color chipFg;
   final Color chipActiveBg;
@@ -79,28 +72,24 @@ class TransColors extends ThemeExtension<TransColors> {
 
   static TransColors of(BuildContext context) => Theme.of(context).extension<TransColors>()!;
 
-  /// --------------------------------------------------------------------------
-  /// 3. LOGIC: How colors look in Light vs Dark mode
-  /// modify these values to change contrast/visibility.
-  /// --------------------------------------------------------------------------
   static TransColors fromSeed(Color seed, Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    // Fix for "Pure Black" theme seed being invisible in dark mode
+    // Ensure "Black" theme has white accents in dark mode
     final effectiveSeed = (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
 
     return TransColors(
-      // Search Bar
+      // Search Bar - Made lighter in dark mode for visibility
       searchBarFill: isDark ? Colors.white.withOpacity(0.15) : Colors.grey.shade200,
-      searchIcon: isDark ? Colors.white70 : Colors.grey,
-      searchHintText: isDark ? Colors.white38 : Colors.grey,
+      searchIcon: isDark ? effectiveSeed : effectiveSeed,
+      searchHintText: isDark ? Colors.white54 : Colors.grey,
       searchInputText: isDark ? Colors.white : Colors.black,
 
-      // Favorites (Made brighter for dark mode visibility)
+      // Favorites - Increased opacity for visibility
       favStationBg: isDark ? effectiveSeed.withOpacity(0.3) : effectiveSeed.withOpacity(0.15),
       favStationIcon: isDark ? Colors.white : effectiveSeed,
       favFriendBg: isDark ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.15),
-      favFriendIcon: isDark ? Colors.greenAccent : Colors.green,
-      favAddBg: isDark ? Colors.white.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+      favFriendIcon: isDark ? Colors.white : Colors.green,
+      favAddBg: isDark ? Colors.white24 : Colors.grey.withOpacity(0.2),
       favAddIcon: isDark ? Colors.white : Colors.black,
       favText: isDark ? Colors.white70 : Colors.black87,
 
@@ -114,7 +103,7 @@ class TransColors extends ThemeExtension<TransColors> {
       timelineTextOnTime: Colors.greenAccent,
 
       // Chips
-      chipBg: isDark ? Colors.white10 : Colors.grey.shade200,
+      chipBg: isDark ? Colors.white12 : Colors.grey.shade200,
       chipFg: isDark ? Colors.white70 : Colors.grey.shade700,
       chipActiveBg: effectiveSeed,
       chipActiveFg: (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white,
@@ -188,9 +177,6 @@ class TransColors extends ThemeExtension<TransColors> {
   }
 }
 
-/// --------------------------------------------------------------------------
-/// 4. THEME GENERATOR
-/// --------------------------------------------------------------------------
 ThemeData createTheme(Color seed, Brightness brightness) {
   final isDark = brightness == Brightness.dark;
   final baseScheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
@@ -199,8 +185,8 @@ ThemeData createTheme(Color seed, Brightness brightness) {
       ? baseScheme.copyWith(
           primary: seed, 
           onPrimary: Colors.white,
-          surface: Colors.black, // Pure Black Background
-          surfaceContainerLow: const Color(0xFF18181B), // Cards
+          surface: Colors.black, 
+          surfaceContainerLow: const Color(0xFF18181B),
         )
       : baseScheme.copyWith(
           scrim: const Color(0xFFF3F4F6),
@@ -219,10 +205,8 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     extensions: [
       TransColors.fromSeed(seed, brightness),
     ],
-    // SLIDER & SWITCH THEME
     sliderTheme: SliderThemeData(
       activeTrackColor: seed,
-      inactiveTrackColor: isDark ? Colors.white24 : Colors.grey.shade300,
       thumbColor: Colors.white,
     ),
     switchTheme: SwitchThemeData(

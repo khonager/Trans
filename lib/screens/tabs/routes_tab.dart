@@ -254,6 +254,7 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
+  // --- ROUTE LOGIC --- 
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -493,11 +494,11 @@ class _RoutesTabState extends State<RoutesTab> {
         }));
   }
 
-  // --- UPDATED: Show Alternative Departures in Modal with Lazy Loading ---
+  // --- NEW: Show Alternative Departures in Modal ---
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true, // Needed for list to expand
+      isScrollControlled: true,
       backgroundColor: Theme.of(context).cardColor,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StopDeparturesSheet(
@@ -563,8 +564,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
-    // ... (Keep existing SearchView, make sure it uses 'colors' object) ...
-    // Copying the improved version from before
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -734,7 +733,30 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, TransColors colors, {String hint = "Station..."}) {
     Color iconColor = Colors.grey;
     if (isSelected) iconColor = colors.searchIcon; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchBarFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start, 
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 4), 
+          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
+        ), 
+        TextField(
+          controller: controller, 
+          onChanged: (val) => _onSearchChanged(val, fieldKey), 
+          onTap: () => setState(() => _activeSearchField = fieldKey), 
+          style: TextStyle(color: colors.searchInputText), 
+          decoration: InputDecoration(
+            filled: true, 
+            fillColor: colors.searchBarFill, 
+            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), 
+            hintText: hint, 
+            hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText), 
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
+          )
+        )
+      ]
+    );
   }
 
   Widget _buildActiveRouteView(RouteTab route, TransColors colors) {
@@ -765,7 +787,6 @@ class _RoutesTabState extends State<RoutesTab> {
             onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
             isAlarmSet: _isWakeAlarmSet,
             colors: colors,
-            // Pass the tap callback
             onStopTap: (stopId, time) {
               _showAlternatives(context, stopId, route.destinationId);
             },
@@ -775,147 +796,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
-// --- MODAL FOR STOP DEPARTURES (LAZY LOADING) ---
-class StopDeparturesSheet extends StatefulWidget {
-  final String stationId;
-  final String finalDestinationId;
-  final bool onlyNahverkehr;
-  final Function(DateTime) onSelect;
-
-  const StopDeparturesSheet({
-    super.key,
-    required this.stationId,
-    required this.finalDestinationId,
-    required this.onlyNahverkehr,
-    required this.onSelect,
-  });
-
-  @override
-  State<StopDeparturesSheet> createState() => _StopDeparturesSheetState();
-}
-
-class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
-  final List<Map<String, dynamic>> _departures = [];
-  final ScrollController _scrollCtrl = ScrollController();
-  bool _isLoading = false;
-  DateTime _currentRefTime = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadDepartures();
-    _scrollCtrl.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_isLoading) return;
-    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 50) {
-      _loadDepartures(future: true);
-    }
-    // Pull-to-refresh style for past? Or simple button. 
-    // Implementing scroll-up lazy load is complex in ListViews.
-    // simpler to have a header button "Load earlier".
-  }
-
-  Future<void> _loadDepartures({bool future = true, bool past = false}) async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
-
-    DateTime reqTime = _currentRefTime;
-    
-    // Logic: If future, take last item time + 1 min
-    // If past, take first item time - 60 min
-    if (_departures.isNotEmpty) {
-      if (future) {
-        final last = _departures.last;
-        final t = DateTime.parse(last['plannedWhen'] ?? last['when']);
-        reqTime = t.add(const Duration(minutes: 1));
-      } else if (past) {
-        final first = _departures.first;
-        final t = DateTime.parse(first['plannedWhen'] ?? first['when']);
-        reqTime = t.subtract(const Duration(minutes: 60));
-      }
-    }
-
-    try {
-      final newDeps = await TransportApi.getDepartures(
-        widget.stationId, 
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: reqTime
-      );
-
-      if (mounted) {
-        setState(() {
-          if (past) {
-            _departures.insertAll(0, newDeps);
-          } else {
-            // Avoid duplicates
-            for (var d in newDeps) {
-              if (!_departures.any((e) => e['tripId'] == d['tripId'])) {
-                _departures.add(d);
-              }
-            }
-          }
-          _isLoading = false;
-          // If we loaded future, _currentRefTime updates implicitly by list tail
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 600,
-      padding: const EdgeInsets.only(top: 16),
-      child: Column(
-        children: [
-          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
-          const SizedBox(height: 16),
-          const Text("Departures", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const Divider(),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollCtrl,
-              itemCount: _departures.length + 1, // +1 for "Load Earlier" button at top
-              itemBuilder: (ctx, idx) {
-                if (idx == 0) {
-                  return TextButton(
-                    onPressed: () => _loadDepartures(past: true, future: false),
-                    child: _isLoading ? const CircularProgressIndicator.adaptive() : const Text("Load Earlier"),
-                  );
-                }
-                
-                final dep = _departures[idx - 1];
-                final line = dep['line']['name'] ?? 'Unknown';
-                final dir = dep['direction'] ?? 'Unknown';
-                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
-                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                
-                return ListTile(
-                  leading: const Icon(Icons.directions_bus),
-                  title: Text("$line to $dir"),
-                  trailing: Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  onTap: () => widget.onSelect(planned),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ... _StepCard, _EditFavoriteDialog, ChatSheet ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
@@ -1051,6 +931,138 @@ class _StepCard extends StatelessWidget {
 
   Widget _buildActionChip(IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
     return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
+  }
+}
+
+class StopDeparturesSheet extends StatefulWidget {
+  final String stationId;
+  final String finalDestinationId;
+  final bool onlyNahverkehr;
+  final Function(DateTime) onSelect;
+
+  const StopDeparturesSheet({
+    super.key,
+    required this.stationId,
+    required this.finalDestinationId,
+    required this.onlyNahverkehr,
+    required this.onSelect,
+  });
+
+  @override
+  State<StopDeparturesSheet> createState() => _StopDeparturesSheetState();
+}
+
+class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
+  final List<Map<String, dynamic>> _departures = [];
+  final ScrollController _scrollCtrl = ScrollController();
+  bool _isLoading = false;
+  DateTime _currentRefTime = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDepartures();
+    _scrollCtrl.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_isLoading) return;
+    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 50) {
+      _loadDepartures(future: true);
+    }
+  }
+
+  Future<void> _loadDepartures({bool future = true, bool past = false}) async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+
+    DateTime reqTime = _currentRefTime;
+    
+    if (_departures.isNotEmpty) {
+      if (future) {
+        final last = _departures.last;
+        final t = DateTime.parse(last['plannedWhen'] ?? last['when']);
+        reqTime = t.add(const Duration(minutes: 1));
+      } else if (past) {
+        final first = _departures.first;
+        final t = DateTime.parse(first['plannedWhen'] ?? first['when']);
+        reqTime = t.subtract(const Duration(minutes: 60));
+      }
+    }
+
+    try {
+      final newDeps = await TransportApi.getDepartures(
+        widget.stationId, 
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: reqTime
+      );
+
+      if (mounted) {
+        setState(() {
+          if (past) {
+            _departures.insertAll(0, newDeps);
+          } else {
+            for (var d in newDeps) {
+              if (!_departures.any((e) => e['tripId'] == d['tripId'])) {
+                _departures.add(d);
+              }
+            }
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 600,
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        children: [
+          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          const Text("Departures", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Divider(),
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollCtrl,
+              itemCount: _departures.length + 1,
+              itemBuilder: (ctx, idx) {
+                if (idx == 0) {
+                  return TextButton(
+                    onPressed: () => _loadDepartures(past: true, future: false),
+                    child: _isLoading ? const CircularProgressIndicator.adaptive() : const Text("Load Earlier"),
+                  );
+                }
+                
+                final dep = _departures[idx - 1];
+                final line = dep['line']['name'] ?? 'Unknown';
+                final dir = dep['direction'] ?? 'Unknown';
+                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
+                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
+                
+                return ListTile(
+                  leading: const Icon(Icons.directions_bus),
+                  title: Text("$line to $dir"),
+                  trailing: Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  onTap: () => widget.onSelect(planned),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
