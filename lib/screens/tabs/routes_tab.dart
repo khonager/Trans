@@ -10,7 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-import '../../config/app_theme.dart';
 import '../../models/station.dart';
 import '../../models/journey.dart';
 import '../../models/favorite.dart';
@@ -18,13 +17,7 @@ import '../../services/transport_api.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 import '../../services/favorites_manager.dart';
-
-const List<IconData> kAvailableIcons = [
-  Icons.star, Icons.home, Icons.work, Icons.favorite, 
-  Icons.train, Icons.directions_bus, Icons.school, 
-  Icons.person, Icons.location_on, Icons.shopping_cart, 
-  Icons.fitness_center, Icons.local_cafe, Icons.local_airport
-];
+import '../../widgets/chat_sheet.dart';
 
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
@@ -254,7 +247,7 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC --- 
+  // --- ROUTE LOGIC ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -282,24 +275,60 @@ class _RoutesTabState extends State<RoutesTab> {
         blockEnd = blockStart;
       }
 
+      int walkMinutes = 0;
+      for (var leg in transferBuffer) {
+        final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
+        final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
+        int dur = arr.difference(dep).inMinutes;
+        
+        final origin = leg['origin']?['name'];
+        final dest = leg['destination']?['name'];
+        
+        if (origin != null && dest != null && origin == dest) {
+        } else {
+          walkMinutes += dur;
+        }
+      }
+
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
 
-      String actionText = "Transfer";
-      if (nextStationName != null && nextStationName.isNotEmpty && nextStationName != "Destination") {
-         actionText = "Walk to $nextStationName";
-      } else {
-         actionText = "Wait for connection";
+      int waitMinutes = totalGapMinutes - walkMinutes;
+      if (waitMinutes < 1) waitMinutes = 0;
+
+      List<String> breakdownParts = [];
+      if (walkMinutes > 0) breakdownParts.add("Walk $walkMinutes min");
+      if (waitMinutes > 0) breakdownParts.add("Wait $waitMinutes min");
+      
+      String breakdownText = breakdownParts.join(" • ");
+      if (breakdownText.isEmpty) {
+        if (totalGapMinutes > 0) breakdownText = "$totalGapMinutes min transfer";
+        else breakdownText = "Immediate connection";
       }
 
+      String actionText = "Transfer";
+      if (walkMinutes > 0) {
+        if (nextStationName != null && nextStationName.isNotEmpty && nextStationName != "Destination") {
+           actionText = "Walk to $nextStationName";
+        } else if (nextStationName == "Destination") {
+           actionText = "Walk to Destination";
+        } else {
+           actionText = "Walk to connection";
+        }
+      } else {
+        actionText = "Wait for connection";
+      }
+
+      String type = (walkMinutes > 0) ? 'walk' : 'wait';
+
       steps.add(JourneyStep(
-        type: 'walk',
+        type: type,
         line: 'Transfer',
         instruction: actionText,
-        duration: "$totalGapMinutes min",
+        duration: breakdownText,
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: true,
+        isWalking: type == 'walk',
       ));
       
       transferBuffer.clear();
@@ -324,21 +353,41 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
-        int legDurationMin = arr.difference(dep).inMinutes;
-        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
+        if (steps.isNotEmpty && steps.last.line == lineName && steps.last.type == 'ride') {
+           var last = steps.removeLast();
+           List<dynamic> mergedStops = [];
+           if (last.stopovers != null) mergedStops.addAll(last.stopovers!);
+           if (leg['stopovers'] != null) mergedStops.addAll(leg['stopovers']);
 
-        steps.add(JourneyStep(
-          type: 'ride',
-          line: lineName,
-          instruction: "$lineName → $destName",
-          duration: durationDisplay,
-          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-          arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
-          chatCount: random.nextInt(15) + 1,
-          startStationId: startStationId,
-          platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'], 
-        ));
+           steps.add(JourneyStep(
+             type: 'ride',
+             line: lineName,
+             instruction: last.instruction, 
+             duration: "Updated", 
+             departureTime: last.departureTime,
+             arrivalTime: "${arr.hour.toString().padLeft(2,'0')}:${arr.minute.toString().padLeft(2,'0')}",
+             stopovers: mergedStops,
+             chatCount: last.chatCount,
+             startStationId: last.startStationId,
+             platform: last.platform,
+           ));
+        } else {
+          int legDurationMin = arr.difference(dep).inMinutes;
+          String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
+
+          steps.add(JourneyStep(
+            type: 'ride',
+            line: lineName,
+            instruction: "$lineName → $destName",
+            duration: durationDisplay,
+            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+            arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
+            chatCount: random.nextInt(15) + 1,
+            startStationId: startStationId,
+            platform: platform != null ? "Plat $platform" : null,
+            stopovers: leg['stopovers'],
+          ));
+        }
         
         lastArrival = arr;
       }
@@ -428,7 +477,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
-     setState(() => _isLoadingRoute = true);
+    setState(() => _isLoadingRoute = true);
     try {
       final journeyData = await TransportApi.searchJourney(startStationId, finalDestId, nahverkehrOnly: widget.onlyNahverkehr, when: newDepartureTime, isArrival: false);
 
@@ -488,29 +537,27 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showGuide(BuildContext context, String? startStationId) {
-     if (startStationId == null) return;
+    if (startStationId == null) return;
     showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setStateDialog) {
           return AlertDialog(backgroundColor: Theme.of(ctx).cardColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)), IconButton(icon: const Icon(Icons.add_a_photo, color: Colors.blue), onPressed: () async { final picker = ImagePicker(); final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024); if (picked != null) { try { dynamic imageFile; if (kIsWeb) imageFile = await picked.readAsBytes(); else imageFile = File(picked.path); await SupabaseService.uploadStationImage(imageFile, startStationId); setStateDialog(() {}); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } } })]), content: FutureBuilder<String?>(future: SupabaseService.getStationImage(startStationId), builder: (context, snapshot) { if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())); if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]); return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200)); }), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))]);
         }));
   }
 
-  // --- NEW: Show Alternative Departures in Modal ---
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => StopDeparturesSheet(
-        stationId: stationId,
-        finalDestinationId: finalDestinationId,
-        onlyNahverkehr: widget.onlyNahverkehr,
-        onSelect: (time) {
-          Navigator.pop(ctx);
-          _openNewRouteTab(time, stationId, finalDestinationId);
-        },
-      ),
-    );
+      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
+        return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
+            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
+                final dep = snapshot.data![idx];
+                final line = dep['line']['name'] ?? 'Unknown';
+                final dir = dep['direction'] ?? 'Unknown';
+                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
+                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
+                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time), onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); });
+              });
+          });
+      });
   }
 
   Future<void> _triggerVibration() async {
@@ -520,8 +567,8 @@ class _RoutesTabState extends State<RoutesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = TransColors.of(context);
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
       children: [
@@ -542,28 +589,19 @@ class _RoutesTabState extends State<RoutesTab> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isActive ? colors.chipActiveBg : colors.chipBg, 
-                      borderRadius: BorderRadius.circular(20)
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.directions, size: 16, color: isActive ? colors.chipActiveFg : colors.chipFg), 
-                      const SizedBox(width: 6), 
-                      Text(tab.title, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontWeight: FontWeight.bold, fontSize: 12)), 
-                      const SizedBox(width: 4), 
-                      GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? colors.chipActiveFg.withOpacity(0.7) : colors.chipFg))
-                    ]),
+                    decoration: BoxDecoration(color: isActive ? const Color(0xFF4F46E5) : Theme.of(context).cardColor, borderRadius: BorderRadius.circular(20)),
+                    child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))]),
                   ),
                 );
               },
             ),
           ),
-        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId), colors)),
+        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, isDark) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
       ],
     );
   }
 
-  Widget _buildSearchView(bool canSearch, TransColors colors) {
+  Widget _buildSearchView(bool canSearch, bool isDark) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -579,36 +617,22 @@ class _RoutesTabState extends State<RoutesTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.favAddBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.favAddIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
                   const SizedBox(height: 20),
-                  
-                  _buildTextField("From", _fromController, _fromStation != null, 'from', colors, hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
-                  if (_activeSearchField == 'from') _buildSuggestionsList(colors),
+                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
+                  if (_activeSearchField == 'from') _buildSuggestionsList(),
                   const SizedBox(height: 12),
-                  _buildTextField("To", _toController, _toStation != null, 'to', colors),
-                  if (_activeSearchField == 'to') _buildSuggestionsList(colors),
-                  
+                  _buildTextField("To", _toController, _toStation != null, 'to'),
+                  if (_activeSearchField == 'to') _buildSuggestionsList(),
                   const SizedBox(height: 20),
                   Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: colors.searchBarFill, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, borderRadius: BorderRadius.circular(16)),
                     child: Row(
                       children: [
-                        GestureDetector(
-                          onTap: () => setState(() => _isArrival = !_isArrival), 
-                          child: Container(
-                            height: 36,
-                            alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(color: colors.searchIcon, borderRadius: BorderRadius.circular(12)), 
-                            child: Text(
-                              _isArrival ? "Arrive by" : "Depart at", 
-                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)
-                            )
-                          )
-                        ),
+                        GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
                         const SizedBox(width: 12),
                         Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
@@ -625,58 +649,22 @@ class _RoutesTabState extends State<RoutesTab> {
                       itemCount: _favorites.length + 1,
                       separatorBuilder: (_,__) => const SizedBox(width: 12),
                       itemBuilder: (ctx, idx) {
-                         if (idx == _favorites.length) {
-                           return GestureDetector(
-                             onTap: _addNewFavorite, 
-                             child: Column(
-                               mainAxisAlignment: MainAxisAlignment.center, 
-                               children: [
-                                 Container(
-                                   width: 48, height: 48, 
-                                   decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), 
-                                   child: Icon(Icons.add, color: colors.favAddIcon)
-                                 ), 
-                                 const SizedBox(height: 4), 
-                                 const Text("Add", style: TextStyle(fontSize: 10))
-                               ]
-                             )
-                           );
-                         }
-                         final fav = _favorites[idx];
-                         IconData icon = Icons.star;
-                         if (fav.type == 'friend') icon = Icons.person;
-                         else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
-                         else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
-                         
-                         if (fav.iconCode != null) {
-                           icon = kAvailableIcons.firstWhere((i) => i.codePoint == fav.iconCode, orElse: () => icon);
-                         }
+                          if (idx == _favorites.length) {
+                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
+                          }
+                          final fav = _favorites[idx];
+                          IconData icon = Icons.star;
+                          if (fav.type == 'friend') icon = Icons.person;
+                          else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
+                          else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
+                          if (fav.iconCode != null) icon = IconData(fav.iconCode!, fontFamily: 'MaterialIcons');
 
-                         final isFriend = fav.type == 'friend';
-                         return GestureDetector(
-                           onTap: () => _onFavoriteTap(fav), 
-                           onLongPress: () => _showEditFavoriteDialog(fav), 
-                           child: Column(
-                             mainAxisAlignment: MainAxisAlignment.center, 
-                             children: [
-                               Container(
-                                 width: 48, height: 48, 
-                                 decoration: BoxDecoration(
-                                   color: isFriend ? colors.favFriendBg : colors.favStationBg, 
-                                   shape: BoxShape.circle
-                                 ), 
-                                 child: Icon(icon, color: isFriend ? colors.favFriendIcon : colors.favStationIcon, size: 20)
-                               ), 
-                               const SizedBox(height: 4), 
-                               Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))
-                            ]
-                          )
-                        );
+                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
                       },
                     ),
                   ),
                   const SizedBox(height: 20),
-                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchIcon, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
                 ],
               ),
             ),
@@ -686,8 +674,8 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  Widget _buildSuggestionsList(TransColors colors) {
-     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
+  Widget _buildSuggestionsList() {
+    if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
     return Container(
@@ -706,12 +694,13 @@ class _RoutesTabState extends State<RoutesTab> {
               separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
               itemBuilder: (ctx, idx) {
                 final item = _suggestions[idx];
-                if (item is Favorite) return ListTile(leading: Icon(Icons.star, size: 16, color: colors.favStationIcon), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
+                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
                 final station = item as Station;
                 return ListTile(
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
                   title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
                   onTap: () => _selectItem(station),
+                  // ADDED: Hold to Add Favorite logic
                   onLongPress: () {
                     final newFav = Favorite(
                       id: DateTime.now().millisecondsSinceEpoch.toString(), 
@@ -730,38 +719,15 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, TransColors colors, {String hint = "Station..."}) {
+  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     Color iconColor = Colors.grey;
-    if (isSelected) iconColor = colors.searchIcon; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start, 
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 4), 
-          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
-        ), 
-        TextField(
-          controller: controller, 
-          onChanged: (val) => _onSearchChanged(val, fieldKey), 
-          onTap: () => setState(() => _activeSearchField = fieldKey), 
-          style: TextStyle(color: colors.searchInputText), 
-          decoration: InputDecoration(
-            filled: true, 
-            fillColor: colors.searchBarFill, 
-            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), 
-            hintText: hint, 
-            hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText), 
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
-          )
-        )
-      ]
-    );
+    if (isSelected) iconColor = Colors.greenAccent; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: isDark ? Colors.white : Colors.black), decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 
-  Widget _buildActiveRouteView(RouteTab route, TransColors colors) {
-     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-
+  Widget _buildActiveRouteView(RouteTab route) {
+    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
       children: [
@@ -786,10 +752,6 @@ class _RoutesTabState extends State<RoutesTab> {
             onGuide: (station) => _showGuide(context, station),
             onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
             isAlarmSet: _isWakeAlarmSet,
-            colors: colors,
-            onStopTap: (stopId, time) {
-              _showAlternatives(context, stopId, route.destinationId);
-            },
           )
       ],
     );
@@ -803,12 +765,10 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final Function(String) onGuide;
-  final Function(String stopId, DateTime time) onStopTap;
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
-  final TransColors colors;
 
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet, required this.colors, required this.onStopTap});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet});
 
   @override
   Widget build(BuildContext context) {
@@ -837,88 +797,34 @@ class _StepCard extends StatelessWidget {
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.searchIcon))]),
+          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
           subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8), _buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
           children: [
             if (step.stopovers != null && step.stopovers!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              Container(
+                decoration: BoxDecoration(color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.5)),
                 child: ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: step.stopovers!.length,
                   itemBuilder: (ctx, idx) {
                     final stop = step.stopovers![idx];
-                    final isLast = idx == step.stopovers!.length - 1;
                     final name = stop['stop']['name'];
                     final stopId = stop['stop']['id'];
                     final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival'];
                     final actualDep = stop['departure'] ?? stop['arrival'];
-                    
                     String timeStr = "--:--";
-                    Color timeColor = colors.timelineTextTime;
-                    bool isDelayed = false;
-
+                    Color timeColor = Colors.grey;
                     if (plannedDep != null) {
                       final p = DateTime.parse(plannedDep);
                       timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}";
                       if (actualDep != null) {
                         final a = DateTime.parse(actualDep);
                         final delay = a.difference(p).inMinutes;
-                        if (delay > 2) { 
-                          timeStr += " (+${delay}')"; 
-                          timeColor = colors.timelineTextDelay; 
-                          isDelayed = true;
-                        } else { 
-                          timeColor = colors.timelineTextOnTime; 
-                        }
+                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = Colors.red; } else { timeColor = Colors.green; }
                       }
                     }
-
-                    // --- TIMELINE ROW ---
-                    return GestureDetector(
-                      onTap: () {
-                        if (plannedDep != null) {
-                          onStopTap(stopId, DateTime.parse(plannedDep));
-                        }
-                      },
-                      child: IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                             Column(
-                               children: [
-                                 const SizedBox(height: 5), // Align dot visually
-                                 Container(
-                                   width: 8, height: 8,
-                                   decoration: BoxDecoration(color: colors.timelineDot, shape: BoxShape.circle),
-                                 ),
-                                 if (!isLast) Expanded(child: Container(width: 2, color: colors.timelineLine)),
-                               ],
-                             ),
-                             const SizedBox(width: 12),
-                             Expanded(
-                               child: Padding(
-                                 padding: const EdgeInsets.only(bottom: 16),
-                                 child: Row(
-                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                   children: [
-                                     Expanded(child: Text(name, style: TextStyle(color: colors.timelineTextMain, fontSize: 13))),
-                                     const SizedBox(width: 8),
-                                     Text(timeStr, style: TextStyle(
-                                       color: timeColor, 
-                                       fontSize: 12, 
-                                       fontWeight: isDelayed ? FontWeight.bold : FontWeight.normal
-                                     )),
-                                   ],
-                                 ),
-                               ),
-                             )
-                          ],
-                        ),
-                      ),
-                    );
+                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: textColor, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
                   },
                 ),
               )
@@ -930,145 +836,15 @@ class _StepCard extends StatelessWidget {
   }
 
   Widget _buildActionChip(IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
-    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
+    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))])));
   }
 }
 
-class StopDeparturesSheet extends StatefulWidget {
-  final String stationId;
-  final String finalDestinationId;
-  final bool onlyNahverkehr;
-  final Function(DateTime) onSelect;
-
-  const StopDeparturesSheet({
-    super.key,
-    required this.stationId,
-    required this.finalDestinationId,
-    required this.onlyNahverkehr,
-    required this.onSelect,
-  });
-
-  @override
-  State<StopDeparturesSheet> createState() => _StopDeparturesSheetState();
-}
-
-class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
-  final List<Map<String, dynamic>> _departures = [];
-  final ScrollController _scrollCtrl = ScrollController();
-  bool _isLoading = false;
-  DateTime _currentRefTime = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadDepartures();
-    _scrollCtrl.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_isLoading) return;
-    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 50) {
-      _loadDepartures(future: true);
-    }
-  }
-
-  Future<void> _loadDepartures({bool future = true, bool past = false}) async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
-
-    DateTime reqTime = _currentRefTime;
-    
-    if (_departures.isNotEmpty) {
-      if (future) {
-        final last = _departures.last;
-        final t = DateTime.parse(last['plannedWhen'] ?? last['when']);
-        reqTime = t.add(const Duration(minutes: 1));
-      } else if (past) {
-        final first = _departures.first;
-        final t = DateTime.parse(first['plannedWhen'] ?? first['when']);
-        reqTime = t.subtract(const Duration(minutes: 60));
-      }
-    }
-
-    try {
-      final newDeps = await TransportApi.getDepartures(
-        widget.stationId, 
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: reqTime
-      );
-
-      if (mounted) {
-        setState(() {
-          if (past) {
-            _departures.insertAll(0, newDeps);
-          } else {
-            for (var d in newDeps) {
-              if (!_departures.any((e) => e['tripId'] == d['tripId'])) {
-                _departures.add(d);
-              }
-            }
-          }
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 600,
-      padding: const EdgeInsets.only(top: 16),
-      child: Column(
-        children: [
-          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
-          const SizedBox(height: 16),
-          const Text("Departures", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const Divider(),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollCtrl,
-              itemCount: _departures.length + 1,
-              itemBuilder: (ctx, idx) {
-                if (idx == 0) {
-                  return TextButton(
-                    onPressed: () => _loadDepartures(past: true, future: false),
-                    child: _isLoading ? const CircularProgressIndicator.adaptive() : const Text("Load Earlier"),
-                  );
-                }
-                
-                final dep = _departures[idx - 1];
-                final line = dep['line']['name'] ?? 'Unknown';
-                final dir = dep['direction'] ?? 'Unknown';
-                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
-                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                
-                return ListTile(
-                  leading: const Icon(Icons.directions_bus),
-                  title: Text("$line to $dir"),
-                  trailing: Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  onTap: () => widget.onSelect(planned),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
+// --- UPDATED EDIT DIALOG with ICON PICKER ---
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
+
   @override
   State<_EditFavoriteDialog> createState() => _EditFavoriteDialogState();
 }
@@ -1080,9 +856,17 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Station? _selectedStation;
   String? _selectedFriendId;
   int? _selectedIconCode;
+  
   List<Station> _suggestions = [];
   Timer? _debounce;
   bool _isLoading = false;
+
+  final List<IconData> _availableIcons = [
+    Icons.star, Icons.home, Icons.work, Icons.favorite, 
+    Icons.train, Icons.directions_bus, Icons.school, 
+    Icons.person, Icons.location_on, Icons.shopping_cart, 
+    Icons.fitness_center, Icons.local_cafe, Icons.local_airport
+  ];
 
   @override
   void initState() {
@@ -1095,12 +879,16 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   }
 
   @override
-  void dispose() { _labelCtrl.dispose(); _searchCtrl.dispose(); _debounce?.cancel(); super.dispose(); }
+  void dispose() {
+    _labelCtrl.dispose();
+    _searchCtrl.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
-    final primaryColor = Theme.of(context).primaryColor;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1114,59 +902,164 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
           children: [
             Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
             const SizedBox(height: 20),
+            
+            // LABEL INPUT
             TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
             const SizedBox(height: 10),
+            
+            // TYPE SELECTOR
             Row(children: [
-              Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, activeColor: primaryColor, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
-              Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, activeColor: primaryColor, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
+              Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
+              Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
             ]),
+            
+            // ICON PICKER
             const SizedBox(height: 10),
             const Text("Pick Icon", style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 8),
-            SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: kAvailableIcons.map((icon) { final isSelected = _selectedIconCode == icon.codePoint; return GestureDetector(onTap: () => setState(() => _selectedIconCode = icon.codePoint), child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: isSelected ? primaryColor : Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey))); }).toList())),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _availableIcons.map((icon) {
+                  final isSelected = _selectedIconCode == icon.codePoint;
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedIconCode = icon.codePoint),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? Colors.indigoAccent : Colors.grey.withOpacity(0.1),
+                        shape: BoxShape.circle
+                      ),
+                      child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
             const SizedBox(height: 10),
+
+            // CONTENT AREA 
             if (_currentType == 'station') ...[
-              if (_selectedStation != null) ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.train, color: Colors.indigo), title: Text(_selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)), trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selectedStation = null; _searchCtrl.clear(); _suggestions = []; })))
+              if (_selectedStation != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.train, color: Colors.indigo),
+                  title: Text(_selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selectedStation = null; _searchCtrl.clear(); _suggestions = []; })),
+                )
               else ...[
-                TextField(controller: _searchCtrl, decoration: InputDecoration(labelText: "Search Station Name", prefixIcon: const Icon(Icons.search), suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null)), onChanged: (val) { if (_debounce?.isActive ?? false) _debounce!.cancel(); if (val.isEmpty) { if (mounted) setState(() => _suggestions = []); return; } _debounce = Timer(const Duration(milliseconds: 400), () async { if (!mounted) return; setState(() => _isLoading = true); try { final res = await TransportApi.searchStations(val); if (mounted) setState(() { _suggestions = res; _isLoading = false; }); } catch (e) { if (mounted) setState(() => _isLoading = false); } }); }),
-                if (_suggestions.isNotEmpty) Container(height: 150, margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(border: Border.all(color: Colors.white10), borderRadius: BorderRadius.circular(8)), child: ListView.builder(itemCount: _suggestions.length, itemBuilder: (context, idx) { final s = _suggestions[idx]; return ListTile(dense: true, title: Text(s.name), onTap: () { if (!mounted) return; setState(() { _selectedStation = s; _suggestions = []; if (_labelCtrl.text.isEmpty) _labelCtrl.text = s.name; }); }); }))
+                TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    labelText: "Search Station Name",
+                    prefixIcon: const Icon(Icons.search),
+                    suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null),
+                  ),
+                  onChanged: (val) {
+                    if (_debounce?.isActive ?? false) _debounce!.cancel();
+                    if (val.isEmpty) {
+                      if (mounted) setState(() => _suggestions = []);
+                      return;
+                    }
+                    _debounce = Timer(const Duration(milliseconds: 400), () async {
+                      if (!mounted) return;
+                      setState(() => _isLoading = true);
+                      try {
+                        final res = await TransportApi.searchStations(val);
+                        if (mounted) setState(() { _suggestions = res; _isLoading = false; });
+                      } catch (e) {
+                        if (mounted) setState(() => _isLoading = false);
+                      }
+                    });
+                  },
+                ),
+                if (_suggestions.isNotEmpty)
+                  Container(
+                    height: 150,
+                    margin: const EdgeInsets.only(top: 8),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.white10), borderRadius: BorderRadius.circular(8)),
+                    child: ListView.builder(
+                      itemCount: _suggestions.length,
+                      itemBuilder: (context, idx) {
+                        final s = _suggestions[idx];
+                        return ListTile(
+                          dense: true,
+                          title: Text(s.name),
+                          onTap: () {
+                            if (!mounted) return;
+                            setState(() {
+                              _selectedStation = s;
+                              _suggestions = [];
+                              if (_labelCtrl.text.isEmpty) _labelCtrl.text = s.name;
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  )
               ]
             ],
-            if (_currentType == 'friend') ...[ TextField(decoration: const InputDecoration(labelText: "Search Friend Username"), onSubmitted: (val) async { final res = await SupabaseService.searchUsers(val); if (res.isNotEmpty && mounted) { setState(() { _selectedFriendId = res.first['id']; if (_labelCtrl.text.isEmpty) { _labelCtrl.text = res.first['username']; } }); } }), if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text("Friend Selected", style: TextStyle(color: Colors.green))) ],
+            
+            if (_currentType == 'friend') ...[
+               TextField(
+                 decoration: const InputDecoration(labelText: "Search Friend Username"),
+                 onSubmitted: (val) async {
+                   final res = await SupabaseService.searchUsers(val);
+                   if (res.isNotEmpty && mounted) {
+                     setState(() {
+                       _selectedFriendId = res.first['id'];
+                       if (_labelCtrl.text.isEmpty) {
+                          _labelCtrl.text = res.first['username'];
+                       }
+                     });
+                   }
+                 },
+               ),
+               if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text("Friend Selected", style: TextStyle(color: Colors.green))),
+            ],
+
             const SizedBox(height: 20),
-            Row(mainAxisAlignment: MainAxisAlignment.end, children: [if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work') TextButton(onPressed: () async { await FavoritesManager.deleteFavorite(widget.favorite.id); if (mounted) Navigator.pop(context, true); }, child: const Text("Delete", style: TextStyle(color: Colors.red))), const SizedBox(width: 8), TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { if (_labelCtrl.text.isNotEmpty) { final newFav = Favorite(id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id, label: _labelCtrl.text, type: _currentType, station: _selectedStation, friendId: _selectedFriendId, iconCode: _selectedIconCode); await FavoritesManager.saveFavorite(newFav); if (mounted) Navigator.pop(context, true); } }, child: const Text("Save"))])
+            
+            // ACTION BUTTONS
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work')
+                  TextButton(
+                    onPressed: () async {
+                      await FavoritesManager.deleteFavorite(widget.favorite.id);
+                      if (mounted) Navigator.pop(context, true); 
+                    },
+                    child: const Text("Delete", style: TextStyle(color: Colors.red)),
+                  ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (_labelCtrl.text.isNotEmpty) {
+                      final newFav = Favorite(
+                        id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id,
+                        label: _labelCtrl.text,
+                        type: _currentType,
+                        station: _selectedStation,
+                        friendId: _selectedFriendId,
+                        iconCode: _selectedIconCode
+                      );
+                      await FavoritesManager.saveFavorite(newFav);
+                      if (mounted) Navigator.pop(context, true); 
+                    }
+                  },
+                  child: const Text("Save"),
+                )
+              ],
+            )
           ],
         ),
       ),
     );
   }
-}
-
-class ChatSheet extends StatefulWidget {
-  final String lineId;
-  final String title;
-  const ChatSheet({super.key, required this.lineId, required this.title});
-  @override
-  State<ChatSheet> createState() => _ChatSheetState();
-}
-
-class _ChatSheetState extends State<ChatSheet> {
-  final TextEditingController _msgCtrl = TextEditingController();
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 600,
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Column(
-        children: [
-          Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Row(children: [const CircleAvatar(backgroundColor: Colors.indigo, child: Icon(Icons.directions_bus, color: Colors.white)), const SizedBox(width: 12), Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color))])),
-          const Divider(),
-          Expanded(child: StreamBuilder<List<Map<String, dynamic>>>(stream: SupabaseService.getMessages(widget.lineId), builder: (context, snapshot) { if (!snapshot.hasData) return const Center(child: CircularProgressIndicator()); final msgs = snapshot.data!; if (msgs.isEmpty) return const Center(child: Text("No messages yet.", style: TextStyle(color: Colors.grey))); return ListView.builder(padding: const EdgeInsets.all(16), itemCount: msgs.length, itemBuilder: (ctx, idx) { final msg = msgs[idx]; final isMe = msg['user_id'] == SupabaseService.currentUser?.id; final username = msg['username'] ?? 'Unknown'; final avatar = msg['avatar_url']; final emoji = msg['avatar_emoji']; final themeColorVal = msg['theme_color']; final Color themeColor = themeColorVal != null ? Color(themeColorVal) : Colors.indigo; return Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start, crossAxisAlignment: CrossAxisAlignment.start, children: [if (!isMe) CircleAvatar(radius: 16, backgroundColor: themeColor, backgroundImage: avatar != null ? NetworkImage(avatar) : null, child: (avatar == null && emoji != null) ? Text(emoji, style: const TextStyle(fontSize: 16)) : (avatar == null ? Text(username[0].toUpperCase()) : null)), const SizedBox(width: 8), Column(crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [if (!isMe) Padding(padding: const EdgeInsets.only(left: 4, bottom: 2), child: Text(username, style: const TextStyle(fontSize: 10, color: Colors.grey))), Container(constraints: const BoxConstraints(maxWidth: 240), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isMe ? Colors.blue : Theme.of(context).cardColor, borderRadius: BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: isMe ? const Radius.circular(16) : Radius.zero, bottomRight: isMe ? Radius.zero : const Radius.circular(16)), border: isMe ? null : Border.all(color: Colors.white10)), child: Text(msg['content'], style: TextStyle(color: isMe ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color)))])])); }); })),
-          Padding(padding: const EdgeInsets.all(16), child: Row(children: [Expanded(child: TextField(controller: _msgCtrl, decoration: InputDecoration(hintText: "Say something...", filled: true, fillColor: Theme.of(context).cardColor, border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 20)), onSubmitted: (_) => _send())), const SizedBox(width: 8), CircleAvatar(backgroundColor: Colors.blue, child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _send))]))
-        ],
-      ),
-    );
-  }
-  void _send() { if (_msgCtrl.text.trim().isEmpty) return; SupabaseService.sendMessage(widget.lineId, _msgCtrl.text.trim()); _msgCtrl.clear(); }
 }
