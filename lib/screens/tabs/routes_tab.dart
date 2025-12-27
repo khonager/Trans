@@ -336,7 +336,7 @@ class _RoutesTabState extends State<RoutesTab> {
           chatCount: random.nextInt(15) + 1,
           startStationId: startStationId,
           platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'], // CORRECTLY PASS STOPOVERS
+          stopovers: leg['stopovers'], 
         ));
         
         lastArrival = arr;
@@ -493,21 +493,23 @@ class _RoutesTabState extends State<RoutesTab> {
         }));
   }
 
+  // --- UPDATED: Show Alternative Departures in Modal with Lazy Loading ---
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
-            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
-                final dep = snapshot.data![idx];
-                final line = dep['line']['name'] ?? 'Unknown';
-                final dir = dep['direction'] ?? 'Unknown';
-                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
-                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time), onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); });
-              });
-          });
-      });
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true, // Needed for list to expand
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => StopDeparturesSheet(
+        stationId: stationId,
+        finalDestinationId: finalDestinationId,
+        onlyNahverkehr: widget.onlyNahverkehr,
+        onSelect: (time) {
+          Navigator.pop(ctx);
+          _openNewRouteTab(time, stationId, finalDestinationId);
+        },
+      ),
+    );
   }
 
   Future<void> _triggerVibration() async {
@@ -561,6 +563,8 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
+    // ... (Keep existing SearchView, make sure it uses 'colors' object) ...
+    // Copying the improved version from before
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
 
@@ -579,7 +583,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.favAddBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.favAddIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
                   const SizedBox(height: 20),
                   
-                  // Search Fields using TransColors
                   _buildTextField("From", _fromController, _fromStation != null, 'from', colors, hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(colors),
                   const SizedBox(height: 12),
@@ -731,30 +734,7 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, TransColors colors, {String hint = "Station..."}) {
     Color iconColor = Colors.grey;
     if (isSelected) iconColor = colors.searchIcon; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start, 
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 4), 
-          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
-        ), 
-        TextField(
-          controller: controller, 
-          onChanged: (val) => _onSearchChanged(val, fieldKey), 
-          onTap: () => setState(() => _activeSearchField = fieldKey), 
-          style: TextStyle(color: colors.searchInputText), 
-          decoration: InputDecoration(
-            filled: true, 
-            fillColor: colors.searchBarFill, 
-            prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), 
-            hintText: hint, 
-            hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText), 
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
-          )
-        )
-      ]
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchBarFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 
   Widget _buildActiveRouteView(RouteTab route, TransColors colors) {
@@ -785,9 +765,9 @@ class _RoutesTabState extends State<RoutesTab> {
             onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
             isAlarmSet: _isWakeAlarmSet,
             colors: colors,
-            // ADDED: Callback to open new tab
+            // Pass the tap callback
             onStopTap: (stopId, time) {
-              _openNewRouteTab(time, stopId, route.destinationId);
+              _showAlternatives(context, stopId, route.destinationId);
             },
           )
       ],
@@ -795,6 +775,147 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
+// --- MODAL FOR STOP DEPARTURES (LAZY LOADING) ---
+class StopDeparturesSheet extends StatefulWidget {
+  final String stationId;
+  final String finalDestinationId;
+  final bool onlyNahverkehr;
+  final Function(DateTime) onSelect;
+
+  const StopDeparturesSheet({
+    super.key,
+    required this.stationId,
+    required this.finalDestinationId,
+    required this.onlyNahverkehr,
+    required this.onSelect,
+  });
+
+  @override
+  State<StopDeparturesSheet> createState() => _StopDeparturesSheetState();
+}
+
+class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
+  final List<Map<String, dynamic>> _departures = [];
+  final ScrollController _scrollCtrl = ScrollController();
+  bool _isLoading = false;
+  DateTime _currentRefTime = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDepartures();
+    _scrollCtrl.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_isLoading) return;
+    if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 50) {
+      _loadDepartures(future: true);
+    }
+    // Pull-to-refresh style for past? Or simple button. 
+    // Implementing scroll-up lazy load is complex in ListViews.
+    // simpler to have a header button "Load earlier".
+  }
+
+  Future<void> _loadDepartures({bool future = true, bool past = false}) async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+
+    DateTime reqTime = _currentRefTime;
+    
+    // Logic: If future, take last item time + 1 min
+    // If past, take first item time - 60 min
+    if (_departures.isNotEmpty) {
+      if (future) {
+        final last = _departures.last;
+        final t = DateTime.parse(last['plannedWhen'] ?? last['when']);
+        reqTime = t.add(const Duration(minutes: 1));
+      } else if (past) {
+        final first = _departures.first;
+        final t = DateTime.parse(first['plannedWhen'] ?? first['when']);
+        reqTime = t.subtract(const Duration(minutes: 60));
+      }
+    }
+
+    try {
+      final newDeps = await TransportApi.getDepartures(
+        widget.stationId, 
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: reqTime
+      );
+
+      if (mounted) {
+        setState(() {
+          if (past) {
+            _departures.insertAll(0, newDeps);
+          } else {
+            // Avoid duplicates
+            for (var d in newDeps) {
+              if (!_departures.any((e) => e['tripId'] == d['tripId'])) {
+                _departures.add(d);
+              }
+            }
+          }
+          _isLoading = false;
+          // If we loaded future, _currentRefTime updates implicitly by list tail
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 600,
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        children: [
+          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          const Text("Departures", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Divider(),
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollCtrl,
+              itemCount: _departures.length + 1, // +1 for "Load Earlier" button at top
+              itemBuilder: (ctx, idx) {
+                if (idx == 0) {
+                  return TextButton(
+                    onPressed: () => _loadDepartures(past: true, future: false),
+                    child: _isLoading ? const CircularProgressIndicator.adaptive() : const Text("Load Earlier"),
+                  );
+                }
+                
+                final dep = _departures[idx - 1];
+                final line = dep['line']['name'] ?? 'Unknown';
+                final dir = dep['direction'] ?? 'Unknown';
+                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
+                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
+                
+                return ListTile(
+                  leading: const Icon(Icons.directions_bus),
+                  title: Text("$line to $dir"),
+                  trailing: Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  onTap: () => widget.onSelect(planned),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ... _StepCard, _EditFavoriteDialog, ChatSheet ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
@@ -802,7 +923,7 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final Function(String) onGuide;
-  final Function(String stopId, DateTime time) onStopTap; // New Callback
+  final Function(String stopId, DateTime time) onStopTap;
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
   final TransColors colors;
@@ -887,7 +1008,7 @@ class _StepCard extends StatelessWidget {
                           children: [
                              Column(
                                children: [
-                                 SizedBox(height: 5), // Align dot visually
+                                 const SizedBox(height: 5), // Align dot visually
                                  Container(
                                    width: 8, height: 8,
                                    decoration: BoxDecoration(color: colors.timelineDot, shape: BoxShape.circle),
@@ -966,7 +1087,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // Also use AppTheme colors here if desired, but Dialogs usually follow standard theme
     final bool isNew = widget.favorite.id.isEmpty;
     final primaryColor = Theme.of(context).primaryColor;
 
