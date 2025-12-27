@@ -6,6 +6,7 @@ import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart'; 
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
+import '../../config/app_theme.dart'; // Import for color list
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
@@ -87,7 +88,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  // DIRECTLY OPEN EMOJI PICKER
   void _pickAvatar() {
     showModalBottomSheet(
       context: context,
@@ -226,16 +226,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 height: 40,
                 child: ListView(
                   scrollDirection: Axis.horizontal,
-                  children: [
-                    _colorCircle(const Color(0xFF4F46E5)), // Indigo
-                    _colorCircle(Colors.blue),
-                    _colorCircle(Colors.teal),
-                    _colorCircle(Colors.green),
-                    _colorCircle(Colors.orange),
-                    _colorCircle(Colors.red),
-                    _colorCircle(Colors.purple),
-                    _colorCircle(Colors.pink),
-                  ],
+                  children: appThemeColors.map((c) => _colorCircle(c)).toList(),
                 ),
               ),
             ),
