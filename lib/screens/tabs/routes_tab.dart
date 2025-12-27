@@ -233,15 +233,12 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showEditFavoriteDialog(Favorite fav) async {
-    final bool? shouldReload = await showDialog<bool>(
+    await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _EditFavoriteDialog(favorite: fav),
     );
-
-    if (shouldReload == true && mounted) {
-      _loadFavorites();
-    }
+    if (mounted) _loadFavorites();
   }
   
   void _addNewFavorite() {
@@ -250,14 +247,15 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   // --- ROUTE LOGIC ---
-
+  // (Same as before, omitted for brevity but required in full file)
   List<JourneyStep> _processLegs(List legs) {
+    // Paste the same _processLegs logic from previous turn here
+    // For completeness in this artifact I will include it
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
-    // Helper: Flush the buffer into a Step
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
@@ -289,7 +287,6 @@ class _RoutesTabState extends State<RoutesTab> {
         final dest = leg['destination']?['name'];
         
         if (origin != null && dest != null && origin == dest) {
-          // wait, do not add to walkMinutes
         } else {
           walkMinutes += dur;
         }
@@ -403,6 +400,9 @@ class _RoutesTabState extends State<RoutesTab> {
     return steps;
   }
 
+  // ... (Rest of methods: _findRoutes, _openNewRouteTab, _closeTab, _showChat, _showGuide, _showAlternatives, _triggerVibration)
+  // They are identical to the previous file version. I will include _findRoutes and _openNewRouteTab for context.
+  
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     if (from == null && widget.currentPosition != null) {
@@ -425,7 +425,6 @@ class _RoutesTabState extends State<RoutesTab> {
       setState(() => _isLoadingRoute = false);
       return;
     }
-    
     setState(() => _isLoadingRoute = true);
 
     DateTime? searchTime;
@@ -435,11 +434,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
     try {
       final journeyData = await TransportApi.searchJourney(
-          from.id, 
-          _toStation!.id, 
-          nahverkehrOnly: widget.onlyNahverkehr,
-          when: searchTime,
-          isArrival: _isArrival
+          from.id, _toStation!.id, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
 
       if (journeyData != null && journeyData['legs'] != null) {
@@ -465,15 +460,7 @@ class _RoutesTabState extends State<RoutesTab> {
           eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
         }
 
-        final newTab = RouteTab(
-          id: newTabId,
-          title: _toStation!.name,
-          subtitle: "${from.name} → ${_toStation!.name}",
-          eta: eta,
-          totalDuration: totalDurationStr, 
-          destinationId: _toStation!.id, 
-          steps: steps,
-        );
+        final newTab = RouteTab(id: newTabId, title: _toStation!.name, subtitle: "${from.name} → ${_toStation!.name}", eta: eta, totalDuration: totalDurationStr, destinationId: _toStation!.id, steps: steps);
 
         setState(() {
           _tabs.add(newTab);
@@ -497,13 +484,7 @@ class _RoutesTabState extends State<RoutesTab> {
   Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
     setState(() => _isLoadingRoute = true);
     try {
-      final journeyData = await TransportApi.searchJourney(
-        startStationId,
-        finalDestId,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: newDepartureTime,
-        isArrival: false
-      );
+      final journeyData = await TransportApi.searchJourney(startStationId, finalDestId, nahverkehrOnly: widget.onlyNahverkehr, when: newDepartureTime, isArrival: false);
 
       if (journeyData != null && journeyData['legs'] != null) {
         final List legs = journeyData['legs'];
@@ -513,10 +494,8 @@ class _RoutesTabState extends State<RoutesTab> {
         if (legs.isNotEmpty) {
            var firstLeg = legs.first;
            var lastLeg = legs.last;
-           
            String? startStr = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
            String? endStr = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
-           
            if (startStr != null && endStr != null) {
              DateTime routeStart = DateTime.parse(startStr);
              DateTime routeEnd = DateTime.parse(endStr);
@@ -532,15 +511,7 @@ class _RoutesTabState extends State<RoutesTab> {
           eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
         }
         
-        final newTab = RouteTab(
-          id: newTabId,
-          title: "Alternative", 
-          subtitle: "From ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}",
-          eta: eta,
-          totalDuration: totalDurationStr, 
-          destinationId: finalDestId, 
-          steps: steps,
-        );
+        final newTab = RouteTab(id: newTabId, title: "Alternative", subtitle: "From ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}", eta: eta, totalDuration: totalDurationStr, destinationId: finalDestId, steps: steps);
 
         setState(() {
           _tabs.add(newTab);
@@ -567,93 +538,31 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => ChatSheet(lineId: lineName, title: lineName),
-    );
+    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
   }
 
   void _showGuide(BuildContext context, String? startStationId) {
     if (startStationId == null) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setStateDialog) {
-          return AlertDialog(
-            backgroundColor: Theme.of(ctx).cardColor,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-                IconButton(
-                  icon: const Icon(Icons.add_a_photo, color: Colors.blue),
-                  onPressed: () async {
-                    final picker = ImagePicker();
-                    final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024);
-                    if (picked != null) {
-                       try {
-                         dynamic imageFile;
-                         if (kIsWeb) imageFile = await picked.readAsBytes();
-                         else imageFile = File(picked.path);
-                         
-                         await SupabaseService.uploadStationImage(imageFile, startStationId);
-                         setStateDialog(() {}); 
-                       } catch (e) {
-                         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-                       }
-                    }
-                  },
-                )
-              ],
-            ),
-            content: FutureBuilder<String?>(
-              future: SupabaseService.getStationImage(startStationId),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
-                if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]);
-                return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200));
-              },
-            ),
-            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))],
-          );
-        }
-      ),
-    );
+    showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setStateDialog) {
+          return AlertDialog(backgroundColor: Theme.of(ctx).cardColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)), IconButton(icon: const Icon(Icons.add_a_photo, color: Colors.blue), onPressed: () async { final picker = ImagePicker(); final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024); if (picked != null) { try { dynamic imageFile; if (kIsWeb) imageFile = await picked.readAsBytes(); else imageFile = File(picked.path); await SupabaseService.uploadStationImage(imageFile, startStationId); setStateDialog(() {}); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } } })]), content: FutureBuilder<String?>(future: SupabaseService.getStationImage(startStationId), builder: (context, snapshot) { if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())); if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]); return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200)); }), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))]);
+        }));
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-     showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(
-          future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr),
-          builder: (context, snapshot) {
+     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
+        return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
-            return ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: snapshot.data!.length,
-              itemBuilder: (ctx, idx) {
+            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
                 final dep = snapshot.data![idx];
                 final line = dep['line']['name'] ?? 'Unknown';
                 final dir = dep['direction'] ?? 'Unknown';
                 final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
                 final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(
-                  leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time),
-                  onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); },
-                );
-              },
-            );
-          },
-        );
-      },
-    );
+                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time), onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); });
+              });
+          });
+      });
   }
 
   Future<void> _triggerVibration() async {
@@ -749,7 +658,13 @@ class _RoutesTabState extends State<RoutesTab> {
                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
                          }
                          final fav = _favorites[idx];
-                         return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(fav.type == 'friend' ? Icons.person : (fav.label.toLowerCase() == 'home' ? Icons.home : (fav.label.toLowerCase() == 'work' ? Icons.work : Icons.star)), color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
+                         IconData icon = Icons.star;
+                         if (fav.type == 'friend') icon = Icons.person;
+                         else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
+                         else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
+                         if (fav.iconCode != null) icon = IconData(fav.iconCode!, fontFamily: 'MaterialIcons');
+
+                         return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
                       },
                     ),
                   ),
@@ -790,7 +705,7 @@ class _RoutesTabState extends State<RoutesTab> {
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
                   title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
                   onTap: () => _selectItem(station),
-                  // ADDED: Long Press triggers dialog
+                  // ADDED: Hold to Add Favorite logic
                   onLongPress: () {
                     final newFav = Favorite(
                       id: DateTime.now().millisecondsSinceEpoch.toString(), 
@@ -809,6 +724,8 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // ... (TextField, ActiveRouteView, StepCard - kept identical to ensure compatibility) ...
+  // Included to make file complete and copy-paste ready
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     Color iconColor = Colors.grey;
@@ -930,7 +847,7 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-// --- RESTORED: Full _EditFavoriteDialog Class ---
+// --- UPDATED EDIT DIALOG with ICON PICKER ---
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
@@ -945,10 +862,18 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   late String _currentType;
   Station? _selectedStation;
   String? _selectedFriendId;
+  int? _selectedIconCode;
   
   List<Station> _suggestions = [];
   Timer? _debounce;
   bool _isLoading = false;
+
+  final List<IconData> _availableIcons = [
+    Icons.star, Icons.home, Icons.work, Icons.favorite, 
+    Icons.train, Icons.directions_bus, Icons.school, 
+    Icons.person, Icons.location_on, Icons.shopping_cart, 
+    Icons.fitness_center, Icons.local_cafe, Icons.local_airport
+  ];
 
   @override
   void initState() {
@@ -957,6 +882,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
     _currentType = widget.favorite.type;
     _selectedStation = widget.favorite.station;
     _selectedFriendId = widget.favorite.friendId;
+    _selectedIconCode = widget.favorite.iconCode;
   }
 
   @override
@@ -969,7 +895,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // If id is empty, it's a new favorite
     final bool isNew = widget.favorite.id.isEmpty;
 
     return Dialog(
@@ -986,11 +911,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             const SizedBox(height: 20),
             
             // LABEL INPUT
-            TextField(
-              controller: _labelCtrl, 
-              decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)"),
-              autofocus: true,
-            ),
+            TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
             const SizedBox(height: 10),
             
             // TYPE SELECTOR
@@ -999,6 +920,30 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
               Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
             ]),
             
+            // ICON PICKER
+            const SizedBox(height: 10),
+            const Text("Pick Icon", style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _availableIcons.map((icon) {
+                  final isSelected = _selectedIconCode == icon.codePoint;
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedIconCode = icon.codePoint),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? Colors.indigoAccent : Colors.grey.withOpacity(0.1),
+                        shape: BoxShape.circle
+                      ),
+                      child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
             const SizedBox(height: 10),
 
             // CONTENT AREA 
@@ -1108,7 +1053,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                         label: _labelCtrl.text,
                         type: _currentType,
                         station: _selectedStation,
-                        friendId: _selectedFriendId
+                        friendId: _selectedFriendId,
+                        iconCode: _selectedIconCode
                       );
                       await FavoritesManager.saveFavorite(newFav);
                       if (mounted) Navigator.pop(context, true); 
