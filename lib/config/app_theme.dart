@@ -10,7 +10,6 @@ const List<Color> appThemeColors = [
   Colors.purple,
   Colors.pink,
   Colors.amber,
-  Color(0xFF000000), // Pure Black
 ];
 
 @immutable
