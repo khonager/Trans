@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-import '../../config/app_theme.dart'; // Import Theme Config
+import '../../config/app_theme.dart';
 import '../../models/station.dart';
 import '../../models/journey.dart';
 import '../../models/favorite.dart';
@@ -254,7 +254,6 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC --- 
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -337,7 +336,7 @@ class _RoutesTabState extends State<RoutesTab> {
           chatCount: random.nextInt(15) + 1,
           startStationId: startStationId,
           platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'], // KEY: Now we have the data!
+          stopovers: leg['stopovers'], // CORRECTLY PASS STOPOVERS
         ));
         
         lastArrival = arr;
@@ -518,7 +517,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. GET THE COLORS
     final colors = TransColors.of(context);
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
 
@@ -787,6 +785,10 @@ class _RoutesTabState extends State<RoutesTab> {
             onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
             isAlarmSet: _isWakeAlarmSet,
             colors: colors,
+            // ADDED: Callback to open new tab
+            onStopTap: (stopId, time) {
+              _openNewRouteTab(time, stopId, route.destinationId);
+            },
           )
       ],
     );
@@ -800,11 +802,12 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final Function(String) onGuide;
+  final Function(String stopId, DateTime time) onStopTap; // New Callback
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
   final TransColors colors;
 
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet, required this.colors});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet, required this.colors, required this.onStopTap});
 
   @override
   Widget build(BuildContext context) {
@@ -847,7 +850,6 @@ class _StepCard extends StatelessWidget {
                     final stop = step.stopovers![idx];
                     final isLast = idx == step.stopovers!.length - 1;
                     final name = stop['stop']['name'];
-                    // ignore: unused_local_variable
                     final stopId = stop['stop']['id'];
                     final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival'];
                     final actualDep = stop['departure'] ?? stop['arrival'];
@@ -872,40 +874,48 @@ class _StepCard extends StatelessWidget {
                       }
                     }
 
-                    // --- NEW INTERMEDIATE STOPS TIMELINE DESIGN ---
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                           Column(
-                             children: [
-                               Container(
-                                 width: 8, height: 8,
-                                 decoration: BoxDecoration(color: colors.timelineDot, shape: BoxShape.circle),
-                               ),
-                               if (!isLast) Expanded(child: Container(width: 2, color: colors.timelineLine)),
-                             ],
-                           ),
-                           const SizedBox(width: 12),
-                           Expanded(
-                             child: Padding(
-                               padding: const EdgeInsets.only(bottom: 16),
-                               child: Row(
-                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                 children: [
-                                   Expanded(child: Text(name, style: TextStyle(color: colors.timelineTextMain, fontSize: 13))),
-                                   const SizedBox(width: 8),
-                                   Text(timeStr, style: TextStyle(
-                                     color: timeColor, 
-                                     fontSize: 12, 
-                                     fontWeight: isDelayed ? FontWeight.bold : FontWeight.normal
-                                   )),
-                                 ],
-                               ),
+                    // --- TIMELINE ROW ---
+                    return GestureDetector(
+                      onTap: () {
+                        if (plannedDep != null) {
+                          onStopTap(stopId, DateTime.parse(plannedDep));
+                        }
+                      },
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                             Column(
+                               children: [
+                                 SizedBox(height: 5), // Align dot visually
+                                 Container(
+                                   width: 8, height: 8,
+                                   decoration: BoxDecoration(color: colors.timelineDot, shape: BoxShape.circle),
+                                 ),
+                                 if (!isLast) Expanded(child: Container(width: 2, color: colors.timelineLine)),
+                               ],
                              ),
-                           )
-                        ],
+                             const SizedBox(width: 12),
+                             Expanded(
+                               child: Padding(
+                                 padding: const EdgeInsets.only(bottom: 16),
+                                 child: Row(
+                                   crossAxisAlignment: CrossAxisAlignment.start,
+                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                   children: [
+                                     Expanded(child: Text(name, style: TextStyle(color: colors.timelineTextMain, fontSize: 13))),
+                                     const SizedBox(width: 8),
+                                     Text(timeStr, style: TextStyle(
+                                       color: timeColor, 
+                                       fontSize: 12, 
+                                       fontWeight: isDelayed ? FontWeight.bold : FontWeight.normal
+                                     )),
+                                   ],
+                                 ),
+                               ),
+                             )
+                          ],
+                        ),
                       ),
                     );
                   },
@@ -923,7 +933,6 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-// ... _EditFavoriteDialog, ChatSheet, etc. (same as provided before) ...
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
