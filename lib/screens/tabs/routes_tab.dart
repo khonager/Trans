@@ -16,6 +16,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
+import 'package:trans/config/app_theme.dart'; // Import theme to access TransColors
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -621,6 +622,9 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildSearchView(bool canSearch, bool isDark) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
+    
+    // 🟢 Use new Theme Colors
+    final colors = TransColors.of(context);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 100),
@@ -675,11 +679,10 @@ class _RoutesTabState extends State<RoutesTab> {
                           else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
                           else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
                           
-                          // FIX: Use lookup instead of dynamic IconData creation to satisfy tree-shaker
                           if (fav.iconCode != null) {
                             icon = kAvailableIcons.firstWhere(
                               (i) => i.codePoint == fav.iconCode,
-                              orElse: () => Icons.star // Fallback safely
+                              orElse: () => Icons.star 
                             );
                           }
 
@@ -688,7 +691,19 @@ class _RoutesTabState extends State<RoutesTab> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                  SizedBox(
+                    width: double.infinity, 
+                    height: 56, 
+                    child: ElevatedButton(
+                      onPressed: canSearch ? _findRoutes : null, 
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colors.journeyBtnBg,     // 🟢 Uses new theme
+                        foregroundColor: colors.journeyBtnText,   // 🟢 Uses new theme
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+                      ), 
+                      child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+                    )
+                  ),
                 ],
               ),
             ),
@@ -743,10 +758,41 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    Color iconColor = Colors.grey;
-    if (isSelected) iconColor = Colors.greenAccent; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: isDark ? Colors.white : Colors.black), decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    final colors = TransColors.of(context); // 🟢 Get Theme Colors
+
+    Color iconColor = colors.journeyInputIcon; // 🟢 Use Dynamic Icon Color
+    if (isSelected) iconColor = Colors.greenAccent; 
+    else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start, 
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 4), 
+          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
+        ), 
+        TextField(
+          controller: controller, 
+          onChanged: (val) => _onSearchChanged(val, fieldKey), 
+          onTap: () => setState(() => _activeSearchField = fieldKey), 
+          style: TextStyle(color: colors.searchInputText), 
+          decoration: InputDecoration(
+            filled: true, 
+            fillColor: colors.journeyInputFill, // 🟢 Use Dynamic Fill Color
+            prefixIcon: Icon(
+              fieldKey == 'from' ? Icons.my_location : Icons.location_on, 
+              color: iconColor, 
+              size: 20
+            ), 
+            hintText: hint, 
+            hintStyle: TextStyle(
+              color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText
+            ), 
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
+          )
+        )
+      ]
+    );
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
@@ -880,8 +926,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   List<Station> _suggestions = [];
   Timer? _debounce;
   bool _isLoading = false;
-
-  // Use kAvailableIcons instead of local definition
 
   @override
   void initState() {
