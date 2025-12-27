@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import '../models/favorite.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
@@ -34,10 +35,6 @@ class SupabaseService {
     await client.auth.updateUser(UserAttributes(password: newPassword));
   }
 
-  static Future<void> updateEmail(String newEmail) async {
-    await client.auth.updateUser(UserAttributes(email: newEmail));
-  }
-
   static Future<void> updateUsername(String newUsername) async {
     final user = currentUser;
     if (user == null) return;
@@ -45,7 +42,7 @@ class SupabaseService {
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
 
-  // --- PROFILES ---
+  // --- PROFILES & EMOJI ---
   static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
     if (user == null) return null;
@@ -56,15 +53,7 @@ class SupabaseService {
     }
   }
 
-  static Future<String?> getUsername(String userId) async {
-    try {
-      final data = await client.from('profiles').select('username').eq('id', userId).maybeSingle();
-      return data?['username'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
+  // Upload Image Avatar
   static Future<String?> uploadAvatar(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
@@ -73,16 +62,131 @@ class SupabaseService {
     try {
       await client.storage.from('avatars').upload(fileName, imageFile);
       final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
-      await client.from('profiles').update({'avatar_url': imageUrl}).eq('id', user.id);
+      // Clear emoji if setting image
+      await client.from('profiles').update({'avatar_url': imageUrl, 'avatar_emoji': null}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
       return null;
     }
   }
 
-  // --- FRIENDS SYSTEM ---
+  // Set Emoji Avatar
+  static Future<void> updateAvatarEmoji(String emoji) async {
+    final user = currentUser;
+    if (user == null) return;
+    // Clear image URL if setting emoji, so UI knows which to prioritize
+    await client.from('profiles').update({
+      'avatar_emoji': emoji, 
+      'avatar_url': null 
+    }).eq('id', user.id);
+  }
 
-  // 1. Send Request
+  // --- FAVORITES (SYNC) ---
+  static Future<List<Favorite>> fetchFavorites() async {
+    final user = currentUser;
+    if (user == null) return [];
+    
+    try {
+      final response = await client.from('favorites').select().eq('user_id', user.id);
+      return (response as List).map((json) => Favorite.fromJson(json)).toList();
+    } catch (e) {
+      debugPrint("Error fetching favorites: $e");
+      return [];
+    }
+  }
+
+  static Future<void> addFavorite(Favorite favorite) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    final data = favorite.toJson();
+    data['user_id'] = user.id;
+    // Remove ID if it was generated locally to let Supabase gen it, 
+    // OR allow client-generated IDs. Let's use Upsert with ID.
+    
+    await client.from('favorites').upsert(data);
+  }
+
+  static Future<void> deleteFavorite(String favoriteId) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('favorites').delete().eq('id', favoriteId).eq('user_id', user.id);
+  }
+
+  // --- FRIENDS SYSTEM ---
+  static Future<List<Map<String, dynamic>>> getPendingRequests() async {
+    final user = currentUser;
+    if (user == null) return [];
+    
+    final data = await client.from('friend_requests')
+        .select()
+        .eq('receiver_id', user.id)
+        .eq('status', 'pending');
+    
+    if (data.isEmpty) return [];
+    
+    final senderIds = (data as List).map((r) => r['sender_id']).toList();
+    final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    return data.map((req) {
+      final sender = profileMap[req['sender_id']];
+      return {
+        ...req,
+        'sender_username': sender?['username'] ?? 'Unknown',
+        'sender_avatar': sender?['avatar_url'],
+        'sender_emoji': sender?['avatar_emoji'], // Added
+      };
+    }).toList();
+  }
+
+  static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return client.from('friend_requests').stream(primaryKey: ['id']).eq('receiver_id', user.id).asyncMap((_) => getPendingRequests());
+  }
+
+  static Future<List<Map<String, dynamic>>> getFriends() async {
+    final user = currentUser;
+    if (user == null) return [];
+
+    final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
+    if (friendsRelation.isEmpty) return [];
+
+    final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
+
+    final profiles = await client.from('profiles').select().filter('id', 'in', friendIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
+    final locationMap = {for (var l in locations) l['user_id']: l};
+
+    List<Map<String, dynamic>> result = [];
+    for (var id in friendIds) {
+      final profile = profileMap[id];
+      if (profile == null) continue;
+
+      final loc = locationMap[id];
+      result.add({
+        'id': id,
+        'username': profile['username'] ?? 'Unknown',
+        'avatar_url': profile['avatar_url'],
+        'avatar_emoji': profile['avatar_emoji'], // Added
+        'latitude': loc?['latitude'],
+        'longitude': loc?['longitude'],
+        'updated_at': loc?['updated_at'], 
+        'current_line': loc?['current_line'],
+      });
+    }
+    return result;
+  }
+
+  static Stream<List<Map<String, dynamic>>> streamFriends() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((_) => getFriends());
+  }
+
   static Future<void> sendFriendRequest(String targetUserId) async {
     final user = currentUser;
     if (user == null) throw "Not logged in";
@@ -102,88 +206,6 @@ class SupabaseService {
       'receiver_id': targetUserId, 
       'status': 'pending'
     });
-  }
-
-  // 2. Fetch Requests
-  static Future<List<Map<String, dynamic>>> getPendingRequests() async {
-    final user = currentUser;
-    if (user == null) return [];
-    
-    final data = await client.from('friend_requests')
-        .select()
-        .eq('receiver_id', user.id)
-        .eq('status', 'pending');
-    
-    if (data.isEmpty) return [];
-    
-    // Enrich with Sender Profiles
-    final senderIds = (data as List).map((r) => r['sender_id']).toList();
-    final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
-    final profileMap = {for (var p in profiles) p['id']: p};
-
-    return data.map((req) {
-      final sender = profileMap[req['sender_id']];
-      return {
-        ...req,
-        'sender_username': sender?['username'] ?? 'Unknown',
-        'sender_avatar': sender?['avatar_url'],
-      };
-    }).toList();
-  }
-
-  static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-    // Re-use logic: Stream IDs, fetch details
-    return client.from('friend_requests').stream(primaryKey: ['id']).eq('receiver_id', user.id).asyncMap((_) => getPendingRequests());
-  }
-
-  // 3. Fetch Friends (ROBUST: Friends Table -> Profiles + Locations)
-  static Future<List<Map<String, dynamic>>> getFriends() async {
-    final user = currentUser;
-    if (user == null) return [];
-
-    // A. Get Friend IDs from 'friends' table
-    final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
-    if (friendsRelation.isEmpty) return [];
-
-    final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
-
-    // B. Get Profiles (Name, Avatar)
-    final profiles = await client.from('profiles').select().filter('id', 'in', friendIds);
-    final profileMap = {for (var p in profiles) p['id']: p};
-
-    // C. Get Locations (Lat, Long, Line) - might be empty for some
-    final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
-    final locationMap = {for (var l in locations) l['user_id']: l};
-
-    // D. Merge
-    List<Map<String, dynamic>> result = [];
-    for (var id in friendIds) {
-      final profile = profileMap[id];
-      if (profile == null) continue; // Should not happen
-
-      final loc = locationMap[id];
-      result.add({
-        'id': id,
-        'username': profile['username'] ?? 'Unknown',
-        'avatar_url': profile['avatar_url'],
-        'latitude': loc?['latitude'],
-        'longitude': loc?['longitude'],
-        'updated_at': loc?['updated_at'], // Needed for "Active" check
-        'current_line': loc?['current_line'],
-      });
-    }
-    return result;
-  }
-
-  // Stream Friends (Listens to LOCATION updates to keep "Active" status live)
-  static Stream<List<Map<String, dynamic>>> streamFriends() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-    
-    // We listen to user_locations so we update when friends move
-    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((_) => getFriends());
   }
 
   static Future<void> acceptFriendRequest(String senderId) async {
@@ -215,7 +237,6 @@ class SupabaseService {
       'user_id': user.id,
       'latitude': pos.latitude,
       'longitude': pos.longitude,
-      // FIX: Use UTC to ensure consistency across all devices/users
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
@@ -226,7 +247,7 @@ class SupabaseService {
     await client.from('user_locations').upsert(updateData);
   }
 
-  // --- CHAT & TICKET ---
+  // --- CHAT ---
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
     return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).asyncMap((List<Map<String, dynamic>> messages) async {
           if (messages.isEmpty) return [];
@@ -239,6 +260,7 @@ class SupabaseService {
               ...m,
               'username': sender?['username'] ?? 'Unknown',
               'avatar_url': sender?['avatar_url'],
+              'avatar_emoji': sender?['avatar_emoji'], // Added
             };
           }).toList();
         });
@@ -250,10 +272,10 @@ class SupabaseService {
     await client.from('messages').insert({'line_id': lineId, 'user_id': user.id, 'content': content});
   }
 
+  // --- TICKET ---
   static Future<String?> getTicketUrl() async {
     final user = currentUser;
     if (user == null) return null;
-    // This previously crashed if column didn't exist. Fixed by SQL above.
     final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
     return data?['ticket_url'] as String?;
   }

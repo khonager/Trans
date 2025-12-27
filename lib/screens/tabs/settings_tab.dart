@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart'; 
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 
@@ -12,6 +13,10 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onThemeChanged;
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
+  
+  final Function(Color, bool) onColorChanged;
+  final Color currentColor;
+  final bool useMaterialYou;
 
   const SettingsTab({
     super.key,
@@ -19,6 +24,9 @@ class SettingsTab extends StatefulWidget {
     required this.onThemeChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
+    required this.onColorChanged,
+    required this.currentColor,
+    required this.useMaterialYou,
   });
 
   @override
@@ -69,7 +77,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _testVibration() async {
     if (kIsWeb) return;
-
     if (await Vibration.hasVibrator() ?? false) {
       List<int> pattern = [0, 500]; 
       if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
@@ -84,17 +91,67 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 800,
-      maxHeight: 800,
-      imageQuality: 80,
+    showModalBottomSheet(context: context, builder: (ctx) {
+      return Container(
+        height: 150,
+        color: Theme.of(context).cardColor,
+        child: Column(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.emoji_emotions),
+              title: const Text("Choose Emoji"),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showEmojiPicker();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.image),
+              title: const Text("Upload Image"),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final picker = ImagePicker();
+                final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800, maxHeight: 800, imageQuality: 80);
+                if (picked != null) {
+                  await SupabaseService.uploadAvatar(File(picked.path));
+                  _loadProfile();
+                }
+              },
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  void _showEmojiPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      builder: (ctx) {
+        // Updated for emoji_picker_flutter ^4.0.0
+        return SizedBox(
+          height: 350,
+          child: EmojiPicker(
+            onEmojiSelected: (category, emoji) async {
+              Navigator.pop(ctx);
+              await SupabaseService.updateAvatarEmoji(emoji.emoji);
+              _loadProfile();
+            },
+            config: Config(
+              height: 300,
+              checkPlatformCompatibility: true,
+              emojiViewConfig: EmojiViewConfig(
+                backgroundColor: Theme.of(context).cardColor,
+                columns: 7,
+                emojiSizeMax: 32,
+              ),
+              viewOrderConfig: const ViewOrderConfig(),
+            ),
+          ),
+        );
+      },
     );
-    if (picked != null) {
-      await SupabaseService.uploadAvatar(File(picked.path));
-      _loadProfile();
-    }
   }
 
   Future<void> _clearHistory() async {
@@ -126,7 +183,6 @@ class _SettingsTabState extends State<SettingsTab> {
         future: SupabaseService.getBlockedUsers(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          
           final users = snapshot.data ?? [];
           return Container(
             padding: const EdgeInsets.all(20),
@@ -136,8 +192,7 @@ class _SettingsTabState extends State<SettingsTab> {
               children: [
                 Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
                 const SizedBox(height: 16),
-                if (users.isEmpty)
-                  const Expanded(child: Center(child: Text("No blocked users"))),
+                if (users.isEmpty) const Expanded(child: Center(child: Text("No blocked users"))),
                 if (users.isNotEmpty)
                   Expanded(
                     child: ListView.separated(
@@ -180,10 +235,54 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 100),
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
           const SizedBox(height: 20),
+          
           _buildSection(context, [
-            SwitchListTile(title: Text("Dark Mode", style: TextStyle(color: textColor)), value: widget.isDarkMode, onChanged: widget.onThemeChanged),
-            SwitchListTile(title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)), subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)), value: widget.onlyNahverkehr, onChanged: widget.onNahverkehrChanged),
+            SwitchListTile(
+              title: Text("Dark Mode", style: TextStyle(color: textColor)), 
+              value: widget.isDarkMode, 
+              onChanged: widget.onThemeChanged
+            ),
+            SwitchListTile(
+              title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)), 
+              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)), 
+              value: widget.onlyNahverkehr, 
+              onChanged: widget.onNahverkehrChanged
+            ),
           ]),
+          
+          const SizedBox(height: 20),
+          Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          const SizedBox(height: 8),
+          _buildSection(context, [
+            if (Platform.isAndroid)
+              SwitchListTile(
+                title: Text("Material You (Android)", style: TextStyle(color: textColor)),
+                subtitle: const Text("Use system wallpaper colors", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                value: widget.useMaterialYou,
+                onChanged: (val) => widget.onColorChanged(widget.currentColor, val),
+              ),
+            if (!widget.useMaterialYou || !Platform.isAndroid)
+              ListTile(
+                title: Text("App Theme Color", style: TextStyle(color: textColor)),
+                subtitle: SizedBox(
+                  height: 40,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _colorCircle(const Color(0xFF4F46E5)), // Indigo
+                      _colorCircle(Colors.blue),
+                      _colorCircle(Colors.teal),
+                      _colorCircle(Colors.green),
+                      _colorCircle(Colors.orange),
+                      _colorCircle(Colors.red),
+                      _colorCircle(Colors.purple),
+                      _colorCircle(Colors.pink),
+                    ],
+                  ),
+                ),
+              ),
+          ]),
+
           const SizedBox(height: 20),
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
@@ -191,6 +290,7 @@ class _SettingsTabState extends State<SettingsTab> {
              ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: Theme.of(context).cardColor, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
              ListTile(title: Text("Vibration Intensity", style: TextStyle(color: textColor)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: Theme.of(context).primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
+          
           const SizedBox(height: 20),
           Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
@@ -207,11 +307,49 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  Widget _colorCircle(Color color) {
+    final isSelected = widget.currentColor.value == color.value;
+    return GestureDetector(
+      onTap: () => widget.onColorChanged(color, false),
+      child: Container(
+        width: 30, height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+          boxShadow: isSelected ? [const BoxShadow(color: Colors.black26, blurRadius: 4)] : null
+        ),
+        child: isSelected ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
+      ),
+    );
+  }
+
   Widget _buildProfileSection(BuildContext context, user, Color? textColor) {
+    final emoji = _profile?['avatar_emoji'];
+    final imgUrl = _profile?['avatar_url'];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)), const SizedBox(width: 16), GestureDetector(onTap: _pickAvatar, child: Container(width: 48, height: 48, decoration: const BoxDecoration(color: Colors.indigo, shape: BoxShape.circle), child: ClipOval(child: _profile?['avatar_url'] != null ? Image.network(_profile!['avatar_url'], fit: BoxFit.cover, loadingBuilder: (context, child, loadingProgress) => loadingProgress == null ? child : const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))) : const Icon(Icons.camera_alt, size: 20, color: Colors.white))))]),
+        Row(children: [
+          Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)), 
+          const SizedBox(width: 16), 
+          GestureDetector(
+            onTap: _pickAvatar, 
+            child: Container(
+              width: 48, height: 48, 
+              decoration: const BoxDecoration(color: Colors.indigo, shape: BoxShape.circle), 
+              child: ClipOval(
+                child: (emoji != null) 
+                  ? Center(child: Text(emoji, style: const TextStyle(fontSize: 24)))
+                  : (imgUrl != null 
+                      ? Image.network(imgUrl, fit: BoxFit.cover, loadingBuilder: (_, child, p) => p == null ? child : const CircularProgressIndicator()) 
+                      : const Icon(Icons.camera_alt, size: 20, color: Colors.white))
+              )
+            )
+          )
+        ]),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(16),
@@ -236,7 +374,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Widget _buildAuthForm(BuildContext context, Color? textColor) {
-    return Container(
+     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
       child: Column(

@@ -14,6 +14,21 @@ class ChatSheet extends StatefulWidget {
 class _ChatSheetState extends State<ChatSheet> {
   final TextEditingController _msgCtrl = TextEditingController();
 
+  Widget _buildAvatar(String? url, String? emoji, String username) {
+    if (emoji != null && emoji.isNotEmpty) {
+      return CircleAvatar(
+        radius: 16,
+        backgroundColor: Colors.grey.shade200,
+        child: Text(emoji, style: const TextStyle(fontSize: 20)),
+      );
+    }
+    return CircleAvatar(
+      radius: 16,
+      backgroundImage: url != null ? NetworkImage(url) : null,
+      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?") : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -48,7 +63,7 @@ class _ChatSheetState extends State<ChatSheet> {
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 final msgs = snapshot.data!;
-                if (msgs.isEmpty) return Center(child: Text("No messages yet.", style: TextStyle(color: Colors.grey)));
+                if (msgs.isEmpty) return Center(child: Text("No messages yet.", style: const TextStyle(color: Colors.grey)));
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
@@ -58,6 +73,7 @@ class _ChatSheetState extends State<ChatSheet> {
                     final isMe = msg['user_id'] == SupabaseService.currentUser?.id;
                     final username = msg['username'] ?? 'Unknown';
                     final avatar = msg['avatar_url'];
+                    final emoji = msg['avatar_emoji'];
                     
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -65,12 +81,7 @@ class _ChatSheetState extends State<ChatSheet> {
                         mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (!isMe) 
-                            CircleAvatar(
-                              radius: 16,
-                              backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                              child: avatar == null ? Text(username[0].toUpperCase()) : null,
-                            ),
+                          if (!isMe) _buildAvatar(avatar, emoji, username),
                           const SizedBox(width: 8),
                           Column(
                             crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -78,13 +89,13 @@ class _ChatSheetState extends State<ChatSheet> {
                               if (!isMe) 
                                 Padding(
                                   padding: const EdgeInsets.only(left: 4, bottom: 2),
-                                  child: Text(username, style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                  child: Text(username, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                 ),
                               Container(
                                 constraints: const BoxConstraints(maxWidth: 240),
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: isMe ? Colors.blue : Theme.of(context).cardColor,
+                                  color: isMe ? Theme.of(context).primaryColor : Theme.of(context).cardColor,
                                   borderRadius: BorderRadius.only(
                                     topLeft: const Radius.circular(16),
                                     topRight: const Radius.circular(16),
@@ -129,7 +140,7 @@ class _ChatSheetState extends State<ChatSheet> {
                 ),
                 const SizedBox(width: 8),
                 CircleAvatar(
-                  backgroundColor: Colors.blue,
+                  backgroundColor: Theme.of(context).primaryColor,
                   child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _send),
                 )
               ],
