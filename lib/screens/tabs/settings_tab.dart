@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart'; // REQUIRED
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,7 +34,6 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _isEditing = false;
   Map<String, dynamic>? _profile;
 
-  // Vibration Settings
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
 
@@ -69,7 +68,6 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _testVibration() async {
-    // FIX: Check kIsWeb
     if (kIsWeb) return;
 
     if (await Vibration.hasVibrator() ?? false) {
@@ -87,7 +85,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
-    // CHANGED: Added resize and quality settings to keep file size low
     final picked = await picker.pickImage(
       source: ImageSource.gallery,
       maxWidth: 800,
@@ -108,14 +105,8 @@ class _SettingsTabState extends State<SettingsTab> {
         title: Text("Clear History", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
         content: const Text("Are you sure you want to delete your recent search history?"),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false), 
-            child: const Text("Cancel")
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true), 
-            child: const Text("Delete", style: TextStyle(color: Colors.red))
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -160,7 +151,7 @@ class _SettingsTabState extends State<SettingsTab> {
                           trailing: TextButton(
                             onPressed: () async {
                               await SupabaseService.unblockUser(u['id']);
-                              Navigator.pop(context); // Close to refresh
+                              Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Unblocked ${u['username']}")));
                             },
                             child: const Text("Unblock"),
@@ -188,82 +179,28 @@ class _SettingsTabState extends State<SettingsTab> {
         children: [
           const SizedBox(height: 100),
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
-          
           const SizedBox(height: 20),
-          // App Settings
           _buildSection(context, [
-            SwitchListTile(
-              title: Text("Dark Mode", style: TextStyle(color: textColor)),
-              value: widget.isDarkMode,
-              onChanged: widget.onThemeChanged,
-            ),
-            SwitchListTile(
-              title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)),
-              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              value: widget.onlyNahverkehr,
-              onChanged: widget.onNahverkehrChanged,
-            ),
+            SwitchListTile(title: Text("Dark Mode", style: TextStyle(color: textColor)), value: widget.isDarkMode, onChanged: widget.onThemeChanged),
+            SwitchListTile(title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)), subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)), value: widget.onlyNahverkehr, onChanged: widget.onNahverkehrChanged),
           ]),
-
           const SizedBox(height: 20),
-
-          // Vibration Settings
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
-             ListTile(
-               title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)),
-               trailing: DropdownButton<String>(
-                 value: _vibrationPattern,
-                 dropdownColor: Theme.of(context).cardColor,
-                 underline: const SizedBox(),
-                 items: const [
-                   DropdownMenuItem(value: 'standard', child: Text("Standard")),
-                   DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")),
-                   DropdownMenuItem(value: 'tick', child: Text("Tick")),
-                 ],
-                 onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity),
-               ),
-             ),
-             ListTile(
-               title: Text("Vibration Intensity", style: TextStyle(color: textColor)),
-               subtitle: Slider(
-                 value: _vibrationIntensity.toDouble(),
-                 min: 1, max: 255,
-                 activeColor: Theme.of(context).primaryColor,
-                 onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()),
-                 onChangeEnd: (_) => _testVibration(),
-               ),
-             ),
+             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: Theme.of(context).cardColor, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
+             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: textColor)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: Theme.of(context).primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
-
           const SizedBox(height: 20),
-
-          // NEW: Data & Privacy Section
           Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
-            ListTile(
-              leading: const Icon(Icons.block, color: Colors.orange),
-              title: Text("Blocked Users", style: TextStyle(color: textColor)),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _showBlockedUsers,
-            ),
+            ListTile(leading: const Icon(Icons.block, color: Colors.orange), title: Text("Blocked Users", style: TextStyle(color: textColor)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
             const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text("Clear Search History", style: TextStyle(color: Colors.red)),
-              onTap: _clearHistory,
-            ),
+            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
           ]),
-
           const SizedBox(height: 20),
-          
-          if (user == null)
-            _buildAuthForm(context, textColor)
-          else
-            _buildProfileSection(context, user, textColor),
-          
+          if (user == null) _buildAuthForm(context, textColor) else _buildProfileSection(context, user, textColor),
           const SizedBox(height: 100),
         ],
       ),
@@ -274,36 +211,7 @@ class _SettingsTabState extends State<SettingsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
-            const SizedBox(width: 16),
-            GestureDetector(
-              onTap: _pickAvatar,
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  color: Colors.indigo,
-                  shape: BoxShape.circle,
-                ),
-                child: ClipOval(
-                  child: _profile?['avatar_url'] != null
-                    ? Image.network(
-                        _profile!['avatar_url'],
-                        fit: BoxFit.cover,
-                        // CHANGED: Added loading indicator
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white));
-                        },
-                      )
-                    : const Icon(Icons.camera_alt, size: 20, color: Colors.white),
-                ),
-              ),
-            ),
-          ],
-        ),
+        Row(children: [Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)), const SizedBox(width: 16), GestureDetector(onTap: _pickAvatar, child: Container(width: 48, height: 48, decoration: const BoxDecoration(color: Colors.indigo, shape: BoxShape.circle), child: ClipOval(child: _profile?['avatar_url'] != null ? Image.network(_profile!['avatar_url'], fit: BoxFit.cover, loadingBuilder: (context, child, loadingProgress) => loadingProgress == null ? child : const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))) : const Icon(Icons.camera_alt, size: 20, color: Colors.white))))]),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(16),
@@ -311,58 +219,15 @@ class _SettingsTabState extends State<SettingsTab> {
           child: Column(
             children: [
               if (!_isEditing) ...[
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: textColor)),
-                  subtitle: Text(user.email ?? "", style: TextStyle(color: textColor?.withOpacity(0.6))),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit),
-                    onPressed: () {
-                      _usernameCtrl.text = _profile?['username'] ?? "";
-                      setState(() => _isEditing = true);
-                    },
-                  ),
-                ),
+                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: textColor)), subtitle: Text(user.email ?? "", style: TextStyle(color: textColor?.withOpacity(0.6))), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
                 TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: "Username")),
                 TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: "New Password (Optional)"), obscureText: true),
                 const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")),
-                    ElevatedButton(
-                      onPressed: () async {
-                        try {
-                          if (_usernameCtrl.text.isNotEmpty) {
-                            await SupabaseService.updateUsername(_usernameCtrl.text);
-                          }
-                          if (_newPasswordCtrl.text.isNotEmpty) {
-                            await SupabaseService.updatePassword(_newPasswordCtrl.text);
-                          }
-                          setState(() => _isEditing = false);
-                          _loadProfile();
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!")));
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-                        }
-                      },
-                      child: const Text("Save"),
-                    ),
-                  ],
-                )
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!"))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
               ],
-              
               const Divider(),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text("Log Out", style: TextStyle(color: Colors.red)),
-                leading: const Icon(Icons.logout, color: Colors.red),
-                onTap: () async {
-                  await SupabaseService.signOut();
-                  if (mounted) setState(() {});
-                },
-              )
+              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); })
             ],
           ),
         )
@@ -384,42 +249,13 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text);
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
-                  }
-                },
-                child: const Text("Login"),
-              ),
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text);
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
-                  }
-                },
-                child: const Text("Sign Up"),
-              ),
-            ],
-          )
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
         ],
       ),
     );
   }
 
   Widget _buildSection(BuildContext context, List<Widget> children) {
-    return Container(
-      decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
-      child: Column(children: children),
-    );
+    return Container(decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)), child: Column(children: children));
   }
 }
