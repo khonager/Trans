@@ -12,8 +12,8 @@ class TransportApi {
       final Map<String, String> params = {
         'query': query,
         'results': '10',
-        'poi': 'false',      
-        'addresses': 'false' 
+        'poi': 'true',       // Allow Points of Interest
+        'addresses': 'true', // Allow Addresses
       };
       if (lat != null && lng != null) {
         params['latitude'] = lat.toString();
@@ -25,10 +25,7 @@ class TransportApi {
       
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
-        return data
-            .where((d) => d['type'] == 'station' || d['type'] == 'stop')
-            .map((json) => Station.fromJson(json))
-            .toList();
+        return data.map((json) => Station.fromJson(json)).toList();
       }
     } catch (e) {
       debugPrint("Error fetching stations: $e");
@@ -41,8 +38,8 @@ class TransportApi {
       final uri = Uri.parse('$_baseUrl/stops/nearby').replace(queryParameters: {
         'latitude': lat.toString(),
         'longitude': lng.toString(),
-        'results': '5',
-        'distance': '2000',
+        'results': '10',    // Fetch more results to filter bad ones
+        'distance': '2000', // Standard 2km walking distance
       });
       
       final response = await http.get(uri);
@@ -57,8 +54,8 @@ class TransportApi {
   }
 
   static Future<List<Map<String, dynamic>>> searchJourneys(
-    String fromId, 
-    String toId, 
+    Station from, 
+    Station to, 
     {
       bool nahverkehrOnly = false,
       DateTime? when,      
@@ -68,11 +65,26 @@ class TransportApi {
   ) async {
     try {
       final Map<String, String> params = {
-        'from': fromId,
-        'to': toId,
         'results': results.toString(),
         'stopovers': 'true',
       };
+
+      // HANDLING ADDRESSES: If ID contains comma (our coordinate hack) or it's an address, use lat/long
+      if (from.id.contains(',') || from.type == 'address') {
+        params['from.latitude'] = from.latitude.toString();
+        params['from.longitude'] = from.longitude.toString();
+        params['from.address'] = from.name;
+      } else {
+        params['from'] = from.id;
+      }
+
+      if (to.id.contains(',') || to.type == 'address') {
+        params['to.latitude'] = to.latitude.toString();
+        params['to.longitude'] = to.longitude.toString();
+        params['to.address'] = to.name;
+      } else {
+        params['to'] = to.id;
+      }
 
       if (when != null) {
         final iso = when.toIso8601String().split('.').first;
@@ -83,12 +95,9 @@ class TransportApi {
         }
       }
 
-      // Exact match to your working request:
-      // nationalExpress=false&national=false
       if (nahverkehrOnly) {
         params['nationalExpress'] = 'false';
         params['national'] = 'false';
-        // params['regional'] = 'true'; // Optional, but usually implied by removing others
       }
 
       final uri = Uri.parse('$_baseUrl/journeys').replace(queryParameters: params);
