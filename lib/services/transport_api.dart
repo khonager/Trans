@@ -6,10 +6,12 @@ import '../models/station.dart';
 class TransportApi {
   static const String _baseUrl = 'https://v6.db.transport.rest';
 
+  // --- HELPER: Handle Web vs Native Requests ---
   static Future<dynamic> _get(String endpoint, {Map<String, String>? queryParams}) async {
     final uri = Uri.parse('$_baseUrl$endpoint').replace(queryParameters: queryParams);
     Uri finalUri = uri;
     
+    // Routing through proxy on Web to avoid CORS blocking
     if (kIsWeb) {
       final String encodedUrl = Uri.encodeComponent(uri.toString());
       finalUri = Uri.parse('https://corsproxy.io/?$encodedUrl');
@@ -100,7 +102,7 @@ class TransportApi {
       'results': '3', 
       'language': 'en',
       'transfers': '5',
-      'stopovers': 'true', // FIX: Crucial for fetching intermediate stops!
+      'stopovers': 'true', 
     };
 
     if (nahverkehrOnly) {
@@ -127,16 +129,22 @@ class TransportApi {
   }
 
   // 4. Get Departures (Alternatives)
-  static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false}) async {
+  // UPDATED: Added 'when' parameter for scrolling
+  static Future<List<Map<String, dynamic>>> getDepartures(String stationId, {bool nahverkehrOnly = false, DateTime? when}) async {
     final params = {
       'duration': '60', 
-      'results': '15',
+      'results': '20', // Increased results for better scrolling
       'language': 'en',
     };
 
     if (nahverkehrOnly) {
       params['nationalExpress'] = 'false';
       params['national'] = 'false';
+    }
+    
+    // FIX: Pass time for pagination
+    if (when != null) {
+      params['when'] = when.toIso8601String();
     }
 
     try {
