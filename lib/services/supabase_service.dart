@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import '../models/favorite.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
@@ -41,8 +40,15 @@ class SupabaseService {
     await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
+  
+  // NEW: Update Theme Color
+  static Future<void> updateThemeColor(int colorValue) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
+  }
 
-  // --- PROFILES & EMOJI ---
+  // --- PROFILES & EMOJIS ---
   static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
     if (user == null) return null;
@@ -53,74 +59,14 @@ class SupabaseService {
     }
   }
 
-  // Upload Image Avatar (Mobile)
-  static Future<String?> uploadAvatar(File imageFile) async {
-    final user = currentUser;
-    if (user == null) return null;
-    final fileExt = imageFile.path.split('.').last;
-    final fileName = '${user.id}/avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    try {
-      await client.storage.from('avatars').upload(fileName, imageFile);
-      final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
-      await client.from('profiles').update({'avatar_url': imageUrl, 'avatar_emoji': null}).eq('id', user.id);
-      return imageUrl;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Upload Image Avatar (Web)
-  static Future<String?> uploadAvatarBytes(Uint8List bytes, String fileExt) async {
-    final user = currentUser;
-    if (user == null) return null;
-    final fileName = '${user.id}/avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    try {
-      await client.storage.from('avatars').uploadBinary(fileName, bytes);
-      final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
-      await client.from('profiles').update({'avatar_url': imageUrl, 'avatar_emoji': null}).eq('id', user.id);
-      return imageUrl;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Set Emoji Avatar
   static Future<void> updateAvatarEmoji(String emoji) async {
     final user = currentUser;
     if (user == null) return;
+    // Clear image URL if setting emoji
     await client.from('profiles').update({
       'avatar_emoji': emoji, 
       'avatar_url': null 
     }).eq('id', user.id);
-  }
-
-  // --- FAVORITES (SYNC) ---
-  static Future<List<Favorite>> fetchFavorites() async {
-    final user = currentUser;
-    if (user == null) return [];
-    
-    try {
-      final response = await client.from('favorites').select().eq('user_id', user.id);
-      return (response as List).map((json) => Favorite.fromJson(json)).toList();
-    } catch (e) {
-      debugPrint("Error fetching favorites: $e");
-      return [];
-    }
-  }
-
-  static Future<void> addFavorite(Favorite favorite) async {
-    final user = currentUser;
-    if (user == null) return;
-
-    final data = favorite.toJson();
-    data['user_id'] = user.id;
-    await client.from('favorites').upsert(data);
-  }
-
-  static Future<void> deleteFavorite(String favoriteId) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('favorites').delete().eq('id', favoriteId).eq('user_id', user.id);
   }
 
   // --- FRIENDS SYSTEM ---
@@ -136,7 +82,8 @@ class SupabaseService {
     if (data.isEmpty) return [];
     
     final senderIds = (data as List).map((r) => r['sender_id']).toList();
-    final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
+    // Fetch theme_color too
+    final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', senderIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     return data.map((req) {
@@ -146,6 +93,7 @@ class SupabaseService {
         'sender_username': sender?['username'] ?? 'Unknown',
         'sender_avatar': sender?['avatar_url'],
         'sender_emoji': sender?['avatar_emoji'],
+        'theme_color': sender?['theme_color'], // Added
       };
     }).toList();
   }
@@ -165,7 +113,8 @@ class SupabaseService {
 
     final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
 
-    final profiles = await client.from('profiles').select().filter('id', 'in', friendIds);
+    // Fetch theme_color too
+    final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
@@ -182,6 +131,7 @@ class SupabaseService {
         'username': profile['username'] ?? 'Unknown',
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
+        'theme_color': profile['theme_color'], // Added
         'latitude': loc?['latitude'],
         'longitude': loc?['longitude'],
         'updated_at': loc?['updated_at'], 
@@ -262,7 +212,8 @@ class SupabaseService {
     return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).asyncMap((List<Map<String, dynamic>> messages) async {
           if (messages.isEmpty) return [];
           final userIds = messages.map((m) => m['user_id'] as String).toSet().toList();
-          final profiles = await client.from('profiles').select().filter('id', 'in', userIds);
+          // Fetch theme_color too
+          final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', userIds);
           final profileMap = {for (var p in profiles) p['id']: p};
           return messages.map((m) {
             final sender = profileMap[m['user_id']];
@@ -271,6 +222,7 @@ class SupabaseService {
               'username': sender?['username'] ?? 'Unknown',
               'avatar_url': sender?['avatar_url'],
               'avatar_emoji': sender?['avatar_emoji'],
+              'theme_color': sender?['theme_color'], // Added
             };
           }).toList();
         });
