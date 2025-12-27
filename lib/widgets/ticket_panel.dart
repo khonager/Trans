@@ -1,4 +1,5 @@
 import 'dart:io'; 
+import 'dart:ui'; // Required for PointerDeviceKind
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -42,7 +43,7 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // FIX: Force close function for desktop/web swiping
+  // Helper to force close on swipe
   void _forceCloseSheet() {
     _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
   }
@@ -50,6 +51,7 @@ class _TicketPanelState extends State<TicketPanel> {
   Future<void> _loadLocalTicket() async {
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString('local_ticket_path');
+    
     if (path != null) {
       if (kIsWeb) {
         setState(() => _localTicketPath = path);
@@ -215,120 +217,130 @@ class _TicketPanelState extends State<TicketPanel> {
               )
             ],
           ),
-          child: ListView(
-            controller: scrollController,
-            physics: const ClampingScrollPhysics(),
-            padding: EdgeInsets.zero,
-            children: [
-              // FIX: Gesture Detector to allow drag/swipe down on Desktop/Web
-              GestureDetector(
-                onTap: _toggleSheet,
-                // Listen for vertical drag end to detect a "swipe down" intent
-                onVerticalDragEnd: (details) {
-                  // If velocity is positive (downwards)
-                  if (details.primaryVelocity! > 0) {
-                    _forceCloseSheet();
-                  }
-                },
-                behavior: HitTestBehavior.opaque, 
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.qr_code, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            "My Ticket",
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: isDark ? Colors.white : Colors.black
-                            ),
+          // FIX: Enable Mouse Dragging for the entire list
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse, // This enables "Swipe" with mouse
+              },
+            ),
+            child: ListView(
+              controller: scrollController,
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.zero,
+              children: [
+                // Header Area - Also explicitly draggable
+                GestureDetector(
+                  onTap: _toggleSheet,
+                  // Listen for swipe down on the header handle explicitly
+                  onVerticalDragUpdate: (_) {}, // Consume gesture to avoid conflict
+                  onVerticalDragEnd: (details) {
+                    if (details.primaryVelocity! > 0) { // Dragged Down
+                      _forceCloseSheet();
+                    }
+                  },
+                  behavior: HitTestBehavior.opaque, 
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey,
+                            borderRadius: BorderRadius.circular(2),
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.qr_code, size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              "My Ticket",
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: isDark ? Colors.white : Colors.black
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              
-              const SizedBox(height: 10),
+                
+                const SizedBox(height: 10),
 
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _isLoading
-                  ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-                  : _localTicketPath != null
-                    ? Column(
-                        children: [
-                          GestureDetector(
-                            onTap: () => _showFullImage(), 
-                            onLongPress: _manageTicketHistory, 
-                            child: Container(
-                              constraints: const BoxConstraints(maxHeight: 500),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.grey.withOpacity(0.2)),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: kIsWeb 
-                                  ? Image.network(
-                                      _localTicketPath!,
-                                      loadingBuilder: (context, child, loadingProgress) {
-                                         if (loadingProgress == null) return child;
-                                         return const SizedBox(
-                                           height: 200,
-                                           child: Center(child: CircularProgressIndicator())
-                                         );
-                                      },
-                                    ) 
-                                  : Image.file(File(_localTicketPath!)),
+                // Content
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _isLoading
+                    ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+                    : _localTicketPath != null
+                      ? Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () => _showFullImage(), 
+                              onLongPress: _manageTicketHistory, 
+                              child: Container(
+                                constraints: const BoxConstraints(maxHeight: 500),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: kIsWeb 
+                                    ? Image.network(
+                                        _localTicketPath!,
+                                        loadingBuilder: (context, child, loadingProgress) {
+                                           if (loadingProgress == null) return child;
+                                           return const SizedBox(
+                                             height: 200,
+                                             child: Center(child: CircularProgressIndicator())
+                                           );
+                                        },
+                                      ) 
+                                    : Image.file(File(_localTicketPath!)),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 20),
-                          TextButton.icon(
-                            onPressed: _pickAndUploadTicket,
-                            icon: const Icon(Icons.edit),
-                            label: const Text("Update Ticket"),
-                          )
-                        ],
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(height: 30),
-                          Icon(Icons.airplane_ticket_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
-                          const SizedBox(height: 16),
-                          const Text("No ticket added yet"),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: _pickAndUploadTicket,
-                            icon: const Icon(Icons.add_a_photo),
-                            label: const Text("Add Ticket Photo"),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4F46E5),
-                              foregroundColor: Colors.white,
+                            const SizedBox(height: 20),
+                            TextButton.icon(
+                              onPressed: _pickAndUploadTicket,
+                              icon: const Icon(Icons.edit),
+                              label: const Text("Update Ticket"),
+                            )
+                          ],
+                        )
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(height: 30),
+                            Icon(Icons.airplane_ticket_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
+                            const SizedBox(height: 16),
+                            const Text("No ticket added yet"),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: _pickAndUploadTicket,
+                              icon: const Icon(Icons.add_a_photo),
+                              label: const Text("Add Ticket Photo"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF4F46E5),
+                                foregroundColor: Colors.white,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 50),
-                        ],
-                      ),
-              ),
-            ],
+                            const SizedBox(height: 50),
+                          ],
+                        ),
+                ),
+              ],
+            ),
           ),
         );
       },
