@@ -23,20 +23,29 @@ class Station {
 
   factory Station.fromJson(Map<String, dynamic> json) {
     String name = json['name'] ?? 'Unknown Station';
+    // Default to the root ID, but check if it's usable
+    String id = json['id']?.toString() ?? '';
     double? lat;
     double? lng;
 
     if (json['location'] != null) {
-      name = json['location']['name'] ?? name;
-      lat = json['location']['latitude'];
-      lng = json['location']['longitude'];
+      final loc = json['location'];
+      name = loc['name'] ?? name;
+      lat = loc['latitude'];
+      lng = loc['longitude'];
+      
+      // FIX: Always prefer the ID inside 'location' if available, 
+      // as the root ID can sometimes be an internal artifact (e.g. "0000008")
+      if (loc['id'] != null) {
+        id = loc['id'].toString();
+      }
     } else {
       lat = json['latitude'];
       lng = json['longitude'];
     }
 
     return Station(
-      id: json['id']?.toString() ?? '',
+      id: id,
       name: name,
       distance: json['distance'] != null ? (json['distance'] as num).toDouble() : null,
       latitude: lat,

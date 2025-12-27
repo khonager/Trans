@@ -1,5 +1,5 @@
 import 'dart:io'; 
-import 'dart:ui'; // Required for PointerDeviceKind
+import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart'; 
 import '../services/supabase_service.dart';
+import '../config/app_theme.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -94,13 +95,14 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _renameHistoryItem(File file, String currentName, Function refreshCallback) async {
+    final colors = TransColors.of(context);
     final nameCtrl = TextEditingController(text: currentName.replaceAll(".jpg", "").replaceAll("hist_", "Ticket "));
-    final newName = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: Theme.of(context).cardColor, title: const Text("Rename Ticket"), content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")), ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename"))]));
+    final newName = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: colors.cardBg, title: Text("Rename Ticket", style: TextStyle(color: colors.textPrimary)), content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")), ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename"))]));
     if (newName != null && newName.isNotEmpty) {
       try {
         final dir = file.parent;
         final newPath = '${dir.path}/$newName.jpg';
-        if (await File(newPath).exists()) { if (mounted) { await showDialog(context: context, builder: (ctx) => AlertDialog(backgroundColor: Theme.of(context).cardColor, title: const Text("Name Unavailable"), content: const Text("A ticket with this name already exists."), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))])); } return; }
+        if (await File(newPath).exists()) { if (mounted) { await showDialog(context: context, builder: (ctx) => AlertDialog(backgroundColor: colors.cardBg, title: const Text("Name Unavailable"), content: const Text("A ticket with this name already exists."), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))])); } return; }
         await file.rename(newPath);
         refreshCallback();
       } catch (e) { print("Rename error: $e"); }
@@ -167,21 +169,22 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   void _manageTicketHistory() {
-    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => StatefulBuilder(builder: (context, setModalState) {
+    final colors = TransColors.of(context);
+    showModalBottomSheet(context: context, backgroundColor: colors.cardBg, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => StatefulBuilder(builder: (context, setModalState) {
           return Container(padding: const EdgeInsets.all(20), height: 500, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text("Ticket History (Local)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
-                const SizedBox(height: 8), const Text("Tickets saved on this device.", style: TextStyle(fontSize: 12, color: Colors.grey)), const SizedBox(height: 16),
+                Text("Ticket History (Local)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                const SizedBox(height: 8), Text("Tickets saved on this device.", style: TextStyle(fontSize: 12, color: colors.textSecondary)), const SizedBox(height: 16),
                 Expanded(child: FutureBuilder<List<File>>(future: _getLocalHistoryFiles(), builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                       final files = snapshot.data ?? [];
-                      if (files.isEmpty) return const Center(child: Text("No local history found."));
-                      return ListView.separated(itemCount: files.length, separatorBuilder: (_,__) => const Divider(color: Colors.white10), itemBuilder: (ctx, idx) {
+                      if (files.isEmpty) return Center(child: Text("No local history found.", style: TextStyle(color: colors.textSecondary)));
+                      return ListView.separated(itemCount: files.length, separatorBuilder: (_,__) => Divider(color: colors.divider), itemBuilder: (ctx, idx) {
                           final file = files[idx];
                           final filename = file.path.split('/').last.replaceAll(".jpg", "");
                           final date = file.lastModifiedSync();
                           final dateStr = "${date.day}/${date.month}/${date.year}";
                           String displayName = filename.startsWith("hist_") ? "Ticket ${files.length - idx}" : filename;
-                          return ListTile(leading: const Icon(Icons.airplane_ticket), title: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)), subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)), onTap: () => _showFullImage(overridePath: file.path), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){}))), IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () async { await file.delete(); setModalState(() {}); })]));
+                          return ListTile(leading: const Icon(Icons.airplane_ticket), title: Text(displayName, style: TextStyle(color: colors.textPrimary)), subtitle: Text(dateStr, style: TextStyle(color: colors.textSecondary)), onTap: () => _showFullImage(overridePath: file.path), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){}))), IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () async { await file.delete(); setModalState(() {}); })]));
                         });
                     }))
               ]));
@@ -190,7 +193,7 @@ class _TicketPanelState extends State<TicketPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = TransColors.of(context);
     
     return DraggableScrollableSheet(
       controller: _sheetController,
@@ -201,11 +204,11 @@ class _TicketPanelState extends State<TicketPanel> {
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1F2937) : Colors.white,
+            color: colors.ticketSheetBg,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withValues(alpha: 0.2),
                 blurRadius: 10,
                 offset: const Offset(0, -5),
               )
@@ -220,34 +223,28 @@ class _TicketPanelState extends State<TicketPanel> {
               physics: const ClampingScrollPhysics(),
               padding: EdgeInsets.zero,
               children: [
-                // FIX: Manual Swipe Handling for the Header on Desktop
                 GestureDetector(
                   onTap: _toggleSheet,
-                  behavior: HitTestBehavior.opaque, // Ensures the entire header area is grabbable
+                  behavior: HitTestBehavior.opaque, 
                   onVerticalDragUpdate: (details) {
-                    // Manually update sheet size based on drag distance
                     final double screenHeight = MediaQuery.of(context).size.height;
                     final double delta = details.delta.dy;
                     final double currentSize = _sheetController.size;
                     
-                    // Subtract delta because dragging UP (negative) means increasing size
                     double newSize = currentSize - (delta / screenHeight);
                     
-                    // Clamp limits (must match sheet limits)
                     if (newSize < 0.08) newSize = 0.08;
                     if (newSize > 0.85) newSize = 0.85;
                     
                     _sheetController.jumpTo(newSize);
                   },
                   onVerticalDragEnd: (details) {
-                    // Snap logic on release
                     final double velocity = details.primaryVelocity ?? 0;
-                    if (velocity < -500) { // Fast swipe UP
+                    if (velocity < -500) { 
                       _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-                    } else if (velocity > 500) { // Fast swipe DOWN
+                    } else if (velocity > 500) { 
                       _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
                     } else {
-                      // Snap to nearest half
                       if (_sheetController.size > 0.4) {
                         _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
                       } else {
@@ -264,7 +261,7 @@ class _TicketPanelState extends State<TicketPanel> {
                           height: 4,
                           margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
-                            color: Colors.grey,
+                            color: colors.modalHandle,
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -278,7 +275,7 @@ class _TicketPanelState extends State<TicketPanel> {
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: isDark ? Colors.white : Colors.black
+                                color: colors.ticketHeader
                               ),
                             ),
                           ],
@@ -305,7 +302,7 @@ class _TicketPanelState extends State<TicketPanel> {
                                 constraints: const BoxConstraints(maxHeight: 500),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.grey.withOpacity(0.2)),
+                                  border: Border.all(color: colors.ticketBorder),
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
@@ -336,17 +333,17 @@ class _TicketPanelState extends State<TicketPanel> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             const SizedBox(height: 30),
-                            Icon(Icons.airplane_ticket_outlined, size: 64, color: Colors.grey.withOpacity(0.5)),
+                            Icon(Icons.airplane_ticket_outlined, size: 64, color: colors.ticketEmptyIcon),
                             const SizedBox(height: 16),
-                            const Text("No ticket added yet"),
+                            Text("No ticket added yet", style: TextStyle(color: colors.textSecondary)),
                             const SizedBox(height: 16),
                             ElevatedButton.icon(
                               onPressed: _pickAndUploadTicket,
                               icon: const Icon(Icons.add_a_photo),
-                              label: const Text("Add Ticket Photo"),
+                              label: Text("Add Ticket Photo", style: TextStyle(color: colors.ticketAddBtnText)),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4F46E5),
-                                foregroundColor: Colors.white,
+                                backgroundColor: colors.ticketAddBtnBg,
+                                foregroundColor: colors.ticketAddBtnText,
                               ),
                             ),
                             const SizedBox(height: 50),
