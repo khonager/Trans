@@ -30,7 +30,6 @@ class SupabaseService {
     await client.auth.signOut();
   }
 
-  // FIX: Restore missing update methods
   static Future<void> updatePassword(String newPassword) async {
     await client.auth.updateUser(UserAttributes(password: newPassword));
   }
@@ -42,9 +41,7 @@ class SupabaseService {
   static Future<void> updateUsername(String newUsername) async {
     final user = currentUser;
     if (user == null) return;
-    // Update metadata
     await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
-    // Update public profile table
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
 
@@ -106,6 +103,21 @@ class SupabaseService {
     });
   }
 
+  // NEW: Fetch Requests ONCE (for fast load)
+  static Future<List<Map<String, dynamic>>> getPendingRequests() async {
+    final user = currentUser;
+    if (user == null) return [];
+    
+    final data = await client.from('friend_requests')
+        .select()
+        .eq('receiver_id', user.id)
+        .eq('status', 'pending');
+    
+    if (data.isEmpty) return [];
+    return _enrichRequests(List<Map<String, dynamic>>.from(data));
+  }
+
+  // Stream Requests (for live updates)
   static Stream<List<Map<String, dynamic>>> streamPendingRequests() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
@@ -115,21 +127,25 @@ class SupabaseService {
         .eq('receiver_id', user.id)
         .asyncMap((data) async {
            final pending = data.where((r) => r['status'] == 'pending').toList();
-           if (pending.isEmpty) return [];
-
-           final senderIds = pending.map((r) => r['sender_id']).toList();
-           final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
-           final profileMap = {for (var p in profiles) p['id']: p};
-
-           return pending.map((req) {
-             final sender = profileMap[req['sender_id']];
-             return {
-               ...req,
-               'sender_username': sender?['username'] ?? 'Unknown',
-               'sender_avatar': sender?['avatar_url'],
-             };
-           }).toList();
+           return _enrichRequests(List<Map<String, dynamic>>.from(pending));
         });
+  }
+
+  // Helper to attach profiles to requests
+  static Future<List<Map<String, dynamic>>> _enrichRequests(List<Map<String, dynamic>> requests) async {
+    if (requests.isEmpty) return [];
+    final senderIds = requests.map((r) => r['sender_id']).toList();
+    final profiles = await client.from('profiles').select().filter('id', 'in', senderIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    return requests.map((req) {
+      final sender = profileMap[req['sender_id']];
+      return {
+        ...req,
+        'sender_username': sender?['username'] ?? 'Unknown',
+        'sender_avatar': sender?['avatar_url'],
+      };
+    }).toList();
   }
 
   static Future<void> acceptFriendRequest(String senderId) async {
@@ -167,35 +183,53 @@ class SupabaseService {
       'longitude': pos.longitude,
       'updated_at': DateTime.now().toIso8601String(),
     };
-    
-    if (currentLine != null) {
-      updateData['current_line'] = currentLine;
-    }
+    if (currentLine != null) updateData['current_line'] = currentLine;
 
     await client.from('user_locations').upsert(updateData);
   }
 
+  // NEW: Fetch Friends ONCE (Fast Load)
+  static Future<List<Map<String, dynamic>>> getFriendsWithLocation() async {
+    final user = currentUser;
+    if (user == null) return [];
+
+    final locations = await client.from('user_locations').select();
+    return _enrichLocations(List<Map<String, dynamic>>.from(locations), user.id);
+  }
+
+  // Stream Friends (Live Updates)
   static Stream<List<Map<String, dynamic>>> streamFriendsWithLocation() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
 
-    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((locations) async {
-       List<Map<String, dynamic>> enriched = [];
-       
-       for (var loc in locations) {
-         if (loc['user_id'] == user.id) continue;
-         
-         final profile = await client.from('profiles').select('username, avatar_url').eq('id', loc['user_id']).maybeSingle();
-         
-         if (profile != null) {
-           final Map<String, dynamic> data = Map.from(loc);
-           data['username'] = profile['username'];
-           data['avatar_url'] = profile['avatar_url'];
-           enriched.add(data);
-         }
-       }
-       return enriched;
-    });
+    return client.from('user_locations')
+        .stream(primaryKey: ['user_id'])
+        .asyncMap((locations) => _enrichLocations(List<Map<String, dynamic>>.from(locations), user.id));
+  }
+
+  // Helper to attach profiles to locations (Batch Fetch Optimized)
+  static Future<List<Map<String, dynamic>>> _enrichLocations(List<Map<String, dynamic>> locations, String myUserId) async {
+    // Filter out myself
+    final friendLocs = locations.where((l) => l['user_id'] != myUserId).toList();
+    if (friendLocs.isEmpty) return [];
+
+    // Batch fetch profiles
+    final userIds = friendLocs.map((l) => l['user_id']).toList();
+    final profiles = await client.from('profiles').select('id, username, avatar_url').filter('id', 'in', userIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    List<Map<String, dynamic>> result = [];
+    for (var loc in friendLocs) {
+      final profile = profileMap[loc['user_id']];
+      if (profile != null) {
+        result.add({
+          ...loc,
+          'username': profile['username'],
+          'avatar_url': profile['avatar_url'],
+        });
+      }
+    }
+    return result;
   }
 
   // --- CHAT & TICKET ---
