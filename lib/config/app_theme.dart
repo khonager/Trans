@@ -42,7 +42,7 @@ class TransColors extends ThemeExtension<TransColors> {
   // ===========================================================================
   // 2. APP BAR & NAVIGATION
   // ===========================================================================
-  Color get appBarBg => (isDark ? Colors.black : Colors.white).withOpacity(0.8);
+  Color get appBarBg => (isDark ? Colors.black : Colors.white).withValues(alpha: 0.8);
   Color get appBarTitle => baseText;
   Color get appBarIconBg => effectiveSeed;
   Color get navBarBg => baseCard;
@@ -52,9 +52,9 @@ class TransColors extends ThemeExtension<TransColors> {
   // ===========================================================================
   // 3. SEARCH & HOME
   // ===========================================================================
-  Color get searchHeaderIconBg => Colors.indigo.withOpacity(0.2);
+  Color get searchHeaderIconBg => Colors.indigo.withValues(alpha: 0.2);
   Color get searchHeaderIcon => Colors.indigoAccent;
-  Color get searchInputFill => isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200;
+  Color get searchInputFill => isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200;
   Color get searchInputIcon => isDark ? effectiveSeed : Colors.grey;
   Color get searchInputText => baseText;
   Color get searchHintText => isDark ? Colors.white38 : Colors.grey;
@@ -68,11 +68,11 @@ class TransColors extends ThemeExtension<TransColors> {
   // ===========================================================================
   // 4. FAVORITES
   // ===========================================================================
-  Color get favStationBg => isDark ? effectiveSeed.withOpacity(0.3) : effectiveSeed.withOpacity(0.15);
+  Color get favStationBg => isDark ? effectiveSeed.withValues(alpha: 0.3) : effectiveSeed.withValues(alpha: 0.15);
   Color get favStationIcon => isDark ? Colors.white : effectiveSeed;
-  Color get favFriendBg => isDark ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.15);
+  Color get favFriendBg => isDark ? Colors.green.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.15);
   Color get favFriendIcon => isDark ? Colors.white : Colors.green;
-  Color get favAddBg => isDark ? Colors.white24 : Colors.grey.withOpacity(0.2);
+  Color get favAddBg => isDark ? Colors.white24 : Colors.grey.withValues(alpha: 0.2);
   Color get favAddIcon => isDark ? Colors.white : Colors.black;
   Color get favText => isDark ? Colors.white70 : Colors.black87;
 
@@ -80,12 +80,12 @@ class TransColors extends ThemeExtension<TransColors> {
   // 5. ROUTES & STEPS
   // ===========================================================================
   Color get stepCardBg => baseCard;
-  Color get stepTransferBg => Colors.orange.withOpacity(0.1);
-  Color get stepTransferBorder => Colors.orange.withOpacity(0.3);
+  Color get stepTransferBg => Colors.orange.withValues(alpha: 0.1);
+  Color get stepTransferBorder => Colors.orange.withValues(alpha: 0.3);
   Color get stepTransferText => Colors.orange;
   Color get stepTimeText => Colors.indigoAccent;
   Color get stepPlatformText => Colors.greenAccent;
-  Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withOpacity(0.5);
+  Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withValues(alpha: 0.5);
   Color get delayLate => Colors.red;
   Color get delayOnTime => Colors.green;
   
@@ -98,12 +98,12 @@ class TransColors extends ThemeExtension<TransColors> {
   // ===========================================================================
   // 6. FRIENDS TAB
   // ===========================================================================
-  Color get friendCardActiveBg => baseCard.withOpacity(0.9);
-  Color get friendCardInactiveBg => baseCard.withOpacity(0.4);
-  Color get friendCardActiveBorder => Colors.green.withOpacity(0.3);
+  Color get friendCardActiveBg => baseCard.withValues(alpha: 0.9);
+  Color get friendCardInactiveBg => baseCard.withValues(alpha: 0.4);
+  Color get friendCardActiveBorder => Colors.green.withValues(alpha: 0.3);
   Color get friendCardInactiveBorder => Colors.white10;
-  Color get requestCardBg => Colors.indigo.withOpacity(0.1);
-  Color get requestCardBorder => Colors.indigo.withOpacity(0.3);
+  Color get requestCardBg => Colors.indigo.withValues(alpha: 0.1);
+  Color get requestCardBorder => Colors.indigo.withValues(alpha: 0.3);
   Color get statusOnline => Colors.blue;
   Color get statusActive => Colors.green;
   Color get statusOffline => Colors.grey;
@@ -128,8 +128,8 @@ class TransColors extends ThemeExtension<TransColors> {
   // ===========================================================================
   Color get ticketSheetBg => isDark ? const Color(0xFF1F2937) : Colors.white;
   Color get ticketHeader => baseText;
-  Color get ticketBorder => Colors.grey.withOpacity(0.2);
-  Color get ticketEmptyIcon => Colors.grey.withOpacity(0.5);
+  Color get ticketBorder => Colors.grey.withValues(alpha: 0.2);
+  Color get ticketEmptyIcon => Colors.grey.withValues(alpha: 0.5);
   Color get ticketAddBtnBg => const Color(0xFF4F46E5);
   Color get ticketAddBtnText => Colors.white;
 
@@ -191,7 +191,7 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     scaffoldBackgroundColor: scheme.surface,
     cardColor: isDark ? const Color(0xFF18181B) : Colors.white,
     appBarTheme: AppBarTheme(
-      backgroundColor: isDark ? Colors.black.withOpacity(0.8) : Colors.white.withOpacity(0.8),
+      backgroundColor: isDark ? Colors.black.withValues(alpha: 0.8) : Colors.white.withValues(alpha: 0.8),
       foregroundColor: isDark ? Colors.white : Colors.black,
     ),
     extensions: [
