@@ -11,6 +11,10 @@ jobs:
     name: Build & Release APK
     runs-on: ubuntu-latest
 
+    # FIX: Grant permission to create Releases and upload files
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,22 +33,19 @@ jobs:
       - name: Get Dependencies
         run: flutter pub get
 
-      # FIX: Inject secrets safely into AppConfig to prevent build crashes
+      # 1. Inject Secrets Safely
       - name: Inject Secrets
         run: |
-          # 1. Create a dummy .env file so dotenv.load() doesn't crash at runtime
           touch .env
-
-          # 2. Read secrets into shell variables
+          
           URL="${{ secrets.SUPABASE_URL }}"
           KEY="${{ secrets.SUPABASE_ANON_KEY }}"
           
-          # 3. Sanitize: Remove newlines to prevent syntax errors in Dart
+          # Sanitize
           URL=$(echo "$URL" | tr -d '\n' | xargs)
           KEY=$(echo "$KEY" | tr -d '\n' | xargs)
 
-          # 4. Overwrite lib/config/app_config.dart with the real keys
-          # We use Raw Strings (r"...") to handle special characters safely
+          # Write AppConfig
           cat <<EOF > lib/config/app_config.dart
           import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -64,22 +65,19 @@ jobs:
       - name: Sign APK
         id: sign_apk
         run: |
-          # Find build tools
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
           
-          # Find APK
           APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
           fi
           
-          # Load secrets into variables
-          KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-          KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-          KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          # 2. Sanitize Signing Keys (Remove hidden newlines)
+          KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
+          KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
+          KEY_PASS=$(echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | tr -d '\r' | tr -d '\n')
 
-          # Sign APK
           $BUILD_TOOLS_PATH/apksigner sign \
             --ks release-keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \

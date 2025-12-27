@@ -1,24 +1,22 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'config/app_config.dart';
+import 'config/app_theme.dart'; // Import theme config
 import 'screens/home_screen.dart';
+import 'services/supabase_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // SAFELY load .env. If it's missing (Release mode), we ignore the error
-  // because AppConfig already has the keys injected by GitHub Actions.
   try {
     await dotenv.load(fileName: ".env");
   } catch (e) {
-    // Silent error: File missing is expected in Release builds
+    // Expected in Release
   }
 
-  // Initialize Supabase with the keys from AppConfig
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
@@ -36,19 +34,50 @@ class TransApp extends StatefulWidget {
 
 class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.dark;
+  Color _seedColor = const Color(0xFF4F46E5); 
 
   @override
   void initState() {
     super.initState();
-    _loadTheme();
+    _loadSettings();
+    _listenToAuthChanges();
   }
 
-  Future<void> _loadTheme() async {
+  void _listenToAuthChanges() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn) {
+        _syncThemeFromCloud();
+      }
+    });
+  }
+
+  Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final isDark = prefs.getBool('isDark') ?? true;
+    final colorVal = prefs.getInt('themeColor');
+    
     setState(() {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+      if (colorVal != null) {
+        _seedColor = Color(colorVal);
+      }
     });
+    
+    if (SupabaseService.currentUser != null) {
+      _syncThemeFromCloud();
+    }
+  }
+
+  Future<void> _syncThemeFromCloud() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (profile != null && profile['theme_color'] != null) {
+      final colorVal = profile['theme_color'] as int;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('themeColor', colorVal);
+      if (mounted) {
+        setState(() => _seedColor = Color(colorVal));
+      }
+    }
   }
 
   Future<void> _toggleTheme(bool isDark) async {
@@ -59,37 +88,27 @@ class _TransAppState extends State<TransApp> {
     });
   }
 
+  Future<void> _updateColor(Color color) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('themeColor', color.value);
+    
+    setState(() => _seedColor = color);
+    await SupabaseService.updateThemeColor(color.value);
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Trans',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
-      theme: ThemeData(
-          brightness: Brightness.light,
-          scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: Colors.white,
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-          )
-      ),
-      darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF000000),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: const Color(0xFF111827),
-          useMaterial3: true,
-          appBarTheme: AppBarTheme(
-            backgroundColor: Colors.black.withOpacity(0.7),
-            foregroundColor: Colors.white,
-          )
-      ),
+      theme: createTheme(_seedColor, Brightness.light),
+      darkTheme: createTheme(_seedColor, Brightness.dark),
       home: HomeScreen(
         onThemeChanged: _toggleTheme,
         isDarkMode: _themeMode == ThemeMode.dark,
+        onColorChanged: _updateColor,
+        currentColor: _seedColor,
       ),
     );
   }

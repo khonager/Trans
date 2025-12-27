@@ -1,5 +1,5 @@
 class JourneyStep {
-  final String type; // 'walk', 'ride', 'wait'
+  final String type; // 'walk', 'ride', 'wait', 'transfer'
   final String line;
   final String instruction;
   final String duration;
@@ -10,6 +10,8 @@ class JourneyStep {
   final int? chatCount;
   final String? startStationId;
   final String? platform;
+  final List<dynamic>? stopovers; // NEW: Holds list of stops
+  final bool isWalking; // NEW: To distinguish pure walking
 
   JourneyStep({
     required this.type,
@@ -23,6 +25,8 @@ class JourneyStep {
     this.chatCount,
     this.startStationId,
     this.platform,
+    this.stopovers,
+    this.isWalking = false,
   });
 }
 
@@ -32,7 +36,7 @@ class RouteTab {
   final String subtitle;
   final String eta;
   final String totalDuration;
-  final String destinationId; // NEW: Needed for recalculation
+  final String destinationId; 
   final List<JourneyStep> steps;
 
   RouteTab({
