@@ -215,9 +215,13 @@ class SupabaseService {
       'user_id': user.id,
       'latitude': pos.latitude,
       'longitude': pos.longitude,
-      'updated_at': DateTime.now().toIso8601String(),
+      // FIX: Use UTC to ensure consistency across all devices/users
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
-    if (currentLine != null) updateData['current_line'] = currentLine;
+    
+    if (currentLine != null) {
+      updateData['current_line'] = currentLine;
+    }
 
     await client.from('user_locations').upsert(updateData);
   }

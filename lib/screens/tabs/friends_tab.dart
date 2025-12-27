@@ -151,15 +151,18 @@ class _FriendsTabState extends State<FriendsTab> {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
     // SORTING
-    final now = DateTime.now();
+final now = DateTime.now().toUtc(); // Compare against UTC now
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
 
     for (var f in _friends) {
-      // Check if location data exists and is recent
       if (f['updated_at'] != null) {
-        final updated = DateTime.tryParse(f['updated_at']) ?? DateTime(2000);
+        // Parse the UTC string from DB
+        final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
+        
+        // Check difference
         final isActive = now.difference(updated).inHours < 12;
+        
         if (isActive) {
           activeFriends.add(f);
           continue;
