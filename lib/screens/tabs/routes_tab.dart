@@ -1,4 +1,4 @@
-// ... imports stay same ...
+// ... [imports same as before] ...
 import 'dart:async';
 import 'dart:math';
 import 'dart:io';
@@ -40,9 +40,8 @@ class RoutesTab extends StatefulWidget {
   State<RoutesTab> createState() => _RoutesTabState();
 }
 
-// ... existing state class ... (omitted standard logic for brevity, only showing build method update)
 class _RoutesTabState extends State<RoutesTab> {
-  // ... [keep all variables and methods exactly as they were] ...
+  // ... [keep logic] ...
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
 
@@ -86,7 +85,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
   // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
-    // ... [keep existing logic] ...
+    // ... [keep logic] ...
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
       if (mounted) setState(() => _suggestions = history);
@@ -257,7 +256,7 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC --- (Keep as is)
+  // --- ROUTE LOGIC --- (Process Legs kept same)
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -487,7 +486,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
-     // ... [keep existing logic] ...
      setState(() => _isLoadingRoute = true);
     try {
       final journeyData = await TransportApi.searchJourney(startStationId, finalDestId, nahverkehrOnly: widget.onlyNahverkehr, when: newDepartureTime, isArrival: false);
@@ -548,7 +546,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showGuide(BuildContext context, String? startStationId) {
-    // ... [keep existing logic] ...
      if (startStationId == null) return;
     showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setStateDialog) {
           return AlertDialog(backgroundColor: Theme.of(ctx).cardColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)), IconButton(icon: const Icon(Icons.add_a_photo, color: Colors.blue), onPressed: () async { final picker = ImagePicker(); final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024); if (picked != null) { try { dynamic imageFile; if (kIsWeb) imageFile = await picked.readAsBytes(); else imageFile = File(picked.path); await SupabaseService.uploadStationImage(imageFile, startStationId); setStateDialog(() {}); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } } })]), content: FutureBuilder<String?>(future: SupabaseService.getStationImage(startStationId), builder: (context, snapshot) { if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())); if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]); return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200)); }), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))]);
@@ -556,7 +553,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-     // ... [keep existing logic] ...
       showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -582,7 +578,6 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget build(BuildContext context) {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // FIX: Get current theme color
     final primaryColor = Theme.of(context).primaryColor;
 
     return Column(
@@ -604,7 +599,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    // FIX: Use primaryColor for active tab
                     decoration: BoxDecoration(color: isActive ? primaryColor : Theme.of(context).cardColor, borderRadius: BorderRadius.circular(20)),
                     child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))]),
                   ),
@@ -648,13 +642,18 @@ class _RoutesTabState extends State<RoutesTab> {
                     decoration: BoxDecoration(color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, borderRadius: BorderRadius.circular(16)),
                     child: Row(
                       children: [
+                        // FIX: Depart/Arrive blurry text fix
                         GestureDetector(
                           onTap: () => setState(() => _isArrival = !_isArrival), 
-                          // FIX: Use primaryColor and fixed text blurriness (font size 13, normal weight)
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), 
+                            height: 36,
+                            alignment: Alignment.center,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(color: primaryColor, borderRadius: BorderRadius.circular(12)), 
-                            child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontSize: 13))
+                            child: Text(
+                              _isArrival ? "Arrive by" : "Depart at", 
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)
+                            )
                           )
                         ),
                         const SizedBox(width: 12),
@@ -697,7 +696,6 @@ class _RoutesTabState extends State<RoutesTab> {
                              children: [
                                Container(
                                  width: 48, height: 48, 
-                                 // FIX: Use primaryColor for friends/stations if needed, or keep distinct colors
                                  decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : primaryColor).withOpacity(0.1), shape: BoxShape.circle), 
                                  child: Icon(icon, color: fav.type == 'friend' ? Colors.green : primaryColor, size: 20)
                                ), 
@@ -721,7 +719,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSuggestionsList() {
-    // ... [keep existing logic] ...
      if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     final cardColor = Theme.of(context).cardColor;
@@ -773,7 +770,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
-     // ... [keep existing logic] ...
      final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -805,7 +801,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
-// ... _StepCard class (no major changes needed, just inherits theme) ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
@@ -820,7 +815,6 @@ class _StepCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ... [keep existing logic] ...
     final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
     final cardColor = Theme.of(context).cardColor;
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
@@ -889,7 +883,6 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-// ... _EditFavoriteDialog ...
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
@@ -899,7 +892,6 @@ class _EditFavoriteDialog extends StatefulWidget {
 }
 
 class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
-  // ... [keep logic] ...
   late TextEditingController _labelCtrl;
   final TextEditingController _searchCtrl = TextEditingController();
   late String _currentType;
@@ -1121,7 +1113,8 @@ class _ChatSheetState extends State<ChatSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(
         children: [
-          Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
+          Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2)),
+          ),
           Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: Row(children: [const CircleAvatar(backgroundColor: Colors.indigo, child: Icon(Icons.directions_bus, color: Colors.white)), const SizedBox(width: 12), Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color))])),
           const Divider(),
           Expanded(

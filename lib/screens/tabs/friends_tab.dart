@@ -1,4 +1,3 @@
-// ... imports ...
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -59,11 +58,7 @@ class _FriendsTabState extends State<FriendsTab> {
     });
   }
 
-  // ... _showAddFriendSheet code stays same ...
-  void _showAddFriendSheet(BuildContext context) async {
-    // ... Copy existing implementation, no changes needed unless you want to show emojis in search results too ...
-    // Assuming SupabaseService.searchUsers is updated to return avatar_emoji too, you can use _buildAvatarHelper there.
-    // For brevity, I'll focus on the display widgets below.
+  void _showAddFriendSheet(BuildContext context) {
     final searchCtrl = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
 
@@ -117,7 +112,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         if (user['id'] == SupabaseService.currentUser?.id) return const SizedBox.shrink();
                         
                         return ListTile(
-                          leading: _buildAvatarHelper(user['avatar_url'], user['avatar_emoji'], user['username']),
+                          leading: _buildAvatarHelper(user),
                           title: Text(user['username']),
                           trailing: IconButton(
                             icon: const Icon(Icons.person_add, color: Colors.blue),
@@ -150,7 +145,7 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
-    // SORTING
+    // Sorting Logic
     final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
@@ -215,18 +210,27 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildAvatarHelper(String? url, String? emoji, String username, {double radius = 20}) {
+  Widget _buildAvatarHelper(Map<String, dynamic> userData, {double radius = 20}) {
+    final emoji = userData['avatar_emoji'] ?? userData['sender_emoji'];
+    final url = userData['avatar_url'] ?? userData['sender_avatar'];
+    final username = userData['username'] ?? userData['sender_username'] ?? "?";
+    
+    // Theme color logic
+    final colorVal = userData['theme_color'];
+    final Color bgColor = colorVal != null ? Color(colorVal) : Colors.indigo;
+
     if (emoji != null && emoji.isNotEmpty) {
        return CircleAvatar(
          radius: radius,
-         backgroundColor: Colors.grey.shade200,
+         backgroundColor: bgColor,
          child: Text(emoji, style: TextStyle(fontSize: radius * 1.2)),
        );
     }
     return CircleAvatar(
       radius: radius,
+      backgroundColor: bgColor,
       backgroundImage: url != null ? NetworkImage(url) : null,
-      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?") : null,
+      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?", style: const TextStyle(color: Colors.white)) : null,
     );
   }
 
@@ -241,7 +245,7 @@ class _FriendsTabState extends State<FriendsTab> {
       ),
       child: Row(
         children: [
-          _buildAvatarHelper(req['sender_avatar'], req['sender_emoji'], req['sender_username'] ?? "?"),
+          _buildAvatarHelper(req),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -280,7 +284,7 @@ class _FriendsTabState extends State<FriendsTab> {
         children: [
           Stack(
             children: [
-              _buildAvatarHelper(friend['avatar_url'], friend['avatar_emoji'], friend['username'] ?? "?"),
+              _buildAvatarHelper(friend),
               if (isActive)
                 Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).cardColor, width: 2))))
             ],
