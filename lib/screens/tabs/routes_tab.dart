@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-import '../../config/app_theme.dart';
+import '../../config/app_theme.dart'; // Import Theme Config
 import '../../models/station.dart';
 import '../../models/journey.dart';
 import '../../models/favorite.dart';
@@ -337,7 +337,7 @@ class _RoutesTabState extends State<RoutesTab> {
           chatCount: random.nextInt(15) + 1,
           startStationId: startStationId,
           platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'], // KEY FIX: Ensuring stopovers are passed
+          stopovers: leg['stopovers'], // KEY: Now we have the data!
         ));
         
         lastArrival = arr;
@@ -518,6 +518,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
   @override
   Widget build(BuildContext context) {
+    // 1. GET THE COLORS
     final colors = TransColors.of(context);
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
 
@@ -540,8 +541,17 @@ class _RoutesTabState extends State<RoutesTab> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)),
-                    child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? colors.chipActiveFg.withOpacity(0.7) : colors.chipFg))]),
+                    decoration: BoxDecoration(
+                      color: isActive ? colors.chipActiveBg : colors.chipBg, 
+                      borderRadius: BorderRadius.circular(20)
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.directions, size: 16, color: isActive ? colors.chipActiveFg : colors.chipFg), 
+                      const SizedBox(width: 6), 
+                      Text(tab.title, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontWeight: FontWeight.bold, fontSize: 12)), 
+                      const SizedBox(width: 4), 
+                      GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? colors.chipActiveFg.withOpacity(0.7) : colors.chipFg))
+                    ]),
                   ),
                 );
               },
@@ -658,7 +668,7 @@ class _RoutesTabState extends State<RoutesTab> {
                                  child: Icon(icon, color: isFriend ? colors.favFriendIcon : colors.favStationIcon, size: 20)
                                ), 
                                const SizedBox(height: 4), 
-                               Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))
+                               Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))
                             ]
                           )
                         );
@@ -735,7 +745,7 @@ class _RoutesTabState extends State<RoutesTab> {
           controller: controller, 
           onChanged: (val) => _onSearchChanged(val, fieldKey), 
           onTap: () => setState(() => _activeSearchField = fieldKey), 
-          style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), 
+          style: TextStyle(color: colors.searchInputText), 
           decoration: InputDecoration(
             filled: true, 
             fillColor: colors.searchBarFill, 
@@ -913,6 +923,7 @@ class _StepCard extends StatelessWidget {
   }
 }
 
+// ... _EditFavoriteDialog, ChatSheet, etc. (same as provided before) ...
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
@@ -946,6 +957,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Also use AppTheme colors here if desired, but Dialogs usually follow standard theme
     final bool isNew = widget.favorite.id.isEmpty;
     final primaryColor = Theme.of(context).primaryColor;
 

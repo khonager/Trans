@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// --------------------------------------------------------------------------
 /// 1. AVAILABLE THEME COLORS
-/// Add/Remove colors here to update the picker in Settings.
+/// Add or remove colors here to update the picker in Settings.
 /// --------------------------------------------------------------------------
 const List<Color> appThemeColors = [
   Color(0xFF4F46E5), // Indigo (Default)
@@ -14,18 +14,19 @@ const List<Color> appThemeColors = [
   Colors.purple,
   Colors.pink,
   Colors.amber,
-  Color(0xFF000000), // Pure Black/White theme
+  Color(0xFF000000), // Pure Black/White
 ];
 
 /// --------------------------------------------------------------------------
-/// 2. CUSTOM COMPONENT COLORS (CSS-like)
+/// 2. CUSTOM COMPONENT COLORS (CSS-like classes)
 /// --------------------------------------------------------------------------
 @immutable
 class TransColors extends ThemeExtension<TransColors> {
-  // Search
+  // Search Bar
   final Color searchBarFill;
   final Color searchIcon;
   final Color searchHintText;
+  final Color searchInputText;
 
   // Favorites
   final Color favStationBg;
@@ -34,6 +35,7 @@ class TransColors extends ThemeExtension<TransColors> {
   final Color favFriendIcon;
   final Color favAddBg;
   final Color favAddIcon;
+  final Color favText;
 
   // Timeline (Intermediate Stops)
   final Color timelineLine;
@@ -44,7 +46,7 @@ class TransColors extends ThemeExtension<TransColors> {
   final Color timelineTextDelay;
   final Color timelineTextOnTime;
 
-  // Buttons & Chips
+  // Chips & Buttons
   final Color chipBg;
   final Color chipFg;
   final Color chipActiveBg;
@@ -54,12 +56,14 @@ class TransColors extends ThemeExtension<TransColors> {
     required this.searchBarFill,
     required this.searchIcon,
     required this.searchHintText,
+    required this.searchInputText,
     required this.favStationBg,
     required this.favStationIcon,
     required this.favFriendBg,
     required this.favFriendIcon,
     required this.favAddBg,
     required this.favAddIcon,
+    required this.favText,
     required this.timelineLine,
     required this.timelineDot,
     required this.timelineTextMain,
@@ -76,31 +80,33 @@ class TransColors extends ThemeExtension<TransColors> {
   static TransColors of(BuildContext context) => Theme.of(context).extension<TransColors>()!;
 
   /// --------------------------------------------------------------------------
-  /// LOGIC: How colors look in Light vs Dark mode
-  /// Edit this to tweak contrast.
+  /// 3. LOGIC: How colors look in Light vs Dark mode
+  /// modify these values to change contrast/visibility.
   /// --------------------------------------------------------------------------
   static TransColors fromSeed(Color seed, Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    // Ensure "Black" theme has visible accents in dark mode (white)
+    // Fix for "Pure Black" theme seed being invisible in dark mode
     final effectiveSeed = (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
 
     return TransColors(
       // Search Bar
-      searchBarFill: isDark ? Colors.white.withOpacity(0.12) : Colors.grey.shade200,
-      searchIcon: isDark ? effectiveSeed.withOpacity(0.9) : effectiveSeed,
+      searchBarFill: isDark ? Colors.white.withOpacity(0.15) : Colors.grey.shade200,
+      searchIcon: isDark ? Colors.white70 : Colors.grey,
       searchHintText: isDark ? Colors.white38 : Colors.grey,
+      searchInputText: isDark ? Colors.white : Colors.black,
 
-      // Favorites
-      favStationBg: isDark ? effectiveSeed.withOpacity(0.25) : effectiveSeed.withOpacity(0.1),
-      favStationIcon: effectiveSeed,
-      favFriendBg: isDark ? Colors.green.withOpacity(0.25) : Colors.green.withOpacity(0.1),
-      favFriendIcon: Colors.green,
-      favAddBg: isDark ? effectiveSeed.withOpacity(0.2) : effectiveSeed.withOpacity(0.1),
-      favAddIcon: effectiveSeed,
+      // Favorites (Made brighter for dark mode visibility)
+      favStationBg: isDark ? effectiveSeed.withOpacity(0.3) : effectiveSeed.withOpacity(0.15),
+      favStationIcon: isDark ? Colors.white : effectiveSeed,
+      favFriendBg: isDark ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.15),
+      favFriendIcon: isDark ? Colors.greenAccent : Colors.green,
+      favAddBg: isDark ? Colors.white.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+      favAddIcon: isDark ? Colors.white : Colors.black,
+      favText: isDark ? Colors.white70 : Colors.black87,
 
       // Timeline
       timelineLine: isDark ? Colors.white24 : Colors.grey.shade300,
-      timelineDot: isDark ? Colors.grey.shade600 : Colors.grey.shade500,
+      timelineDot: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
       timelineTextMain: isDark ? Colors.white : Colors.black87,
       timelineTextSub: isDark ? Colors.white54 : Colors.grey.shade700,
       timelineTextTime: isDark ? Colors.white70 : Colors.black54,
@@ -117,10 +123,10 @@ class TransColors extends ThemeExtension<TransColors> {
 
   @override
   TransColors copyWith({
-    Color? searchBarFill, Color? searchIcon, Color? searchHintText,
+    Color? searchBarFill, Color? searchIcon, Color? searchHintText, Color? searchInputText,
     Color? favStationBg, Color? favStationIcon,
     Color? favFriendBg, Color? favFriendIcon,
-    Color? favAddBg, Color? favAddIcon,
+    Color? favAddBg, Color? favAddIcon, Color? favText,
     Color? timelineLine, Color? timelineDot,
     Color? timelineTextMain, Color? timelineTextSub,
     Color? timelineTextTime, Color? timelineTextDelay, Color? timelineTextOnTime,
@@ -130,12 +136,14 @@ class TransColors extends ThemeExtension<TransColors> {
       searchBarFill: searchBarFill ?? this.searchBarFill,
       searchIcon: searchIcon ?? this.searchIcon,
       searchHintText: searchHintText ?? this.searchHintText,
+      searchInputText: searchInputText ?? this.searchInputText,
       favStationBg: favStationBg ?? this.favStationBg,
       favStationIcon: favStationIcon ?? this.favStationIcon,
       favFriendBg: favFriendBg ?? this.favFriendBg,
       favFriendIcon: favFriendIcon ?? this.favFriendIcon,
       favAddBg: favAddBg ?? this.favAddBg,
       favAddIcon: favAddIcon ?? this.favAddIcon,
+      favText: favText ?? this.favText,
       timelineLine: timelineLine ?? this.timelineLine,
       timelineDot: timelineDot ?? this.timelineDot,
       timelineTextMain: timelineTextMain ?? this.timelineTextMain,
@@ -157,12 +165,14 @@ class TransColors extends ThemeExtension<TransColors> {
       searchBarFill: Color.lerp(searchBarFill, other.searchBarFill, t)!,
       searchIcon: Color.lerp(searchIcon, other.searchIcon, t)!,
       searchHintText: Color.lerp(searchHintText, other.searchHintText, t)!,
+      searchInputText: Color.lerp(searchInputText, other.searchInputText, t)!,
       favStationBg: Color.lerp(favStationBg, other.favStationBg, t)!,
       favStationIcon: Color.lerp(favStationIcon, other.favStationIcon, t)!,
       favFriendBg: Color.lerp(favFriendBg, other.favFriendBg, t)!,
       favFriendIcon: Color.lerp(favFriendIcon, other.favFriendIcon, t)!,
       favAddBg: Color.lerp(favAddBg, other.favAddBg, t)!,
       favAddIcon: Color.lerp(favAddIcon, other.favAddIcon, t)!,
+      favText: Color.lerp(favText, other.favText, t)!,
       timelineLine: Color.lerp(timelineLine, other.timelineLine, t)!,
       timelineDot: Color.lerp(timelineDot, other.timelineDot, t)!,
       timelineTextMain: Color.lerp(timelineTextMain, other.timelineTextMain, t)!,
@@ -178,6 +188,9 @@ class TransColors extends ThemeExtension<TransColors> {
   }
 }
 
+/// --------------------------------------------------------------------------
+/// 4. THEME GENERATOR
+/// --------------------------------------------------------------------------
 ThemeData createTheme(Color seed, Brightness brightness) {
   final isDark = brightness == Brightness.dark;
   final baseScheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
@@ -186,8 +199,8 @@ ThemeData createTheme(Color seed, Brightness brightness) {
       ? baseScheme.copyWith(
           primary: seed, 
           onPrimary: Colors.white,
-          surface: Colors.black, 
-          surfaceContainerLow: const Color(0xFF18181B),
+          surface: Colors.black, // Pure Black Background
+          surfaceContainerLow: const Color(0xFF18181B), // Cards
         )
       : baseScheme.copyWith(
           scrim: const Color(0xFFF3F4F6),
@@ -206,8 +219,10 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     extensions: [
       TransColors.fromSeed(seed, brightness),
     ],
+    // SLIDER & SWITCH THEME
     sliderTheme: SliderThemeData(
       activeTrackColor: seed,
+      inactiveTrackColor: isDark ? Colors.white24 : Colors.grey.shade300,
       thumbColor: Colors.white,
     ),
     switchTheme: SwitchThemeData(
