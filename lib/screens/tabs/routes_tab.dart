@@ -8,16 +8,15 @@ import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
-import '../../models/station.dart';
-import '../../models/journey.dart';
-import '../../models/favorite.dart';
-import '../../services/transport_api.dart';
-import '../../services/supabase_service.dart';
-import '../../services/history_manager.dart';
-import '../../services/favorites_manager.dart';
-import '../../widgets/chat_sheet.dart';
+import 'package:trans/models/station.dart';
+import 'package:trans/models/journey.dart';
+import 'package:trans/models/favorite.dart';
+import 'package:trans/services/transport_api.dart';
+import 'package:trans/services/supabase_service.dart';
+import 'package:trans/services/history_manager.dart';
+import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/widgets/chat_sheet.dart';
 
-// FIX: Define available icons as a constant list for tree-shaking compatibility
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
   Icons.train, Icons.directions_bus, Icons.school, 
@@ -404,6 +403,66 @@ class _RoutesTabState extends State<RoutesTab> {
     return steps;
   }
   
+  // Refactored helper to create a tab from a journey object
+  void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
+    if (journeyData['legs'] == null) return;
+    
+    final List legs = journeyData['legs'];
+    final List<JourneyStep> steps = _processLegs(legs);
+    
+    String totalDurationStr = "";
+    String routeSubtitle = subtitle ?? "Detail";
+    
+    if (legs.isNotEmpty) {
+       var firstLeg = legs.first;
+       var lastLeg = legs.last;
+       if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+         DateTime routeStart = DateTime.parse(firstLeg['departure']);
+         DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+         int totalMin = routeEnd.difference(routeStart).inMinutes;
+         totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
+         
+         if (subtitle == null) {
+            String startName = firstLeg['origin']['name'] ?? 'Start';
+            String endName = lastLeg['destination']['name'] ?? 'End';
+            routeSubtitle = "$startName → $endName";
+         }
+       }
+    }
+
+    final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
+    String eta = "--:--";
+    if (journeyData['arrival'] != null) {
+      final arr = DateTime.parse(journeyData['arrival']);
+      eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+    }
+
+    final String finalDestId = _toStation?.id ?? (legs.isNotEmpty ? legs.last['destination']['id'] : '');
+
+    final newTab = RouteTab(
+      id: newTabId, 
+      title: title == "Route" && _toStation != null ? _toStation!.name : title, 
+      subtitle: routeSubtitle, 
+      eta: eta, 
+      totalDuration: totalDurationStr, 
+      destinationId: finalDestId, 
+      steps: steps
+    );
+
+    setState(() {
+      _tabs.add(newTab);
+      _activeTabId = newTabId;
+      // Only clear inputs if it's the main route search, not an alternative
+      if (title != "Alternative") {
+        _fromStation = null;
+        _toStation = null;
+        _fromController.clear();
+        _toController.clear();
+      }
+      _isLoadingRoute = false;
+    });
+  }
+
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     if (from == null && widget.currentPosition != null) {
@@ -434,44 +493,13 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     try {
-      final journeyData = await TransportApi.searchJourney(
+      // Changed to use searchJourneys (List)
+      final journeys = await TransportApi.searchJourneys(
           from.id, _toStation!.id, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
 
-      if (journeyData != null && journeyData['legs'] != null) {
-        final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = _processLegs(legs);
-        
-        String totalDurationStr = "";
-        if (legs.isNotEmpty) {
-           var firstLeg = legs.first;
-           var lastLeg = legs.last;
-           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
-             DateTime routeStart = DateTime.parse(firstLeg['departure']);
-             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
-             int totalMin = routeEnd.difference(routeStart).inMinutes;
-             totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-           }
-        }
-
-        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-        String eta = "--:--";
-        if (journeyData['arrival'] != null) {
-          final arr = DateTime.parse(journeyData['arrival']);
-          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-        }
-
-        final newTab = RouteTab(id: newTabId, title: _toStation!.name, subtitle: "${from.name} → ${_toStation!.name}", eta: eta, totalDuration: totalDurationStr, destinationId: _toStation!.id, steps: steps);
-
-        setState(() {
-          _tabs.add(newTab);
-          _activeTabId = newTabId;
-          _fromStation = null;
-          _toStation = null;
-          _fromController.clear();
-          _toController.clear();
-          _isLoadingRoute = false;
-        });
+      if (journeys.isNotEmpty) {
+        _addJourneyTab(journeys.first);
       } else {
         setState(() => _isLoadingRoute = false);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
@@ -479,53 +507,6 @@ class _RoutesTabState extends State<RoutesTab> {
     } catch (e) {
       setState(() => _isLoadingRoute = false);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
-    }
-  }
-
-  Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
-    setState(() => _isLoadingRoute = true);
-    try {
-      final journeyData = await TransportApi.searchJourney(startStationId, finalDestId, nahverkehrOnly: widget.onlyNahverkehr, when: newDepartureTime, isArrival: false);
-
-      if (journeyData != null && journeyData['legs'] != null) {
-        final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = _processLegs(legs);
-        
-        String totalDurationStr = "0 min";
-        if (legs.isNotEmpty) {
-           var firstLeg = legs.first;
-           var lastLeg = legs.last;
-           String? startStr = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
-           String? endStr = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
-           if (startStr != null && endStr != null) {
-             DateTime routeStart = DateTime.parse(startStr);
-             DateTime routeEnd = DateTime.parse(endStr);
-             int totalMin = routeEnd.difference(routeStart).inMinutes;
-             totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-           }
-        }
-
-        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-        String eta = "--:--";
-        if (journeyData['arrival'] != null) {
-          final arr = DateTime.parse(journeyData['arrival']);
-          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-        }
-        
-        final newTab = RouteTab(id: newTabId, title: "Alternative", subtitle: "From ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}", eta: eta, totalDuration: totalDurationStr, destinationId: finalDestId, steps: steps);
-
-        setState(() {
-          _tabs.add(newTab);
-          _activeTabId = newTabId;
-          _isLoadingRoute = false;
-        });
-      } else {
-        setState(() => _isLoadingRoute = false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find route.")));
-      }
-    } catch (e) {
-      setState(() => _isLoadingRoute = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
@@ -544,18 +525,55 @@ class _RoutesTabState extends State<RoutesTab> {
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
       showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
+        // FIX: Use searchJourneys instead of getDepartures to ensure routes go to the final destination
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: TransportApi.searchJourneys(
+            stationId, 
+            finalDestinationId, 
+            nahverkehrOnly: widget.onlyNahverkehr,
+            when: DateTime.now(), // Assume looking for connections from now
+            results: 5
+          ), 
+          builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
-            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
-                final dep = snapshot.data![idx];
-                final line = dep['line']['name'] ?? 'Unknown';
-                final dir = dep['direction'] ?? 'Unknown';
-                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
-                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time), onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); });
-              });
-          });
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes to destination found."));
+            
+            return ListView.builder(
+              padding: const EdgeInsets.all(16), 
+              itemCount: snapshot.data!.length, 
+              itemBuilder: (ctx, idx) {
+                final journey = snapshot.data![idx];
+                final legs = journey['legs'] as List;
+                if (legs.isEmpty) return const SizedBox.shrink();
+
+                // Find first ride leg for display info
+                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+                
+                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+                final dir = firstRide['direction'] ?? 'Destination';
+                final depTimeStr = firstRide['departure'] ?? firstRide['plannedDeparture'];
+                final arrTimeStr = legs.last['arrival'] ?? legs.last['plannedArrival'];
+                
+                DateTime depTime = DateTime.parse(depTimeStr);
+                DateTime arrTime = DateTime.parse(arrTimeStr);
+                String timeDisplay = "${depTime.hour.toString().padLeft(2,'0')}:${depTime.minute.toString().padLeft(2,'0')}";
+                int duration = arrTime.difference(depTime).inMinutes;
+
+                return ListTile(
+                  leading: const Icon(Icons.alt_route), 
+                  title: Text("$line to $dir"), 
+                  subtitle: Text("Duration: ${duration}min"),
+                  trailing: Text(timeDisplay, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), 
+                  onTap: () { 
+                    Navigator.pop(context); 
+                    // FIX: Pass the specific journey object directly to create the tab
+                    _addJourneyTab(journey, title: "Alternative", subtitle: "Departs $timeDisplay");
+                  }
+                );
+              }
+            );
+          }
+        );
       });
   }
 
