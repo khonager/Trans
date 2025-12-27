@@ -1,4 +1,4 @@
-// lib/models/favorite.dart
+import 'package:flutter/material.dart';
 import 'station.dart';
 
 class Favorite {
@@ -7,6 +7,7 @@ class Favorite {
   final String type; // 'station' or 'friend'
   final Station? station; // If type is station
   final String? friendId; // If type is friend
+  final int? iconCode; // NEW: Stores the IconData.codePoint
 
   Favorite({
     required this.id,
@@ -14,6 +15,7 @@ class Favorite {
     required this.type,
     this.station,
     this.friendId,
+    this.iconCode,
   });
 
   Map<String, dynamic> toJson() => {
@@ -22,6 +24,7 @@ class Favorite {
     'type': type,
     'station': station?.toJson(),
     'friendId': friendId,
+    'iconCode': iconCode,
   };
 
   factory Favorite.fromJson(Map<String, dynamic> json) {
@@ -31,6 +34,7 @@ class Favorite {
       type: json['type'],
       station: json['station'] != null ? Station.fromJson(json['station']) : null,
       friendId: json['friendId'],
+      iconCode: json['iconCode'],
     );
   }
 }
