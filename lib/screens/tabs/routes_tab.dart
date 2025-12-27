@@ -1,25 +1,23 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-import '../../models/station.dart';
-import '../../models/journey.dart';
-import '../../models/favorite.dart';
-import '../../services/transport_api.dart';
-import '../../services/supabase_service.dart';
-import '../../services/history_manager.dart';
-import '../../services/favorites_manager.dart';
-import '../../widgets/chat_sheet.dart';
+import 'package:trans/models/station.dart';
+import 'package:trans/models/journey.dart';
+import 'package:trans/models/favorite.dart';
+import 'package:trans/services/transport_api.dart';
+import 'package:trans/services/supabase_service.dart';
+import 'package:trans/services/history_manager.dart';
+import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/widgets/chat_sheet.dart';
+import 'package:trans/config/app_theme.dart';
 
-// FIX: Define available icons as a constant list for tree-shaking compatibility
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
   Icons.train, Icons.directions_bus, Icons.school, 
@@ -406,6 +404,66 @@ class _RoutesTabState extends State<RoutesTab> {
     return steps;
   }
   
+  // Refactored helper to create a tab from a journey object
+  void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
+    if (journeyData['legs'] == null) return;
+    
+    final List legs = journeyData['legs'];
+    final List<JourneyStep> steps = _processLegs(legs);
+    
+    String totalDurationStr = "";
+    String routeSubtitle = subtitle ?? "Detail";
+    
+    if (legs.isNotEmpty) {
+       var firstLeg = legs.first;
+       var lastLeg = legs.last;
+       if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
+         DateTime routeStart = DateTime.parse(firstLeg['departure']);
+         DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
+         int totalMin = routeEnd.difference(routeStart).inMinutes;
+         totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
+         
+         if (subtitle == null) {
+            String startName = firstLeg['origin']['name'] ?? 'Start';
+            String endName = lastLeg['destination']['name'] ?? 'End';
+            routeSubtitle = "$startName → $endName";
+         }
+       }
+    }
+
+    final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
+    String eta = "--:--";
+    if (journeyData['arrival'] != null) {
+      final arr = DateTime.parse(journeyData['arrival']);
+      eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
+    }
+
+    final String finalDestId = _toStation?.id ?? (legs.isNotEmpty ? legs.last['destination']['id'] : '');
+
+    final newTab = RouteTab(
+      id: newTabId, 
+      title: title == "Route" && _toStation != null ? _toStation!.name : title, 
+      subtitle: routeSubtitle, 
+      eta: eta, 
+      totalDuration: totalDurationStr, 
+      destinationId: finalDestId, 
+      steps: steps
+    );
+
+    setState(() {
+      _tabs.add(newTab);
+      _activeTabId = newTabId;
+      // Only clear inputs if it's the main route search, not an alternative
+      if (title != "Alternative") {
+        _fromStation = null;
+        _toStation = null;
+        _fromController.clear();
+        _toController.clear();
+      }
+      _isLoadingRoute = false;
+    });
+  }
+
   Future<void> _findRoutes() async {
     Station? from = _fromStation;
     if (from == null && widget.currentPosition != null) {
@@ -436,44 +494,13 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     try {
-      final journeyData = await TransportApi.searchJourney(
+      // Changed to use searchJourneys (List)
+      final journeys = await TransportApi.searchJourneys(
           from.id, _toStation!.id, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
 
-      if (journeyData != null && journeyData['legs'] != null) {
-        final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = _processLegs(legs);
-        
-        String totalDurationStr = "";
-        if (legs.isNotEmpty) {
-           var firstLeg = legs.first;
-           var lastLeg = legs.last;
-           if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
-             DateTime routeStart = DateTime.parse(firstLeg['departure']);
-             DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
-             int totalMin = routeEnd.difference(routeStart).inMinutes;
-             totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-           }
-        }
-
-        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-        String eta = "--:--";
-        if (journeyData['arrival'] != null) {
-          final arr = DateTime.parse(journeyData['arrival']);
-          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-        }
-
-        final newTab = RouteTab(id: newTabId, title: _toStation!.name, subtitle: "${from.name} → ${_toStation!.name}", eta: eta, totalDuration: totalDurationStr, destinationId: _toStation!.id, steps: steps);
-
-        setState(() {
-          _tabs.add(newTab);
-          _activeTabId = newTabId;
-          _fromStation = null;
-          _toStation = null;
-          _fromController.clear();
-          _toController.clear();
-          _isLoadingRoute = false;
-        });
+      if (journeys.isNotEmpty) {
+        _addJourneyTab(journeys.first);
       } else {
         setState(() => _isLoadingRoute = false);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
@@ -481,53 +508,6 @@ class _RoutesTabState extends State<RoutesTab> {
     } catch (e) {
       setState(() => _isLoadingRoute = false);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
-    }
-  }
-
-  Future<void> _openNewRouteTab(DateTime newDepartureTime, String startStationId, String finalDestId) async {
-    setState(() => _isLoadingRoute = true);
-    try {
-      final journeyData = await TransportApi.searchJourney(startStationId, finalDestId, nahverkehrOnly: widget.onlyNahverkehr, when: newDepartureTime, isArrival: false);
-
-      if (journeyData != null && journeyData['legs'] != null) {
-        final List legs = journeyData['legs'];
-        final List<JourneyStep> steps = _processLegs(legs);
-        
-        String totalDurationStr = "0 min";
-        if (legs.isNotEmpty) {
-           var firstLeg = legs.first;
-           var lastLeg = legs.last;
-           String? startStr = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
-           String? endStr = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
-           if (startStr != null && endStr != null) {
-             DateTime routeStart = DateTime.parse(startStr);
-             DateTime routeEnd = DateTime.parse(endStr);
-             int totalMin = routeEnd.difference(routeStart).inMinutes;
-             totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-           }
-        }
-
-        final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-        String eta = "--:--";
-        if (journeyData['arrival'] != null) {
-          final arr = DateTime.parse(journeyData['arrival']);
-          eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-        }
-        
-        final newTab = RouteTab(id: newTabId, title: "Alternative", subtitle: "From ${newDepartureTime.hour}:${newDepartureTime.minute.toString().padLeft(2,'0')}", eta: eta, totalDuration: totalDurationStr, destinationId: finalDestId, steps: steps);
-
-        setState(() {
-          _tabs.add(newTab);
-          _activeTabId = newTabId;
-          _isLoadingRoute = false;
-        });
-      } else {
-        setState(() => _isLoadingRoute = false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find route.")));
-      }
-    } catch (e) {
-      setState(() => _isLoadingRoute = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
@@ -544,27 +524,57 @@ class _RoutesTabState extends State<RoutesTab> {
     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
   }
 
-  void _showGuide(BuildContext context, String? startStationId) {
-    if (startStationId == null) return;
-    showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setStateDialog) {
-          return AlertDialog(backgroundColor: Theme.of(ctx).cardColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Station Guide", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)), IconButton(icon: const Icon(Icons.add_a_photo, color: Colors.blue), onPressed: () async { final picker = ImagePicker(); final picked = await picker.pickImage(source: ImageSource.camera, maxWidth: 1024); if (picked != null) { try { dynamic imageFile; if (kIsWeb) imageFile = await picked.readAsBytes(); else imageFile = File(picked.path); await SupabaseService.uploadStationImage(imageFile, startStationId); setStateDialog(() {}); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } } })]), content: FutureBuilder<String?>(future: SupabaseService.getStationImage(startStationId), builder: (context, snapshot) { if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator())); if (snapshot.data == null) return const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.image_not_supported, size: 40), Text("No guide image found.")]); return ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(snapshot.data!, fit: BoxFit.cover, height: 200)); }), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close"))]);
-        }));
-  }
-
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
       showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(future: TransportApi.getDepartures(stationId, nahverkehrOnly: widget.onlyNahverkehr), builder: (context, snapshot) {
+        // FIX: Use searchJourneys instead of getDepartures to ensure routes go to the final destination
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: TransportApi.searchJourneys(
+            stationId, 
+            finalDestinationId, 
+            nahverkehrOnly: widget.onlyNahverkehr,
+            when: DateTime.now(), // Assume looking for connections from now
+            results: 5
+          ), 
+          builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No alternatives found."));
-            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
-                final dep = snapshot.data![idx];
-                final line = dep['line']['name'] ?? 'Unknown';
-                final dir = dep['direction'] ?? 'Unknown';
-                final planned = DateTime.parse(dep['plannedWhen'] ?? dep['when']);
-                final time = "${planned.hour.toString().padLeft(2,'0')}:${planned.minute.toString().padLeft(2,'0')}";
-                return ListTile(leading: const Icon(Icons.directions_bus), title: Text("$line to $dir"), trailing: Text(time), onTap: () { Navigator.pop(context); _openNewRouteTab(planned, stationId, finalDestinationId); });
-              });
-          });
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes to destination found."));
+            
+            return ListView.builder(
+              padding: const EdgeInsets.all(16), 
+              itemCount: snapshot.data!.length, 
+              itemBuilder: (ctx, idx) {
+                final journey = snapshot.data![idx];
+                final legs = journey['legs'] as List;
+                if (legs.isEmpty) return const SizedBox.shrink();
+
+                // Find first ride leg for display info
+                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+                
+                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+                final dir = firstRide['direction'] ?? 'Destination';
+                final depTimeStr = firstRide['departure'] ?? firstRide['plannedDeparture'];
+                final arrTimeStr = legs.last['arrival'] ?? legs.last['plannedArrival'];
+                
+                DateTime depTime = DateTime.parse(depTimeStr);
+                DateTime arrTime = DateTime.parse(arrTimeStr);
+                String timeDisplay = "${depTime.hour.toString().padLeft(2,'0')}:${depTime.minute.toString().padLeft(2,'0')}";
+                int duration = arrTime.difference(depTime).inMinutes;
+
+                return ListTile(
+                  leading: const Icon(Icons.alt_route), 
+                  title: Text("$line to $dir"), 
+                  subtitle: Text("Duration: ${duration}min"),
+                  trailing: Text(timeDisplay, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), 
+                  onTap: () { 
+                    Navigator.pop(context); 
+                    // FIX: Pass the specific journey object directly to create the tab
+                    _addJourneyTab(journey, title: "Alternative", subtitle: "Departs $timeDisplay");
+                  }
+                );
+              }
+            );
+          }
+        );
       });
   }
 
@@ -576,7 +586,7 @@ class _RoutesTabState extends State<RoutesTab> {
   @override
   Widget build(BuildContext context) {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = TransColors.of(context);
 
     return Column(
       children: [
@@ -597,22 +607,19 @@ class _RoutesTabState extends State<RoutesTab> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isActive ? const Color(0xFF4F46E5) : Theme.of(context).cardColor, borderRadius: BorderRadius.circular(20)),
+                    decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)),
                     child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))]),
                   ),
                 );
               },
             ),
           ),
-        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, isDark) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
+        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
       ],
     );
   }
 
-  Widget _buildSearchView(bool canSearch, bool isDark) {
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    final cardColor = Theme.of(context).cardColor;
-
+  Widget _buildSearchView(bool canSearch, TransColors colors) {
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 100),
       child: Padding(
@@ -621,11 +628,11 @@ class _RoutesTabState extends State<RoutesTab> {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: cardColor.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+              decoration: BoxDecoration(color: colors.cardBg.withValues(alpha: 0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
                   _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
@@ -633,22 +640,37 @@ class _RoutesTabState extends State<RoutesTab> {
                   _buildTextField("To", _toController, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
                   const SizedBox(height: 20),
-                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(color: colors.timeContainerBg, borderRadius: BorderRadius.circular(16)),
                     child: Row(
                       children: [
-                        GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
+                        GestureDetector(
+                          onTap: () => setState(() => _isArrival = !_isArrival),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), 
+                            decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)),
+                            child: Text(
+                              _isArrival ? "Arrive by" : "Depart at",
+                              style: TextStyle(
+                                color: colors.timeToggleText,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                                letterSpacing: 0.5,
+                              )
+                            )
+                          )
+                        ),
                         const SizedBox(width: 12),
-                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("Now", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 80,
@@ -658,7 +680,7 @@ class _RoutesTabState extends State<RoutesTab> {
                       separatorBuilder: (_,__) => const SizedBox(width: 12),
                       itemBuilder: (ctx, idx) {
                           if (idx == _favorites.length) {
-                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
+                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
                           }
                           final fav = _favorites[idx];
                           IconData icon = Icons.star;
@@ -666,20 +688,34 @@ class _RoutesTabState extends State<RoutesTab> {
                           else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
                           else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
                           
-                          // FIX: Use lookup instead of dynamic IconData creation to satisfy tree-shaker
                           if (fav.iconCode != null) {
                             icon = kAvailableIcons.firstWhere(
                               (i) => i.codePoint == fav.iconCode,
-                              orElse: () => Icons.star // Fallback safely
+                              orElse: () => Icons.star 
                             );
                           }
 
-                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
+                          Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg;
+                          Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon;
+
+                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))]));
                       },
                     ),
                   ),
                   const SizedBox(height: 20),
-                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F46E5), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                  SizedBox(
+                    width: double.infinity, 
+                    height: 56, 
+                    child: ElevatedButton(
+                      onPressed: canSearch ? _findRoutes : null, 
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colors.searchBtnBg,
+                        foregroundColor: colors.searchBtnText,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+                      ), 
+                      child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+                    )
+                  ),
                 ],
               ),
             ),
@@ -691,12 +727,11 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    final cardColor = Theme.of(context).cardColor;
+    final colors = TransColors.of(context);
     return Container(
       constraints: const BoxConstraints(maxHeight: 250),
       margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+      decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -709,11 +744,11 @@ class _RoutesTabState extends State<RoutesTab> {
               separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
               itemBuilder: (ctx, idx) {
                 final item = _suggestions[idx];
-                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
+                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
                 final station = item as Station;
                 return ListTile(
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
-                  title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
+                  title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
                   onTap: () => _selectItem(station),
                   onLongPress: () {
                     final newFav = Favorite(
@@ -734,14 +769,45 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    Color iconColor = Colors.grey;
-    if (isSelected) iconColor = Colors.greenAccent; else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: isDark ? Colors.white : Colors.black), decoration: InputDecoration(filled: true, fillColor: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : Colors.grey), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    final colors = TransColors.of(context);
+
+    Color iconColor = colors.searchInputIcon;
+    if (isSelected) iconColor = Colors.greenAccent; 
+    else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start, 
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 4), 
+          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
+        ), 
+        TextField(
+          controller: controller, 
+          onChanged: (val) => _onSearchChanged(val, fieldKey), 
+          onTap: () => setState(() => _activeSearchField = fieldKey), 
+          style: TextStyle(color: colors.searchInputText), 
+          decoration: InputDecoration(
+            filled: true, 
+            fillColor: colors.searchInputFill,
+            prefixIcon: Icon(
+              fieldKey == 'from' ? Icons.my_location : Icons.location_on, 
+              color: iconColor, 
+              size: 20
+            ), 
+            hintText: hint, 
+            hintStyle: TextStyle(
+              color: hint == "Current Location" ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText
+            ), 
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
+          )
+        )
+      ]
+    );
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final colors = TransColors.of(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
       children: [
@@ -750,8 +816,8 @@ class _RoutesTabState extends State<RoutesTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)), Text(route.subtitle, style: const TextStyle(color: Colors.grey))])),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
             ],
           ),
         ),
@@ -763,7 +829,6 @@ class _RoutesTabState extends State<RoutesTab> {
             finalDestinationId: route.destinationId,
             onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId),
             onChat: (line) => _showChat(context, line),
-            onGuide: (station) => _showGuide(context, station),
             onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
             isAlarmSet: _isWakeAlarmSet,
           )
@@ -778,27 +843,25 @@ class _StepCard extends StatelessWidget {
   final String finalDestinationId;
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
-  final Function(String) onGuide;
   final VoidCallback onAlarmToggle;
   final bool isAlarmSet;
 
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onGuide, required this.onAlarmToggle, required this.isAlarmSet});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet});
 
   @override
   Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
     final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
-    final cardColor = Theme.of(context).cardColor;
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
 
     if (isTransfer) {
-      Widget iconWidget = const Icon(Icons.directions_walk, color: Colors.orange);
-      if (step.type == 'wait') iconWidget = const Icon(Icons.man, color: Colors.orange);
+      Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
+      if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
 
       return Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.withOpacity(0.3))),
-        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12))]))]),
+        decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
+        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
       );
     }
 
@@ -806,17 +869,17 @@ class _StepCard extends StatelessWidget {
       margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 0,
-      color: cardColor,
+      color: colors.stepCardBg,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
-          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8), _buildActionChip(Icons.camera_alt_outlined, "Guide", onTap: () => onGuide(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
+          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
           children: [
             if (step.stopovers != null && step.stopovers!.isNotEmpty)
               Container(
-                decoration: BoxDecoration(color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.5)),
+                decoration: BoxDecoration(color: colors.stepStopoversBg),
                 child: ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -835,10 +898,10 @@ class _StepCard extends StatelessWidget {
                       if (actualDep != null) {
                         final a = DateTime.parse(actualDep);
                         final delay = a.difference(p).inMinutes;
-                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = Colors.red; } else { timeColor = Colors.green; }
+                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; }
                       }
                     }
-                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: textColor, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
+                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
                   },
                 ),
               )
@@ -849,8 +912,9 @@ class _StepCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionChip(IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
-    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))])));
+  Widget _buildActionChip(BuildContext context, IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
+    final colors = TransColors.of(context);
+    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
   }
 }
 
@@ -874,8 +938,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Timer? _debounce;
   bool _isLoading = false;
 
-  // Use kAvailableIcons instead of local definition
-
   @override
   void initState() {
     super.initState();
@@ -897,10 +959,11 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   @override
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
+    final colors = TransColors.of(context);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      backgroundColor: Theme.of(context).cardColor,
+      backgroundColor: colors.cardBg,
       child: Container(
         padding: const EdgeInsets.all(20),
         constraints: const BoxConstraints(maxWidth: 400),
@@ -908,7 +971,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+            Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
             const SizedBox(height: 20),
             
             TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
@@ -933,7 +996,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                       margin: const EdgeInsets.only(right: 8),
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: isSelected ? Colors.indigoAccent : Colors.grey.withOpacity(0.1),
+                        color: isSelected ? colors.navBarSelected : colors.chipBg,
                         shape: BoxShape.circle
                       ),
                       child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey),

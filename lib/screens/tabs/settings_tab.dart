@@ -118,12 +118,13 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _clearHistory() async {
+    final colors = TransColors.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(ctx).cardColor,
-        title: Text("Clear History", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-        content: const Text("Are you sure you want to delete your recent search history?"),
+        backgroundColor: colors.cardBg,
+        title: Text("Clear History", style: TextStyle(color: colors.textPrimary)),
+        content: Text("Are you sure you want to delete your recent search history?", style: TextStyle(color: colors.textSecondary)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
           TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
@@ -138,9 +139,10 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   void _showBlockedUsers() {
+    final colors = TransColors.of(context);
     showModalBottomSheet(
       context: context,
-      backgroundColor: Theme.of(context).cardColor,
+      backgroundColor: colors.cardBg,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => FutureBuilder<List<Map<String, dynamic>>>(
         future: SupabaseService.getBlockedUsers(),
@@ -153,19 +155,19 @@ class _SettingsTabState extends State<SettingsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                 const SizedBox(height: 16),
-                if (users.isEmpty) const Expanded(child: Center(child: Text("No blocked users"))),
+                if (users.isEmpty) Expanded(child: Center(child: Text("No blocked users", style: TextStyle(color: colors.textSecondary)))),
                 if (users.isNotEmpty)
                   Expanded(
                     child: ListView.separated(
                       itemCount: users.length,
-                      separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                      separatorBuilder: (_,__) => Divider(color: colors.divider),
                       itemBuilder: (ctx, idx) {
                         final u = users[idx];
                         return ListTile(
                           leading: CircleAvatar(backgroundImage: u['avatar_url'] != null ? NetworkImage(u['avatar_url']) : null, child: u['avatar_url'] == null ? const Icon(Icons.person) : null),
-                          title: Text(u['username'] ?? "Unknown", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                          title: Text(u['username'] ?? "Unknown", style: TextStyle(color: colors.textPrimary)),
                           trailing: TextButton(
                             onPressed: () async {
                               await SupabaseService.unblockUser(u['id']);
@@ -189,7 +191,7 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   Widget build(BuildContext context) {
     final user = SupabaseService.currentUser;
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final colors = TransColors.of(context);
     final primaryColor = Theme.of(context).primaryColor;
 
     return Padding(
@@ -197,19 +199,19 @@ class _SettingsTabState extends State<SettingsTab> {
       child: ListView(
         children: [
           const SizedBox(height: 100),
-          Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
+          Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
           const SizedBox(height: 20),
           
           _buildSection(context, [
             SwitchListTile(
-              title: Text("Dark Mode", style: TextStyle(color: textColor)), 
+              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 
               value: widget.isDarkMode, 
               activeColor: primaryColor,
               onChanged: widget.onThemeChanged
             ),
             SwitchListTile(
-              title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)), 
-              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)), 
+              title: Text("Deutschlandticket Mode", style: TextStyle(color: colors.textPrimary)), 
+              subtitle: Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
               value: widget.onlyNahverkehr, 
               activeColor: primaryColor,
               onChanged: widget.onNahverkehrChanged
@@ -217,11 +219,11 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
           
           const SizedBox(height: 20),
-          Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
             ListTile(
-              title: Text("Theme Color", style: TextStyle(color: textColor)),
+              title: Text("Theme Color", style: TextStyle(color: colors.textPrimary)),
               subtitle: SizedBox(
                 height: 40,
                 child: ListView(
@@ -233,23 +235,23 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
 
           const SizedBox(height: 20),
-          Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
-             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: Theme.of(context).cardColor, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
-             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: textColor)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
+             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: colors.textPrimary)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: colors.cardBg, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
+             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
           
           const SizedBox(height: 20),
-          Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
-            ListTile(leading: const Icon(Icons.block, color: Colors.orange), title: Text("Blocked Users", style: TextStyle(color: textColor)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
-            const Divider(height: 1),
-            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
+            ListTile(leading: Icon(Icons.block, color: colors.iconBlock), title: Text("Blocked Users", style: TextStyle(color: colors.textPrimary)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
+            Divider(height: 1, color: colors.divider),
+            ListTile(leading: Icon(Icons.delete_outline, color: colors.iconDelete), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
           ]),
           const SizedBox(height: 20),
-          if (user == null) _buildAuthForm(context, textColor) else _buildProfileSection(context, user, textColor),
+          if (user == null) _buildAuthForm(context, colors) else _buildProfileSection(context, user, colors),
           const SizedBox(height: 100),
         ],
       ),
@@ -274,20 +276,19 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  Widget _buildProfileSection(BuildContext context, user, Color? textColor) {
+  Widget _buildProfileSection(BuildContext context, user, TransColors colors) {
     final emoji = _profile?['avatar_emoji'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)), 
+          Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)), 
           const SizedBox(width: 16), 
           GestureDetector(
             onTap: _pickAvatar, 
             child: Container(
               width: 48, height: 48, 
-              // Uses current theme color background
               decoration: BoxDecoration(color: widget.currentColor, shape: BoxShape.circle), 
               child: ClipOval(
                 child: (emoji != null) 
@@ -300,18 +301,18 @@ class _SettingsTabState extends State<SettingsTab> {
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
+          decoration: BoxDecoration(color: colors.settingsSectionBg, borderRadius: BorderRadius.circular(16)),
           child: Column(
             children: [
               if (!_isEditing) ...[
-                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: textColor)), subtitle: Text(user.email ?? "", style: TextStyle(color: textColor?.withOpacity(0.6))), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; setState(() => _isEditing = true); })),
+                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
                 TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: "Username")),
                 TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: "New Password (Optional)"), obscureText: true),
                 const SizedBox(height: 10),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!"))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
               ],
-              const Divider(),
+              Divider(color: colors.divider),
               ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); })
             ],
           ),
@@ -320,13 +321,13 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  Widget _buildAuthForm(BuildContext context, Color? textColor) {
+  Widget _buildAuthForm(BuildContext context, TransColors colors) {
      return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(color: colors.authFormBg, borderRadius: BorderRadius.circular(16)),
       child: Column(
         children: [
-          Text("Login / Sign Up", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+          Text("Login / Sign Up", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: "Email")),
           const SizedBox(height: 10),
@@ -341,6 +342,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Widget _buildSection(BuildContext context, List<Widget> children) {
-    return Container(decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)), child: Column(children: children));
+    final colors = TransColors.of(context);
+    return Container(decoration: BoxDecoration(color: colors.settingsSectionBg, borderRadius: BorderRadius.circular(16)), child: Column(children: children));
   }
 }

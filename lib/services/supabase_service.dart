@@ -262,22 +262,6 @@ class SupabaseService {
     await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
     return imageUrl;
   }
-
-  static Future<String?> getStationImage(String stationId) async {
-    final data = await client.from('station_images').select('image_url').eq('station_id', stationId).maybeSingle();
-    return data?['image_url'] as String?;
-  }
-  
-  static Future<void> uploadStationImage(dynamic imageFile, String stationId) async {
-    final user = currentUser;
-    if (user == null) return;
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = '$stationId/$timestamp.jpg';
-    if (imageFile is File) await client.storage.from('station_guides').upload(fileName, imageFile);
-    else if (imageFile is Uint8List) await client.storage.from('station_guides').uploadBinary(fileName, imageFile);
-    final publicUrl = client.storage.from('station_guides').getPublicUrl(fileName);
-    await client.from('station_images').upsert({'station_id': stationId, 'image_url': publicUrl, 'uploaded_by': user.id, 'updated_at': DateTime.now().toIso8601String()});
-  }
   
   static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
     final user = currentUser;

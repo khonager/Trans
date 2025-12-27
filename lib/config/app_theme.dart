@@ -10,171 +10,163 @@ const List<Color> appThemeColors = [
   Colors.purple,
   Colors.pink,
   Colors.amber,
-  Color(0xFF000000), // Pure Black
 ];
 
 @immutable
 class TransColors extends ThemeExtension<TransColors> {
-  // Search
-  final Color searchBarFill;
-  final Color searchIcon;
-  final Color searchHintText;
-  final Color searchInputText;
+  final Color seed;
+  final Brightness brightness;
 
-  // Favorites
-  final Color favStationBg;
-  final Color favStationIcon;
-  final Color favFriendBg;
-  final Color favFriendIcon;
-  final Color favAddBg;
-  final Color favAddIcon;
-  final Color favText;
+  const TransColors({required this.seed, required this.brightness});
 
-  // Timeline
-  final Color timelineLine;
-  final Color timelineDot;
-  final Color timelineTextMain;
-  final Color timelineTextSub;
-  final Color timelineTextTime;
-  final Color timelineTextDelay;
-  final Color timelineTextOnTime;
+  bool get isDark => brightness == Brightness.dark;
+  
+  // Helper for consistent "effective seed" (White in dark mode if seed is Black)
+  Color get effectiveSeed => (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
+  
+  // Helper for consistent base cards
+  Color get baseCard => isDark ? const Color(0xFF18181B) : Colors.white;
+  Color get baseText => isDark ? Colors.white : Colors.black87;
+  Color get subText => isDark ? Colors.white54 : Colors.grey.shade700;
 
+  // ===========================================================================
+  // 1. BASE COLORS
+  // ===========================================================================
+  Color get scaffoldBg => isDark ? Colors.black : const Color(0xFFF3F4F6);
+  Color get cardBg => baseCard;
+  Color get textPrimary => baseText;
+  Color get textSecondary => subText;
+  Color get divider => isDark ? Colors.white10 : Colors.grey.shade300;
+  Color get modalHandle => Colors.grey.shade600;
+
+  // ===========================================================================
+  // 2. APP BAR & NAVIGATION
+  // ===========================================================================
+  Color get appBarBg => (isDark ? Colors.black : Colors.white).withValues(alpha: 0.8);
+  Color get appBarTitle => baseText;
+  Color get appBarIconBg => effectiveSeed;
+  Color get navBarBg => baseCard;
+  Color get navBarSelected => effectiveSeed;
+  Color get navBarUnselected => Colors.grey;
+
+  // ===========================================================================
+  // 3. SEARCH & HOME
+  // ===========================================================================
+  Color get searchHeaderIconBg => Colors.indigo.withValues(alpha: 0.2);
+  Color get searchHeaderIcon => Colors.indigoAccent;
+  Color get searchInputFill => isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200;
+  Color get searchInputIcon => isDark ? effectiveSeed : Colors.grey;
+  Color get searchInputText => baseText;
+  Color get searchHintText => isDark ? Colors.white38 : Colors.grey;
+  Color get searchBtnBg => effectiveSeed;
+  Color get searchBtnText => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+  Color get timeContainerBg => isDark ? const Color(0xFF1F2937) : Colors.grey.shade200;
+  Color get timeToggleBg => Colors.indigoAccent;
+  Color get timeToggleText => Colors.white;
+  Color get sectionHeader => isDark ? Colors.white60 : Colors.grey.shade600;
+
+  // ===========================================================================
+  // 4. FAVORITES
+  // ===========================================================================
+  Color get favStationBg => isDark ? effectiveSeed.withValues(alpha: 0.3) : effectiveSeed.withValues(alpha: 0.15);
+  Color get favStationIcon => isDark ? Colors.white : effectiveSeed;
+  Color get favFriendBg => isDark ? Colors.green.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.15);
+  Color get favFriendIcon => isDark ? Colors.white : Colors.green;
+  Color get favAddBg => isDark ? Colors.white24 : Colors.grey.withValues(alpha: 0.2);
+  Color get favAddIcon => isDark ? Colors.white : Colors.black;
+  Color get favText => isDark ? Colors.white70 : Colors.black87;
+
+  // ===========================================================================
+  // 5. ROUTES & STEPS
+  // ===========================================================================
+  Color get stepCardBg => baseCard;
+  Color get stepTransferBg => Colors.orange.withValues(alpha: 0.1);
+  Color get stepTransferBorder => Colors.orange.withValues(alpha: 0.3);
+  Color get stepTransferText => Colors.orange;
+  Color get stepTimeText => Colors.indigoAccent;
+  Color get stepPlatformText => Colors.greenAccent;
+  Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withValues(alpha: 0.5);
+  Color get delayLate => Colors.red;
+  Color get delayOnTime => Colors.green;
+  
   // Chips
-  final Color chipBg;
-  final Color chipFg;
-  final Color chipActiveBg;
-  final Color chipActiveFg;
+  Color get chipBg => isDark ? Colors.white12 : Colors.grey.shade200;
+  Color get chipFg => isDark ? Colors.white70 : Colors.grey.shade700;
+  Color get chipActiveBg => effectiveSeed;
+  Color get chipActiveFg => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
 
-  const TransColors({
-    required this.searchBarFill,
-    required this.searchIcon,
-    required this.searchHintText,
-    required this.searchInputText,
-    required this.favStationBg,
-    required this.favStationIcon,
-    required this.favFriendBg,
-    required this.favFriendIcon,
-    required this.favAddBg,
-    required this.favAddIcon,
-    required this.favText,
-    required this.timelineLine,
-    required this.timelineDot,
-    required this.timelineTextMain,
-    required this.timelineTextSub,
-    required this.timelineTextTime,
-    required this.timelineTextDelay,
-    required this.timelineTextOnTime,
-    required this.chipBg,
-    required this.chipFg,
-    required this.chipActiveBg,
-    required this.chipActiveFg,
-  });
+  // ===========================================================================
+  // 6. FRIENDS TAB
+  // ===========================================================================
+  Color get friendCardActiveBg => baseCard.withValues(alpha: 0.9);
+  Color get friendCardInactiveBg => baseCard.withValues(alpha: 0.4);
+  Color get friendCardActiveBorder => Colors.green.withValues(alpha: 0.3);
+  Color get friendCardInactiveBorder => Colors.white10;
+  Color get requestCardBg => Colors.indigo.withValues(alpha: 0.1);
+  Color get requestCardBorder => Colors.indigo.withValues(alpha: 0.3);
+  Color get statusOnline => Colors.blue;
+  Color get statusActive => Colors.green;
+  Color get statusOffline => Colors.grey;
+  Color get actionIconSuccess => Colors.green;
+  Color get actionIconError => Colors.red;
 
-  static TransColors of(BuildContext context) => Theme.of(context).extension<TransColors>()!;
+  // ===========================================================================
+  // 7. CHAT
+  // ===========================================================================
+  Color get chatHeaderIconBg => Colors.indigo;
+  Color get chatBubbleMeBg => effectiveSeed;
+  Color get chatBubbleMeText => Colors.white;
+  Color get chatBubbleFriendBg => baseCard;
+  Color get chatBubbleFriendText => baseText;
+  Color get chatBubbleFriendBorder => Colors.white10;
+  Color get chatInputFill => baseCard;
+  Color get chatSendBtnBg => effectiveSeed;
+  Color get chatSendBtnIcon => Colors.white;
 
-  static TransColors fromSeed(Color seed, Brightness brightness) {
-    final isDark = brightness == Brightness.dark;
-    // Ensure "Black" theme has white accents in dark mode
-    final effectiveSeed = (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
+  // ===========================================================================
+  // 8. TICKET PANEL
+  // ===========================================================================
+  Color get ticketSheetBg => isDark ? const Color(0xFF1F2937) : Colors.white;
+  Color get ticketHeader => baseText;
+  Color get ticketBorder => Colors.grey.withValues(alpha: 0.2);
+  Color get ticketEmptyIcon => Colors.grey.withValues(alpha: 0.5);
+  Color get ticketAddBtnBg => const Color(0xFF4F46E5);
+  Color get ticketAddBtnText => Colors.white;
 
-    return TransColors(
-      // Search Bar - Made lighter in dark mode for visibility
-      searchBarFill: isDark ? Colors.white.withOpacity(0.15) : Colors.grey.shade200,
-      searchIcon: isDark ? effectiveSeed : effectiveSeed,
-      searchHintText: isDark ? Colors.white54 : Colors.grey,
-      searchInputText: isDark ? Colors.white : Colors.black,
+  // ===========================================================================
+  // 9. SETTINGS
+  // ===========================================================================
+  Color get settingsSectionBg => baseCard;
+  Color get settingsHeader => subText;
+  Color get iconBlock => Colors.orange;
+  Color get iconDelete => Colors.red;
+  Color get authFormBg => baseCard;
 
-      // Favorites - Increased opacity for visibility
-      favStationBg: isDark ? effectiveSeed.withOpacity(0.3) : effectiveSeed.withOpacity(0.15),
-      favStationIcon: isDark ? Colors.white : effectiveSeed,
-      favFriendBg: isDark ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.15),
-      favFriendIcon: isDark ? Colors.white : Colors.green,
-      favAddBg: isDark ? Colors.white24 : Colors.grey.withOpacity(0.2),
-      favAddIcon: isDark ? Colors.white : Colors.black,
-      favText: isDark ? Colors.white70 : Colors.black87,
-
-      // Timeline
-      timelineLine: isDark ? Colors.white24 : Colors.grey.shade300,
-      timelineDot: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
-      timelineTextMain: isDark ? Colors.white : Colors.black87,
-      timelineTextSub: isDark ? Colors.white54 : Colors.grey.shade700,
-      timelineTextTime: isDark ? Colors.white70 : Colors.black54,
-      timelineTextDelay: Colors.redAccent,
-      timelineTextOnTime: Colors.greenAccent,
-
-      // Chips
-      chipBg: isDark ? Colors.white12 : Colors.grey.shade200,
-      chipFg: isDark ? Colors.white70 : Colors.grey.shade700,
-      chipActiveBg: effectiveSeed,
-      chipActiveFg: (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white,
-    );
-  }
+  // ===========================================================================
+  // 🛑 BOILERPLATE (Simplified for Getter Method)
+  // ===========================================================================
 
   @override
-  TransColors copyWith({
-    Color? searchBarFill, Color? searchIcon, Color? searchHintText, Color? searchInputText,
-    Color? favStationBg, Color? favStationIcon,
-    Color? favFriendBg, Color? favFriendIcon,
-    Color? favAddBg, Color? favAddIcon, Color? favText,
-    Color? timelineLine, Color? timelineDot,
-    Color? timelineTextMain, Color? timelineTextSub,
-    Color? timelineTextTime, Color? timelineTextDelay, Color? timelineTextOnTime,
-    Color? chipBg, Color? chipFg, Color? chipActiveBg, Color? chipActiveFg,
-  }) {
+  TransColors copyWith({Color? seed, Brightness? brightness}) {
     return TransColors(
-      searchBarFill: searchBarFill ?? this.searchBarFill,
-      searchIcon: searchIcon ?? this.searchIcon,
-      searchHintText: searchHintText ?? this.searchHintText,
-      searchInputText: searchInputText ?? this.searchInputText,
-      favStationBg: favStationBg ?? this.favStationBg,
-      favStationIcon: favStationIcon ?? this.favStationIcon,
-      favFriendBg: favFriendBg ?? this.favFriendBg,
-      favFriendIcon: favFriendIcon ?? this.favFriendIcon,
-      favAddBg: favAddBg ?? this.favAddBg,
-      favAddIcon: favAddIcon ?? this.favAddIcon,
-      favText: favText ?? this.favText,
-      timelineLine: timelineLine ?? this.timelineLine,
-      timelineDot: timelineDot ?? this.timelineDot,
-      timelineTextMain: timelineTextMain ?? this.timelineTextMain,
-      timelineTextSub: timelineTextSub ?? this.timelineTextSub,
-      timelineTextTime: timelineTextTime ?? this.timelineTextTime,
-      timelineTextDelay: timelineTextDelay ?? this.timelineTextDelay,
-      timelineTextOnTime: timelineTextOnTime ?? this.timelineTextOnTime,
-      chipBg: chipBg ?? this.chipBg,
-      chipFg: chipFg ?? this.chipFg,
-      chipActiveBg: chipActiveBg ?? this.chipActiveBg,
-      chipActiveFg: chipActiveFg ?? this.chipActiveFg,
+      seed: seed ?? this.seed,
+      brightness: brightness ?? this.brightness,
     );
   }
 
   @override
   TransColors lerp(ThemeExtension<TransColors>? other, double t) {
     if (other is! TransColors) return this;
-    return TransColors(
-      searchBarFill: Color.lerp(searchBarFill, other.searchBarFill, t)!,
-      searchIcon: Color.lerp(searchIcon, other.searchIcon, t)!,
-      searchHintText: Color.lerp(searchHintText, other.searchHintText, t)!,
-      searchInputText: Color.lerp(searchInputText, other.searchInputText, t)!,
-      favStationBg: Color.lerp(favStationBg, other.favStationBg, t)!,
-      favStationIcon: Color.lerp(favStationIcon, other.favStationIcon, t)!,
-      favFriendBg: Color.lerp(favFriendBg, other.favFriendBg, t)!,
-      favFriendIcon: Color.lerp(favFriendIcon, other.favFriendIcon, t)!,
-      favAddBg: Color.lerp(favAddBg, other.favAddBg, t)!,
-      favAddIcon: Color.lerp(favAddIcon, other.favAddIcon, t)!,
-      favText: Color.lerp(favText, other.favText, t)!,
-      timelineLine: Color.lerp(timelineLine, other.timelineLine, t)!,
-      timelineDot: Color.lerp(timelineDot, other.timelineDot, t)!,
-      timelineTextMain: Color.lerp(timelineTextMain, other.timelineTextMain, t)!,
-      timelineTextSub: Color.lerp(timelineTextSub, other.timelineTextSub, t)!,
-      timelineTextTime: Color.lerp(timelineTextTime, other.timelineTextTime, t)!,
-      timelineTextDelay: Color.lerp(timelineTextDelay, other.timelineTextDelay, t)!,
-      timelineTextOnTime: Color.lerp(timelineTextOnTime, other.timelineTextOnTime, t)!,
-      chipBg: Color.lerp(chipBg, other.chipBg, t)!,
-      chipFg: Color.lerp(chipFg, other.chipFg, t)!,
-      chipActiveBg: Color.lerp(chipActiveBg, other.chipActiveBg, t)!,
-      chipActiveFg: Color.lerp(chipActiveFg, other.chipActiveFg, t)!,
-    );
+    // Snap change (no fade) for simplicity
+    if (t < 0.5) return this;
+    return other;
   }
+
+  static TransColors fromSeed(Color seed, Brightness brightness) {
+    return TransColors(seed: seed, brightness: brightness);
+  }
+
+  static TransColors of(BuildContext context) => Theme.of(context).extension<TransColors>()!;
 }
 
 ThemeData createTheme(Color seed, Brightness brightness) {
@@ -199,7 +191,7 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     scaffoldBackgroundColor: scheme.surface,
     cardColor: isDark ? const Color(0xFF18181B) : Colors.white,
     appBarTheme: AppBarTheme(
-      backgroundColor: isDark ? Colors.black.withOpacity(0.8) : Colors.white.withOpacity(0.8),
+      backgroundColor: isDark ? Colors.black.withValues(alpha: 0.8) : Colors.white.withValues(alpha: 0.8),
       foregroundColor: isDark ? Colors.white : Colors.black,
     ),
     extensions: [
@@ -210,12 +202,12 @@ ThemeData createTheme(Color seed, Brightness brightness) {
       thumbColor: Colors.white,
     ),
     switchTheme: SwitchThemeData(
-      thumbColor: MaterialStateProperty.resolveWith((states) {
-        if (states.contains(MaterialState.selected)) return Colors.white;
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) return Colors.white;
         return null;
       }),
-      trackColor: MaterialStateProperty.resolveWith((states) {
-        if (states.contains(MaterialState.selected)) return seed;
+      trackColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) return seed;
         return null;
       }),
     ),
