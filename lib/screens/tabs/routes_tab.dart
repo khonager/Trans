@@ -628,7 +628,7 @@ class _RoutesTabState extends State<RoutesTab> {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: colors.cardBg.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+              decoration: BoxDecoration(color: colors.cardBg.withValues(alpha: 0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -797,7 +797,7 @@ class _RoutesTabState extends State<RoutesTab> {
             ), 
             hintText: hint, 
             hintStyle: TextStyle(
-              color: hint == "Current Location" ? Colors.blue.withOpacity(0.5) : colors.searchHintText
+              color: hint == "Current Location" ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText
             ), 
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
           )
@@ -817,7 +817,7 @@ class _RoutesTabState extends State<RoutesTab> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
+              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
             ],
           ),
         ),
