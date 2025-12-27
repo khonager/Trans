@@ -42,10 +42,14 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
+  // FIX: Force close function for desktop/web swiping
+  void _forceCloseSheet() {
+    _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
+
   Future<void> _loadLocalTicket() async {
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString('local_ticket_path');
-    
     if (path != null) {
       if (kIsWeb) {
         setState(() => _localTicketPath = path);
@@ -57,7 +61,6 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // --- LOCAL HISTORY HELPERS ---
   Future<String> _getLocalHistoryDir() async {
     final dir = await getApplicationDocumentsDirectory();
     final historyDir = Directory('${dir.path}/ticket_history');
@@ -87,8 +90,6 @@ class _TicketPanelState extends State<TicketPanel> {
           .whereType<File>()
           .where((f) => f.path.endsWith('.jpg'))
           .toList();
-      
-      // Sort by modified date (newest first)
       files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
       return files;
     } catch (e) {
@@ -98,64 +99,26 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<void> _renameHistoryItem(File file, String currentName, Function refreshCallback) async {
     final nameCtrl = TextEditingController(text: currentName.replaceAll(".jpg", "").replaceAll("hist_", "Ticket "));
-    
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(context).cardColor,
-        title: const Text("Rename Ticket"),
-        content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename")),
-        ],
-      )
-    );
-
+    final newName = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: Theme.of(context).cardColor, title: const Text("Rename Ticket"), content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")), ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename"))]));
     if (newName != null && newName.isNotEmpty) {
       try {
         final dir = file.parent;
         final newPath = '${dir.path}/$newName.jpg';
-        
-        // CHECK FOR CONFLICT
-        if (await File(newPath).exists()) {
-          if (mounted) {
-            await showDialog(
-              context: context, 
-              builder: (ctx) => AlertDialog(
-                backgroundColor: Theme.of(context).cardColor,
-                title: const Text("Name Unavailable"),
-                content: const Text("A ticket with this name already exists."),
-                actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
-              )
-            );
-          }
-          return; // Stop here
-        }
-
+        if (await File(newPath).exists()) { if (mounted) { await showDialog(context: context, builder: (ctx) => AlertDialog(backgroundColor: Theme.of(context).cardColor, title: const Text("Name Unavailable"), content: const Text("A ticket with this name already exists."), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))])); } return; }
         await file.rename(newPath);
         refreshCallback();
-      } catch (e) {
-        print("Rename error: $e");
-      }
+      } catch (e) { print("Rename error: $e"); }
     }
   }
 
   Future<void> _syncTicketFromCloud() async {
     final user = SupabaseService.currentUser;
     if (user == null) return;
-
     final remoteUrl = await SupabaseService.getTicketUrl();
     final prefs = await SharedPreferences.getInstance();
     final lastUrl = prefs.getString('remote_ticket_url');
-
     if (remoteUrl != null) {
-      if (kIsWeb) {
-        await prefs.setString('local_ticket_path', remoteUrl);
-        setState(() => _localTicketPath = remoteUrl);
-        return;
-      }
-
+      if (kIsWeb) { await prefs.setString('local_ticket_path', remoteUrl); setState(() => _localTicketPath = remoteUrl); return; }
       if (remoteUrl != lastUrl) {
         try {
           final response = await http.get(Uri.parse(remoteUrl));
@@ -164,172 +127,69 @@ class _TicketPanelState extends State<TicketPanel> {
             final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
             final file = File('${dir.path}/$filename');
             await file.writeAsBytes(response.bodyBytes);
-
             await prefs.setString('local_ticket_path', file.path);
             await prefs.setString('remote_ticket_url', remoteUrl);
-
-            // SAVE TO LOCAL HISTORY
             await _saveToHistory(file);
-
             setState(() => _localTicketPath = file.path);
           }
-        } catch (e) {
-          print("Error syncing ticket: $e");
-        }
+        } catch (e) { print("Error syncing ticket: $e"); }
       }
     }
   }
 
   Future<void> _pickAndUploadTicket() async {
     final picker = ImagePicker();
-    final XFile? picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 80,
-    );
-    
+    final XFile? picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1024, maxHeight: 1024, imageQuality: 80);
     if (picked != null) {
       setState(() => _isLoading = true);
-      
       try {
         if (kIsWeb) {
           final bytes = await picked.readAsBytes();
           final ext = picked.name.contains('.') ? picked.name.split('.').last : 'jpg';
           setState(() => _localTicketPath = picked.path);
           final url = await SupabaseService.uploadTicketBytes(bytes, ext);
-          if (url != null) {
-             final prefs = await SharedPreferences.getInstance();
-             await prefs.setString('remote_ticket_url', url);
-          }
+          if (url != null) { final prefs = await SharedPreferences.getInstance(); await prefs.setString('remote_ticket_url', url); }
         } else {
           final dir = await getApplicationDocumentsDirectory();
           final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
           final savedFile = await File(picked.path).copy('${dir.path}/$filename');
-
-          // SAVE TO HISTORY FIRST
           await _saveToHistory(savedFile);
-
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('local_ticket_path', savedFile.path);
-
           setState(() => _localTicketPath = savedFile.path);
-
           final url = await SupabaseService.uploadTicket(savedFile);
-          if (url != null) {
-            await prefs.setString('remote_ticket_url', url);
-          }
+          if (url != null) { await prefs.setString('remote_ticket_url', url); }
         }
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-      } finally {
-        setState(() => _isLoading = false);
-      }
+      } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { setState(() => _isLoading = false); }
     }
   }
 
   void _showFullImage({String? overridePath}) {
     final path = overridePath ?? _localTicketPath;
     if (path == null) return;
-    
-    showDialog(
-      context: context,
-      builder: (ctx) => GestureDetector(
-        onTap: () => Navigator.pop(ctx),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: EdgeInsets.zero,
-          child: SizedBox(
-            width: double.infinity,
-            height: double.infinity,
-            child: InteractiveViewer(
-              maxScale: 4.0,
-              child: (kIsWeb || path.startsWith('http'))
-                ? Image.network(
-                    path,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(child: CircularProgressIndicator(color: Colors.white));
-                    },
-                  )
-                : Image.file(File(path)),
-            ),
-          ),
-        ),
-      ),
-    );
+    showDialog(context: context, builder: (ctx) => GestureDetector(onTap: () => Navigator.pop(ctx), child: Dialog(backgroundColor: Colors.transparent, insetPadding: EdgeInsets.zero, child: SizedBox(width: double.infinity, height: double.infinity, child: InteractiveViewer(maxScale: 4.0, child: (kIsWeb || path.startsWith('http')) ? Image.network(path, loadingBuilder: (context, child, loadingProgress) { if (loadingProgress == null) return child; return const Center(child: CircularProgressIndicator(color: Colors.white)); }) : Image.file(File(path)))))));
   }
 
   void _manageTicketHistory() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) {
-          return Container(
-            padding: const EdgeInsets.all(20),
-            height: 500,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => StatefulBuilder(builder: (context, setModalState) {
+          return Container(padding: const EdgeInsets.all(20), height: 500, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text("Ticket History (Local)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
-                const SizedBox(height: 8),
-                const Text("Tickets saved on this device.", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: FutureBuilder<List<File>>(
-                    future: _getLocalHistoryFiles(),
-                    builder: (context, snapshot) {
+                const SizedBox(height: 8), const Text("Tickets saved on this device.", style: TextStyle(fontSize: 12, color: Colors.grey)), const SizedBox(height: 16),
+                Expanded(child: FutureBuilder<List<File>>(future: _getLocalHistoryFiles(), builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                       final files = snapshot.data ?? [];
-                      
                       if (files.isEmpty) return const Center(child: Text("No local history found."));
-
-                      return ListView.separated(
-                        itemCount: files.length,
-                        separatorBuilder: (_,__) => const Divider(color: Colors.white10),
-                        itemBuilder: (ctx, idx) {
+                      return ListView.separated(itemCount: files.length, separatorBuilder: (_,__) => const Divider(color: Colors.white10), itemBuilder: (ctx, idx) {
                           final file = files[idx];
                           final filename = file.path.split('/').last.replaceAll(".jpg", "");
                           final date = file.lastModifiedSync();
                           final dateStr = "${date.day}/${date.month}/${date.year}";
-
                           String displayName = filename.startsWith("hist_") ? "Ticket ${files.length - idx}" : filename;
-
-                          return ListTile(
-                            leading: const Icon(Icons.airplane_ticket),
-                            title: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
-                            subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)),
-                            onTap: () => _showFullImage(overridePath: file.path),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, color: Colors.blue),
-                                  onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){})),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () async {
-                                    await file.delete();
-                                    setModalState(() {}); 
-                                  },
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                )
-              ],
-            ),
-          );
-        },
-      ),
-    );
+                          return ListTile(leading: const Icon(Icons.airplane_ticket), title: Text(displayName, style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)), subtitle: Text(dateStr, style: const TextStyle(color: Colors.grey)), onTap: () => _showFullImage(overridePath: file.path), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){}))), IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () async { await file.delete(); setModalState(() {}); })]));
+                        });
+                    }))
+              ]));
+        }));
   }
 
   @override
@@ -360,8 +220,16 @@ class _TicketPanelState extends State<TicketPanel> {
             physics: const ClampingScrollPhysics(),
             padding: EdgeInsets.zero,
             children: [
+              // FIX: Gesture Detector to allow drag/swipe down on Desktop/Web
               GestureDetector(
                 onTap: _toggleSheet,
+                // Listen for vertical drag end to detect a "swipe down" intent
+                onVerticalDragEnd: (details) {
+                  // If velocity is positive (downwards)
+                  if (details.primaryVelocity! > 0) {
+                    _forceCloseSheet();
+                  }
+                },
                 behavior: HitTestBehavior.opaque, 
                 child: Padding(
                   padding: const EdgeInsets.all(16),
