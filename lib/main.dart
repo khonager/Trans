@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'config/app_config.dart';
+import 'config/app_theme.dart'; // Import the new theme file
 import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
 
@@ -97,58 +98,13 @@ class _TransAppState extends State<TransApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Generate base schemes
-    final lightScheme = ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.light);
-    
-    // For Dark Mode: We manually override 'primary' to be the saturated seed color
-    // instead of the default pastel version. This ensures high contrast for White icons.
-    final darkBase = ColorScheme.fromSeed(seedColor: _seedColor, brightness: Brightness.dark);
-    final darkScheme = darkBase.copyWith(
-      primary: _seedColor, 
-      onPrimary: Colors.white, // Ensure icons on top are white
-      primaryContainer: _seedColor.withOpacity(0.3),
-      onPrimaryContainer: Colors.white,
-    );
-
     return MaterialApp(
       title: 'Trans',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
-      theme: ThemeData(
-          brightness: Brightness.light,
-          scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-          colorScheme: lightScheme,
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-          )
-      ),
-      darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF000000),
-          colorScheme: darkScheme,
-          useMaterial3: true,
-          appBarTheme: AppBarTheme(
-            backgroundColor: Colors.black.withOpacity(0.7),
-            foregroundColor: Colors.white,
-          ),
-          // Ensure sliders and switches pop
-          sliderTheme: SliderThemeData(
-            activeTrackColor: _seedColor,
-            thumbColor: Colors.white,
-          ),
-          switchTheme: SwitchThemeData(
-            thumbColor: MaterialStateProperty.resolveWith((states) {
-              if (states.contains(MaterialState.selected)) return Colors.white;
-              return null;
-            }),
-            trackColor: MaterialStateProperty.resolveWith((states) {
-              if (states.contains(MaterialState.selected)) return _seedColor;
-              return null;
-            }),
-          )
-      ),
+      // Use the generator from app_theme.dart
+      theme: createTheme(_seedColor, Brightness.light),
+      darkTheme: createTheme(_seedColor, Brightness.dark),
       home: HomeScreen(
         onThemeChanged: _toggleTheme,
         isDarkMode: _themeMode == ThemeMode.dark,
