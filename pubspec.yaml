@@ -11,7 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
   
-  intl: ^0.19.0 # <--- ADD THIS LINE
+  intl: ^0.19.0
   http: ^1.1.0
   geolocator: ^13.0.0
   cupertino_icons: ^1.0.2
@@ -26,6 +26,10 @@ dependencies:
   supabase_flutter: ^2.0.0
   image_picker: ^1.0.7
   flutter_dotenv: ^6.0.0
+  
+  # UPDATED VERSION
+  dynamic_color: ^1.6.0
+  emoji_picker_flutter: ^4.0.0
 
 dev_dependencies:
   flutter_test:

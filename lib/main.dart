@@ -1,4 +1,5 @@
 // lib/main.dart
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,15 +11,12 @@ import 'screens/home_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // SAFELY load .env. If it's missing (Release mode), we ignore the error
-  // because AppConfig already has the keys injected by GitHub Actions.
   try {
     await dotenv.load(fileName: ".env");
   } catch (e) {
-    // Silent error: File missing is expected in Release builds
+    // Expected in Release
   }
 
-  // Initialize Supabase with the keys from AppConfig
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
@@ -36,18 +34,27 @@ class TransApp extends StatefulWidget {
 
 class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.dark;
+  Color _seedColor = const Color(0xFF4F46E5); // Default indigo
+  bool _useMaterialYou = false;
 
   @override
   void initState() {
     super.initState();
-    _loadTheme();
+    _loadSettings();
   }
 
-  Future<void> _loadTheme() async {
+  Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final isDark = prefs.getBool('isDark') ?? true;
+    final colorValue = prefs.getInt('themeColor');
+    final useMaterialYou = prefs.getBool('useMaterialYou') ?? false;
+
     setState(() {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+      if (colorValue != null) {
+        _seedColor = Color(colorValue);
+      }
+      _useMaterialYou = useMaterialYou;
     });
   }
 
@@ -59,38 +66,72 @@ class _TransAppState extends State<TransApp> {
     });
   }
 
+  Future<void> _updateColorTheme(Color color, bool useMaterialYou) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('themeColor', color.value);
+    await prefs.setBool('useMaterialYou', useMaterialYou);
+    setState(() {
+      _seedColor = color;
+      _useMaterialYou = useMaterialYou;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Trans',
-      debugShowCheckedModeBanner: false,
-      themeMode: _themeMode,
-      theme: ThemeData(
-          brightness: Brightness.light,
-          scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: Colors.white,
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-          )
-      ),
-      darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF000000),
-          primaryColor: const Color(0xFF4F46E5),
-          cardColor: const Color(0xFF111827),
-          useMaterial3: true,
-          appBarTheme: AppBarTheme(
-            backgroundColor: Colors.black.withOpacity(0.7),
-            foregroundColor: Colors.white,
-          )
-      ),
-      home: HomeScreen(
-        onThemeChanged: _toggleTheme,
-        isDarkMode: _themeMode == ThemeMode.dark,
-      ),
+    return DynamicColorBuilder(
+      builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
+        ColorScheme lightScheme;
+        ColorScheme darkScheme;
+
+        if (lightDynamic != null && darkDynamic != null && _useMaterialYou) {
+          // Use Material You (Android 12+)
+          lightScheme = lightDynamic.harmonized();
+          darkScheme = darkDynamic.harmonized();
+        } else {
+          // Use Custom Seed Color
+          lightScheme = ColorScheme.fromSeed(
+            seedColor: _seedColor,
+            brightness: Brightness.light,
+          );
+          darkScheme = ColorScheme.fromSeed(
+            seedColor: _seedColor,
+            brightness: Brightness.dark,
+          );
+        }
+
+        return MaterialApp(
+          title: 'Trans',
+          debugShowCheckedModeBanner: false,
+          themeMode: _themeMode,
+          theme: ThemeData(
+            useMaterial3: true,
+            colorScheme: lightScheme,
+            scaffoldBackgroundColor: lightScheme.surface,
+            cardColor: lightScheme.surfaceContainerLow,
+            appBarTheme: AppBarTheme(
+              backgroundColor: lightScheme.surface,
+              foregroundColor: lightScheme.onSurface,
+            ),
+          ),
+          darkTheme: ThemeData(
+            useMaterial3: true,
+            colorScheme: darkScheme,
+            scaffoldBackgroundColor: Colors.black, // Keep pure black for OLED preference? Or use darkScheme.surface
+            cardColor: const Color(0xFF111827),
+            appBarTheme: AppBarTheme(
+              backgroundColor: Colors.black.withOpacity(0.7),
+              foregroundColor: Colors.white,
+            ),
+          ),
+          home: HomeScreen(
+            onThemeChanged: _toggleTheme,
+            onColorChanged: _updateColorTheme,
+            isDarkMode: _themeMode == ThemeMode.dark,
+            currentColor: _seedColor,
+            useMaterialYou: _useMaterialYou,
+          ),
+        );
+      },
     );
   }
 }

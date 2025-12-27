@@ -1,3 +1,4 @@
+// ... imports ...
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -34,9 +35,8 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   void _initData() async {
-    // 1. Initial Fetch
     try {
-      final friends = await SupabaseService.getFriends(); // Use updated method
+      final friends = await SupabaseService.getFriends();
       final requests = await SupabaseService.getPendingRequests();
       if (mounted) {
         setState(() {
@@ -50,7 +50,6 @@ class _FriendsTabState extends State<FriendsTab> {
       if (mounted) setState(() => _isLoading = false);
     }
 
-    // 2. Streams for updates
     _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
     });
@@ -60,7 +59,11 @@ class _FriendsTabState extends State<FriendsTab> {
     });
   }
 
+  // ... _showAddFriendSheet code stays same ...
   void _showAddFriendSheet(BuildContext context) async {
+    // ... Copy existing implementation, no changes needed unless you want to show emojis in search results too ...
+    // Assuming SupabaseService.searchUsers is updated to return avatar_emoji too, you can use _buildAvatarHelper there.
+    // For brevity, I'll focus on the display widgets below.
     final searchCtrl = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
 
@@ -114,10 +117,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         if (user['id'] == SupabaseService.currentUser?.id) return const SizedBox.shrink();
                         
                         return ListTile(
-                          leading: CircleAvatar(
-                             backgroundImage: user['avatar_url'] != null ? NetworkImage(user['avatar_url']) : null,
-                             child: user['avatar_url'] == null ? Text(user['username'][0].toUpperCase()) : null
-                          ),
+                          leading: _buildAvatarHelper(user['avatar_url'], user['avatar_emoji'], user['username']),
                           title: Text(user['username']),
                           trailing: IconButton(
                             icon: const Icon(Icons.person_add, color: Colors.blue),
@@ -151,18 +151,14 @@ class _FriendsTabState extends State<FriendsTab> {
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
     
     // SORTING
-final now = DateTime.now().toUtc(); // Compare against UTC now
+    final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
 
     for (var f in _friends) {
       if (f['updated_at'] != null) {
-        // Parse the UTC string from DB
         final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
-        
-        // Check difference
         final isActive = now.difference(updated).inHours < 12;
-        
         if (isActive) {
           activeFriends.add(f);
           continue;
@@ -219,6 +215,21 @@ final now = DateTime.now().toUtc(); // Compare against UTC now
     );
   }
 
+  Widget _buildAvatarHelper(String? url, String? emoji, String username, {double radius = 20}) {
+    if (emoji != null && emoji.isNotEmpty) {
+       return CircleAvatar(
+         radius: radius,
+         backgroundColor: Colors.grey.shade200,
+         child: Text(emoji, style: TextStyle(fontSize: radius * 1.2)),
+       );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundImage: url != null ? NetworkImage(url) : null,
+      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?") : null,
+    );
+  }
+
   Widget _buildRequestCard(Map<String, dynamic> req, Color? textColor) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -230,10 +241,7 @@ final now = DateTime.now().toUtc(); // Compare against UTC now
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundImage: req['sender_avatar'] != null ? NetworkImage(req['sender_avatar']) : null,
-            child: req['sender_avatar'] == null ? Text((req['sender_username'] ?? "?")[0].toUpperCase()) : null,
-          ),
+          _buildAvatarHelper(req['sender_avatar'], req['sender_emoji'], req['sender_username'] ?? "?"),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -272,10 +280,7 @@ final now = DateTime.now().toUtc(); // Compare against UTC now
         children: [
           Stack(
             children: [
-              CircleAvatar(
-                backgroundImage: friend['avatar_url'] != null ? NetworkImage(friend['avatar_url']) : null,
-                child: friend['avatar_url'] == null ? Text((friend['username'] ?? "?")[0].toUpperCase()) : null,
-              ),
+              _buildAvatarHelper(friend['avatar_url'], friend['avatar_emoji'], friend['username'] ?? "?"),
               if (isActive)
                 Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).cardColor, width: 2))))
             ],

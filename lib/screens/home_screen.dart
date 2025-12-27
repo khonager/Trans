@@ -1,3 +1,4 @@
+// lib/screens/home_screen.dart
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -12,8 +13,20 @@ import '../widgets/ticket_panel.dart';
 class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
   final bool isDarkMode;
+  
+  // NEW
+  final Function(Color, bool) onColorChanged;
+  final Color currentColor;
+  final bool useMaterialYou;
 
-  const HomeScreen({super.key, required this.onThemeChanged, required this.isDarkMode});
+  const HomeScreen({
+    super.key, 
+    required this.onThemeChanged, 
+    required this.isDarkMode,
+    required this.onColorChanged,
+    required this.currentColor,
+    required this.useMaterialYou,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -24,18 +37,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Position? _currentPosition;
   bool _onlyNahverkehr = true;
   Timer? _locationTimer;
-  bool _gettingLocation = true; // This controls the spinner
+  bool _gettingLocation = true; 
 
   @override
   void initState() {
     super.initState();
-    
-    // Slight delay to allow UI to render first
     Future.delayed(const Duration(seconds: 1), () {
       _determinePosition();
     });
-
-    // Auto-update location every 2 minutes
     _locationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       if (_currentPosition != null) SupabaseService.updateLocation(_currentPosition!);
     });
@@ -51,15 +60,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return;
-
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) return;
       }
-
       if (permission == LocationPermission.deniedForever) return;
-
       final pos = await Geolocator.getCurrentPosition();
       if (mounted) {
         setState(() => _currentPosition = pos);
@@ -68,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       debugPrint("Location error: $e");
     } finally {
-      // FIX: Always turn off spinner, success or fail
       if (mounted) setState(() => _gettingLocation = false);
     }
   }
@@ -88,8 +93,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFF6366F1), Color(0xFFA855F7)]),
+                  gradient: LinearGradient(
+                      colors: [Theme.of(context).primaryColor, Theme.of(context).primaryColorDark]),
                   borderRadius: BorderRadius.circular(8)),
               child: Image.asset('assets/icon.png', width: 24, height: 24, errorBuilder: (_,__,___) => const Icon(Icons.directions_transit, size: 24, color: Colors.white)),
             ),
@@ -105,18 +110,13 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train,
                 color: _onlyNahverkehr ? Colors.greenAccent : Colors.grey),
-            tooltip: _onlyNahverkehr
-                ? "Deutschlandticket Mode (On)"
-                : "All Trains",
+            tooltip: _onlyNahverkehr ? "Deutschlandticket Mode (On)" : "All Trains",
             onPressed: () {
               setState(() => _onlyNahverkehr = !_onlyNahverkehr);
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(_onlyNahverkehr
-                      ? "Deutschlandticket Mode: On"
-                      : "All Trains Allowed")));
+                  content: Text(_onlyNahverkehr ? "Deutschlandticket Mode: On" : "All Trains Allowed")));
             },
           ),
-          // Only show this spinner if actually loading
           if (_gettingLocation)
             const Padding(
                 padding: EdgeInsets.only(right: 16),
@@ -139,17 +139,14 @@ class _HomeScreenState extends State<HomeScreen> {
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          selectedItemColor: const Color(0xFF6366F1),
+          selectedItemColor: Theme.of(context).primaryColor,
           unselectedItemColor: Colors.grey,
           currentIndex: _currentIndex,
           onTap: (idx) => setState(() => _currentIndex = idx),
           items: const [
-            BottomNavigationBarItem(
-                icon: Icon(Icons.alt_route_outlined), label: 'Routes'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.people_outline), label: 'Friends'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.settings_outlined), label: 'Settings'),
+            BottomNavigationBarItem(icon: Icon(Icons.alt_route_outlined), label: 'Routes'),
+            BottomNavigationBarItem(icon: Icon(Icons.people_outline), label: 'Friends'),
+            BottomNavigationBarItem(icon: Icon(Icons.settings_outlined), label: 'Settings'),
           ],
         ),
       ),
@@ -159,10 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCurrentTab() {
     switch (_currentIndex) {
       case 0:
-        return RoutesTab(
-          currentPosition: _currentPosition,
-          onlyNahverkehr: _onlyNahverkehr,
-        );
+        return RoutesTab(currentPosition: _currentPosition, onlyNahverkehr: _onlyNahverkehr);
       case 1:
         return FriendsTab(currentPosition: _currentPosition);
       case 2:
@@ -171,6 +165,9 @@ class _HomeScreenState extends State<HomeScreen> {
           onThemeChanged: widget.onThemeChanged,
           onlyNahverkehr: _onlyNahverkehr,
           onNahverkehrChanged: (val) => setState(() => _onlyNahverkehr = val),
+          currentColor: widget.currentColor,
+          onColorChanged: widget.onColorChanged,
+          useMaterialYou: widget.useMaterialYou,
         );
       default:
         return const SizedBox.shrink();
