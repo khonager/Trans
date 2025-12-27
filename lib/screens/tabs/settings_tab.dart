@@ -6,7 +6,7 @@ import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart'; 
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
-import '../../config/app_theme.dart'; // Import for color list
+import '../../config/app_theme.dart';
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;

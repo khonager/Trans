@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'config/app_config.dart';
-import 'config/app_theme.dart'; // Import the new theme file
+import 'config/app_theme.dart'; // Import theme config
 import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
 
@@ -34,7 +34,7 @@ class TransApp extends StatefulWidget {
 
 class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.dark;
-  Color _seedColor = const Color(0xFF4F46E5); // Default Indigo
+  Color _seedColor = const Color(0xFF4F46E5); 
 
   @override
   void initState() {
@@ -102,7 +102,6 @@ class _TransAppState extends State<TransApp> {
       title: 'Trans',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
-      // Use the generator from app_theme.dart
       theme: createTheme(_seedColor, Brightness.light),
       darkTheme: createTheme(_seedColor, Brightness.dark),
       home: HomeScreen(
