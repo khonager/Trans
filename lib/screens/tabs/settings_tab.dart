@@ -1,17 +1,21 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart'; // REQUIRED
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart'; 
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
+import '../../config/app_theme.dart';
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
+  
+  final Function(Color) onColorChanged;
+  final Color currentColor;
 
   const SettingsTab({
     super.key,
@@ -19,6 +23,8 @@ class SettingsTab extends StatefulWidget {
     required this.onThemeChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
+    required this.onColorChanged,
+    required this.currentColor,
   });
 
   @override
@@ -34,7 +40,6 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _isEditing = false;
   Map<String, dynamic>? _profile;
 
-  // Vibration Settings
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
 
@@ -69,9 +74,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _testVibration() async {
-    // FIX: Check kIsWeb
     if (kIsWeb) return;
-
     if (await Vibration.hasVibrator() ?? false) {
       List<int> pattern = [0, 500]; 
       if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
@@ -85,19 +88,33 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    // CHANGED: Added resize and quality settings to keep file size low
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 800,
-      maxHeight: 800,
-      imageQuality: 80,
+  void _pickAvatar() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      builder: (ctx) {
+        return SizedBox(
+          height: 350,
+          child: EmojiPicker(
+            onEmojiSelected: (category, emoji) async {
+              Navigator.pop(ctx);
+              await SupabaseService.updateAvatarEmoji(emoji.emoji);
+              _loadProfile();
+            },
+            config: Config(
+              height: 300,
+              checkPlatformCompatibility: true,
+              emojiViewConfig: EmojiViewConfig(
+                backgroundColor: Theme.of(context).cardColor,
+                columns: 7,
+                emojiSizeMax: 32,
+              ),
+              viewOrderConfig: const ViewOrderConfig(),
+            ),
+          ),
+        );
+      },
     );
-    if (picked != null) {
-      await SupabaseService.uploadAvatar(File(picked.path));
-      _loadProfile();
-    }
   }
 
   Future<void> _clearHistory() async {
@@ -108,14 +125,8 @@ class _SettingsTabState extends State<SettingsTab> {
         title: Text("Clear History", style: TextStyle(color: Theme.of(ctx).textTheme.bodyLarge?.color)),
         content: const Text("Are you sure you want to delete your recent search history?"),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false), 
-            child: const Text("Cancel")
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true), 
-            child: const Text("Delete", style: TextStyle(color: Colors.red))
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -135,7 +146,6 @@ class _SettingsTabState extends State<SettingsTab> {
         future: SupabaseService.getBlockedUsers(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          
           final users = snapshot.data ?? [];
           return Container(
             padding: const EdgeInsets.all(20),
@@ -145,8 +155,7 @@ class _SettingsTabState extends State<SettingsTab> {
               children: [
                 Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
                 const SizedBox(height: 16),
-                if (users.isEmpty)
-                  const Expanded(child: Center(child: Text("No blocked users"))),
+                if (users.isEmpty) const Expanded(child: Center(child: Text("No blocked users"))),
                 if (users.isNotEmpty)
                   Expanded(
                     child: ListView.separated(
@@ -160,7 +169,7 @@ class _SettingsTabState extends State<SettingsTab> {
                           trailing: TextButton(
                             onPressed: () async {
                               await SupabaseService.unblockUser(u['id']);
-                              Navigator.pop(context); // Close to refresh
+                              Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Unblocked ${u['username']}")));
                             },
                             child: const Text("Unblock"),
@@ -181,6 +190,7 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget build(BuildContext context) {
     final user = SupabaseService.currentUser;
     final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final primaryColor = Theme.of(context).primaryColor;
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -188,122 +198,105 @@ class _SettingsTabState extends State<SettingsTab> {
         children: [
           const SizedBox(height: 100),
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
-          
           const SizedBox(height: 20),
-          // App Settings
+          
           _buildSection(context, [
             SwitchListTile(
-              title: Text("Dark Mode", style: TextStyle(color: textColor)),
-              value: widget.isDarkMode,
-              onChanged: widget.onThemeChanged,
+              title: Text("Dark Mode", style: TextStyle(color: textColor)), 
+              value: widget.isDarkMode, 
+              activeColor: primaryColor,
+              onChanged: widget.onThemeChanged
             ),
             SwitchListTile(
-              title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)),
-              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              value: widget.onlyNahverkehr,
-              onChanged: widget.onNahverkehrChanged,
+              title: Text("Deutschlandticket Mode", style: TextStyle(color: textColor)), 
+              subtitle: const Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: Colors.grey)), 
+              value: widget.onlyNahverkehr, 
+              activeColor: primaryColor,
+              onChanged: widget.onNahverkehrChanged
+            ),
+          ]),
+          
+          const SizedBox(height: 20),
+          Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
+          const SizedBox(height: 8),
+          _buildSection(context, [
+            ListTile(
+              title: Text("Theme Color", style: TextStyle(color: textColor)),
+              subtitle: SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: appThemeColors.map((c) => _colorCircle(c)).toList(),
+                ),
+              ),
             ),
           ]),
 
           const SizedBox(height: 20),
-
-          // Vibration Settings
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
-             ListTile(
-               title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)),
-               trailing: DropdownButton<String>(
-                 value: _vibrationPattern,
-                 dropdownColor: Theme.of(context).cardColor,
-                 underline: const SizedBox(),
-                 items: const [
-                   DropdownMenuItem(value: 'standard', child: Text("Standard")),
-                   DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")),
-                   DropdownMenuItem(value: 'tick', child: Text("Tick")),
-                 ],
-                 onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity),
-               ),
-             ),
-             ListTile(
-               title: Text("Vibration Intensity", style: TextStyle(color: textColor)),
-               subtitle: Slider(
-                 value: _vibrationIntensity.toDouble(),
-                 min: 1, max: 255,
-                 activeColor: Theme.of(context).primaryColor,
-                 onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()),
-                 onChangeEnd: (_) => _testVibration(),
-               ),
-             ),
+             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: textColor)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: Theme.of(context).cardColor, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
+             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: textColor)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
-
+          
           const SizedBox(height: 20),
-
-          // NEW: Data & Privacy Section
           Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
-            ListTile(
-              leading: const Icon(Icons.block, color: Colors.orange),
-              title: Text("Blocked Users", style: TextStyle(color: textColor)),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: _showBlockedUsers,
-            ),
+            ListTile(leading: const Icon(Icons.block, color: Colors.orange), title: Text("Blocked Users", style: TextStyle(color: textColor)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
             const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text("Clear Search History", style: TextStyle(color: Colors.red)),
-              onTap: _clearHistory,
-            ),
+            ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
           ]),
-
           const SizedBox(height: 20),
-          
-          if (user == null)
-            _buildAuthForm(context, textColor)
-          else
-            _buildProfileSection(context, user, textColor),
-          
+          if (user == null) _buildAuthForm(context, textColor) else _buildProfileSection(context, user, textColor),
           const SizedBox(height: 100),
         ],
       ),
     );
   }
 
+  Widget _colorCircle(Color color) {
+    final isSelected = widget.currentColor.value == color.value;
+    return GestureDetector(
+      onTap: () => widget.onColorChanged(color),
+      child: Container(
+        width: 30, height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+          boxShadow: isSelected ? [const BoxShadow(color: Colors.black26, blurRadius: 4)] : null
+        ),
+        child: isSelected ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
+      ),
+    );
+  }
+
   Widget _buildProfileSection(BuildContext context, user, Color? textColor) {
+    final emoji = _profile?['avatar_emoji'];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
-            const SizedBox(width: 16),
-            GestureDetector(
-              onTap: _pickAvatar,
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  color: Colors.indigo,
-                  shape: BoxShape.circle,
-                ),
-                child: ClipOval(
-                  child: _profile?['avatar_url'] != null
-                    ? Image.network(
-                        _profile!['avatar_url'],
-                        fit: BoxFit.cover,
-                        // CHANGED: Added loading indicator
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white));
-                        },
-                      )
-                    : const Icon(Icons.camera_alt, size: 20, color: Colors.white),
-                ),
-              ),
-            ),
-          ],
-        ),
+        Row(children: [
+          Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)), 
+          const SizedBox(width: 16), 
+          GestureDetector(
+            onTap: _pickAvatar, 
+            child: Container(
+              width: 48, height: 48, 
+              // Uses current theme color background
+              decoration: BoxDecoration(color: widget.currentColor, shape: BoxShape.circle), 
+              child: ClipOval(
+                child: (emoji != null) 
+                  ? Center(child: Text(emoji, style: const TextStyle(fontSize: 24)))
+                  : const Icon(Icons.emoji_emotions, size: 24, color: Colors.white)
+              )
+            )
+          )
+        ]),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(16),
@@ -311,58 +304,15 @@ class _SettingsTabState extends State<SettingsTab> {
           child: Column(
             children: [
               if (!_isEditing) ...[
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: textColor)),
-                  subtitle: Text(user.email ?? "", style: TextStyle(color: textColor?.withOpacity(0.6))),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit),
-                    onPressed: () {
-                      _usernameCtrl.text = _profile?['username'] ?? "";
-                      setState(() => _isEditing = true);
-                    },
-                  ),
-                ),
+                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: textColor)), subtitle: Text(user.email ?? "", style: TextStyle(color: textColor?.withOpacity(0.6))), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
                 TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: "Username")),
                 TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: "New Password (Optional)"), obscureText: true),
                 const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")),
-                    ElevatedButton(
-                      onPressed: () async {
-                        try {
-                          if (_usernameCtrl.text.isNotEmpty) {
-                            await SupabaseService.updateUsername(_usernameCtrl.text);
-                          }
-                          if (_newPasswordCtrl.text.isNotEmpty) {
-                            await SupabaseService.updatePassword(_newPasswordCtrl.text);
-                          }
-                          setState(() => _isEditing = false);
-                          _loadProfile();
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!")));
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-                        }
-                      },
-                      child: const Text("Save"),
-                    ),
-                  ],
-                )
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!"))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
               ],
-              
               const Divider(),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text("Log Out", style: TextStyle(color: Colors.red)),
-                leading: const Icon(Icons.logout, color: Colors.red),
-                onTap: () async {
-                  await SupabaseService.signOut();
-                  if (mounted) setState(() {});
-                },
-              )
+              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); })
             ],
           ),
         )
@@ -371,7 +321,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Widget _buildAuthForm(BuildContext context, Color? textColor) {
-    return Container(
+     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
       child: Column(
@@ -384,42 +334,13 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text);
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
-                  }
-                },
-                child: const Text("Login"),
-              ),
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text);
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
-                  }
-                },
-                child: const Text("Sign Up"),
-              ),
-            ],
-          )
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
         ],
       ),
     );
   }
 
   Widget _buildSection(BuildContext context, List<Widget> children) {
-    return Container(
-      decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)),
-      child: Column(children: children),
-    );
+    return Container(decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16)), child: Column(children: children));
   }
 }
