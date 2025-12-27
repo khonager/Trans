@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
+import '../config/app_theme.dart';
 
 class ChatSheet extends StatefulWidget {
   final String lineId;
@@ -31,39 +32,42 @@ class _ChatSheetState extends State<ChatSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+
     return Container(
       height: 600,
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      decoration: BoxDecoration(
+        color: colors.cardBg, // Use theme bg for the sheet itself
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24))
+      ),
       child: Column(
         children: [
-          // Handle Bar
           Container(
             width: 40, height: 4, 
             margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2)),
           ),
           
-          // Header
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
-                CircleAvatar(backgroundColor: Colors.indigo, child: const Icon(Icons.directions_bus, color: Colors.white)),
+                CircleAvatar(backgroundColor: colors.chatHeaderIconBg, child: const Icon(Icons.directions_bus, color: Colors.white)),
                 const SizedBox(width: 12),
-                Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                Text(widget.title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary)),
               ],
             ),
           ),
-          const Divider(),
+          Divider(color: colors.divider),
 
-          // Messages Area
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: SupabaseService.getMessages(widget.lineId),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 final msgs = snapshot.data!;
-                if (msgs.isEmpty) return Center(child: Text("No messages yet.", style: const TextStyle(color: Colors.grey)));
+                if (msgs.isEmpty) return Center(child: Text("No messages yet.", style: TextStyle(color: colors.textSecondary)));
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
@@ -89,24 +93,24 @@ class _ChatSheetState extends State<ChatSheet> {
                               if (!isMe) 
                                 Padding(
                                   padding: const EdgeInsets.only(left: 4, bottom: 2),
-                                  child: Text(username, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                                  child: Text(username, style: TextStyle(fontSize: 10, color: colors.textSecondary)),
                                 ),
                               Container(
                                 constraints: const BoxConstraints(maxWidth: 240),
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: isMe ? Theme.of(context).primaryColor : Theme.of(context).cardColor,
+                                  color: isMe ? colors.chatBubbleMeBg : colors.chatBubbleFriendBg,
                                   borderRadius: BorderRadius.only(
                                     topLeft: const Radius.circular(16),
                                     topRight: const Radius.circular(16),
                                     bottomLeft: isMe ? const Radius.circular(16) : Radius.zero,
                                     bottomRight: isMe ? Radius.zero : const Radius.circular(16),
                                   ),
-                                  border: isMe ? null : Border.all(color: Colors.white10)
+                                  border: isMe ? null : Border.all(color: colors.chatBubbleFriendBorder)
                                 ),
                                 child: Text(
                                   msg['content'], 
-                                  style: TextStyle(color: isMe ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color)
+                                  style: TextStyle(color: isMe ? colors.chatBubbleMeText : colors.chatBubbleFriendText)
                                 ),
                               ),
                             ],
@@ -120,7 +124,6 @@ class _ChatSheetState extends State<ChatSheet> {
             ),
           ),
 
-          // Input Area
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -128,10 +131,12 @@ class _ChatSheetState extends State<ChatSheet> {
                 Expanded(
                   child: TextField(
                     controller: _msgCtrl,
+                    style: TextStyle(color: colors.textPrimary),
                     decoration: InputDecoration(
                       hintText: "Say something...",
+                      hintStyle: TextStyle(color: colors.textSecondary),
                       filled: true,
-                      fillColor: Theme.of(context).cardColor,
+                      fillColor: colors.chatInputFill,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 20)
                     ),
@@ -140,8 +145,8 @@ class _ChatSheetState extends State<ChatSheet> {
                 ),
                 const SizedBox(width: 8),
                 CircleAvatar(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  child: IconButton(icon: const Icon(Icons.send, color: Colors.white), onPressed: _send),
+                  backgroundColor: colors.chatSendBtnBg,
+                  child: IconButton(icon: Icon(Icons.send, color: colors.chatSendBtnIcon), onPressed: _send),
                 )
               ],
             ),

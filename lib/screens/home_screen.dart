@@ -7,12 +7,11 @@ import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../services/supabase_service.dart';
 import '../widgets/ticket_panel.dart'; 
+import '../config/app_theme.dart';
 
 class HomeScreen extends StatefulWidget {
   final Function(bool) onThemeChanged;
   final bool isDarkMode;
-  
-  // NEW: Accept current color to pass around
   final Function(Color) onColorChanged;
   final Color currentColor;
 
@@ -76,23 +75,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Use the active theme color
-    final primaryColor = Theme.of(context).colorScheme.primary;
+    final colors = TransColors.of(context);
 
     return Scaffold(
       extendBodyBehindAppBar: true,
       resizeToAvoidBottomInset: false,
+      backgroundColor: colors.scaffoldBg,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: (isDark ? Colors.black : Colors.white).withOpacity(0.8),
+        backgroundColor: colors.appBarBg,
         title: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                  // FIX: Use active theme color
-                  color: primaryColor,
+                  color: colors.appBarIconBg,
                   borderRadius: BorderRadius.circular(8)),
               child: Image.asset('assets/icon.png', width: 24, height: 24, errorBuilder: (_,__,___) => const Icon(Icons.directions_transit, size: 24, color: Colors.white)),
             ),
@@ -101,14 +98,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 20,
-                    color: isDark ? Colors.white : Colors.black)),
+                    color: colors.appBarTitle)),
           ],
         ),
         actions: [
           IconButton(
             icon: Icon(_onlyNahverkehr ? Icons.directions_bus : Icons.train,
-                // FIX: Use active theme color
-                color: _onlyNahverkehr ? primaryColor : Colors.grey),
+                color: _onlyNahverkehr ? colors.appBarIconBg : Colors.grey),
             tooltip: _onlyNahverkehr ? "Deutschlandticket Mode (On)" : "All Trains",
             onPressed: () {
               setState(() => _onlyNahverkehr = !_onlyNahverkehr);
@@ -133,14 +129,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-            border: const Border(top: BorderSide(color: Colors.white10)),
-            color: Theme.of(context).cardColor),
+            border: Border(top: BorderSide(color: colors.divider)),
+            color: colors.navBarBg),
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          // FIX: Use active theme color for active tab
-          selectedItemColor: primaryColor,
-          unselectedItemColor: Colors.grey,
+          selectedItemColor: colors.navBarSelected,
+          unselectedItemColor: colors.navBarUnselected,
           currentIndex: _currentIndex,
           onTap: (idx) => setState(() => _currentIndex = idx),
           items: const [

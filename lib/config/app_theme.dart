@@ -21,61 +21,130 @@ class TransColors extends ThemeExtension<TransColors> {
   const TransColors({required this.seed, required this.brightness});
 
   bool get isDark => brightness == Brightness.dark;
-
-  // ===========================================================================
-  // 🟢 NEW COLORS (Ticket, Friends, Journey)
-  // ===========================================================================
   
-  // Ticket Panel
-  Color get ticketBg => isDark ? const Color(0xFF1E1E1E) : Colors.white;
-  Color get ticketBorder => isDark ? Colors.white24 : Colors.grey.shade300;
-
-  // Add Friends Button
-  Color get addFriendBtnBg => isDark ? Colors.green.withOpacity(0.2) : Colors.green.shade100;
-  Color get addFriendBtnText => isDark ? Colors.greenAccent : Colors.green.shade800;
-
-  // Plan Journey Inputs & Buttons
-  Color get journeyInputFill => isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200;
-  Color get journeyInputIcon => isDark ? seed : Colors.grey;
-  Color get journeyBtnBg => seed;
-  Color get journeyBtnText => (seed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+  // Helper for consistent "effective seed" (White in dark mode if seed is Black)
+  Color get effectiveSeed => (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
+  
+  // Helper for consistent base cards
+  Color get baseCard => isDark ? const Color(0xFF18181B) : Colors.white;
+  Color get baseText => isDark ? Colors.white : Colors.black87;
+  Color get subText => isDark ? Colors.white54 : Colors.grey.shade700;
 
   // ===========================================================================
-  // 🟡 EXISTING COLORS (Ported to simple getters)
+  // 1. BASE COLORS
   // ===========================================================================
+  Color get scaffoldBg => isDark ? Colors.black : const Color(0xFFF3F4F6);
+  Color get cardBg => baseCard;
+  Color get textPrimary => baseText;
+  Color get textSecondary => subText;
+  Color get divider => isDark ? Colors.white10 : Colors.grey.shade300;
+  Color get modalHandle => Colors.grey.shade600;
 
-  // Search
-  Color get searchBarFill => isDark ? Colors.white.withOpacity(0.15) : Colors.grey.shade200;
-  Color get searchIcon => seed;
-  Color get searchHintText => isDark ? Colors.white54 : Colors.grey;
-  Color get searchInputText => isDark ? Colors.white : Colors.black;
+  // ===========================================================================
+  // 2. APP BAR & NAVIGATION
+  // ===========================================================================
+  Color get appBarBg => (isDark ? Colors.black : Colors.white).withOpacity(0.8);
+  Color get appBarTitle => baseText;
+  Color get appBarIconBg => effectiveSeed;
+  Color get navBarBg => baseCard;
+  Color get navBarSelected => effectiveSeed;
+  Color get navBarUnselected => Colors.grey;
 
-  // Favorites
-  Color get favStationBg => isDark ? seed.withOpacity(0.3) : seed.withOpacity(0.15);
-  Color get favStationIcon => isDark ? Colors.white : seed;
+  // ===========================================================================
+  // 3. SEARCH & HOME
+  // ===========================================================================
+  Color get searchHeaderIconBg => Colors.indigo.withOpacity(0.2);
+  Color get searchHeaderIcon => Colors.indigoAccent;
+  Color get searchInputFill => isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade200;
+  Color get searchInputIcon => isDark ? effectiveSeed : Colors.grey;
+  Color get searchInputText => baseText;
+  Color get searchHintText => isDark ? Colors.white38 : Colors.grey;
+  Color get searchBtnBg => effectiveSeed;
+  Color get searchBtnText => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+  Color get timeContainerBg => isDark ? const Color(0xFF1F2937) : Colors.grey.shade200;
+  Color get timeToggleBg => Colors.indigoAccent;
+  Color get timeToggleText => Colors.white;
+  Color get sectionHeader => isDark ? Colors.white60 : Colors.grey.shade600;
+
+  // ===========================================================================
+  // 4. FAVORITES
+  // ===========================================================================
+  Color get favStationBg => isDark ? effectiveSeed.withOpacity(0.3) : effectiveSeed.withOpacity(0.15);
+  Color get favStationIcon => isDark ? Colors.white : effectiveSeed;
   Color get favFriendBg => isDark ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.15);
   Color get favFriendIcon => isDark ? Colors.white : Colors.green;
   Color get favAddBg => isDark ? Colors.white24 : Colors.grey.withOpacity(0.2);
   Color get favAddIcon => isDark ? Colors.white : Colors.black;
   Color get favText => isDark ? Colors.white70 : Colors.black87;
 
-  // Timeline
-  Color get timelineLine => isDark ? Colors.white24 : Colors.grey.shade300;
-  Color get timelineDot => Colors.grey.shade500;
-  Color get timelineTextMain => isDark ? Colors.white : Colors.black87;
-  Color get timelineTextSub => isDark ? Colors.white54 : Colors.grey.shade700;
-  Color get timelineTextTime => isDark ? Colors.white70 : Colors.black54;
-  Color get timelineTextDelay => Colors.redAccent;
-  Color get timelineTextOnTime => Colors.greenAccent;
-
+  // ===========================================================================
+  // 5. ROUTES & STEPS
+  // ===========================================================================
+  Color get stepCardBg => baseCard;
+  Color get stepTransferBg => Colors.orange.withOpacity(0.1);
+  Color get stepTransferBorder => Colors.orange.withOpacity(0.3);
+  Color get stepTransferText => Colors.orange;
+  Color get stepTimeText => Colors.indigoAccent;
+  Color get stepPlatformText => Colors.greenAccent;
+  Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withOpacity(0.5);
+  Color get delayLate => Colors.red;
+  Color get delayOnTime => Colors.green;
+  
   // Chips
   Color get chipBg => isDark ? Colors.white12 : Colors.grey.shade200;
   Color get chipFg => isDark ? Colors.white70 : Colors.grey.shade700;
-  Color get chipActiveBg => seed;
-  Color get chipActiveFg => (seed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+  Color get chipActiveBg => effectiveSeed;
+  Color get chipActiveFg => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
 
   // ===========================================================================
-  // 🛑 BOILERPLATE (Do not edit below)
+  // 6. FRIENDS TAB
+  // ===========================================================================
+  Color get friendCardActiveBg => baseCard.withOpacity(0.9);
+  Color get friendCardInactiveBg => baseCard.withOpacity(0.4);
+  Color get friendCardActiveBorder => Colors.green.withOpacity(0.3);
+  Color get friendCardInactiveBorder => Colors.white10;
+  Color get requestCardBg => Colors.indigo.withOpacity(0.1);
+  Color get requestCardBorder => Colors.indigo.withOpacity(0.3);
+  Color get statusOnline => Colors.blue;
+  Color get statusActive => Colors.green;
+  Color get statusOffline => Colors.grey;
+  Color get actionIconSuccess => Colors.green;
+  Color get actionIconError => Colors.red;
+
+  // ===========================================================================
+  // 7. CHAT
+  // ===========================================================================
+  Color get chatHeaderIconBg => Colors.indigo;
+  Color get chatBubbleMeBg => effectiveSeed;
+  Color get chatBubbleMeText => Colors.white;
+  Color get chatBubbleFriendBg => baseCard;
+  Color get chatBubbleFriendText => baseText;
+  Color get chatBubbleFriendBorder => Colors.white10;
+  Color get chatInputFill => baseCard;
+  Color get chatSendBtnBg => effectiveSeed;
+  Color get chatSendBtnIcon => Colors.white;
+
+  // ===========================================================================
+  // 8. TICKET PANEL
+  // ===========================================================================
+  Color get ticketSheetBg => isDark ? const Color(0xFF1F2937) : Colors.white;
+  Color get ticketHeader => baseText;
+  Color get ticketBorder => Colors.grey.withOpacity(0.2);
+  Color get ticketEmptyIcon => Colors.grey.withOpacity(0.5);
+  Color get ticketAddBtnBg => const Color(0xFF4F46E5);
+  Color get ticketAddBtnText => Colors.white;
+
+  // ===========================================================================
+  // 9. SETTINGS
+  // ===========================================================================
+  Color get settingsSectionBg => baseCard;
+  Color get settingsHeader => subText;
+  Color get iconBlock => Colors.orange;
+  Color get iconDelete => Colors.red;
+  Color get authFormBg => baseCard;
+
+  // ===========================================================================
+  // 🛑 BOILERPLATE (Simplified for Getter Method)
   // ===========================================================================
 
   @override
@@ -89,6 +158,7 @@ class TransColors extends ThemeExtension<TransColors> {
   @override
   TransColors lerp(ThemeExtension<TransColors>? other, double t) {
     if (other is! TransColors) return this;
+    // Snap change (no fade) for simplicity
     if (t < 0.5) return this;
     return other;
   }

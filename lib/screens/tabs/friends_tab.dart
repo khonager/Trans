@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../services/supabase_service.dart';
+import '../../config/app_theme.dart';
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
@@ -61,11 +62,12 @@ class _FriendsTabState extends State<FriendsTab> {
   void _showAddFriendSheet(BuildContext context) {
     final searchCtrl = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
+    final colors = TransColors.of(context);
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Theme.of(context).cardColor,
+      backgroundColor: colors.cardBg,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
         builder: (context, setSheetState) {
@@ -77,8 +79,8 @@ class _FriendsTabState extends State<FriendsTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade600, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
-                  Text("Add New Friend", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                  Container(width: 40, height: 4, decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
+                  Text("Add New Friend", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                   const SizedBox(height: 16),
                   
                   TextField(
@@ -86,8 +88,8 @@ class _FriendsTabState extends State<FriendsTab> {
                     decoration: InputDecoration(
                       hintText: "Search by username...",
                       filled: true,
-                      fillColor: Theme.of(context).scaffoldBackgroundColor,
-                      prefixIcon: const Icon(Icons.search),
+                      fillColor: colors.scaffoldBg,
+                      prefixIcon: Icon(Icons.search, color: colors.textSecondary),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.arrow_forward, color: Colors.blue),
@@ -106,14 +108,14 @@ class _FriendsTabState extends State<FriendsTab> {
                   Expanded(
                     child: ListView.separated(
                       itemCount: searchResults.length,
-                      separatorBuilder: (_,__) => const Divider(color: Colors.white10),
+                      separatorBuilder: (_,__) => Divider(color: colors.divider),
                       itemBuilder: (ctx, idx) {
                         final user = searchResults[idx];
                         if (user['id'] == SupabaseService.currentUser?.id) return const SizedBox.shrink();
                         
                         return ListTile(
                           leading: _buildAvatarHelper(user),
-                          title: Text(user['username']),
+                          title: Text(user['username'], style: TextStyle(color: colors.textPrimary)),
                           trailing: IconButton(
                             icon: const Icon(Icons.person_add, color: Colors.blue),
                             onPressed: () async {
@@ -143,7 +145,7 @@ class _FriendsTabState extends State<FriendsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final colors = TransColors.of(context);
     
     // Sorting Logic
     final now = DateTime.now().toUtc(); 
@@ -176,7 +178,7 @@ class _FriendsTabState extends State<FriendsTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("Friends", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)),
+              Text("Friends", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)),
               IconButton(
                 icon: const Icon(Icons.person_add, color: Colors.blue),
                 onPressed: () => _showAddFriendSheet(context),
@@ -189,7 +191,7 @@ class _FriendsTabState extends State<FriendsTab> {
           child: _isLoading 
             ? const Center(child: CircularProgressIndicator()) 
             : combinedList.isEmpty 
-                ? Center(child: Text("No friends yet.", style: TextStyle(color: Colors.grey.shade600)))
+                ? Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary)))
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: combinedList.length,
@@ -198,10 +200,10 @@ class _FriendsTabState extends State<FriendsTab> {
                       final bool isRequest = item.containsKey('sender_id');
 
                       if (isRequest) {
-                        return _buildRequestCard(item, textColor);
+                        return _buildRequestCard(context, item);
                       } else {
                         final bool isActive = activeFriends.contains(item);
-                        return _buildFriendCard(item, isActive, textColor);
+                        return _buildFriendCard(context, item, isActive);
                       }
                     },
                   ),
@@ -215,7 +217,6 @@ class _FriendsTabState extends State<FriendsTab> {
     final url = userData['avatar_url'] ?? userData['sender_avatar'];
     final username = userData['username'] ?? userData['sender_username'] ?? "?";
     
-    // Theme color logic
     final colorVal = userData['theme_color'];
     final Color bgColor = colorVal != null ? Color(colorVal) : Colors.indigo;
 
@@ -234,14 +235,15 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildRequestCard(Map<String, dynamic> req, Color? textColor) {
+  Widget _buildRequestCard(BuildContext context, Map<String, dynamic> req) {
+    final colors = TransColors.of(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.indigo.withOpacity(0.1), 
+        color: colors.requestCardBg, 
         borderRadius: BorderRadius.circular(16), 
-        border: Border.all(color: Colors.indigo.withOpacity(0.3))
+        border: Border.all(color: colors.requestCardBorder)
       ),
       child: Row(
         children: [
@@ -251,17 +253,17 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(req['sender_username'] ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: textColor)),
-                const Text("Sent a friend request", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                Text(req['sender_username'] ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                Text("Sent a friend request", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               ],
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.check_circle, color: Colors.green),
+            icon: Icon(Icons.check_circle, color: colors.actionIconSuccess),
             onPressed: () => SupabaseService.acceptFriendRequest(req['sender_id']),
           ),
           IconButton(
-            icon: const Icon(Icons.cancel, color: Colors.red),
+            icon: Icon(Icons.cancel, color: colors.actionIconError),
             onPressed: () => SupabaseService.rejectFriendRequest(req['sender_id']),
           ),
         ],
@@ -269,16 +271,17 @@ class _FriendsTabState extends State<FriendsTab> {
     );
   }
 
-  Widget _buildFriendCard(Map<String, dynamic> friend, bool isActive, Color? textColor) {
+  Widget _buildFriendCard(BuildContext context, Map<String, dynamic> friend, bool isActive) {
+    final colors = TransColors.of(context);
     final String? currentLine = friend['current_line']; 
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isActive ? Theme.of(context).cardColor.withOpacity(0.9) : Theme.of(context).cardColor.withOpacity(0.4),
+        color: isActive ? colors.friendCardActiveBg : colors.friendCardInactiveBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isActive ? Colors.green.withOpacity(0.3) : Colors.white10)
+        border: Border.all(color: isActive ? colors.friendCardActiveBorder : colors.friendCardInactiveBorder)
       ),
       child: Row(
         children: [
@@ -286,7 +289,7 @@ class _FriendsTabState extends State<FriendsTab> {
             children: [
               _buildAvatarHelper(friend),
               if (isActive)
-                Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).cardColor, width: 2))))
+                Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: colors.statusActive, shape: BoxShape.circle, border: Border.all(color: colors.cardBg, width: 2))))
             ],
           ),
           const SizedBox(width: 16),
@@ -294,19 +297,19 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, 
               children: [
-                Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)), 
+                Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
                 const SizedBox(height: 2), 
                 
                 if (currentLine != null && currentLine.isNotEmpty && isActive)
                   Row(
                     children: [
-                      const Icon(Icons.directions_bus, size: 12, color: Colors.blue),
+                      Icon(Icons.directions_bus, size: 12, color: colors.statusOnline),
                       const SizedBox(width: 4),
-                      Text("On $currentLine", style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                      Text("On $currentLine", style: TextStyle(fontSize: 12, color: colors.statusOnline)),
                     ],
                   )
                 else
-                  Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? Colors.green : Colors.grey))
+                  Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? colors.statusActive : colors.statusOffline))
               ]
             ),
           ),

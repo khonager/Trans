@@ -16,7 +16,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
-import 'package:trans/config/app_theme.dart'; // Import theme to access TransColors
+import 'package:trans/config/app_theme.dart';
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -586,7 +586,7 @@ class _RoutesTabState extends State<RoutesTab> {
   @override
   Widget build(BuildContext context) {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = TransColors.of(context);
 
     return Column(
       children: [
@@ -607,25 +607,19 @@ class _RoutesTabState extends State<RoutesTab> {
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isActive ? const Color(0xFF4F46E5) : Theme.of(context).cardColor, borderRadius: BorderRadius.circular(20)),
+                    decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)),
                     child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))]),
                   ),
                 );
               },
             ),
           ),
-        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, isDark) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
+        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
       ],
     );
   }
 
-  Widget _buildSearchView(bool canSearch, bool isDark) {
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    final cardColor = Theme.of(context).cardColor;
-    
-    // 🟢 Use new Theme Colors
-    final colors = TransColors.of(context);
-
+  Widget _buildSearchView(bool canSearch, TransColors colors) {
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 100),
       child: Padding(
@@ -634,11 +628,11 @@ class _RoutesTabState extends State<RoutesTab> {
           children: [
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: cardColor.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+              decoration: BoxDecoration(color: colors.cardBg.withOpacity(0.9), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.search, color: Colors.indigoAccent)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor))]),
+                  Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
                   _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
@@ -646,22 +640,37 @@ class _RoutesTabState extends State<RoutesTab> {
                   _buildTextField("To", _toController, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
                   const SizedBox(height: 20),
-                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isDark ? const Color(0xFF1F2937) : Colors.grey.shade200, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(color: colors.timeContainerBg, borderRadius: BorderRadius.circular(16)),
                     child: Row(
                       children: [
-                        GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: Colors.indigoAccent, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))),
+                        GestureDetector(
+                          onTap: () => setState(() => _isArrival = !_isArrival),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), 
+                            decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)),
+                            child: Text(
+                              _isArrival ? "Arrive by" : "Depart at",
+                              style: TextStyle(
+                                color: colors.timeToggleText,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                                letterSpacing: 0.5,
+                              )
+                            )
+                          )
+                        ),
                         const SizedBox(width: 12),
-                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: textColor, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600), const SizedBox(width: 6), const Text("Now", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))]))),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("Now", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                  Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 80,
@@ -671,7 +680,7 @@ class _RoutesTabState extends State<RoutesTab> {
                       separatorBuilder: (_,__) => const SizedBox(width: 12),
                       itemBuilder: (ctx, idx) {
                           if (idx == _favorites.length) {
-                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.add, color: Colors.blue)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
+                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
                           }
                           final fav = _favorites[idx];
                           IconData icon = Icons.star;
@@ -686,7 +695,10 @@ class _RoutesTabState extends State<RoutesTab> {
                             );
                           }
 
-                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: (fav.type == 'friend' ? Colors.green : Colors.indigo).withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: fav.type == 'friend' ? Colors.green : Colors.indigo, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: textColor))]));
+                          Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg;
+                          Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon;
+
+                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))]));
                       },
                     ),
                   ),
@@ -697,8 +709,8 @@ class _RoutesTabState extends State<RoutesTab> {
                     child: ElevatedButton(
                       onPressed: canSearch ? _findRoutes : null, 
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: colors.journeyBtnBg,     // 🟢 Uses new theme
-                        foregroundColor: colors.journeyBtnText,   // 🟢 Uses new theme
+                        backgroundColor: colors.searchBtnBg,
+                        foregroundColor: colors.searchBtnText,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
                       ), 
                       child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
@@ -715,12 +727,11 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
-    final cardColor = Theme.of(context).cardColor;
+    final colors = TransColors.of(context);
     return Container(
       constraints: const BoxConstraints(maxHeight: 250),
       margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+      decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -733,11 +744,11 @@ class _RoutesTabState extends State<RoutesTab> {
               separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
               itemBuilder: (ctx, idx) {
                 final item = _suggestions[idx];
-                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
+                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
                 final station = item as Station;
                 return ListTile(
                   leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
-                  title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
+                  title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
                   onTap: () => _selectItem(station),
                   onLongPress: () {
                     final newFav = Favorite(
@@ -758,9 +769,9 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
-    final colors = TransColors.of(context); // 🟢 Get Theme Colors
+    final colors = TransColors.of(context);
 
-    Color iconColor = colors.journeyInputIcon; // 🟢 Use Dynamic Icon Color
+    Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
     else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
     
@@ -778,7 +789,7 @@ class _RoutesTabState extends State<RoutesTab> {
           style: TextStyle(color: colors.searchInputText), 
           decoration: InputDecoration(
             filled: true, 
-            fillColor: colors.journeyInputFill, // 🟢 Use Dynamic Fill Color
+            fillColor: colors.searchInputFill,
             prefixIcon: Icon(
               fieldKey == 'from' ? Icons.my_location : Icons.location_on, 
               color: iconColor, 
@@ -796,7 +807,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
+    final colors = TransColors.of(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
       children: [
@@ -805,7 +816,7 @@ class _RoutesTabState extends State<RoutesTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor)), Text(route.subtitle, style: const TextStyle(color: Colors.grey))])),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
               Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
             ],
           ),
@@ -839,19 +850,18 @@ class _StepCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
     final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
-    final cardColor = Theme.of(context).cardColor;
-    final textColor = Theme.of(context).textTheme.bodyLarge?.color;
 
     if (isTransfer) {
-      Widget iconWidget = const Icon(Icons.directions_walk, color: Colors.orange);
-      if (step.type == 'wait') iconWidget = const Icon(Icons.man, color: Colors.orange);
+      Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
+      if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
 
       return Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orange.withOpacity(0.3))),
-        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor)), Text(step.duration, style: const TextStyle(color: Colors.orange, fontSize: 12))]))]),
+        decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
+        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
       );
     }
 
@@ -859,17 +869,17 @@ class _StepCard extends StatelessWidget {
       margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 0,
-      color: cardColor,
+      color: colors.stepCardBg,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: textColor))), Text("${step.departureTime} - ${step.arrivalTime}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigoAccent))]),
-          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: const TextStyle(color: Colors.grey)), if (step.platform != null) Text(step.platform!, style: const TextStyle(color: Colors.greenAccent, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
+          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
           children: [
             if (step.stopovers != null && step.stopovers!.isNotEmpty)
               Container(
-                decoration: BoxDecoration(color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.5)),
+                decoration: BoxDecoration(color: colors.stepStopoversBg),
                 child: ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -888,10 +898,10 @@ class _StepCard extends StatelessWidget {
                       if (actualDep != null) {
                         final a = DateTime.parse(actualDep);
                         final delay = a.difference(p).inMinutes;
-                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = Colors.red; } else { timeColor = Colors.green; }
+                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; }
                       }
                     }
-                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: textColor, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
+                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
                   },
                 ),
               )
@@ -902,8 +912,9 @@ class _StepCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionChip(IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
-    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? Colors.indigoAccent : Colors.grey.withOpacity(0.2), borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontSize: 12))])));
+  Widget _buildActionChip(BuildContext context, IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
+    final colors = TransColors.of(context);
+    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
   }
 }
 
@@ -948,10 +959,11 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   @override
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
+    final colors = TransColors.of(context);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      backgroundColor: Theme.of(context).cardColor,
+      backgroundColor: colors.cardBg,
       child: Container(
         padding: const EdgeInsets.all(20),
         constraints: const BoxConstraints(maxWidth: 400),
@@ -959,7 +971,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
+            Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
             const SizedBox(height: 20),
             
             TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
@@ -984,7 +996,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                       margin: const EdgeInsets.only(right: 8),
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: isSelected ? Colors.indigoAccent : Colors.grey.withOpacity(0.1),
+                        color: isSelected ? colors.navBarSelected : colors.chipBg,
                         shape: BoxShape.circle
                       ),
                       child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey),
