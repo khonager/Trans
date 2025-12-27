@@ -53,7 +53,7 @@ class SupabaseService {
     }
   }
 
-  // Upload Image Avatar
+  // Upload Image Avatar (Mobile)
   static Future<String?> uploadAvatar(File imageFile) async {
     final user = currentUser;
     if (user == null) return null;
@@ -62,7 +62,21 @@ class SupabaseService {
     try {
       await client.storage.from('avatars').upload(fileName, imageFile);
       final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
-      // Clear emoji if setting image
+      await client.from('profiles').update({'avatar_url': imageUrl, 'avatar_emoji': null}).eq('id', user.id);
+      return imageUrl;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Upload Image Avatar (Web)
+  static Future<String?> uploadAvatarBytes(Uint8List bytes, String fileExt) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileName = '${user.id}/avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    try {
+      await client.storage.from('avatars').uploadBinary(fileName, bytes);
+      final imageUrl = client.storage.from('avatars').getPublicUrl(fileName);
       await client.from('profiles').update({'avatar_url': imageUrl, 'avatar_emoji': null}).eq('id', user.id);
       return imageUrl;
     } catch (e) {
@@ -74,7 +88,6 @@ class SupabaseService {
   static Future<void> updateAvatarEmoji(String emoji) async {
     final user = currentUser;
     if (user == null) return;
-    // Clear image URL if setting emoji, so UI knows which to prioritize
     await client.from('profiles').update({
       'avatar_emoji': emoji, 
       'avatar_url': null 
@@ -101,9 +114,6 @@ class SupabaseService {
 
     final data = favorite.toJson();
     data['user_id'] = user.id;
-    // Remove ID if it was generated locally to let Supabase gen it, 
-    // OR allow client-generated IDs. Let's use Upsert with ID.
-    
     await client.from('favorites').upsert(data);
   }
 
@@ -135,7 +145,7 @@ class SupabaseService {
         ...req,
         'sender_username': sender?['username'] ?? 'Unknown',
         'sender_avatar': sender?['avatar_url'],
-        'sender_emoji': sender?['avatar_emoji'], // Added
+        'sender_emoji': sender?['avatar_emoji'],
       };
     }).toList();
   }
@@ -171,7 +181,7 @@ class SupabaseService {
         'id': id,
         'username': profile['username'] ?? 'Unknown',
         'avatar_url': profile['avatar_url'],
-        'avatar_emoji': profile['avatar_emoji'], // Added
+        'avatar_emoji': profile['avatar_emoji'],
         'latitude': loc?['latitude'],
         'longitude': loc?['longitude'],
         'updated_at': loc?['updated_at'], 
@@ -260,7 +270,7 @@ class SupabaseService {
               ...m,
               'username': sender?['username'] ?? 'Unknown',
               'avatar_url': sender?['avatar_url'],
-              'avatar_emoji': sender?['avatar_emoji'], // Added
+              'avatar_emoji': sender?['avatar_emoji'],
             };
           }).toList();
         });

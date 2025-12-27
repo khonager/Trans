@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'; // Required for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -113,7 +113,14 @@ class _SettingsTabState extends State<SettingsTab> {
                 final picker = ImagePicker();
                 final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800, maxHeight: 800, imageQuality: 80);
                 if (picked != null) {
-                  await SupabaseService.uploadAvatar(File(picked.path));
+                  // FIX: Handle Web vs Mobile upload
+                  if (kIsWeb) {
+                    final bytes = await picked.readAsBytes();
+                    final ext = picked.name.contains('.') ? picked.name.split('.').last : 'jpg';
+                    await SupabaseService.uploadAvatarBytes(bytes, ext);
+                  } else {
+                    await SupabaseService.uploadAvatar(File(picked.path));
+                  }
                   _loadProfile();
                 }
               },
@@ -129,7 +136,6 @@ class _SettingsTabState extends State<SettingsTab> {
       context: context,
       backgroundColor: Theme.of(context).cardColor,
       builder: (ctx) {
-        // Updated for emoji_picker_flutter ^4.0.0
         return SizedBox(
           height: 350,
           child: EmojiPicker(
@@ -254,14 +260,16 @@ class _SettingsTabState extends State<SettingsTab> {
           Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor?.withOpacity(0.7))),
           const SizedBox(height: 8),
           _buildSection(context, [
-            if (Platform.isAndroid)
+            // FIX: Added !kIsWeb check to prevent crash on web
+            if (!kIsWeb && Platform.isAndroid)
               SwitchListTile(
                 title: Text("Material You (Android)", style: TextStyle(color: textColor)),
                 subtitle: const Text("Use system wallpaper colors", style: TextStyle(fontSize: 12, color: Colors.grey)),
                 value: widget.useMaterialYou,
                 onChanged: (val) => widget.onColorChanged(widget.currentColor, val),
               ),
-            if (!widget.useMaterialYou || !Platform.isAndroid)
+            // FIX: Ensure this shows on Web or non-Android, or if Material You is off
+            if (!widget.useMaterialYou || kIsWeb || !Platform.isAndroid)
               ListTile(
                 title: Text("App Theme Color", style: TextStyle(color: textColor)),
                 subtitle: SizedBox(
