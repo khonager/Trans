@@ -245,8 +245,9 @@ class _RoutesTabState extends State<RoutesTab> {
   }
   
   void _addNewFavorite() {
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
-    _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
+    // Create an empty dummy station favorite
+    final newFav = Favorite(id: '', label: '', type: 'station', station: null); 
+    _showEditFavoriteDialog(newFav);
   }
 
   // --- ROUTE LOGIC (REFACTORED) ---
@@ -261,7 +262,7 @@ class _RoutesTabState extends State<RoutesTab> {
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
-      // 1. Determine Time Block (Start -> End)
+      // 1. Determine Time Block
       DateTime blockStart;
       if (lastArrival != null) {
         blockStart = lastArrival!;
@@ -305,7 +306,7 @@ class _RoutesTabState extends State<RoutesTab> {
       int waitMinutes = totalGapMinutes - walkMinutes;
       if (waitMinutes < 1) waitMinutes = 0;
 
-      // 4. Construct Strings (FIXED)
+      // 4. Construct Strings
       // Bottom Line: The Breakdown
       List<String> breakdownParts = [];
       if (walkMinutes > 0) breakdownParts.add("Walk $walkMinutes min");
@@ -331,7 +332,7 @@ class _RoutesTabState extends State<RoutesTab> {
         actionText = "Wait for connection";
       }
 
-      // Icon Logic: 'walk' if walking, 'wait' if just waiting
+      // Icon Logic
       String type = (walkMinutes > 0) ? 'walk' : 'wait';
 
       steps.add(JourneyStep(
@@ -797,7 +798,20 @@ class _RoutesTabState extends State<RoutesTab> {
                 final item = _suggestions[idx];
                 if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
                 final station = item as Station;
-                return ListTile(leading: const Icon(Icons.place, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), onTap: () => _selectItem(station));
+                return ListTile(
+                  leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
+                  title: Text(station.name, style: TextStyle(color: textColor, fontSize: 14)), 
+                  onTap: () => _selectItem(station),
+                  // ADDED: Hold to Add Favorite Feature
+                  onLongPress: () {
+                     _showEditFavoriteDialog(Favorite(
+                       id: '', // New fav
+                       label: station.name,
+                       type: 'station',
+                       station: station
+                     ));
+                  },
+                );
               },
             ),
           ),
@@ -927,12 +941,87 @@ class _StepCard extends StatelessWidget {
   }
 }
 
-class _EditFavoriteDialog extends StatelessWidget {
+// --- FULLY RESTORED & FUNCTIONAL EDIT FAVORITE DIALOG ---
+class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
+
+  @override
+  State<_EditFavoriteDialog> createState() => _EditFavoriteDialogState();
+}
+
+class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
+  late TextEditingController _labelController;
+
+  @override
+  void initState() {
+    super.initState();
+    _labelController = TextEditingController(text: widget.favorite.label);
+  }
+
+  @override
+  void dispose() {
+    _labelController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(title: const Text("Edit Favorite"), content: const Text("Hold favorite to edit feature coming soon."), actions: [TextButton(onPressed: ()=>Navigator.pop(context), child: const Text("OK"))]);
+    final bool isNew = widget.favorite.id.isEmpty;
+    
+    return AlertDialog(
+      backgroundColor: Theme.of(context).cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+      content: TextField(
+        controller: _labelController,
+        style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color),
+        decoration: InputDecoration(
+          labelText: "Label (e.g. Home, Work)",
+          filled: true,
+          fillColor: Theme.of(context).scaffoldBackgroundColor,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        autofocus: true,
+      ),
+      actions: [
+        if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work')
+          TextButton(
+            onPressed: () async {
+              await FavoritesManager.deleteFavorite(widget.favorite.id);
+              if (mounted) Navigator.pop(context, true);
+            },
+            child: const Text("Delete", style: TextStyle(color: Colors.red)),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text("Cancel"),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF4F46E5),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
+          ),
+          onPressed: () async {
+            if (_labelController.text.trim().isEmpty) return;
+            
+            // Create updated object
+            final newFav = Favorite(
+              id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id,
+              label: _labelController.text.trim(),
+              type: widget.favorite.type,
+              station: widget.favorite.station,
+              friendId: widget.favorite.friendId,
+            );
+            
+            await FavoritesManager.saveFavorite(newFav);
+            if (mounted) Navigator.pop(context, true);
+          },
+          child: const Text("Save"),
+        ),
+      ],
+    );
   }
 }
 
