@@ -17,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import 'package:trans/utils/format_utils.dart'; // Ensure this exists
 import '../map_screen.dart'; 
 
 const List<IconData> kAvailableIcons = [
@@ -85,6 +86,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
+  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -156,9 +158,19 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _openMap(RouteTab route, {JourneyStep? focusStep}) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
+    Navigator.push(
+      context, 
+      MaterialPageRoute(
+        builder: (_) => MapScreen(
+          steps: route.steps, 
+          focusStep: focusStep,
+          currentPosition: widget.currentPosition
+        )
+      )
+    );
   }
 
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -326,26 +338,19 @@ class _RoutesTabState extends State<RoutesTab> {
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       
-      // SAFE PARSING START
-      DateTime? blockStart;
-      try {
-        blockStart = (lastArrival != null) ? lastArrival! : DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
-      } catch(e) { blockStart = DateTime.now(); }
-
-      DateTime? blockEnd;
-      try {
-        blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']) : blockStart);
-      } catch (e) { blockEnd = blockStart; }
-      // SAFE PARSING END
+      DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '') ?? DateTime.now();
+      DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '') ?? blockStart : blockStart);
 
       int walkMinutes = 0;
       for (var leg in transferBuffer) {
         try {
-          walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes;
+          final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
+          final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
+          walkMinutes += arr.difference(dep).inMinutes;
         } catch(e) {}
       }
       
-      int totalGapMinutes = blockEnd!.difference(blockStart!).inMinutes;
+      int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
       
       double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -357,7 +362,7 @@ class _RoutesTabState extends State<RoutesTab> {
         type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
         instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer",
-        duration: "$totalGapMinutes min",
+        duration: FormatUtils.formatDuration(totalGapMinutes), // FORMAT UTILS
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: walkMinutes > 0,
@@ -378,16 +383,15 @@ class _RoutesTabState extends State<RoutesTab> {
           arr = DateTime.parse(leg['arrival']);
         } catch(e) {}
 
-        if (dep == null || arr == null) continue; // Skip broken legs
+        if (dep == null || arr == null) continue;
 
         flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
         
-        // FIX: Strong Null Safety Checks
         steps.add(JourneyStep(
           type: 'ride',
-          line: leg['line']?['name']?.toString() ?? '?', // Check nesting
+          line: leg['line']?['name']?.toString() ?? '?',
           instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
-          duration: "${arr.difference(dep).inMinutes} min",
+          duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes), // FORMAT UTILS
           departureTime: DateFormat('HH:mm').format(dep),
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
@@ -420,7 +424,7 @@ class _RoutesTabState extends State<RoutesTab> {
       if (legs.isNotEmpty) {
         final start = DateTime.parse(legs.first['departure']);
         final end = DateTime.parse(legs.last['arrival']);
-        duration = "${end.difference(start).inMinutes} min";
+        duration = FormatUtils.formatDuration(end.difference(start).inMinutes); // FORMAT UTILS
       }
       if (journeyData['arrival'] != null) arr = DateTime.parse(journeyData['arrival']);
     } catch(e) {}
@@ -450,7 +454,6 @@ class _RoutesTabState extends State<RoutesTab> {
      }
      
      if (from == null || _toStation == null) {
-        // Just in case, reset loading
         if (mounted) setState(() => _isLoadingRoute = false);
         return;
      }
@@ -458,13 +461,12 @@ class _RoutesTabState extends State<RoutesTab> {
      setState(() => _isLoadingRoute = true);
      
      try {
-       // Added simple timeout
        final res = await TransportApi.searchJourneys(
          from, _toStation!, 
          nahverkehrOnly: widget.onlyNahverkehr, 
          when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, 
          isArrival: _isArrival
-       ).timeout(const Duration(seconds: 15)); // Timeout
+       ).timeout(const Duration(seconds: 15)); 
 
        if (mounted) {
          if (res.isNotEmpty) {
@@ -480,7 +482,6 @@ class _RoutesTabState extends State<RoutesTab> {
          }
        }
      } finally {
-       // FIX: ALWAYS reset loading, no matter what
        if (mounted) setState(() => _isLoadingRoute = false);
      }
   }
@@ -734,7 +735,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                     decoration: InputDecoration(labelText: "Search Station Name", prefixIcon: const Icon(Icons.search), suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null)),
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (val.isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
+                      if (val.trim().isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
                       _debounce = Timer(const Duration(milliseconds: 400), () async {
                         if (!mounted) return;
                         setState(() => _isLoading = true);
