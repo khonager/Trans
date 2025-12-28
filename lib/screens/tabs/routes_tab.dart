@@ -85,7 +85,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC (UPDATED) ---
+  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -98,46 +98,77 @@ class _RoutesTabState extends State<RoutesTab> {
     _gpsStream?.cancel();
     _gpsStream = null;
     
-    // FIX: Clear journey status when ride stops
+    // Clear status in DB when ride ends
     SupabaseService.clearJourneyStatus();
     
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
-  void _startWakeAlarm(RouteTab route) {
+  Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
     
+    // 1. Get Settings for how many stops before
+    final prefs = await SharedPreferences.getInstance();
+    final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+
+    // 2. Identify the Ride and Target Coordinate
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
     final String currentLine = firstRide.line;
 
+    double? targetLat = firstRide.endLat;
+    double? targetLng = firstRide.endLng;
+
+    // Logic: Try to find coordinates for "X stops before"
+    if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
+      // stopovers usually includes the destination as the last element (or we infer it)
+      final stops = firstRide.stopovers!;
+      // Index of target: Length - 1 (Destination) - stopsBefore
+      int targetIndex = stops.length - 1 - stopsBefore;
+      
+      // Ensure we don't go out of bounds (negative index)
+      if (targetIndex >= 0) {
+        final stopData = stops[targetIndex];
+        // Try to get location from stop data
+        if (stopData['stop'] != null && stopData['stop']['location'] != null) {
+           targetLat = stopData['stop']['location']['latitude'];
+           targetLng = stopData['stop']['location']['longitude'];
+        }
+      }
+    }
+
+    if (targetLat == null || targetLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot start alarm: Missing destination coordinates.")));
+      return;
+    }
+
     if (mounted) setState(() => _isWakeAlarmSet = true);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! Sharing ride status with friends.")));
+    
+    String msg = "Wake Alarm Set!";
+    if (stopsBefore > 0) msg += " Alerting $stopsBefore stop(s) early.";
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     
-    // FIX: Explicitly set the line when starting tracking
+    // Explicitly set the line when starting tracking
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
+      
       // Keep updating location (and the line info) as we move
       SupabaseService.updateLocation(pos, currentLine: currentLine);
       
-      if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
-        double dist = Geolocator.distanceBetween(
-          pos.latitude, pos.longitude, 
-          route.steps.last.endLat!, route.steps.last.endLng!
-        );
-        
-        if (dist < 500) { 
-           _triggerVibration();
-           if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Arriving soon! Wake up!")));
-             _stopWakeAlarm();
-           }
-        }
+      double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
+      
+      // Trigger radius: 500m
+      if (dist < 500) { 
+         _triggerVibration();
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Up! Approaching your stop!"), backgroundColor: Colors.red));
+           _stopWakeAlarm();
+         }
       }
     });
   }
@@ -155,7 +186,7 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // ... [Retain Search Logic Unchanged] ...
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -323,6 +354,7 @@ class _RoutesTabState extends State<RoutesTab> {
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
+    // Helper to grab coords from locations
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
 
@@ -396,7 +428,7 @@ class _RoutesTabState extends State<RoutesTab> {
         isWalking: walkMinutes > 0,
         startLat: startLat,
         startLng: startLng,
-        endLat: endLat, 
+        endLat: endLat,
         endLng: endLng,
         path: path,
       ));
@@ -577,8 +609,13 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
-    // FIX: Removed updateLocation. Chatting != Riding.
-    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
+    showModalBottomSheet(
+      context: context, 
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor, 
+      isScrollControlled: true, 
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), 
+      builder: (ctx) => ChatSheet(lineId: lineName, title: lineName)
+    );
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {

@@ -42,7 +42,10 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
-  bool _isGhostMode = false;
+  // FIX: Nullable to prevent toggle animation on load
+  bool? _isGhostMode; 
+  // FIX: New setting for Alarm
+  int _stopsBeforeAlarm = 1;
 
   @override
   void initState() {
@@ -64,13 +67,14 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() {
       _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
       _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
+      _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
     });
   }
 
   Future<void> _toggleGhostMode(bool val) async {
-    // Simple toggle, no dialog
+    setState(() => _isGhostMode = val); // Immediate UI update
     await SupabaseService.toggleGhostMode(val);
-    _loadProfile();
+    // Profile is reloaded in background implicitly by toggleGhostMode's notifier if needed, but we set local state.
   }
 
   Future<void> _saveVibrationSettings(String pattern, int intensity) async {
@@ -80,6 +84,14 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() {
       _vibrationPattern = pattern;
       _vibrationIntensity = intensity;
+    });
+  }
+
+  Future<void> _saveAlarmSettings(int stops) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('alarm_stops_before', stops);
+    setState(() {
+      _stopsBeforeAlarm = stops;
     });
   }
 
@@ -216,19 +228,20 @@ class _SettingsTabState extends State<SettingsTab> {
             Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
             const SizedBox(height: 8),
             _buildSection(context, [
-              SwitchListTile(
+              // FIX: Handle Loading State to prevent toggle animation
+              _isGhostMode == null 
+              ? const ListTile(title: Text("Ghost Mode"), trailing: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
+              : SwitchListTile(
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
                 subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-                value: _isGhostMode, 
+                value: _isGhostMode!, 
                 activeColor: Colors.red,
                 onChanged: _toggleGhostMode
               ),
             ]),
             const SizedBox(height: 20),
           ],
-          
-          // ... [Rest of the file remains same] ...
-          
+
           _buildSection(context, [
             SwitchListTile(
               title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 
@@ -265,7 +278,24 @@ class _SettingsTabState extends State<SettingsTab> {
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
-             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: colors.textPrimary)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: colors.cardBg, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
+             ListTile(
+               title: Text("Alarm Trigger", style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Text("Alert ${_stopsBeforeAlarm == 0 ? 'at destination' : '$_stopsBeforeAlarm stops before'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               trailing: DropdownButton<int>(
+                 value: _stopsBeforeAlarm,
+                 dropdownColor: colors.cardBg,
+                 underline: const SizedBox(),
+                 items: const [
+                   DropdownMenuItem(value: 0, child: Text("At Dest")),
+                   DropdownMenuItem(value: 1, child: Text("1 Stop")),
+                   DropdownMenuItem(value: 2, child: Text("2 Stops")),
+                   DropdownMenuItem(value: 3, child: Text("3 Stops")),
+                 ],
+                 onChanged: (val) => _saveAlarmSettings(val!)
+               )
+             ),
+             Divider(color: colors.divider),
+             ListTile(title: Text("Alarm Pattern", style: TextStyle(color: colors.textPrimary)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: colors.cardBg, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
              ListTile(title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
           
@@ -285,6 +315,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // ... [Retain Helper Widgets: _colorCircle, _buildProfileSection, _buildAuthForm, _buildSection from previous versions] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
