@@ -1,178 +1,138 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:trans/models/station.dart';
+import 'package:flutter/foundation.dart'; // For kIsWeb
+import '../models/station.dart';
 
 class TransportApi {
-  static const String _baseUrl = 'https://v6.db.transport.rest';
+  static const String baseUrl = 'https://v6.db.transport.rest';
+
+  // FIX: Web CORS Proxy Helper
+  static Uri _getUri(String endpoint, [Map<String, dynamic>? params]) {
+    String url = "$baseUrl$endpoint";
+    if (params != null) {
+      url += "?";
+      params.forEach((key, value) {
+        if (value != null) url += "$key=${Uri.encodeComponent(value.toString())}&";
+      });
+    }
+    
+    // On Web, route through a proxy to bypass CORS
+    if (kIsWeb) {
+      return Uri.parse("https://corsproxy.io/?${Uri.encodeComponent(url)}");
+    }
+    
+    return Uri.parse(url);
+  }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
-    if (query.length < 2) return [];
-    try {
-      final Map<String, String> params = {
-        'query': query,
-        'results': '10',
-        'poi': 'true',       
-        'addresses': 'true', 
-      };
-      if (lat != null && lng != null) {
-        params['latitude'] = lat.toString();
-        params['longitude'] = lng.toString();
-      }
+    if (query.isEmpty) return [];
+    
+    final Map<String, dynamic> params = {
+      'query': query,
+      'results': 10,
+      'poi': 'true',
+      'addresses': 'true',
+    };
+    
+    // If lat/lng are provided, prioritize location
+    if (lat != null && lng != null) {
+      params['latitude'] = lat;
+      params['longitude'] = lng;
+      params['distance'] = 2000;
+    }
 
-      final uri = Uri.parse('$_baseUrl/locations').replace(queryParameters: params);
-      final response = await http.get(uri);
-      
+    try {
+      final response = await http.get(_getUri('/locations', params));
+
       if (response.statusCode == 200) {
-        final List data = json.decode(response.body);
+        final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
+      } else {
+        debugPrint("API Error: ${response.statusCode}");
+        return [];
       }
     } catch (e) {
-      debugPrint("Error fetching stations: $e");
+      debugPrint("API Exception: $e");
+      return [];
     }
-    return [];
   }
 
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
     try {
-      final uri = Uri.parse('$_baseUrl/stops/nearby').replace(queryParameters: {
-        'latitude': lat.toString(),
-        'longitude': lng.toString(),
-        'results': '10',    
-        'distance': '2000', 
-      });
-      
-      final response = await http.get(uri);
+      final response = await http.get(_getUri('/stops/nearby', {
+        'latitude': lat, 
+        'longitude': lng, 
+        'results': 5, 
+        'distance': 1000
+      }));
+
       if (response.statusCode == 200) {
-        final List data = json.decode(response.body);
+        final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
       }
+      return [];
     } catch (e) {
-      debugPrint("Error fetching nearby: $e");
+      return [];
     }
-    return [];
   }
 
   static Future<List<Map<String, dynamic>>> searchJourneys(
     Station from, 
     Station to, 
-    {
-      bool nahverkehrOnly = false,
-      DateTime? when,      
-      bool isArrival = false,
-      int results = 3 
-    }
+    {bool nahverkehrOnly = false, DateTime? when, bool isArrival = false, int results = 3}
   ) async {
+    
+    final Map<String, dynamic> params = {
+      'results': results,
+      'stopovers': 'true',
+      'polylines': 'true',
+    };
+
+    if (from.id == 'gps' || from.type == 'location') {
+      params['from.latitude'] = from.latitude;
+      params['from.longitude'] = from.longitude;
+      params['from.address'] = "${from.latitude},${from.longitude}";
+    } else {
+      params['from'] = from.id;
+    }
+
+    if (to.id == 'gps' || to.type == 'location') {
+      params['to.latitude'] = to.latitude;
+      params['to.longitude'] = to.longitude;
+    } else {
+      params['to'] = to.id;
+    }
+
+    if (when != null) {
+      params[isArrival ? 'arrival' : 'departure'] = when.toIso8601String();
+    }
+
+    if (nahverkehrOnly) {
+      params['loyaltyCard'] = 'none';
+      params['class'] = 2;
+      // Exclude ICE, IC, EC (High Speed)
+      params['nationalExpress'] = false;
+      params['national'] = false;
+    }
+
     try {
-      final Map<String, String> params = {
-        'results': results.toString(),
-        'stopovers': 'true',
-        'polylines': 'true', // Request geometry
-      };
-
-      // HANDLING START POINT
-      if (from.id.contains(',') || from.type == 'address' || from.type == 'location') {
-        params['from.latitude'] = from.latitude.toString();
-        params['from.longitude'] = from.longitude.toString();
-        params['from.address'] = (from.type == 'address' && from.name != "Current Location") 
-            ? from.name 
-            : "${from.latitude},${from.longitude}"; 
-      } else {
-        params['from'] = from.id;
-      }
-
-      // HANDLING DESTINATION
-      if (to.id.contains(',') || to.type == 'address' || to.type == 'location') {
-        params['to.latitude'] = to.latitude.toString();
-        params['to.longitude'] = to.longitude.toString();
-        params['to.address'] = (to.type == 'address' && to.name != "Current Location") 
-            ? to.name 
-            : "${to.latitude},${to.longitude}";
-      } else {
-        params['to'] = to.id;
-      }
-
-      if (when != null) {
-        final iso = when.toIso8601String().split('.').first;
-        if (isArrival) {
-          params['arrival'] = iso;
-        } else {
-          params['departure'] = iso;
-        }
-      }
-
-      if (nahverkehrOnly) {
-        params['nationalExpress'] = 'false';
-        params['national'] = 'false';
-      }
-
-      final uri = Uri.parse('$_baseUrl/journeys').replace(queryParameters: params);
-      debugPrint('TransportApi Calling: $uri');
-
-      final response = await http.get(uri);
+      final uri = _getUri('/journeys', params);
+      debugPrint("TransportApi Calling: $uri"); // Debug log
       
+      final response = await http.get(uri);
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null) {
-          List<Map<String, dynamic>> journeys = List<Map<String, dynamic>>.from(data['journeys']);
-          
-          // Parse Polylines
-          for (var journey in journeys) {
-            for (var leg in journey['legs']) {
-              if (leg['polyline'] != null) {
-                String? encoded;
-                // API V6 sometimes returns object { points: "..." }
-                if (leg['polyline'] is Map && leg['polyline']['points'] != null) {
-                  encoded = leg['polyline']['points'];
-                } else if (leg['polyline'] is String) {
-                  encoded = leg['polyline'];
-                }
-
-                if (encoded != null) {
-                  leg['decodedPath'] = _decodePolyline(encoded);
-                }
-              }
-            }
-          }
-          return journeys;
+          return List<Map<String, dynamic>>.from(data['journeys']);
         }
       } else {
-        debugPrint('TransportApi Error ${response.statusCode}: ${response.body}');
+        debugPrint("Journey Error ${response.statusCode}: ${response.body}");
       }
+      return [];
     } catch (e) {
-      debugPrint("Error fetching journeys: $e");
+      debugPrint("Journey Exception: $e");
+      return [];
     }
-    return [];
-  }
-
-  // Google Polyline Algorithm Decoder
-  static List<List<double>> _decodePolyline(String encoded) {
-    List<List<double>> points = [];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.add([lat / 1E5, lng / 1E5]);
-    }
-    return points;
   }
 }

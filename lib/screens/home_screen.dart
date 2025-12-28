@@ -10,17 +10,12 @@ import '../config/app_theme.dart';
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
-  
-  // NEW: Sync Logic
   final bool useSystemTheme;
   final Function(bool) onSystemSyncChanged;
-
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
-  
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  
   final Function(Color) onColorChanged;
   final Color currentColor;
 
@@ -79,18 +74,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final screens = [
-      RoutesTab(
-        currentPosition: _currentPosition, 
-        onlyNahverkehr: widget.onlyNahverkehr
-      ),
+      RoutesTab(currentPosition: _currentPosition, onlyNahverkehr: widget.onlyNahverkehr),
       FriendsTab(currentPosition: _currentPosition),
       SettingsTab(
         isDarkMode: widget.isDarkMode,
         onThemeChanged: widget.onThemeChanged,
-        // Pass down
         useSystemTheme: widget.useSystemTheme,
         onSystemSyncChanged: widget.onSystemSyncChanged,
-        
         onlyNahverkehr: widget.onlyNahverkehr,
         onNahverkehrChanged: widget.onNahverkehrChanged,
         isGhostMode: widget.isGhostMode,
@@ -102,6 +92,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
+      // FIX: Prevents ticket jumping
+      resizeToAvoidBottomInset: false, 
       body: Stack(
         children: [
           screens[_currentIndex],
