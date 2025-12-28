@@ -17,7 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
-import '../map_screen.dart'; // Import the new map screen
+import '../map_screen.dart'; 
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -26,6 +26,9 @@ const List<IconData> kAvailableIcons = [
   Icons.fitness_center, Icons.local_cafe, Icons.local_airport
 ];
 
+// -----------------------------------------------------------------------------
+// MAIN ROUTES TAB WIDGET
+// -----------------------------------------------------------------------------
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -76,7 +79,7 @@ class _RoutesTabState extends State<RoutesTab> {
     _fromController.dispose();
     _toController.dispose();
     _debounce?.cancel();
-    _gpsStream?.cancel(); // Cancel stream directly
+    _gpsStream?.cancel();
     super.dispose();
   }
 
@@ -85,7 +88,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME & GPS LOGIC ---
+  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -97,7 +100,6 @@ class _RoutesTabState extends State<RoutesTab> {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
-    // FIX: Check if mounted before calling setState to prevent crash
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
@@ -112,14 +114,13 @@ class _RoutesTabState extends State<RoutesTab> {
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
       
-      // Simple logic: If we have destination coordinates in the last step
       if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
         double dist = Geolocator.distanceBetween(
           pos.latitude, pos.longitude, 
           route.steps.last.endLat!, route.steps.last.endLng!
         );
         
-        if (dist < 500) { // 500 meters
+        if (dist < 500) { 
            _triggerVibration();
            if (mounted) {
              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Arriving soon! Wake up!")));
@@ -143,7 +144,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -268,10 +268,13 @@ class _RoutesTabState extends State<RoutesTab> {
           final lat = data['latitude'] as double;
           final lng = data['longitude'] as double;
           
+          // FIX: Add mounted check before using context or setState
           final stops = await TransportApi.getNearbyStops(lat, lng);
+          if (!mounted) return;
+
           if (stops.isNotEmpty) {
             target = stops.first;
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
           } else {
             throw "No stations found near friend.";
           }
@@ -281,11 +284,11 @@ class _RoutesTabState extends State<RoutesTab> {
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       } finally {
-        setState(() => _isLoadingRoute = false);
+        if (mounted) setState(() => _isLoadingRoute = false);
       }
     }
 
-    if (target != null) {
+    if (target != null && mounted) {
       setState(() {
         if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
           _fromStation = target;
@@ -298,6 +301,7 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
+  // --- CALLING THE DIALOG ---
   void _showEditFavoriteDialog(Favorite fav) async {
     await showDialog(
       context: context,
@@ -312,14 +316,13 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC ---
+  // --- ROUTE PROCESSING ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
-    // Helper to grab coords from leg locations
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
 
@@ -331,7 +334,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
       if (lastArrival != null) {
         blockStart = lastArrival!;
-        // Can't easily get previous leg info here without more state, but simplistic approach:
       } else if (transferBuffer.isNotEmpty) {
         blockStart = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
         startLocationData = transferBuffer.first['origin'];
@@ -340,13 +342,10 @@ class _RoutesTabState extends State<RoutesTab> {
       }
 
       DateTime blockEnd;
-      dynamic endLocationData;
-
       if (nextRideDeparture != null) {
         blockEnd = nextRideDeparture;
       } else if (transferBuffer.isNotEmpty) {
         blockEnd = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
-        endLocationData = transferBuffer.last['destination'];
       } else {
         blockEnd = blockStart;
       }
@@ -397,11 +396,8 @@ class _RoutesTabState extends State<RoutesTab> {
 
       String type = (walkMinutes > 0) ? 'walk' : 'wait';
 
-      // Attempt to extract coords for the transfer/walk
       double? startLat = getLat(startLocationData);
       double? startLng = getLng(startLocationData);
-      // For end coords, we might need context from the next loop or the buffer
-      // This is a simplification.
 
       steps.add(JourneyStep(
         type: type,
@@ -437,7 +433,6 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
-        // Extract Coordinates for the Ride
         double? startLat = getLat(leg['origin']);
         double? startLng = getLng(leg['origin']);
         double? endLat = getLat(leg['destination']);
@@ -460,9 +455,9 @@ class _RoutesTabState extends State<RoutesTab> {
              chatCount: last.chatCount,
              startStationId: last.startStationId,
              platform: last.platform,
-             startLat: last.startLat, // Keep original start
+             startLat: last.startLat,
              startLng: last.startLng,
-             endLat: endLat,          // Update end to new leg end
+             endLat: endLat,
              endLng: endLng,
            ));
         } else {
@@ -559,10 +554,12 @@ class _RoutesTabState extends State<RoutesTab> {
     if (from == null && widget.currentPosition != null) {
        setState(() => _isLoadingRoute = true); 
        try {
-         // Fallback logic if API fails nearby search
          if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
 
          final nearby = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+         // FIX: Added mounted check
+         if (!mounted) return;
+
          if (nearby.isNotEmpty) {
            from = nearby.first;
          } else {
@@ -576,16 +573,17 @@ class _RoutesTabState extends State<RoutesTab> {
            );
          }
        } catch (e) {
-         setState(() => _isLoadingRoute = false);
+         if (mounted) setState(() => _isLoadingRoute = false);
          return;
        }
     }
 
     if (from == null || _toStation == null) {
-      setState(() => _isLoadingRoute = false);
+      if (mounted) setState(() => _isLoadingRoute = false);
       return;
     }
-    setState(() => _isLoadingRoute = true);
+    
+    if (mounted) setState(() => _isLoadingRoute = true);
 
     DateTime? searchTime;
     if (_selectedDate != null && _selectedTime != null) {
@@ -597,15 +595,19 @@ class _RoutesTabState extends State<RoutesTab> {
           from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
 
+      // FIX: Vital mounted check
+      if (!mounted) return;
+
       if (journeys.isNotEmpty) {
         _addJourneyTab(journeys.first);
       } else {
         setState(() => _isLoadingRoute = false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoadingRoute = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
     }
   }
 
@@ -956,12 +958,16 @@ class _RoutesTabState extends State<RoutesTab> {
             onChat: (line) => _showChat(context, line),
             onAlarmToggle: () => _toggleWakeAlarm(route),
             isAlarmSet: _isWakeAlarmSet,
-            onMapTap: () => _openMap(route, focusStep: route.steps[i]), // NEW: Tap walk to see map
+            onMapTap: () => _openMap(route, focusStep: route.steps[i]), 
           )
       ],
     );
   }
 }
+
+// -----------------------------------------------------------------------------
+// HELPER WIDGETS (Outside State Class)
+// -----------------------------------------------------------------------------
 
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
@@ -970,7 +976,7 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
-  final VoidCallback onMapTap; // NEW
+  final VoidCallback onMapTap;
   final bool isAlarmSet;
 
   const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
@@ -984,7 +990,7 @@ class _StepCard extends StatelessWidget {
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
       if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
 
-      return GestureDetector( // Make clickable for map
+      return GestureDetector(
         onTap: onMapTap,
         child: Container(
           margin: const EdgeInsets.only(bottom: 16),
