@@ -38,12 +38,11 @@ class TransApp extends StatefulWidget {
 }
 
 class _TransAppState extends State<TransApp> {
-  // FIX: Default to Light to ensure toggle matches visual state on first run
-  ThemeMode _themeMode = ThemeMode.light; 
+  ThemeMode _themeMode = ThemeMode.dark; // Default fallback
+  bool _useSystemTheme = false; // Secret setting
+  
   bool _onlyNahverkehr = false;
   bool _isGhostMode = false;
-  
-  // FIX: Default to the first color in the list so it appears selected
   Color _themeColor = appThemeColors[0]; 
 
   @override
@@ -55,34 +54,66 @@ class _TransAppState extends State<TransApp> {
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Load saved values
-    final isDark = prefs.getBool('is_dark_mode');
+    // Load Simple Values
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final isGhost = prefs.getBool('ghost_mode') ?? false;
+    
+    // Load Theme Logic
+    final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
+    final storedIsDark = prefs.getBool('is_dark_mode');
 
     setState(() {
-      if (isDark != null) {
-        _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-      }
       _onlyNahverkehr = onlyNv;
       _isGhostMode = isGhost;
+      if (colorVal != null) _themeColor = Color(colorVal);
       
-      // Load color, fallback to default list[0] if null
-      if (colorVal != null) {
-        _themeColor = Color(colorVal);
+      _useSystemTheme = storedSystemSync;
+
+      if (_useSystemTheme) {
+        _themeMode = ThemeMode.system;
       } else {
-        _themeColor = appThemeColors[0];
+        // Manual Mode
+        if (storedIsDark != null) {
+          // Restore saved preference
+          _themeMode = storedIsDark ? ThemeMode.dark : ThemeMode.light;
+        } else {
+          // FIRST RUN: Detect System, Default to Dark if unsure
+          final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+          _themeMode = (brightness == Brightness.light) ? ThemeMode.light : ThemeMode.dark;
+          
+          // Save this initial state so it is "Manual" from now on
+          prefs.setBool('is_dark_mode', _themeMode == ThemeMode.dark);
+        }
       }
     });
   }
 
   void _toggleTheme(bool isDark) async {
+    // If we toggle manually, we must disable system sync
     setState(() {
+      _useSystemTheme = false; 
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_dark_mode', isDark);
+    await prefs.setBool('use_system_theme', false);
+  }
+
+  void _toggleSystemSync(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _useSystemTheme = enabled;
+      if (enabled) {
+        _themeMode = ThemeMode.system;
+      } else {
+        // When disabling sync, snap to current actual brightness so it doesn't jump
+        final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+        _themeMode = (brightness == Brightness.dark) ? ThemeMode.dark : ThemeMode.light;
+        prefs.setBool('is_dark_mode', _themeMode == ThemeMode.dark);
+      }
+    });
+    await prefs.setBool('use_system_theme', enabled);
   }
 
   void _toggleNahverkehr(bool enabled) async {
@@ -120,8 +151,13 @@ class _TransAppState extends State<TransApp> {
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),
       home: HomeScreen(
-        isDarkMode: _themeMode == ThemeMode.dark,
+        isDarkMode: _themeMode == ThemeMode.dark, // This reflects current ACTUAL mode
         onThemeChanged: _toggleTheme,
+        
+        // Pass Sync Logic
+        useSystemTheme: _useSystemTheme,
+        onSystemSyncChanged: _toggleSystemSync,
+
         onlyNahverkehr: _onlyNahverkehr,
         onNahverkehrChanged: _toggleNahverkehr,
         isGhostMode: _isGhostMode,

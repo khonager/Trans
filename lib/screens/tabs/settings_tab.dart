@@ -11,6 +11,11 @@ import '../../config/app_theme.dart';
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
+  
+  // Sync Logic
+  final bool useSystemTheme;
+  final Function(bool) onSystemSyncChanged;
+
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
   
@@ -24,6 +29,8 @@ class SettingsTab extends StatefulWidget {
     super.key,
     required this.isDarkMode,
     required this.onThemeChanged,
+    required this.useSystemTheme,
+    required this.onSystemSyncChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
     required this.isGhostMode,
@@ -244,7 +251,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
                 subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: widget.isGhostMode, 
-                // FIX: Use activeTrackColor for red background, activeColor for white thumb
                 activeTrackColor: Colors.red,
                 activeColor: Colors.white,
                 onChanged: widget.onGhostModeChanged
@@ -254,12 +260,31 @@ class _SettingsTabState extends State<SettingsTab> {
           ],
 
           _buildSection(context, [
-            SwitchListTile(
-              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 
-              value: widget.isDarkMode, 
-              activeColor: primaryColor,
-              onChanged: widget.onThemeChanged
+            // FIX: Manual ListTile to handle onLongPress for Secret Sync
+            ListTile(
+              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)),
+              subtitle: widget.useSystemTheme 
+                  ? Text("Synced with System", style: TextStyle(fontSize: 12, color: primaryColor))
+                  : null,
+              trailing: Switch(
+                value: widget.isDarkMode,
+                activeColor: widget.useSystemTheme ? Colors.grey : primaryColor,
+                onChanged: widget.useSystemTheme 
+                  ? (val) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("System Sync Active. Long press to disable.")));
+                    } 
+                  : widget.onThemeChanged,
+              ),
+              onLongPress: () {
+                // Toggle Secret Sync Mode
+                bool newState = !widget.useSystemTheme;
+                widget.onSystemSyncChanged(newState);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(newState ? "System Sync Enabled 🔄" : "Manual Mode Enabled 🖐️")
+                ));
+              },
             ),
+            
             SwitchListTile(
               title: Text("Deutschlandticket Mode", style: TextStyle(color: colors.textPrimary)), 
               subtitle: Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
@@ -285,6 +310,7 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ]),
 
+          // ... [Rest of file unchanged] ...
           const SizedBox(height: 20),
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
@@ -351,6 +377,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // ... [Retain Helper Widgets] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
@@ -428,7 +455,32 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); await _loadProfile(); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); await _loadProfile(); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); 
+                  await _loadProfile(); 
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Login")
+            ), 
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); 
+                  await _loadProfile(); 
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Sign Up")
+            )
+          ])
         ],
       ),
     );
