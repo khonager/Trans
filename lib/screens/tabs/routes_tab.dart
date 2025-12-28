@@ -567,7 +567,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
-// ... [Keep _StepCard and _EditFavoriteDialog same as before] ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
@@ -577,17 +576,154 @@ class _StepCard extends StatelessWidget {
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
   final bool isAlarmSet;
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
+
+  const _StepCard({
+    required this.step, 
+    this.isFirst = false, 
+    required this.finalDestinationId, 
+    required this.onOpenAlternatives, 
+    required this.onChat, 
+    required this.onAlarmToggle, 
+    required this.isAlarmSet, 
+    required this.onMapTap
+  });
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
-    if (isTransfer) { Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText); return GestureDetector(onTap: onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); }
-    return Card(margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0, color: colors.stepCardBg, child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]), subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]), children: [if (step.stopovers != null && step.stopovers!.isNotEmpty) Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { final stop = step.stopovers![idx]; final name = stop['stop']['name']; final stopId = stop['stop']['id']; final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; final actualDep = stop['departure'] ?? stop['arrival']; String timeStr = "--:--"; Color timeColor = Colors.grey; if (plannedDep != null) { final p = DateTime.parse(plannedDep); timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; if (actualDep != null) { final a = DateTime.parse(actualDep); final delay = a.difference(p).inMinutes; if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; } } } return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))])); })) else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))])));
+    
+    // FIX: Wait steps often have 0 distance or invalid paths, so disable map click
+    final bool isWait = step.type == 'wait';
+    final isTransfer = step.type == 'transfer' || isWait || step.type == 'walk';
+
+    if (isTransfer) { 
+      Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); 
+      if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText); 
+      
+      return GestureDetector(
+        // FIX: Only allow map tap if NOT waiting
+        onTap: isWait ? null : onMapTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16), 
+          padding: const EdgeInsets.all(16), 
+          decoration: BoxDecoration(
+            color: colors.stepTransferBg, 
+            borderRadius: BorderRadius.circular(16), 
+            border: Border.all(color: colors.stepTransferBorder)
+          ), 
+          child: Row(children: [
+            iconWidget, 
+            const SizedBox(width: 16), 
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), 
+              Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))
+            ]))
+          ])
+        )
+      ); 
+    }
+    
+    return Card(
+      margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), 
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+      elevation: 0, 
+      color: colors.stepCardBg, 
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent), 
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), 
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+            children: [
+              Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), 
+              Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))
+            ]
+          ), 
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, 
+            children: [
+              const SizedBox(height: 4), 
+              Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
+              if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+              const SizedBox(height: 8), 
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal, 
+                child: Row(children: [
+                  _buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), 
+                  const SizedBox(width: 8), 
+                  if (step.startStationId != null) ...[
+                    _buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), 
+                    const SizedBox(width: 8)
+                  ], 
+                  _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
+                ])
+              )
+            ]
+          ), 
+          children: [
+            if (step.stopovers != null && step.stopovers!.isNotEmpty) 
+              Container(
+                decoration: BoxDecoration(color: colors.stepStopoversBg), 
+                child: ListView.builder(
+                  shrinkWrap: true, 
+                  physics: const NeverScrollableScrollPhysics(), 
+                  itemCount: step.stopovers!.length, 
+                  itemBuilder: (ctx, idx) { 
+                    final stop = step.stopovers![idx]; 
+                    final name = stop['stop']['name']; 
+                    final stopId = stop['stop']['id']; 
+                    final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; 
+                    final actualDep = stop['departure'] ?? stop['arrival']; 
+                    String timeStr = "--:--"; 
+                    Color timeColor = Colors.grey; 
+                    if (plannedDep != null) { 
+                      final p = DateTime.parse(plannedDep); 
+                      timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; 
+                      if (actualDep != null) { 
+                        final a = DateTime.parse(actualDep); 
+                        final delay = a.difference(p).inMinutes; 
+                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } 
+                        else { timeColor = colors.delayOnTime; } 
+                      } 
+                    } 
+                    return ListTile(
+                      dense: true, 
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
+                      leading: const Icon(Icons.circle, size: 8, color: Colors.grey), 
+                      title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min, 
+                        children: [
+                          Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), 
+                          const SizedBox(width: 8), 
+                          IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))
+                        ]
+                      )
+                    ); 
+                  }
+                )
+              ) 
+            else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
+          ]
+        )
+      )
+    );
   }
+  
   Widget _buildActionChip(BuildContext context, IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
     final colors = TransColors.of(context);
-    return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
+    return GestureDetector(
+      onTap: onTap, 
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), 
+        decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), 
+        child: Row(children: [
+          Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), 
+          const SizedBox(width: 6), 
+          Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))
+        ])
+      )
+    );
   }
 }
 
