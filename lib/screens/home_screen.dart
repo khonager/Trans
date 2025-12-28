@@ -63,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen> {
       
       if (permission == LocationPermission.deniedForever) return;
 
-      // FIX: Catch Web errors here
       final pos = await Geolocator.getCurrentPosition();
       setState(() => _currentPosition = pos);
       
@@ -97,11 +96,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
+      // REVERT: Set to false to keep Ticket Panel stable
       resizeToAvoidBottomInset: false, 
       body: Stack(
         children: [
           screens[_currentIndex],
-          const TicketPanel(),
+          const TicketPanel(), // Removed Positioned wrapper
         ],
       ),
       bottomNavigationBar: NavigationBar(
