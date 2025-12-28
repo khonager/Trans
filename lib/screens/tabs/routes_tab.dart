@@ -168,8 +168,7 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      // Don't auto-fetch stations if we have GPS, we will use GPS directly
-      // Just show "Current Location" option is implicitly handled by UI
+      // Logic handled in findRoutes
     }
 
     if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
@@ -307,16 +306,19 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
+  // --- ROUTE PROCESSING (Fixing coordinates) ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
+    // Helper to grab coords from locations
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
 
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName) {
+    // Updated flush function accepting End Coordinates
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
       DateTime blockStart;
@@ -360,10 +362,22 @@ class _RoutesTabState extends State<RoutesTab> {
       String actionText = "Transfer";
       if (walkMinutes > 0) actionText = nextStationName != null ? "Walk to $nextStationName" : "Walk";
       
+      // Determine Start Coords (Start of walk/transfer)
       double? startLat = getLat(startLocationData);
       double? startLng = getLng(startLocationData);
+      
+      // Fallback: If this is the very first step, try grabbing from previous ride end if available
+      if (startLat == null && steps.isNotEmpty && steps.last.endLat != null) {
+        startLat = steps.last.endLat;
+        startLng = steps.last.endLng;
+      }
 
-      // Extract polyline for walking if available
+      // Determine End Coords (End of walk = Start of next ride)
+      // This is passed into the function now!
+      double? endLat = nextRideStartLat;
+      double? endLng = nextRideStartLng;
+
+      // Polyline for walking?
       List<List<double>>? path;
       if (transferBuffer.isNotEmpty && transferBuffer.first['decodedPath'] != null) {
         path = transferBuffer.first['decodedPath'];
@@ -379,6 +393,8 @@ class _RoutesTabState extends State<RoutesTab> {
         isWalking: walkMinutes > 0,
         startLat: startLat,
         startLng: startLng,
+        endLat: endLat, // FIX: Now we have an end coordinate!
+        endLng: endLng, // FIX: Now we have an end coordinate!
         path: path,
       ));
       
@@ -395,7 +411,11 @@ class _RoutesTabState extends State<RoutesTab> {
         DateTime currentRideDeparture = DateTime.parse(leg['departure']);
         String startStationName = leg['origin']?['name'] ?? 'Station';
         
-        flushTransferBuffer(currentRideDeparture, startStationName);
+        // FIX: Extract coordinates for the upcoming ride to pass to the transfer logic
+        double? nextRideStartLat = getLat(leg['origin']);
+        double? nextRideStartLng = getLng(leg['origin']);
+        
+        flushTransferBuffer(currentRideDeparture, startStationName, nextRideStartLat, nextRideStartLng);
 
         final String lineName = leg['line']['name'].toString();
         final String destName = leg['direction'] ?? leg['destination']['name'] ?? 'Unknown';
@@ -409,7 +429,6 @@ class _RoutesTabState extends State<RoutesTab> {
         double? endLat = getLat(leg['destination']);
         double? endLng = getLng(leg['destination']);
         
-        // Grab decoded path
         List<List<double>>? path = leg['decodedPath'];
 
         int legDurationMin = arr.difference(dep).inMinutes;
@@ -437,7 +456,10 @@ class _RoutesTabState extends State<RoutesTab> {
       }
     }
     
-    flushTransferBuffer(null, "Destination");
+    // Final buffer flush (walk to destination)
+    // We don't have a "next ride", but we might have coordinates from the very last leg's destination if available
+    // For simplicity, pass nulls or try to grab from transferBuffer last element
+    flushTransferBuffer(null, "Destination", null, null);
 
     return steps;
   }
@@ -499,12 +521,11 @@ class _RoutesTabState extends State<RoutesTab> {
        try {
          if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
 
-         // We now default to sending GPS coords directly to searchJourneys
-         // We do NOT call getNearbyStops here to avoid the extra step failing
+         // Use GPS directly
          from = Station(
-           id: "gps", // ID ignored by API logic for addresses
+           id: "gps", 
            name: "Current Location",
-           type: 'address', // Force address type so logic handles it
+           type: 'location', 
            latitude: widget.currentPosition!.latitude,
            longitude: widget.currentPosition!.longitude
          );
@@ -899,10 +920,6 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 }
-
-// -----------------------------------------------------------------------------
-// HELPER WIDGETS
-// -----------------------------------------------------------------------------
 
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
