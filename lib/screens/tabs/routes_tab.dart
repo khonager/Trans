@@ -667,12 +667,23 @@ class _RoutesTabState extends State<RoutesTab> {
     final String patternName = prefs.getString('vibration_pattern') ?? 'standard';
     final int intensity = prefs.getInt('vibration_intensity') ?? 128;
 
-    List<int> pattern = [0, 500]; 
-    if (patternName == 'heartbeat') {
-      // Adjusted heartbeat: 150ms on, 150ms off, 150ms on
-      pattern = [0, 150, 150, 150];
-    } else if (patternName == 'tick') {
-      pattern = [0, 50];
+    List<int> pattern = [0, 500]; // Default Standard
+
+    switch (patternName) {
+      case 'heartbeat': pattern = [0, 150, 150, 150]; break;
+      case 'tick': pattern = [0, 50]; break;
+      case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
+      case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
+      case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
+      case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
+      case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
+      case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
+      case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
+      case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
+      case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
+      case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
+      case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
+      case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
     }
 
     bool? hasAmplitude = await Vibration.hasAmplitudeControl();

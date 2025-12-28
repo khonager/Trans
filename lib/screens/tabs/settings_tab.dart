@@ -43,15 +43,14 @@ class _SettingsTabState extends State<SettingsTab> {
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
   
-  // FIX: Non-nullable default for instant rendering
   bool _isGhostMode = false; 
   int _stopsBeforeAlarm = 1;
 
   @override
   void initState() {
     super.initState();
-    _loadSettings(); // Load local prefs first (instant)
-    _loadProfile();  // Then sync with DB
+    _loadSettings();
+    _loadProfile();
   }
 
   Future<void> _loadSettings() async {
@@ -61,7 +60,6 @@ class _SettingsTabState extends State<SettingsTab> {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
-        // Load cached ghost mode state if available
         if (prefs.containsKey('ghost_mode')) {
           _isGhostMode = prefs.getBool('ghost_mode') ?? false;
         }
@@ -74,27 +72,18 @@ class _SettingsTabState extends State<SettingsTab> {
     if (mounted && profile != null) {
       setState(() {
         _profile = profile;
-        // Sync local state with DB source of truth
         _isGhostMode = profile['ghost_mode'] ?? false;
       });
-      // Update cache
       final prefs = await SharedPreferences.getInstance();
       prefs.setBool('ghost_mode', _isGhostMode);
     }
   }
 
   Future<void> _toggleGhostMode(bool val) async {
-    // 1. Instant UI Update
     setState(() => _isGhostMode = val);
-    
-    // 2. Cache locally
     final prefs = await SharedPreferences.getInstance();
     prefs.setBool('ghost_mode', val);
-
-    // 3. Sync to Backend
     await SupabaseService.toggleGhostMode(val);
-    
-    // 4. Refresh profile (optional, just to be sure)
     _loadProfile();
   }
 
@@ -119,9 +108,24 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _testVibration() async {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator() ?? false) {
-      List<int> pattern = [0, 500]; 
-      if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
-      if (_vibrationPattern == 'tick') pattern = [0, 50];
+      List<int> pattern = [0, 500]; // Standard
+
+      switch (_vibrationPattern) {
+        case 'heartbeat': pattern = [0, 150, 150, 150]; break;
+        case 'tick': pattern = [0, 50]; break;
+        case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
+        case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
+        case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
+        case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
+        case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
+        case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
+        case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
+        case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
+        case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
+        case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
+        case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
+        case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
+      }
 
       if (await Vibration.hasAmplitudeControl() ?? false) {
         Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => _vibrationIntensity).toList());
@@ -251,7 +255,7 @@ class _SettingsTabState extends State<SettingsTab> {
             _buildSection(context, [
               SwitchListTile(
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
-                subtitle: Text("Hide live location/bus", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: _isGhostMode, 
                 activeColor: Colors.red,
                 onChanged: _toggleGhostMode
@@ -313,7 +317,32 @@ class _SettingsTabState extends State<SettingsTab> {
                )
              ),
              Divider(color: colors.divider),
-             ListTile(title: Text("Alarm Pattern", style: TextStyle(color: colors.textPrimary)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: colors.cardBg, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
+             ListTile(
+               title: Text("Alarm Pattern", style: TextStyle(color: colors.textPrimary)), 
+               trailing: DropdownButton<String>(
+                 value: _vibrationPattern, 
+                 dropdownColor: colors.cardBg, 
+                 underline: const SizedBox(), 
+                 items: const [
+                   DropdownMenuItem(value: 'standard', child: Text("Standard")), 
+                   DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), 
+                   DropdownMenuItem(value: 'tick', child: Text("Tick")),
+                   DropdownMenuItem(value: 'mario', child: Text("Mario")),
+                   DropdownMenuItem(value: 'fox', child: Text("20th Century")),
+                   DropdownMenuItem(value: 'imperial', child: Text("Imperial March")),
+                   DropdownMenuItem(value: 'potter', child: Text("Harry Potter")),
+                   DropdownMenuItem(value: 'indy', child: Text("Indiana Jones")),
+                   DropdownMenuItem(value: 'mission', child: Text("Mission Impossible")),
+                   DropdownMenuItem(value: 'terminator', child: Text("Terminator")),
+                   DropdownMenuItem(value: 'future', child: Text("Back to Future")),
+                   DropdownMenuItem(value: 'eva', child: Text("Evangelion")),
+                   DropdownMenuItem(value: 'pokemon', child: Text("Pokémon")),
+                   DropdownMenuItem(value: 'titan', child: Text("Attack on Titan")),
+                   DropdownMenuItem(value: 'bebop', child: Text("Cowboy Bebop")),
+                 ], 
+                 onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity)
+               )
+             ),
              ListTile(title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
           ]),
           
@@ -333,6 +362,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // ... [Keep helper widgets: _colorCircle, _buildProfileSection, _buildAuthForm, _buildSection exactly as they were] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
@@ -410,32 +440,7 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            TextButton(
-              onPressed: () async { 
-                try { 
-                  await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); 
-                  await _loadProfile(); 
-                  if (mounted) setState(() {}); 
-                } catch (e) { 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
-                } 
-              }, 
-              child: const Text("Login")
-            ), 
-            TextButton(
-              onPressed: () async { 
-                try { 
-                  await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); 
-                  await _loadProfile(); 
-                  if (mounted) setState(() {}); 
-                } catch (e) { 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
-                } 
-              }, 
-              child: const Text("Sign Up")
-            )
-          ])
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
         ],
       ),
     );
