@@ -1,17 +1,21 @@
 class JourneyStep {
-  final String type; // 'walk', 'ride', 'wait', 'transfer'
+  final String type; // 'ride', 'walk', 'wait', 'transfer'
   final String line;
   final String instruction;
   final String duration;
   final String departureTime;
-  final String arrivalTime; 
-  final String? alert;
-  final String? seating;
-  final int? chatCount;
-  final String? startStationId;
+  final String arrivalTime;
+  final bool isWalking;
   final String? platform;
-  final List<dynamic>? stopovers; // NEW: Holds list of stops
-  final bool isWalking; // NEW: To distinguish pure walking
+  final String? startStationId;
+  final List<dynamic>? stopovers;
+  final int? chatCount;
+
+  // New fields for Map
+  final double? startLat;
+  final double? startLng;
+  final double? endLat;
+  final double? endLng;
 
   JourneyStep({
     required this.type,
@@ -20,13 +24,15 @@ class JourneyStep {
     required this.duration,
     required this.departureTime,
     required this.arrivalTime,
-    this.alert,
-    this.seating,
-    this.chatCount,
-    this.startStationId,
-    this.platform,
-    this.stopovers,
     this.isWalking = false,
+    this.platform,
+    this.startStationId,
+    this.stopovers,
+    this.chatCount,
+    this.startLat,
+    this.startLng,
+    this.endLat,
+    this.endLng,
   });
 }
 
@@ -36,7 +42,7 @@ class RouteTab {
   final String subtitle;
   final String eta;
   final String totalDuration;
-  final String destinationId; 
+  final String destinationId;
   final List<JourneyStep> steps;
 
   RouteTab({
