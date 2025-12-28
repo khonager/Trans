@@ -36,7 +36,6 @@ class SupabaseService {
           if (data.isNotEmpty) {
             final msg = data.first;
             final created = DateTime.parse(msg['created_at']);
-            // Only notify if message is recent (last 10s)
             if (DateTime.now().toUtc().difference(created).inSeconds < 10) {
               NotificationManager.showNotification(
                 id: msg['id'].hashCode,
@@ -98,12 +97,16 @@ class SupabaseService {
     await client.from('profiles').update({'ghost_mode': enable}).eq('id', user.id);
     
     if (enable) {
-      // FIX: Do NOT delete row. Just clear sensitive data so updated_at remains.
-      await client.from('user_locations').update({
+      // FIX: Use UPDATE, not DELETE. 
+      // We clear location data but keep the row so 'updated_at' is preserved.
+      // This ensures "Active Recently" works.
+      await client.from('user_locations').upsert({
+        'user_id': user.id,
         'latitude': null,
         'longitude': null,
-        'current_line': null
-      }).eq('user_id', user.id);
+        'current_line': null,
+        'updated_at': DateTime.now().toUtc().toIso8601String() // Keep timestamp fresh
+      });
     }
     
     friendsListRefresh.value++;
@@ -192,10 +195,10 @@ class SupabaseService {
       // Logic: Show details (bus/loc) ONLY if neither is ghost.
       final bool showDetails = !amIGhost && !isFriendGhost;
 
-      // Always show updated_at if available
+      // updated_at is always visible if loc record exists
       dynamic updatedAt = (loc != null) ? loc['updated_at'] : null;
+      
       dynamic lat, lng, currentLine;
-
       if (showDetails && loc != null) {
         lat = loc['latitude'];
         lng = loc['longitude'];
@@ -273,15 +276,17 @@ class SupabaseService {
     final profile = await getCurrentProfile();
     final bool isGhost = profile != null && profile['ghost_mode'] == true;
     
-    // If ghost: UPDATE ONLY updated_at. Do NOT update lat/lng.
-    // If not ghost: Update everything.
-    
     final Map<String, dynamic> updateData = {
       'user_id': user.id,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
-    if (!isGhost) {
+    // If ghost: We send NULLS for location to clear/ensure privacy, but update timestamp
+    if (isGhost) {
+      updateData['latitude'] = null;
+      updateData['longitude'] = null;
+      updateData['current_line'] = null; 
+    } else {
       updateData['latitude'] = pos.latitude;
       updateData['longitude'] = pos.longitude;
       if (currentLine != null) {
@@ -295,6 +300,8 @@ class SupabaseService {
   static Future<void> clearJourneyStatus() async {
     final user = currentUser;
     if (user == null) return;
+    // Just clear line, keep location if not ghost
+    // Ideally we should check ghost mode here too, but simpler:
     await client.from('user_locations').upsert({
       'user_id': user.id,
       'current_line': null 

@@ -97,31 +97,24 @@ class _RoutesTabState extends State<RoutesTab> {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
-    
-    // Clear status in DB when ride ends
     SupabaseService.clearJourneyStatus();
-    
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
     
-    // 1. Get Settings for how many stops before
     final prefs = await SharedPreferences.getInstance();
     final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
 
-    // 2. Identify the Ride and Target Coordinate
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
     final String currentLine = firstRide.line;
 
     double? targetLat = firstRide.endLat;
     double? targetLng = firstRide.endLng;
 
-    // Logic: Try to find coordinates for "X stops before"
     if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
       final stops = firstRide.stopovers!;
-      // Index of target: Length - 1 (Destination) - stopsBefore
       int targetIndex = stops.length - 1 - stopsBefore;
       
       if (targetIndex >= 0) {
@@ -157,7 +150,6 @@ class _RoutesTabState extends State<RoutesTab> {
       
       double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
       
-      // Trigger radius: 500m
       if (dist < 500) { 
          _triggerVibration();
          if (mounted) {
@@ -668,7 +660,6 @@ class _RoutesTabState extends State<RoutesTab> {
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
     
-    // Check if vibrator exists
     bool? hasVibrator = await Vibration.hasVibrator();
     if (hasVibrator == null || !hasVibrator) return;
 
@@ -676,10 +667,10 @@ class _RoutesTabState extends State<RoutesTab> {
     final String patternName = prefs.getString('vibration_pattern') ?? 'standard';
     final int intensity = prefs.getInt('vibration_intensity') ?? 128;
 
-    // Load actual pattern logic
-    List<int> pattern = [0, 500]; // Default Standard
+    List<int> pattern = [0, 500]; 
     if (patternName == 'heartbeat') {
-      pattern = [0, 200, 100, 200];
+      // Adjusted heartbeat: 150ms on, 150ms off, 150ms on
+      pattern = [0, 150, 150, 150];
     } else if (patternName == 'tick') {
       pattern = [0, 50];
     }
