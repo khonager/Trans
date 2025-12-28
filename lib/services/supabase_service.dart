@@ -1,3 +1,4 @@
+// ... [Retain all imports] ...
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -22,6 +23,26 @@ class SupabaseService {
     _startMessageListener();
   }
 
+  // ... [Retain Auth, Ghost Mode, Profiles, Pending Requests Logic] ...
+  // (Assuming you have these from previous steps, they are unchanged)
+  
+  // --- REMOVE FRIEND (NEW) ---
+  static Future<void> removeFriend(String friendId) async {
+    final user = currentUser;
+    if (user == null) return;
+    // Remove both directions
+    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': friendId});
+    await client.from('friends').delete().match({'user_id': friendId, 'friend_id': user.id});
+    
+    friendsListRefresh.value++;
+  }
+
+  // ... [Retain Block, Location, Ticket Logic] ...
+  
+  // (Full file content was provided in the previous turn, ensure you have the 'removeFriend' method inside it)
+  // I will provide the full file for safety if you wish, but the previous one handles it.
+  
+  // FULL CONTENT BELOW FOR COMPLETENESS:
   static void _startMessageListener() {
     final user = currentUser;
     if (user == null) return;
@@ -47,7 +68,6 @@ class SupabaseService {
         });
   }
 
-  // --- AUTH ---
   static Future<void> signUp(String email, String password, String username) async {
     String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
     final response = await client.auth.signUp(
@@ -89,7 +109,6 @@ class SupabaseService {
     await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
   }
 
-  // --- GHOST MODE ---
   static Future<void> toggleGhostMode(bool enable) async {
     final user = currentUser;
     if (user == null) return;
@@ -108,7 +127,6 @@ class SupabaseService {
     friendsListRefresh.value++;
   }
 
-  // --- PROFILES ---
   static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
     if (user == null) return null;
@@ -128,7 +146,6 @@ class SupabaseService {
     }).eq('id', user.id);
   }
 
-  // --- FRIENDS SYSTEM ---
   static Future<List<Map<String, dynamic>>> getPendingRequests() async {
     final user = currentUser;
     if (user == null) return [];
@@ -262,18 +279,6 @@ class SupabaseService {
     }
   }
 
-  // --- REMOVE FRIEND ---
-  static Future<void> removeFriend(String friendId) async {
-    final user = currentUser;
-    if (user == null) return;
-    // Remove both directions
-    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': friendId});
-    await client.from('friends').delete().match({'user_id': friendId, 'friend_id': user.id});
-    
-    friendsListRefresh.value++;
-  }
-
-  // --- LOCATION ---
   static Future<void> updateLocation(Position pos, {String? currentLine}) async {
     final user = currentUser;
     if (user == null) return;
@@ -310,7 +315,6 @@ class SupabaseService {
     });
   }
 
-  // --- CHAT ---
   static String _getPrivateKey(String otherUserId) {
     final myId = currentUser!.id;
     final List<String> ids = [myId, otherUserId]..sort();
@@ -418,7 +422,6 @@ class SupabaseService {
     });
   }
 
-  // --- TICKET & BLOCKING ---
   static Future<String?> getTicketUrl() async {
     final user = currentUser;
     if (user == null) return null;
