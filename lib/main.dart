@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart'; // Add this import
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
@@ -11,19 +11,15 @@ import 'services/supabase_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // FIX: Load environment variables before accessing AppConfig
   await dotenv.load(fileName: ".env"); 
 
-  // Initialize Supabase
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
   );
 
-  // Initialize Services (Cache Ghost Mode, Notifications)
   await SupabaseService.init();
 
-  // Set system UI style
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -42,11 +38,13 @@ class TransApp extends StatefulWidget {
 }
 
 class _TransAppState extends State<TransApp> {
-  ThemeMode _themeMode = ThemeMode.system;
+  // FIX: Default to Light to ensure toggle matches visual state on first run
+  ThemeMode _themeMode = ThemeMode.light; 
   bool _onlyNahverkehr = false;
-  // State lifted to root
   bool _isGhostMode = false;
-  Color _themeColor = Colors.indigo; 
+  
+  // FIX: Default to the first color in the list so it appears selected
+  Color _themeColor = appThemeColors[0]; 
 
   @override
   void initState() {
@@ -56,10 +54,11 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // Load saved values
     final isDark = prefs.getBool('is_dark_mode');
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
-    // Load Ghost Mode immediately
     final isGhost = prefs.getBool('ghost_mode') ?? false;
 
     setState(() {
@@ -68,8 +67,12 @@ class _TransAppState extends State<TransApp> {
       }
       _onlyNahverkehr = onlyNv;
       _isGhostMode = isGhost;
+      
+      // Load color, fallback to default list[0] if null
       if (colorVal != null) {
         _themeColor = Color(colorVal);
+      } else {
+        _themeColor = appThemeColors[0];
       }
     });
   }
@@ -90,7 +93,6 @@ class _TransAppState extends State<TransApp> {
     await prefs.setBool('only_nahverkehr', enabled);
   }
   
-  // Ghost Mode Toggle
   void _toggleGhostMode(bool enabled) async {
     setState(() {
       _isGhostMode = enabled;
@@ -122,7 +124,6 @@ class _TransAppState extends State<TransApp> {
         onThemeChanged: _toggleTheme,
         onlyNahverkehr: _onlyNahverkehr,
         onNahverkehrChanged: _toggleNahverkehr,
-        // Pass these down
         isGhostMode: _isGhostMode,
         onGhostModeChanged: _toggleGhostMode,
         onColorChanged: _updateThemeColor,
