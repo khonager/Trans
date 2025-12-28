@@ -1,14 +1,16 @@
-import 'dart:io'; 
-import 'dart:ui';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'package:supabase_flutter/supabase_flutter.dart'; 
-import '../services/supabase_service.dart';
-import '../config/app_theme.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:trans/services/supabase_service.dart';
+import 'package:trans/config/app_theme.dart';
+import 'package:intl/intl.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -20,338 +22,367 @@ class TicketPanel extends StatefulWidget {
 class _TicketPanelState extends State<TicketPanel> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   
-  String? _localTicketPath; 
+  File? _mobileFile;
+  Uint8List? _webBytes;
+  
+  List<dynamic> _history = [];
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadLocalTicket();
-    _syncTicketFromCloud();
-  }
-
-  @override
-  void dispose() {
-    _sheetController.dispose();
-    super.dispose();
+    _initTicket();
   }
 
   void _toggleSheet() {
-    if (_sheetController.size > 0.3) {
-      _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-    } else {
+    if (_sheetController.size < 0.2) {
       _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    } else {
+      _sheetController.animateTo(0.1, duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
     }
   }
 
-  Future<void> _loadLocalTicket() async {
-    final prefs = await SharedPreferences.getInstance();
-    final path = prefs.getString('local_ticket_path');
-    if (path != null) {
-      if (kIsWeb) {
-        setState(() => _localTicketPath = path);
-      } else {
-        if (await File(path).exists()) {
-          setState(() => _localTicketPath = path);
+  Future<void> _initTicket() async {
+    await _refreshHistory();
+    _syncFromCloud();
+  }
+
+  Future<void> _refreshHistory() async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      final savedData = prefs.getString('saved_ticket_base64');
+      if (savedData != null) {
+        setState(() => _webBytes = base64Decode(savedData));
+      }
+    } else {
+      // MOBILE ONLY
+      try {
+        final directory = await getApplicationDocumentsDirectory();
+        final files = directory.listSync()
+            .whereType<File>()
+            .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
+            .toList();
+        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+        
+        if (mounted) {
+          setState(() {
+            _history = files;
+            if (files.isNotEmpty) _mobileFile = files.first;
+          });
         }
+      } catch (e) {
+        debugPrint("Local Storage Error: $e");
       }
     }
   }
 
-  Future<String> _getLocalHistoryDir() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final historyDir = Directory('${dir.path}/ticket_history');
-    if (!await historyDir.exists()) {
-      await historyDir.create(recursive: true);
-    }
-    return historyDir.path;
-  }
-
-  Future<void> _saveToHistory(File file) async {
-    if (kIsWeb) return; 
+  Future<void> _syncFromCloud() async {
     try {
-      final historyPath = await _getLocalHistoryDir();
-      final filename = 'hist_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await file.copy('$historyPath/$filename');
-    } catch (e) {
-      print("Error saving to local history: $e");
-    }
-  }
-
-  Future<List<File>> _getLocalHistoryFiles() async {
-    if (kIsWeb) return [];
-    try {
-      final historyPath = await _getLocalHistoryDir();
-      final dir = Directory(historyPath);
-      final List<File> files = dir.listSync()
-          .whereType<File>()
-          .where((f) => f.path.endsWith('.jpg'))
-          .toList();
-      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-      return files;
-    } catch (e) {
-      return [];
-    }
-  }
-
-  Future<void> _renameHistoryItem(File file, String currentName, Function refreshCallback) async {
-    final colors = TransColors.of(context);
-    final nameCtrl = TextEditingController(text: currentName.replaceAll(".jpg", "").replaceAll("hist_", "Ticket "));
-    final newName = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(backgroundColor: colors.cardBg, title: Text("Rename Ticket", style: TextStyle(color: colors.textPrimary)), content: TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "New Name")), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")), ElevatedButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text("Rename"))]));
-    if (newName != null && newName.isNotEmpty) {
-      try {
-        final dir = file.parent;
-        final newPath = '${dir.path}/$newName.jpg';
-        if (await File(newPath).exists()) { if (mounted) { await showDialog(context: context, builder: (ctx) => AlertDialog(backgroundColor: colors.cardBg, title: const Text("Name Unavailable"), content: const Text("A ticket with this name already exists."), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))])); } return; }
-        await file.rename(newPath);
-        refreshCallback();
-      } catch (e) { print("Rename error: $e"); }
-    }
-  }
-
-  Future<void> _syncTicketFromCloud() async {
-    final user = SupabaseService.currentUser;
-    if (user == null) return;
-    final remoteUrl = await SupabaseService.getTicketUrl();
-    final prefs = await SharedPreferences.getInstance();
-    final lastUrl = prefs.getString('remote_ticket_url');
-    if (remoteUrl != null) {
-      if (kIsWeb) { await prefs.setString('local_ticket_path', remoteUrl); setState(() => _localTicketPath = remoteUrl); return; }
-      if (remoteUrl != lastUrl) {
-        try {
-          final response = await http.get(Uri.parse(remoteUrl));
-          if (response.statusCode == 200) {
-            final dir = await getApplicationDocumentsDirectory();
-            final filename = 'ticket_${DateTime.now().millisecondsSinceEpoch}.jpg';
-            final file = File('${dir.path}/$filename');
-            await file.writeAsBytes(response.bodyBytes);
-            await prefs.setString('local_ticket_path', file.path);
-            await prefs.setString('remote_ticket_url', remoteUrl);
-            await _saveToHistory(file);
-            setState(() => _localTicketPath = file.path);
+      final url = await SupabaseService.getTicketUrl();
+      if (url != null && url.isNotEmpty) {
+        final response = await http.get(Uri.parse(url));
+        if (response.statusCode == 200) {
+          if (kIsWeb) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('saved_ticket_base64', base64Encode(response.bodyBytes));
+            setState(() => _webBytes = response.bodyBytes);
+          } else {
+            final directory = await getApplicationDocumentsDirectory();
+            final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
+            await backupFile.writeAsBytes(response.bodyBytes);
+            await _refreshHistory();
           }
-        } catch (e) { print("Error syncing ticket: $e"); }
+        }
+      }
+    } catch (e) {
+      debugPrint("Cloud sync failed: $e");
+    }
+  }
+
+  Future<Uint8List?> _compressImage(XFile file) async {
+    try {
+      if (kIsWeb) return await file.readAsBytes(); 
+      
+      final result = await FlutterImageCompress.compressWithFile(
+        file.path,
+        minWidth: 540,
+        minHeight: 540,
+        quality: 85,
+        format: CompressFormat.jpeg,
+      );
+      return result;
+    } catch (e) {
+      return await file.readAsBytes();
+    }
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    
+    if (image == null) return;
+
+    setState(() => _isLoading = true);
+    
+    try {
+      final Uint8List? bytes = await _compressImage(image);
+      if (bytes == null) throw "Image processing failed.";
+
+      if (kIsWeb) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('saved_ticket_base64', base64Encode(bytes));
+        setState(() => _webBytes = bytes);
+      } else {
+        final directory = await getApplicationDocumentsDirectory();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final localPath = '${directory.path}/ticket_$timestamp.jpg';
+        final localFile = File(localPath);
+        await localFile.writeAsBytes(bytes);
+        
+        await _refreshHistory();
+        setState(() => _mobileFile = localFile);
+      }
+
+      await SupabaseService.uploadTicketBytes(bytes, 'jpg');
+
+      if (mounted) setState(() => _isLoading = false);
+      
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        String msg = e.toString();
+        if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
       }
     }
   }
 
-  Future<void> _pickAndUploadTicket() async {
-    final picker = ImagePicker();
-    final XFile? picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1024, maxHeight: 1024, imageQuality: 80);
-    if (picked != null) {
-      setState(() => _isLoading = true);
-      try {
-        if (kIsWeb) {
-          final bytes = await picked.readAsBytes();
-          final ext = picked.name.contains('.') ? picked.name.split('.').last : 'jpg';
-          setState(() => _localTicketPath = picked.path);
-          final url = await SupabaseService.uploadTicketBytes(bytes, ext);
-          if (url != null) { final prefs = await SharedPreferences.getInstance(); await prefs.setString('remote_ticket_url', url); }
-        } else {
-          final dir = await getApplicationDocumentsDirectory();
-          final filename = 'ticket_local_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          final savedFile = await File(picked.path).copy('${dir.path}/$filename');
-          await _saveToHistory(savedFile);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('local_ticket_path', savedFile.path);
-          setState(() => _localTicketPath = savedFile.path);
-          final url = await SupabaseService.uploadTicket(savedFile);
-          if (url != null) { await prefs.setString('remote_ticket_url', url); }
-        }
-      } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { setState(() => _isLoading = false); }
+  void _openFullScreen(ImageProvider imageProvider) {
+    showDialog(
+      context: context,
+      barrierDismissible: true, 
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.pop(context), 
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.9),
+          child: Center(
+            child: Image(image: imageProvider, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Mobile Management ---
+  void _renameFile(File file) async {
+    final controller = TextEditingController();
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Rename Ticket"),
+        content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Enter label")),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
+        ],
+      )
+    );
+
+    if (newName != null && newName.isNotEmpty) {
+      final dir = file.parent.path;
+      final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
+      await file.rename(newPath);
+      _refreshHistory();
+      Navigator.pop(context); 
     }
   }
 
-  void _showFullImage({String? overridePath}) {
-    final path = overridePath ?? _localTicketPath;
-    if (path == null) return;
-    showDialog(context: context, builder: (ctx) => GestureDetector(onTap: () => Navigator.pop(ctx), child: Dialog(backgroundColor: Colors.transparent, insetPadding: EdgeInsets.zero, child: SizedBox(width: double.infinity, height: double.infinity, child: InteractiveViewer(maxScale: 4.0, child: (kIsWeb || path.startsWith('http')) ? Image.network(path, loadingBuilder: (context, child, loadingProgress) { if (loadingProgress == null) return child; return const Center(child: CircularProgressIndicator(color: Colors.white)); }) : Image.file(File(path)))))));
+  void _deleteFile(File file) async {
+    await file.delete();
+    await _refreshHistory();
+    // If deleted the active one, refresh active
+    if (_mobileFile?.path == file.path) {
+      setState(() => _mobileFile = _history.isNotEmpty ? _history.first : null);
+    }
+    Navigator.pop(context); 
   }
 
-  void _manageTicketHistory() {
-    final colors = TransColors.of(context);
-    showModalBottomSheet(context: context, backgroundColor: colors.cardBg, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => StatefulBuilder(builder: (context, setModalState) {
-          return Container(padding: const EdgeInsets.all(20), height: 500, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text("Ticket History (Local)", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
-                const SizedBox(height: 8), Text("Tickets saved on this device.", style: TextStyle(fontSize: 12, color: colors.textSecondary)), const SizedBox(height: 16),
-                Expanded(child: FutureBuilder<List<File>>(future: _getLocalHistoryFiles(), builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                      final files = snapshot.data ?? [];
-                      if (files.isEmpty) return Center(child: Text("No local history found.", style: TextStyle(color: colors.textSecondary)));
-                      return ListView.separated(itemCount: files.length, separatorBuilder: (_,__) => Divider(color: colors.divider), itemBuilder: (ctx, idx) {
-                          final file = files[idx];
-                          final filename = file.path.split('/').last.replaceAll(".jpg", "");
-                          final date = file.lastModifiedSync();
-                          final dateStr = "${date.day}/${date.month}/${date.year}";
-                          String displayName = filename.startsWith("hist_") ? "Ticket ${files.length - idx}" : filename;
-                          return ListTile(leading: const Icon(Icons.airplane_ticket), title: Text(displayName, style: TextStyle(color: colors.textPrimary)), subtitle: Text(dateStr, style: TextStyle(color: colors.textSecondary)), onTap: () => _showFullImage(overridePath: file.path), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _renameHistoryItem(file, filename, () => setModalState((){}))), IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () async { await file.delete(); setModalState(() {}); })]));
-                        });
-                    }))
-              ]));
-        }));
+  void _showHistorySheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        height: 400,
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _history.isEmpty 
+                ? const Center(child: Text("No history found.")) 
+                : ListView.separated(
+                    itemCount: _history.length,
+                    separatorBuilder: (_,__) => const Divider(),
+                    itemBuilder: (ctx, idx) {
+                      final file = _history[idx] as File;
+                      String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
+                      if (int.tryParse(name) != null) {
+                         final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
+                         name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
+                      } else {
+                         name = name.replaceAll('_', ' ');
+                      }
+
+                      return ListTile(
+                        leading: Image.file(file, width: 40, height: 40, fit: BoxFit.cover),
+                        title: Text(name),
+                        onTap: () {
+                          setState(() => _mobileFile = file);
+                          Navigator.pop(ctx);
+                        },
+                        trailing: PopupMenuButton(
+                          onSelected: (value) {
+                            if (value == 'rename') _renameFile(file);
+                            if (value == 'delete') _deleteFile(file);
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
+                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     
+    ImageProvider? imageToShow;
+    if (kIsWeb && _webBytes != null) {
+      imageToShow = MemoryImage(_webBytes!);
+    } else if (!kIsWeb && _mobileFile != null) {
+      imageToShow = FileImage(_mobileFile!);
+    }
+
     return DraggableScrollableSheet(
-      controller: _sheetController,
-      initialChildSize: 0.08,
-      minChildSize: 0.08,
+      controller: _sheetController, 
+      initialChildSize: 0.1,
+      minChildSize: 0.1,
       maxChildSize: 0.85,
-      snap: true, 
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: colors.ticketSheetBg,
+            color: colors.ticketSheetBg, 
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 10,
-                offset: const Offset(0, -5),
-              )
+              BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12, offset: const Offset(0, -4))
             ],
           ),
-          child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
-            ),
-            child: ListView(
-              controller: scrollController,
-              physics: const ClampingScrollPhysics(),
-              padding: EdgeInsets.zero,
-              children: [
+          child: ListView(
+            controller: scrollController,
+            physics: const AlwaysScrollableScrollPhysics(), 
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+            children: [
+              GestureDetector(
+                onTap: _toggleSheet, 
+                behavior: HitTestBehavior.opaque,
+                child: Column(
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40, 
+                        height: 4, 
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
+                      )
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.confirmation_number_outlined, color: colors.ticketHeader),
+                        const SizedBox(width: 8),
+                        Text(
+                          "My Ticket", 
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.ticketHeader)
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+              
+              if (_isLoading)
+                Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
+              else if (imageToShow != null)
+                Column(
+                  children: [
+                    GestureDetector(
+                      onTap: () => _openFullScreen(imageToShow!), 
+                      onLongPress: kIsWeb ? null : _showHistorySheet, 
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image(
+                          image: imageToShow,
+                          fit: BoxFit.contain,
+                          errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket")),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(kIsWeb ? "Tap for fullscreen" : "Tap for fullscreen • Hold for history", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: colors.textPrimary,
+                          side: BorderSide(color: colors.divider),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                        ),
+                        onPressed: _pickAndUploadImage,
+                        icon: const Icon(Icons.edit),
+                        label: const Text("Change Ticket"),
+                      ),
+                    )
+                  ],
+                )
+              else
                 GestureDetector(
-                  onTap: _toggleSheet,
-                  behavior: HitTestBehavior.opaque, 
-                  onVerticalDragUpdate: (details) {
-                    final double screenHeight = MediaQuery.of(context).size.height;
-                    final double delta = details.delta.dy;
-                    final double currentSize = _sheetController.size;
-                    
-                    double newSize = currentSize - (delta / screenHeight);
-                    
-                    if (newSize < 0.08) newSize = 0.08;
-                    if (newSize > 0.85) newSize = 0.85;
-                    
-                    _sheetController.jumpTo(newSize);
-                  },
-                  onVerticalDragEnd: (details) {
-                    final double velocity = details.primaryVelocity ?? 0;
-                    if (velocity < -500) { 
-                      _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-                    } else if (velocity > 500) { 
-                      _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-                    } else {
-                      if (_sheetController.size > 0.4) {
-                        _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-                      } else {
-                        _sheetController.animateTo(0.08, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-                      }
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
+                  onTap: _pickAndUploadImage,
+                  child: Container(
+                    height: 220,
+                    decoration: BoxDecoration(
+                      color: colors.isDark ? Colors.white10 : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: colors.ticketBorder, width: 2),
+                    ),
                     child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Container(
-                          width: 40,
-                          height: 4,
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: colors.modalHandle,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(color: colors.scaffoldBg, shape: BoxShape.circle),
+                          child: Icon(Icons.add_a_photo_rounded, size: 32, color: colors.textSecondary)
                         ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.qr_code, size: 20),
-                            const SizedBox(width: 8),
-                            Text(
-                              "My Ticket",
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: colors.ticketHeader
-                              ),
-                            ),
-                          ],
-                        ),
+                        const SizedBox(height: 16),
+                        Text("Add Ticket", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                        const SizedBox(height: 4),
+                        Text("Select image from gallery", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                       ],
                     ),
                   ),
                 ),
-                
-                const SizedBox(height: 10),
-
-                // Content
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _isLoading
-                    ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-                    : _localTicketPath != null
-                      ? Column(
-                          children: [
-                            GestureDetector(
-                              onTap: () => _showFullImage(), 
-                              onLongPress: _manageTicketHistory, 
-                              child: Container(
-                                constraints: const BoxConstraints(maxHeight: 500),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: colors.ticketBorder),
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: kIsWeb 
-                                    ? Image.network(
-                                        _localTicketPath!,
-                                        loadingBuilder: (context, child, loadingProgress) {
-                                           if (loadingProgress == null) return child;
-                                           return const SizedBox(
-                                             height: 200,
-                                             child: Center(child: CircularProgressIndicator())
-                                           );
-                                        },
-                                      ) 
-                                    : Image.file(File(_localTicketPath!)),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            TextButton.icon(
-                              onPressed: _pickAndUploadTicket,
-                              icon: const Icon(Icons.edit),
-                              label: const Text("Update Ticket"),
-                            )
-                          ],
-                        )
-                      : Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(height: 30),
-                            Icon(Icons.airplane_ticket_outlined, size: 64, color: colors.ticketEmptyIcon),
-                            const SizedBox(height: 16),
-                            Text("No ticket added yet", style: TextStyle(color: colors.textSecondary)),
-                            const SizedBox(height: 16),
-                            ElevatedButton.icon(
-                              onPressed: _pickAndUploadTicket,
-                              icon: const Icon(Icons.add_a_photo),
-                              label: Text("Add Ticket Photo", style: TextStyle(color: colors.ticketAddBtnText)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: colors.ticketAddBtnBg,
-                                foregroundColor: colors.ticketAddBtnText,
-                              ),
-                            ),
-                            const SizedBox(height: 50),
-                          ],
-                        ),
-                ),
-              ],
-            ),
+            ],
           ),
         );
       },

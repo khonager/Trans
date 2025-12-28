@@ -17,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import 'package:trans/utils/format_utils.dart'; 
 import '../map_screen.dart'; 
 
 const List<IconData> kAvailableIcons = [
@@ -46,6 +47,12 @@ class _RoutesTabState extends State<RoutesTab> {
 
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
+  
+  final FocusNode _fromFocusNode = FocusNode();
+  final FocusNode _toFocusNode = FocusNode();
+  
+  final ScrollController _scrollController = ScrollController();
+
   Station? _fromStation;
   Station? _toStation;
   
@@ -75,9 +82,20 @@ class _RoutesTabState extends State<RoutesTab> {
   void dispose() {
     _fromController.dispose();
     _toController.dispose();
+    _fromFocusNode.dispose();
+    _toFocusNode.dispose();
+    _scrollController.dispose();
     _debounce?.cancel();
     _gpsStream?.cancel();
     super.dispose();
+  }
+
+  void _scrollToTop() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+      }
+    });
   }
 
   Future<void> _loadFavorites() async {
@@ -85,7 +103,6 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -97,85 +114,78 @@ class _RoutesTabState extends State<RoutesTab> {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
-    
-    // Clear the current line status when alarm/ride stops
-    if (widget.currentPosition != null) {
-      SupabaseService.updateLocation(widget.currentPosition!, currentLine: null);
-    }
-    
+    SupabaseService.clearJourneyStatus();
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
-  void _startWakeAlarm(RouteTab route) {
+  Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
-    
-    // Auto-detect Line: Use the first "ride" step's line name
+    final prefs = await SharedPreferences.getInstance();
+    final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
     final String currentLine = firstRide.line;
+    double? targetLat = firstRide.endLat;
+    double? targetLng = firstRide.endLng;
+
+    if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
+      final stops = firstRide.stopovers!;
+      int targetIndex = stops.length - 1 - stopsBefore;
+      if (targetIndex >= 0) {
+        final stopData = stops[targetIndex];
+        if (stopData['stop'] != null && stopData['stop']['location'] != null) {
+           targetLat = stopData['stop']['location']['latitude'];
+           targetLng = stopData['stop']['location']['longitude'];
+        }
+      }
+    }
+
+    if (targetLat == null || targetLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot start alarm: Missing destination coordinates.")));
+      return;
+    }
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! Sharing ride status with friends.")));
+    
+    String msg = "Wake Alarm Set!";
+    if (stopsBefore > 0) msg += " Alerting $stopsBefore stop(s) early.";
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
-    
-    // Update location IMMEDIATELY with the new line
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
-      
-      // Keep updating location (and the line info) as we move
       SupabaseService.updateLocation(pos, currentLine: currentLine);
-      
-      if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
-        double dist = Geolocator.distanceBetween(
-          pos.latitude, pos.longitude, 
-          route.steps.last.endLat!, route.steps.last.endLng!
-        );
-        
-        if (dist < 500) { 
-           _triggerVibration();
-           if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Arriving soon! Wake up!")));
-             _stopWakeAlarm();
-           }
-        }
+      double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
+      if (dist < 500) { 
+         _triggerVibration();
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Up! Approaching your stop!"), backgroundColor: Colors.red));
+           _stopWakeAlarm();
+         }
       }
     });
   }
 
   void _openMap(RouteTab route, {JourneyStep? focusStep}) {
-    Navigator.push(
-      context, 
-      MaterialPageRoute(
-        builder: (_) => MapScreen(
-          steps: route.steps, 
-          focusStep: focusStep,
-          currentPosition: widget.currentPosition,
-        )
-      )
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
   }
 
-  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
       if (mounted) setState(() => _suggestions = history);
       return;
     }
-
     setState(() => _isSuggestionsLoading = true);
     List<dynamic> results = [];
     final query = _activeSearchField == 'from' ? _fromController.text : _toController.text;
-
     if (query.isNotEmpty) {
       final matchingFavs = _favorites.where((f) => f.label.toLowerCase().contains(query.toLowerCase())).toList();
       results.addAll(matchingFavs);
     }
-
     final history = await SearchHistoryManager.getHistory();
     if (history.isNotEmpty) {
        if (query.isNotEmpty) {
@@ -184,41 +194,36 @@ class _RoutesTabState extends State<RoutesTab> {
          results.addAll(history);
        }
     }
-
-    if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      // Logic handled in findRoutes
-    }
-
     if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
   }
 
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
-
     if (query.isEmpty) return;
-
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       if (query.length > 2) {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
-        
-        final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
-        
-        if (mounted) {
-          setState(() { 
-            for (var s in apiResults) {
-               bool exists = _suggestions.any((existing) {
-                 if (existing is Station) return existing.id == s.id;
-                 if (existing is Favorite) return existing.station?.id == s.id;
-                 return false;
-               });
-               if (!exists) _suggestions.add(s);
-            }
-            _isSuggestionsLoading = false; 
-          });
+        try {
+          final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
+          if (mounted) {
+            setState(() { 
+              for (var s in apiResults) {
+                 bool exists = _suggestions.any((existing) {
+                   if (existing is Station) return existing.id == s.id;
+                   if (existing is Favorite) return existing.station?.id == s.id;
+                   return false;
+                 });
+                 if (!exists) _suggestions.add(s);
+              }
+              _isSuggestionsLoading = false; 
+            });
+          }
+        } catch (e) {
+          if (mounted) setState(() => _isSuggestionsLoading = false);
         }
       } else {
         if (mounted) setState(() => _isSuggestionsLoading = false);
@@ -240,6 +245,13 @@ class _RoutesTabState extends State<RoutesTab> {
       if (_activeSearchField == 'from') {
         _fromStation = station;
         _fromController.text = station.name;
+        if (_toStation == null) {
+           _activeSearchField = 'to';
+           _suggestions = []; 
+           _toFocusNode.requestFocus();
+           _scrollToTop();
+           return; 
+        }
       } else {
         _toStation = station;
         _toController.text = station.name;
@@ -251,44 +263,19 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
-    setState(() {
-      _suggestions = [];
-      _activeSearchField = '';
-    });
+    setState(() { _suggestions = []; _activeSearchField = ''; });
     FocusScope.of(context).unfocus();
-
     Station? target;
-
     if (fav.type == 'station') {
       target = fav.station;
-      if (target == null) {
-        _showEditFavoriteDialog(fav);
-        return;
-      }
+      if (target == null) { _showEditFavoriteDialog(fav); return; }
     } else if (fav.type == 'friend' && fav.friendId != null) {
       setState(() => _isLoadingRoute = true);
       try {
-        final data = await SupabaseService.client
-            .from('user_locations')
-            .select()
-            .eq('user_id', fav.friendId!)
-            .maybeSingle();
-        
+        final data = await SupabaseService.client.from('user_locations').select().eq('user_id', fav.friendId!).maybeSingle();
         if (data != null) {
-          final lat = data['latitude'] as double;
-          final lng = data['longitude'] as double;
-          
-          final stops = await TransportApi.getNearbyStops(lat, lng);
-          if (!mounted) return;
-
-          if (stops.isNotEmpty) {
-            target = stops.first;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
-          } else {
-            throw "No stations found near friend.";
-          }
-        } else {
-          throw "Friend's location not found.";
+          final stops = await TransportApi.getNearbyStops(data['latitude'], data['longitude']);
+          if (mounted && stops.isNotEmpty) target = stops.first;
         }
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
@@ -299,23 +286,179 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (target != null && mounted) {
       setState(() {
-        if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
-          _fromStation = target;
-          _fromController.text = target!.name;
+        if (_activeSearchField == 'from') {
+           _fromStation = target;
+           _fromController.text = target!.name;
+           if (_toStation == null) {
+             _activeSearchField = 'to';
+             _toFocusNode.requestFocus();
+             _scrollToTop();
+           }
+        } else if (_activeSearchField == 'to') {
+           _toStation = target;
+           _toController.text = target!.name;
         } else {
-          _toStation = target;
-          _toController.text = target!.name;
+           if (_fromStation != null || widget.currentPosition != null) {
+             _toStation = target;
+             _toController.text = target!.name;
+           } else {
+             _fromStation = target;
+             _fromController.text = target!.name;
+             _toFocusNode.requestFocus();
+             _scrollToTop();
+           }
         }
       });
     }
   }
 
+  void _closeTab(String id) {
+    setState(() {
+      _tabs.removeWhere((t) => t.id == id);
+      if (_activeTabId == id) _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
+    });
+    _stopWakeAlarm();
+  }
+  
+  void _showChat(BuildContext context, String lineName) {
+    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
+  }
+  
+  void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
+      Station fromDummy = Station(id: stationId, name: "From");
+      Station toDummy = Station(id: finalDestinationId, name: "To");
+      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: TransportApi.searchJourneys(fromDummy, toDummy, nahverkehrOnly: widget.onlyNahverkehr, when: DateTime.now(), results: 5), 
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes to destination found."));
+            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
+                final journey = snapshot.data![idx];
+                final legs = journey['legs'] as List;
+                if (legs.isEmpty) return const SizedBox.shrink();
+                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+                final dir = firstRide['direction'] ?? 'Destination';
+                final depTime = DateTime.parse(firstRide['departure'] ?? firstRide['plannedDeparture']);
+                return ListTile(leading: const Icon(Icons.alt_route), title: Text("$line to $dir"), subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"), onTap: () { Navigator.pop(context); _addJourneyTab(journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); });
+              });
+          }
+        );
+      });
+  }
+
+  List<JourneyStep> _processLegs(List legs) {
+    final List<JourneyStep> steps = [];
+    final random = Random();
+    List<dynamic> transferBuffer = [];
+    DateTime? lastArrival; 
+    double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
+    double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
+      if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
+      DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '') ?? DateTime.now();
+      DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '') ?? blockStart : blockStart);
+      int walkMinutes = 0;
+      for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes; } catch(e) {} }
+      int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
+      if (totalGapMinutes < 0) totalGapMinutes = 0;
+      double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
+      if (startLat == null && steps.isNotEmpty) startLat = steps.last.endLat;
+      double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
+      if (startLng == null && steps.isNotEmpty) startLng = steps.last.endLng;
+      steps.add(JourneyStep(type: (walkMinutes > 0) ? 'walk' : 'wait', line: 'Transfer', instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer", duration: FormatUtils.formatDuration(totalGapMinutes), departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}", arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}", isWalking: walkMinutes > 0, startLat: startLat, startLng: startLng, endLat: nextRideStartLat, endLng: nextRideStartLng, path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null));
+      transferBuffer.clear();
+    }
+    for (var leg in legs) {
+      if (leg['line'] != null && leg['line']['name'] != null) {
+        DateTime? dep, arr;
+        try { dep = DateTime.parse(leg['departure']); arr = DateTime.parse(leg['arrival']); } catch(e) {}
+        if (dep == null || arr == null) continue;
+        flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
+        steps.add(JourneyStep(type: 'ride', line: leg['line']?['name']?.toString() ?? '?', instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}", duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes), departureTime: DateFormat('HH:mm').format(dep), arrivalTime: DateFormat('HH:mm').format(arr), chatCount: random.nextInt(15), startStationId: leg['origin']?['id']?.toString(), platform: leg['platform']?.toString(), stopovers: leg['stopovers'], startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']), path: leg['decodedPath']));
+        lastArrival = arr;
+      } else { transferBuffer.add(leg); }
+    }
+    flushTransferBuffer(null, "Destination", null, null);
+    return steps;
+  }
+  
+  void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
+    if (journeyData['legs'] == null) return;
+    final List legs = journeyData['legs'];
+    final List<JourneyStep> steps = _processLegs(legs);
+    String duration = "";
+    DateTime? arr;
+    try {
+      if (legs.isNotEmpty) {
+        final start = DateTime.parse(legs.first['departure']);
+        final end = DateTime.parse(legs.last['arrival']);
+        duration = FormatUtils.formatDuration(end.difference(start).inMinutes);
+      }
+      if (journeyData['arrival'] != null) arr = DateTime.parse(journeyData['arrival']);
+    } catch(e) {}
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    setState(() {
+      _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps));
+      _activeTabId = id;
+      if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
+    });
+  }
+
+  Future<void> _findRoutes() async {
+     if (_isLoadingRoute) return;
+     Station? from = _fromStation;
+     if (from == null && widget.currentPosition != null) {
+        from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
+     }
+     if (from == null || _toStation == null) { if (mounted) setState(() => _isLoadingRoute = false); return; }
+     setState(() => _isLoadingRoute = true);
+     try {
+       final res = await TransportApi.searchJourneys(from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, isArrival: _isArrival).timeout(const Duration(seconds: 15)); 
+       if (mounted) {
+         if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found"))); }
+       }
+     } catch(e) {
+       if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+     } finally {
+       if (mounted) setState(() => _isLoadingRoute = false);
+     }
+  }
+
+  Future<void> _triggerVibration() async {
+    if (kIsWeb) return; 
+    bool? hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == null || !hasVibrator) return;
+    final prefs = await SharedPreferences.getInstance();
+    final String patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final int intensity = prefs.getInt('vibration_intensity') ?? 128;
+    List<int> pattern = [0, 500];
+    switch (patternName) {
+      case 'heartbeat': pattern = [0, 150, 150, 150]; break;
+      case 'tick': pattern = [0, 50]; break;
+      case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
+      case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
+      case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
+      case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
+      case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
+      case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
+      case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
+      case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
+      case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
+      case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
+      case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
+      case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
+    }
+    if (await Vibration.hasAmplitudeControl() ?? false) {
+      Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => intensity).toList());
+    } else {
+      Vibration.vibrate(pattern: pattern);
+    }
+  }
+
   void _showEditFavoriteDialog(Favorite fav) async {
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _EditFavoriteDialog(favorite: fav),
-    );
+    await showDialog(context: context, barrierDismissible: false, builder: (ctx) => _EditFavoriteDialog(favorite: fav));
     if (mounted) _loadFavorites();
   }
   
@@ -324,396 +467,28 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE PROCESSING (Fixing coordinates) ---
-  List<JourneyStep> _processLegs(List legs) {
-    final List<JourneyStep> steps = [];
-    final random = Random();
-    List<dynamic> transferBuffer = [];
-    DateTime? lastArrival; 
-
-    // Helper to grab coords from locations
-    double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
-    double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
-
-    // Updated flush function accepting End Coordinates
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
-      if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
-
-      DateTime blockStart;
-      dynamic startLocationData;
-
-      if (lastArrival != null) {
-        blockStart = lastArrival!;
-      } else if (transferBuffer.isNotEmpty) {
-        blockStart = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
-        startLocationData = transferBuffer.first['origin'];
-      } else {
-        return; 
-      }
-
-      DateTime blockEnd;
-      if (nextRideDeparture != null) {
-        blockEnd = nextRideDeparture;
-      } else if (transferBuffer.isNotEmpty) {
-        blockEnd = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
-      } else {
-        blockEnd = blockStart;
-      }
-
-      int walkMinutes = 0;
-      for (var leg in transferBuffer) {
-        final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
-        final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
-        walkMinutes += arr.difference(dep).inMinutes;
-      }
-
-      int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
-      if (totalGapMinutes < 0) totalGapMinutes = 0;
-      int waitMinutes = totalGapMinutes - walkMinutes;
-      if (waitMinutes < 1) waitMinutes = 0;
-
-      String breakdownText = "";
-      if (walkMinutes > 0) breakdownText += "Walk $walkMinutes min ";
-      if (waitMinutes > 0) breakdownText += "Wait $waitMinutes min";
-      if (breakdownText.isEmpty) breakdownText = "$totalGapMinutes min transfer";
-
-      String actionText = "Transfer";
-      if (walkMinutes > 0) actionText = nextStationName != null ? "Walk to $nextStationName" : "Walk";
-      
-      // Determine Start Coords (Start of walk/transfer)
-      double? startLat = getLat(startLocationData);
-      double? startLng = getLng(startLocationData);
-      
-      // Fallback: If this is the very first step, try grabbing from previous ride end if available
-      if (startLat == null && steps.isNotEmpty && steps.last.endLat != null) {
-        startLat = steps.last.endLat;
-        startLng = steps.last.endLng;
-      }
-
-      // Determine End Coords (End of walk = Start of next ride)
-      // This is passed into the function now!
-      double? endLat = nextRideStartLat;
-      double? endLng = nextRideStartLng;
-
-      // Polyline for walking?
-      List<List<double>>? path;
-      if (transferBuffer.isNotEmpty && transferBuffer.first['decodedPath'] != null) {
-        path = transferBuffer.first['decodedPath'];
-      }
-
-      steps.add(JourneyStep(
-        type: (walkMinutes > 0) ? 'walk' : 'wait',
-        line: 'Transfer',
-        instruction: actionText,
-        duration: breakdownText,
-        departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
-        arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: walkMinutes > 0,
-        startLat: startLat,
-        startLng: startLng,
-        endLat: endLat, // FIX: Now we have an end coordinate!
-        endLng: endLng, // FIX: Now we have an end coordinate!
-        path: path,
-      ));
-      
-      transferBuffer.clear();
-    }
-
-    for (int i = 0; i < legs.length; i++) {
-      var leg = legs[i];
-      bool isRide = (leg['line'] != null && leg['line']['name'] != null);
-      
-      if (!isRide) {
-        transferBuffer.add(leg);
-      } else {
-        DateTime currentRideDeparture = DateTime.parse(leg['departure']);
-        String startStationName = leg['origin']?['name'] ?? 'Station';
-        
-        // FIX: Extract coordinates for the upcoming ride to pass to the transfer logic
-        double? nextRideStartLat = getLat(leg['origin']);
-        double? nextRideStartLng = getLng(leg['origin']);
-        
-        flushTransferBuffer(currentRideDeparture, startStationName, nextRideStartLat, nextRideStartLng);
-
-        final String lineName = leg['line']['name'].toString();
-        final String destName = leg['direction'] ?? leg['destination']['name'] ?? 'Unknown';
-        final String startStationId = leg['origin']?['id'];
-        final String? platform = leg['platform'] ?? leg['departurePlatform'];
-        final dep = DateTime.parse(leg['departure']);
-        final arr = DateTime.parse(leg['arrival']);
-        
-        double? startLat = getLat(leg['origin']);
-        double? startLng = getLng(leg['origin']);
-        double? endLat = getLat(leg['destination']);
-        double? endLng = getLng(leg['destination']);
-        
-        List<List<double>>? path = leg['decodedPath'];
-
-        int legDurationMin = arr.difference(dep).inMinutes;
-        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
-
-        steps.add(JourneyStep(
-          type: 'ride',
-          line: lineName,
-          instruction: "$lineName → $destName",
-          duration: durationDisplay,
-          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-          arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
-          chatCount: random.nextInt(15) + 1,
-          startStationId: startStationId,
-          platform: platform != null ? "Plat $platform" : null,
-          stopovers: leg['stopovers'],
-          startLat: startLat,
-          startLng: startLng,
-          endLat: endLat,
-          endLng: endLng,
-          path: path,
-        ));
-        
-        lastArrival = arr;
-      }
-    }
-    
-    // Final buffer flush (walk to destination)
-    // We don't have a "next ride", but we might have coordinates from the very last leg's destination if available
-    // For simplicity, pass nulls or try to grab from transferBuffer last element
-    flushTransferBuffer(null, "Destination", null, null);
-
-    return steps;
-  }
-  
-  void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
-    if (journeyData['legs'] == null) return;
-    
-    final List legs = journeyData['legs'];
-    final List<JourneyStep> steps = _processLegs(legs);
-    
-    String totalDurationStr = "";
-    if (legs.isNotEmpty) {
-       var firstLeg = legs.first;
-       var lastLeg = legs.last;
-       if (firstLeg['departure'] != null && lastLeg['arrival'] != null) {
-         DateTime routeStart = DateTime.parse(firstLeg['departure']);
-         DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
-         int totalMin = routeEnd.difference(routeStart).inMinutes;
-         totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-       }
-    }
-
-    final newTabId = DateTime.now().millisecondsSinceEpoch.toString();
-    String eta = "--:--";
-    if (journeyData['arrival'] != null) {
-      final arr = DateTime.parse(journeyData['arrival']);
-      eta = "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}";
-    }
-
-    final String finalDestId = _toStation?.id ?? (legs.isNotEmpty ? legs.last['destination']['id'] : '');
-
-    final newTab = RouteTab(
-      id: newTabId, 
-      title: title == "Route" && _toStation != null ? _toStation!.name : title, 
-      subtitle: subtitle ?? "Detail", 
-      eta: eta, 
-      totalDuration: totalDurationStr, 
-      destinationId: finalDestId, 
-      steps: steps
-    );
-
-    setState(() {
-      _tabs.add(newTab);
-      _activeTabId = newTabId;
-      if (title != "Alternative") {
-        _fromStation = null;
-        _toStation = null;
-        _fromController.clear();
-        _toController.clear();
-      }
-      _isLoadingRoute = false;
-    });
-  }
-
-  Future<void> _findRoutes() async {
-    Station? from = _fromStation;
-    if (from == null && widget.currentPosition != null) {
-       setState(() => _isLoadingRoute = true); 
-       try {
-         if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
-
-         // Use GPS directly
-         from = Station(
-           id: "gps", 
-           name: "Current Location",
-           type: 'location', 
-           latitude: widget.currentPosition!.latitude,
-           longitude: widget.currentPosition!.longitude
-         );
-       } catch (e) {
-         if (mounted) setState(() => _isLoadingRoute = false);
-         return;
-       }
-    }
-
-    if (from == null || _toStation == null) {
-      if (mounted) setState(() => _isLoadingRoute = false);
-      return;
-    }
-    
-    if (mounted) setState(() => _isLoadingRoute = true);
-
-    DateTime? searchTime;
-    if (_selectedDate != null && _selectedTime != null) {
-      searchTime = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime!.hour, _selectedTime!.minute);
-    }
-
-    try {
-      final journeys = await TransportApi.searchJourneys(
-          from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
-      );
-
-      if (!mounted) return;
-
-      if (journeys.isNotEmpty) {
-        _addJourneyTab(journeys.first);
-      } else {
-        setState(() => _isLoadingRoute = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoadingRoute = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
-    }
-  }
-
-  void _closeTab(String id) {
-    setState(() {
-      _tabs.removeWhere((t) => t.id == id);
-      if (_activeTabId == id) {
-        _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
-      }
-    });
-    _stopWakeAlarm();
-  }
-
-  void _showChat(BuildContext context, String lineName) {
-    if (widget.currentPosition != null) {
-      SupabaseService.updateLocation(widget.currentPosition!, currentLine: lineName);
-    }
-    showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
-  }
-
-  void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-      Station fromDummy = Station(id: stationId, name: "From");
-      Station toDummy = Station(id: finalDestinationId, name: "To");
-
-      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(
-          future: TransportApi.searchJourneys(
-            fromDummy, 
-            toDummy, 
-            nahverkehrOnly: widget.onlyNahverkehr,
-            when: DateTime.now(), 
-            results: 5
-          ), 
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes to destination found."));
-            
-            return ListView.builder(
-              padding: const EdgeInsets.all(16), 
-              itemCount: snapshot.data!.length, 
-              itemBuilder: (ctx, idx) {
-                final journey = snapshot.data![idx];
-                final legs = journey['legs'] as List;
-                if (legs.isEmpty) return const SizedBox.shrink();
-
-                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
-                
-                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
-                final dir = firstRide['direction'] ?? 'Destination';
-                final depTimeStr = firstRide['departure'] ?? firstRide['plannedDeparture'];
-                final arrTimeStr = legs.last['arrival'] ?? legs.last['plannedArrival'];
-                
-                DateTime depTime = DateTime.parse(depTimeStr);
-                DateTime arrTime = DateTime.parse(arrTimeStr);
-                String timeDisplay = "${depTime.hour.toString().padLeft(2,'0')}:${depTime.minute.toString().padLeft(2,'0')}";
-                int duration = arrTime.difference(depTime).inMinutes;
-
-                return ListTile(
-                  leading: const Icon(Icons.alt_route), 
-                  title: Text("$line to $dir"), 
-                  subtitle: Text("Duration: ${duration}min"),
-                  trailing: Text(timeDisplay, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), 
-                  onTap: () { 
-                    Navigator.pop(context); 
-                    _addJourneyTab(journey, title: "Alternative", subtitle: "Departs $timeDisplay");
-                  }
-                );
-              }
-            );
-          }
-        );
-      });
-  }
-
-  Future<void> _triggerVibration() async {
-    if (kIsWeb) return; 
-    if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
-  }
-
   @override
   Widget build(BuildContext context) {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final colors = TransColors.of(context);
+    final topPadding = MediaQuery.of(context).padding.top + 10;
 
-    bool gpsPoor = false;
-    if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) {
-      gpsPoor = true;
-    }
-
-    return Column(
-      children: [
-        const SizedBox(height: 100),
+    return Column(children: [
+        // FIX: Dynamic Top Padding
+        SizedBox(height: topPadding),
         
-        if (gpsPoor)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            color: Colors.amber.withValues(alpha: 0.8),
-            child: const Text("⚠️ GPS Signal Weak. Alarm may be inaccurate.", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-          ),
-
-        if (_tabs.isNotEmpty)
-          SizedBox(
-            height: 50,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _tabs.length + 1,
-              itemBuilder: (ctx, idx) {
-                if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null));
-                final tab = _tabs[idx];
-                final isActive = tab.id == _activeTabId;
-                return GestureDetector(
-                  onTap: () => setState(() => _activeTabId = tab.id),
-                  child: Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)),
-                    child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))]),
-                  ),
-                );
-              },
-            ),
-          ),
+        if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) Container(width: double.infinity, padding: const EdgeInsets.all(8), color: Colors.amber, child: const Text("⚠️ Weak GPS", textAlign: TextAlign.center)),
+        if (_tabs.isNotEmpty) SizedBox(height: 50, child: ListView.builder(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _tabs.length + 1, itemBuilder: (ctx, idx) { if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null)); final tab = _tabs[idx]; final isActive = tab.id == _activeTabId; return GestureDetector(onTap: () => setState(() => _activeTabId = tab.id), child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))])));})),
         Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
-      ],
-    );
+    ]);
   }
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 100),
+      controller: _scrollController,
+      padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -726,11 +501,15 @@ class _RoutesTabState extends State<RoutesTab> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
-                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
+                  
+                  _buildTextField("From", _fromController, _fromFocusNode, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 12),
-                  _buildTextField("To", _toController, _toStation != null, 'to'),
+                  
+                  _buildTextField("To", _toController, _toFocusNode, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 20),
                   Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
@@ -744,15 +523,7 @@ class _RoutesTabState extends State<RoutesTab> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), 
                             decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)),
-                            child: Text(
-                              _isArrival ? "Arrive by" : "Depart at",
-                              style: TextStyle(
-                                color: colors.timeToggleText,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
-                                letterSpacing: 0.5,
-                              )
-                            )
+                            child: Text(_isArrival ? "Arrive by" : "Depart at", style: TextStyle(color: colors.timeToggleText, fontWeight: FontWeight.w600, fontSize: 13, letterSpacing: 0.5))
                           )
                         ),
                         const SizedBox(width: 12),
@@ -764,50 +535,9 @@ class _RoutesTabState extends State<RoutesTab> {
                   const SizedBox(height: 20),
                   Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    height: 80,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _favorites.length + 1,
-                      separatorBuilder: (_,__) => const SizedBox(width: 12),
-                      itemBuilder: (ctx, idx) {
-                          if (idx == _favorites.length) {
-                            return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))]));
-                          }
-                          final fav = _favorites[idx];
-                          IconData icon = Icons.star;
-                          if (fav.type == 'friend') icon = Icons.person;
-                          else if (fav.label.toLowerCase() == 'home') icon = Icons.home;
-                          else if (fav.label.toLowerCase() == 'work') icon = Icons.work;
-                          
-                          if (fav.iconCode != null) {
-                            icon = kAvailableIcons.firstWhere(
-                              (i) => i.codePoint == fav.iconCode,
-                              orElse: () => Icons.star 
-                            );
-                          }
-
-                          Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg;
-                          Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon;
-
-                          return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))]));
-                      },
-                    ),
-                  ),
+                  SizedBox(height: 80, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _favorites.length + 1, separatorBuilder: (_,__) => const SizedBox(width: 12), itemBuilder: (ctx, idx) { if (idx == _favorites.length) { return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))])); } final fav = _favorites[idx]; IconData icon = Icons.star; if (fav.type == 'friend') icon = Icons.person; else if (fav.label.toLowerCase() == 'home') icon = Icons.home; else if (fav.label.toLowerCase() == 'work') icon = Icons.work; if (fav.iconCode != null) { icon = kAvailableIcons.firstWhere((i) => i.codePoint == fav.iconCode, orElse: () => Icons.star); } Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg; Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon; return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))])); })),
                   const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity, 
-                    height: 56, 
-                    child: ElevatedButton(
-                      onPressed: canSearch ? _findRoutes : null, 
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: colors.searchBtnBg,
-                        foregroundColor: colors.searchBtnText,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))
-                      ), 
-                      child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
-                    )
-                  ),
+                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchBtnBg, foregroundColor: colors.searchBtnText, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
                 ],
               ),
             ),
@@ -820,125 +550,24 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final colors = TransColors.of(context);
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 250),
-      margin: const EdgeInsets.only(top: 8),
-      decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)),
-          Flexible(
-            child: ListView.separated(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              itemCount: _suggestions.length,
-              separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10),
-              itemBuilder: (ctx, idx) {
-                final item = _suggestions[idx];
-                if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
-                final station = item as Station;
-                IconData leadingIcon = Icons.place;
-                if (station.type == 'address') leadingIcon = Icons.home_work;
-                
-                return ListTile(
-                  leading: Icon(leadingIcon, size: 16, color: Colors.grey), 
-                  title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
-                  onTap: () => _selectItem(station),
-                  onLongPress: () {
-                    final newFav = Favorite(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(), 
-                      label: station.name, 
-                      type: 'station',
-                      station: station
-                    );
-                    _showEditFavoriteDialog(newFav);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), Flexible(child: ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); }))]));
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
+  Widget _buildTextField(String label, TextEditingController controller, FocusNode focusNode, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final colors = TransColors.of(context);
-
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
     else if (fieldKey == 'from' && hint.contains("Location")) iconColor = Colors.blue;
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start, 
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 4), 
-          child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))
-        ), 
-        TextField(
-          controller: controller, 
-          onChanged: (val) => _onSearchChanged(val, fieldKey), 
-          onTap: () => setState(() => _activeSearchField = fieldKey), 
-          style: TextStyle(color: colors.searchInputText), 
-          decoration: InputDecoration(
-            filled: true, 
-            fillColor: colors.searchInputFill,
-            prefixIcon: Icon(
-              fieldKey == 'from' ? Icons.my_location : Icons.location_on, 
-              color: iconColor, 
-              size: 20
-            ), 
-            hintText: hint, 
-            hintStyle: TextStyle(
-              color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText
-            ), 
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
-          )
-        )
-      ]
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () { setState(() => _activeSearchField = fieldKey); _scrollToTop(); }, style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
     final colors = TransColors.of(context);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0), 
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
-              // MAP BUTTON
-              IconButton(
-                icon: const Icon(Icons.map, color: Colors.blue),
-                onPressed: () => _openMap(route),
-              ),
-              const SizedBox(width: 8),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
-            ],
-          ),
-        ),
-        
-        for (int i = 0; i < route.steps.length; i++)
-          _StepCard(
-            step: route.steps[i], 
-            isFirst: i == 0,
-            finalDestinationId: route.destinationId,
-            onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId),
-            onChat: (line) => _showChat(context, line),
-            onAlarmToggle: () => _toggleWakeAlarm(route),
-            isAlarmSet: _isWakeAlarmSet,
-            onMapTap: () => _openMap(route, focusStep: route.steps[i]), 
-          )
-      ],
-    );
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destinationId, onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
   }
 }
 
+// ... [Keep _StepCard and _EditFavoriteDialog same as before] ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
@@ -948,76 +577,14 @@ class _StepCard extends StatelessWidget {
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
   final bool isAlarmSet;
-
   const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
-
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
-
-    if (isTransfer) {
-      Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
-      if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
-
-      return GestureDetector(
-        onTap: onMapTap,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
-          child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
-        ),
-      );
-    }
-
-    return Card(
-      margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: colors.stepCardBg,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]),
-          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]),
-          children: [
-            if (step.stopovers != null && step.stopovers!.isNotEmpty)
-              Container(
-                decoration: BoxDecoration(color: colors.stepStopoversBg),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: step.stopovers!.length,
-                  itemBuilder: (ctx, idx) {
-                    final stop = step.stopovers![idx];
-                    final name = stop['stop']['name'];
-                    final stopId = stop['stop']['id'];
-                    final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival'];
-                    final actualDep = stop['departure'] ?? stop['arrival'];
-                    String timeStr = "--:--";
-                    Color timeColor = Colors.grey;
-                    if (plannedDep != null) {
-                      final p = DateTime.parse(plannedDep);
-                      timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}";
-                      if (actualDep != null) {
-                        final a = DateTime.parse(actualDep);
-                        final delay = a.difference(p).inMinutes;
-                        if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; }
-                      }
-                    }
-                    return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))]));
-                  },
-                ),
-              )
-            else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
-          ],
-        ),
-      ),
-    );
+    if (isTransfer) { Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText); return GestureDetector(onTap: onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); }
+    return Card(margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0, color: colors.stepCardBg, child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]), subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]), children: [if (step.stopovers != null && step.stopovers!.isNotEmpty) Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { final stop = step.stopovers![idx]; final name = stop['stop']['name']; final stopId = stop['stop']['id']; final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; final actualDep = stop['departure'] ?? stop['arrival']; String timeStr = "--:--"; Color timeColor = Colors.grey; if (plannedDep != null) { final p = DateTime.parse(plannedDep); timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; if (actualDep != null) { final a = DateTime.parse(actualDep); final delay = a.difference(p).inMinutes; if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; } } } return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))])); })) else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))])));
   }
-
   Widget _buildActionChip(BuildContext context, IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
     final colors = TransColors.of(context);
     return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
@@ -1027,7 +594,6 @@ class _StepCard extends StatelessWidget {
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
   const _EditFavoriteDialog({required this.favorite});
-
   @override
   State<_EditFavoriteDialog> createState() => _EditFavoriteDialogState();
 }
@@ -1039,7 +605,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Station? _selectedStation;
   String? _selectedFriendId;
   int? _selectedIconCode;
-  
   List<Station> _suggestions = [];
   Timer? _debounce;
   bool _isLoading = false;
@@ -1066,170 +631,60 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
     final colors = TransColors.of(context);
-
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       backgroundColor: colors.cardBg,
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
-            const SizedBox(height: 20),
-            
-            TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
-            const SizedBox(height: 10),
-            
-            Row(children: [
-              Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
-              Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
-            ]),
-            
-            const SizedBox(height: 10),
-            const Text("Pick Icon", style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: kAvailableIcons.map((icon) {
-                  final isSelected = _selectedIconCode == icon.codePoint;
-                  return GestureDetector(
-                    onTap: () => setState(() => _selectedIconCode = icon.codePoint),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: isSelected ? colors.navBarSelected : colors.chipBg,
-                        shape: BoxShape.circle
-                      ),
-                      child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            if (_currentType == 'station') ...[
-              if (_selectedStation != null)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.train, color: Colors.indigo),
-                  title: Text(_selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selectedStation = null; _searchCtrl.clear(); _suggestions = []; })),
-                )
-              else ...[
-                TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                    labelText: "Search Station Name",
-                    prefixIcon: const Icon(Icons.search),
-                    suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null),
-                  ),
-                  onChanged: (val) {
-                    if (_debounce?.isActive ?? false) _debounce!.cancel();
-                    if (val.isEmpty) {
-                      if (mounted) setState(() => _suggestions = []);
-                      return;
-                    }
-                    _debounce = Timer(const Duration(milliseconds: 400), () async {
-                      if (!mounted) return;
-                      setState(() => _isLoading = true);
-                      try {
-                        final res = await TransportApi.searchStations(val);
-                        if (mounted) setState(() { _suggestions = res; _isLoading = false; });
-                      } catch (e) {
-                        if (mounted) setState(() => _isLoading = false);
-                      }
-                    });
-                  },
-                ),
-                if (_suggestions.isNotEmpty)
-                  Container(
-                    height: 150,
-                    margin: const EdgeInsets.only(top: 8),
-                    decoration: BoxDecoration(border: Border.all(color: Colors.white10), borderRadius: BorderRadius.circular(8)),
-                    child: ListView.builder(
-                      itemCount: _suggestions.length,
-                      itemBuilder: (context, idx) {
-                        final s = _suggestions[idx];
-                        return ListTile(
-                          dense: true,
-                          title: Text(s.name),
-                          onTap: () {
-                            if (!mounted) return;
-                            setState(() {
-                              _selectedStation = s;
-                              _suggestions = [];
-                              if (_labelCtrl.text.isEmpty) _labelCtrl.text = s.name;
-                            });
-                          },
-                        );
-                      },
-                    ),
-                  )
-              ]
-            ],
-            
-            if (_currentType == 'friend') ...[
-               TextField(
-                 decoration: const InputDecoration(labelText: "Search Friend Username"),
-                 onSubmitted: (val) async {
-                   final res = await SupabaseService.searchUsers(val);
-                   if (res.isNotEmpty && mounted) {
-                     setState(() {
-                       _selectedFriendId = res.first['id'];
-                       if (_labelCtrl.text.isEmpty) {
-                          _labelCtrl.text = res.first['username'];
-                       }
-                     });
-                   }
-                 },
-               ),
-               if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text("Friend Selected", style: TextStyle(color: Colors.green))),
-            ],
-
-            const SizedBox(height: 20),
-            
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work')
-                  TextButton(
-                    onPressed: () async {
-                      await FavoritesManager.deleteFavorite(widget.favorite.id);
-                      if (mounted) Navigator.pop(context, true); 
+      child: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(isNew ? "Add Favorite" : "Edit Favorite", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+              const SizedBox(height: 20),
+              TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(child: RadioListTile<String>(title: const Text("Station"), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
+                Expanded(child: RadioListTile<String>(title: const Text("Friend"), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
+              ]),
+              const SizedBox(height: 10),
+              SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: kAvailableIcons.map((icon) { final isSelected = _selectedIconCode == icon.codePoint; return GestureDetector(onTap: () => setState(() => _selectedIconCode = icon.codePoint), child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: isSelected ? colors.navBarSelected : colors.chipBg, shape: BoxShape.circle), child: Icon(icon, size: 20, color: isSelected ? Colors.white : Colors.grey))); }).toList())),
+              const SizedBox(height: 10),
+              if (_currentType == 'station') ...[
+                if (_selectedStation != null) ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.train, color: Colors.indigo), title: Text(_selectedStation!.name, style: const TextStyle(fontWeight: FontWeight.bold)), trailing: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { _selectedStation = null; _searchCtrl.clear(); _suggestions = []; })))
+                else ...[
+                  TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(labelText: "Search Station Name", prefixIcon: const Icon(Icons.search), suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null)),
+                    onChanged: (val) {
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      if (val.trim().isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
+                      _debounce = Timer(const Duration(milliseconds: 400), () async {
+                        if (!mounted) return;
+                        setState(() => _isLoading = true);
+                        try {
+                          final res = await TransportApi.searchStations(val).timeout(const Duration(seconds: 10));
+                          if (mounted) setState(() { _suggestions = res; _isLoading = false; });
+                        } catch (e) {
+                          if (mounted) setState(() => _isLoading = false);
+                        }
+                      });
                     },
-                    child: const Text("Delete", style: TextStyle(color: Colors.red)),
                   ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text("Cancel"),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (_labelCtrl.text.isNotEmpty) {
-                      final newFav = Favorite(
-                        id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id,
-                        label: _labelCtrl.text,
-                        type: _currentType,
-                        station: _selectedStation,
-                        friendId: _selectedFriendId,
-                        iconCode: _selectedIconCode
-                      );
-                      await FavoritesManager.saveFavorite(newFav);
-                      if (mounted) Navigator.pop(context, true); 
-                    }
-                  },
-                  child: const Text("Save"),
-                )
+                  if (_suggestions.isNotEmpty) Container(height: 150, margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(border: Border.all(color: Colors.white10), borderRadius: BorderRadius.circular(8)), child: ListView.builder(itemCount: _suggestions.length, itemBuilder: (context, idx) { final s = _suggestions[idx]; return ListTile(dense: true, title: Text(s.name), onTap: () { if (!mounted) return; setState(() { _selectedStation = s; _suggestions = []; if (_labelCtrl.text.isEmpty) _labelCtrl.text = s.name; }); }); }))
+                ]
               ],
-            )
-          ],
+              if (_currentType == 'friend') ...[
+                 TextField(decoration: const InputDecoration(labelText: "Search Friend Username"), onSubmitted: (val) async { final res = await SupabaseService.searchUsers(val); if (res.isNotEmpty && mounted) { setState(() { _selectedFriendId = res.first['id']; if (_labelCtrl.text.isEmpty) { _labelCtrl.text = res.first['username']; } }); } }),
+                 if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text("Friend Selected", style: TextStyle(color: Colors.green))),
+              ],
+              const SizedBox(height: 20),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work') TextButton(onPressed: () async { await FavoritesManager.deleteFavorite(widget.favorite.id); if (mounted) Navigator.pop(context, true); }, child: const Text("Delete", style: TextStyle(color: Colors.red))), const SizedBox(width: 8), TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { if (_labelCtrl.text.isNotEmpty) { final newFav = Favorite(id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id, label: _labelCtrl.text, type: _currentType, station: _selectedStation, friendId: _selectedFriendId, iconCode: _selectedIconCode); await FavoritesManager.saveFavorite(newFav); if (mounted) Navigator.pop(context, true); } }, child: const Text("Save"))])
+            ],
+          ),
         ),
       ),
     );
