@@ -85,7 +85,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC ---
+  // --- WAKE ME LOGIC (UPDATED) ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -98,10 +98,8 @@ class _RoutesTabState extends State<RoutesTab> {
     _gpsStream?.cancel();
     _gpsStream = null;
     
-    // Clear the current line status when alarm/ride stops
-    if (widget.currentPosition != null) {
-      SupabaseService.updateLocation(widget.currentPosition!, currentLine: null);
-    }
+    // FIX: Clear journey status when ride stops
+    SupabaseService.clearJourneyStatus();
     
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
@@ -109,7 +107,6 @@ class _RoutesTabState extends State<RoutesTab> {
   void _startWakeAlarm(RouteTab route) {
     if (route.steps.isEmpty) return;
     
-    // Auto-detect Line: Use the first "ride" step's line name
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
     final String currentLine = firstRide.line;
 
@@ -118,14 +115,13 @@ class _RoutesTabState extends State<RoutesTab> {
 
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     
-    // Update location IMMEDIATELY with the new line
+    // FIX: Explicitly set the line when starting tracking
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
-      
       // Keep updating location (and the line info) as we move
       SupabaseService.updateLocation(pos, currentLine: currentLine);
       
@@ -159,7 +155,7 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
-  // --- SEARCH LOGIC ---
+  // ... [Retain Search Logic Unchanged] ...
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -183,10 +179,6 @@ class _RoutesTabState extends State<RoutesTab> {
        } else {
          results.addAll(history);
        }
-    }
-
-    if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      // Logic handled in findRoutes
     }
 
     if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
@@ -324,18 +316,16 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE PROCESSING (Fixing coordinates) ---
+  // --- ROUTE PROCESSING ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
-    // Helper to grab coords from locations
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
 
-    // Updated flush function accepting End Coordinates
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
@@ -380,22 +370,17 @@ class _RoutesTabState extends State<RoutesTab> {
       String actionText = "Transfer";
       if (walkMinutes > 0) actionText = nextStationName != null ? "Walk to $nextStationName" : "Walk";
       
-      // Determine Start Coords (Start of walk/transfer)
       double? startLat = getLat(startLocationData);
       double? startLng = getLng(startLocationData);
       
-      // Fallback: If this is the very first step, try grabbing from previous ride end if available
       if (startLat == null && steps.isNotEmpty && steps.last.endLat != null) {
         startLat = steps.last.endLat;
         startLng = steps.last.endLng;
       }
 
-      // Determine End Coords (End of walk = Start of next ride)
-      // This is passed into the function now!
       double? endLat = nextRideStartLat;
       double? endLng = nextRideStartLng;
 
-      // Polyline for walking?
       List<List<double>>? path;
       if (transferBuffer.isNotEmpty && transferBuffer.first['decodedPath'] != null) {
         path = transferBuffer.first['decodedPath'];
@@ -411,8 +396,8 @@ class _RoutesTabState extends State<RoutesTab> {
         isWalking: walkMinutes > 0,
         startLat: startLat,
         startLng: startLng,
-        endLat: endLat, // FIX: Now we have an end coordinate!
-        endLng: endLng, // FIX: Now we have an end coordinate!
+        endLat: endLat, 
+        endLng: endLng,
         path: path,
       ));
       
@@ -429,7 +414,6 @@ class _RoutesTabState extends State<RoutesTab> {
         DateTime currentRideDeparture = DateTime.parse(leg['departure']);
         String startStationName = leg['origin']?['name'] ?? 'Station';
         
-        // FIX: Extract coordinates for the upcoming ride to pass to the transfer logic
         double? nextRideStartLat = getLat(leg['origin']);
         double? nextRideStartLng = getLng(leg['origin']);
         
@@ -474,9 +458,6 @@ class _RoutesTabState extends State<RoutesTab> {
       }
     }
     
-    // Final buffer flush (walk to destination)
-    // We don't have a "next ride", but we might have coordinates from the very last leg's destination if available
-    // For simplicity, pass nulls or try to grab from transferBuffer last element
     flushTransferBuffer(null, "Destination", null, null);
 
     return steps;
@@ -596,9 +577,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showChat(BuildContext context, String lineName) {
-    if (widget.currentPosition != null) {
-      SupabaseService.updateLocation(widget.currentPosition!, currentLine: lineName);
-    }
+    // FIX: Removed updateLocation. Chatting != Riding.
     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
   }
 

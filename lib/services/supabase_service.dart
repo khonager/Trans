@@ -56,12 +56,10 @@ class SupabaseService {
     if (user == null) return;
 
     if (enable) {
-      // Just turn it on
       await client.from('profiles').update({'ghost_mode': true}).eq('id', user.id);
-      // When Ghost Mode is ON, we also stop sharing location immediately
       await client.from('user_locations').delete().eq('user_id', user.id);
     } else {
-      // Turn it OFF -> Trigger the Penalty (SQL Function)
+      // Trigger penalty when turning OFF
       await client.rpc('disable_ghost_mode', params: {'user_uuid': user.id});
     }
   }
@@ -69,8 +67,6 @@ class SupabaseService {
   static Future<void> requestLocationAccess(String friendId) async {
     final user = currentUser;
     if (user == null) return;
-    
-    // Simulating friend approval:
     await client.from('friends')
       .update({'can_see_location': true})
       .match({'user_id': user.id, 'friend_id': friendId});
@@ -134,6 +130,10 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
+    // 1. Check MY Ghost Mode status first
+    final myProfile = await client.from('profiles').select('ghost_mode').eq('id', user.id).single();
+    final bool amIGhost = myProfile['ghost_mode'] ?? false;
+
     final friendsRelation = await client.from('friends').select('friend_id, can_see_location').eq('user_id', user.id);
     if (friendsRelation.isEmpty) return [];
 
@@ -153,8 +153,10 @@ class SupabaseService {
 
       final loc = locationMap[id];
       final bool canSee = permissionMap[id] ?? true;
-      final bool isGhost = profile['ghost_mode'] ?? false;
-      final bool showLocation = canSee && !isGhost;
+      final bool isFriendGhost = profile['ghost_mode'] ?? false;
+
+      // FIX: If I am a ghost, I see NOTHING.
+      final bool showLocation = !amIGhost && canSee && !isFriendGhost;
 
       dynamic lat, lng, updatedAt, currentLine;
       if (showLocation && loc != null) {
@@ -170,7 +172,7 @@ class SupabaseService {
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
-        'ghost_mode': isGhost,
+        'ghost_mode': isFriendGhost, // Keep seeing friend's status, just not location
         'can_see_location': canSee, 
         'latitude': lat,
         'longitude': lng,
@@ -233,6 +235,7 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     
+    // Check local ghost mode to avoid unnecessary DB calls, but DB policy handles it too
     final profile = await getCurrentProfile();
     if (profile != null && profile['ghost_mode'] == true) {
       return; 
@@ -245,13 +248,39 @@ class SupabaseService {
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
+    // Allow updating ONLY location without changing line if currentLine is NOT passed
+    // But if currentLine IS passed (even if null), update it.
     if (currentLine != null) {
       updateData['current_line'] = currentLine;
-    } else {
-      updateData['current_line'] = null; 
+    } 
+    // If explicitly null (to clear it), we handle it. But Dart optional params default to null.
+    // So we need a way to distinguish "Don't change" vs "Clear".
+    // For this app: if we call this, we usually want to set the line. 
+    // If we want to CLEAR it, pass an empty string or handle logic in RoutesTab.
+    // Logic: If currentLine is passed, use it. If not, don't overwrite existing line.
+    
+    // However, the caller RoutesTab passes it.
+    // To allow clearing, let's assume if it's passed as 'null', we don't send it?
+    // No, we need to be able to clear it.
+    // Let's rely on upsert behavior.
+    
+    // Revised Logic for Active Status:
+    // We update 'current_line' whenever we have a new value. 
+    if (currentLine != null) {
+        updateData['current_line'] = currentLine;
     }
 
     await client.from('user_locations').upsert(updateData);
+  }
+  
+  // Method to explicitly clear line status (when ride ends)
+  static Future<void> clearJourneyStatus() async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_locations').upsert({
+      'user_id': user.id,
+      'current_line': null // Explicitly clear it
+    });
   }
 
   // --- CHAT (Public & Private) ---
@@ -275,7 +304,7 @@ class SupabaseService {
   static Stream<List<Map<String, dynamic>>> getPrivateMessages(String otherUserId) {
     final myId = currentUser!.id;
     return client.from('messages').stream(primaryKey: ['id'])
-      .eq('is_encrypted', true) 
+      .eq('is_encrypted', true)
       .order('created_at', ascending: true)
       .limit(50)
       .asyncMap((rawMessages) async {
@@ -306,15 +335,12 @@ class SupabaseService {
       
       if (m['is_encrypted'] == true && encrypter != null) {
         try {
-          // --- DECRYPTION FIX ---
-          // Format expected: "iv:ciphertext"
           final parts = content.split(':');
           if (parts.length == 2) {
             final iv = enc.IV.fromBase64(parts[0]);
             final cipher = parts[1];
             content = encrypter.decrypt64(cipher, iv: iv);
           } else {
-             // Fallback if message format is old or invalid
              content = "[Corrupt Message]";
           }
         } catch (e) {
@@ -350,13 +376,12 @@ class SupabaseService {
     
     final keyString = _getPrivateKey(targetUserId);
     final key = enc.Key.fromUtf8(keyString);
-    final iv = enc.IV.fromLength(16); // Random IV
+    final iv = enc.IV.fromLength(16); 
     final encrypter = enc.Encrypter(enc.AES(key));
     
     final encrypted = encrypter.encrypt(content, iv: iv);
     
-    // --- ENCRYPTION FIX ---
-    // Store IV + Ciphertext joined by a colon
+    // Store IV + Ciphertext
     final storedContent = "${iv.base64}:${encrypted.base64}";
 
     await client.from('messages').insert({
@@ -410,14 +435,9 @@ class SupabaseService {
   static Future<void> blockUser(String userId) async {
     final user = currentUser;
     if (user == null) return;
-    
-    // 1. Insert block record
     await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
-    
-    // 2. Delete relationship (BOTH WAYS)
-    // Deleting "Me -> You"
+    // Delete relationship BOTH ways
     await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
-    // Deleting "You -> Me"
     await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
   }
   
