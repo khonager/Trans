@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_image_compress/flutter_image_compress.dart'; // NEW
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/config/app_theme.dart';
+import 'package:intl/intl.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -16,7 +17,8 @@ class TicketPanel extends StatefulWidget {
 }
 
 class _TicketPanelState extends State<TicketPanel> {
-  File? _localTicketFile;
+  File? _currentTicketFile;
+  List<File> _localHistory = [];
   bool _isLoading = false;
 
   @override
@@ -26,27 +28,36 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _initTicket() async {
-    // 1. Check Local Storage (Offline First)
-    final directory = await getApplicationDocumentsDirectory();
-    final localPath = '${directory.path}/saved_ticket.jpg'; // Changed to jpg for consistency
-    final localFile = File(localPath);
-
-    if (await localFile.exists()) {
-      if (mounted) setState(() => _localTicketFile = localFile);
-    } 
-    
-    // 2. Check Cloud Backup (Silent Sync)
-    _syncFromCloud(localFile);
+    await _refreshHistory();
+    if (_localHistory.isNotEmpty) {
+      if (mounted) setState(() => _currentTicketFile = _localHistory.first);
+    }
+    _syncFromCloud();
   }
 
-  Future<void> _syncFromCloud(File localFile) async {
+  Future<void> _refreshHistory() async {
+    final directory = await getApplicationDocumentsDirectory();
+    final files = directory.listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
+        .toList();
+    
+    // Sort by Date Descending
+    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    
+    if (mounted) setState(() => _localHistory = files);
+  }
+
+  Future<void> _syncFromCloud() async {
     try {
       final url = await SupabaseService.getTicketUrl();
       if (url != null && url.isNotEmpty) {
         final response = await http.get(Uri.parse(url));
         if (response.statusCode == 200) {
-          await localFile.writeAsBytes(response.bodyBytes);
-          if (mounted) setState(() => _localTicketFile = localFile);
+          final directory = await getApplicationDocumentsDirectory();
+          final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
+          await backupFile.writeAsBytes(response.bodyBytes);
+          await _refreshHistory();
         }
       }
     } catch (e) {
@@ -54,26 +65,23 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // NEW: Helper to resize and compress
   Future<Uint8List?> _compressImage(File file) async {
     try {
       final result = await FlutterImageCompress.compressWithFile(
         file.absolute.path,
         minWidth: 540,
         minHeight: 540,
-        quality: 85, // 85% quality usually results in very small files (<100kB) for 540px
+        quality: 85,
         format: CompressFormat.jpeg,
       );
       return result;
     } catch (e) {
-      debugPrint("Compression error: $e");
       return null;
     }
   }
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
-    // Pick raw image (high quality initially)
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     
     if (image == null) return;
@@ -82,26 +90,19 @@ class _TicketPanelState extends State<TicketPanel> {
     
     try {
       final File originalFile = File(image.path);
-      
-      // 1. Compress & Resize locally
       final Uint8List? compressedBytes = await _compressImage(originalFile);
       
       if (compressedBytes == null) throw "Image compression failed.";
 
-      // 2. Save Compressed Version Locally
       final directory = await getApplicationDocumentsDirectory();
-      final localPath = '${directory.path}/saved_ticket.jpg';
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final localPath = '${directory.path}/ticket_$timestamp.jpg';
       final localFile = File(localPath);
       await localFile.writeAsBytes(compressedBytes);
       
-      if (mounted) {
-        setState(() {
-          _localTicketFile = localFile;
-        });
-      }
+      await _refreshHistory();
+      if (mounted) setState(() => _currentTicketFile = localFile);
 
-      // 3. Upload Compressed Version to Cloud
-      // We force 'jpg' extension since we compressed to JPEG
       await SupabaseService.uploadTicketBytes(compressedBytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
@@ -109,10 +110,122 @@ class _TicketPanelState extends State<TicketPanel> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        // If local save worked but upload failed, we still show the local ticket
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Cloud upload issue: $e")));
+        String msg = e.toString();
+        if (msg.contains("Bucket not found")) msg = "Cloud Error: Storage bucket missing.";
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. $msg")));
       }
     }
+  }
+
+  // --- FULL SCREEN ---
+  void _openFullScreen(File file) {
+    showDialog(
+      context: context,
+      barrierDismissible: true, // Click outside closes
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.pop(context), // Click image closes
+        child: Container(
+          color: Colors.black.withOpacity(0.9),
+          child: Center(
+            child: Image.file(file, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- MANAGEMENT ---
+  void _renameFile(File file) async {
+    final controller = TextEditingController();
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Rename Ticket"),
+        content: TextField(
+          controller: controller, 
+          decoration: const InputDecoration(hintText: "Enter label (e.g. Sept Ticket)")
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
+        ],
+      )
+    );
+
+    if (newName != null && newName.isNotEmpty) {
+      final dir = file.parent.path;
+      // Keep "ticket_" prefix so our filter still finds it
+      final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
+      await file.rename(newPath);
+      _refreshHistory();
+      Navigator.pop(context); // Close sheet
+    }
+  }
+
+  void _deleteFile(File file) async {
+    await file.delete();
+    _refreshHistory();
+    if (_currentTicketFile?.path == file.path) {
+      setState(() => _currentTicketFile = _localHistory.isNotEmpty ? _localHistory.first : null);
+    }
+    Navigator.pop(context); // Close sheet
+  }
+
+  void _showHistorySheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        height: 400,
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _localHistory.isEmpty 
+                ? const Center(child: Text("No history found.")) 
+                : ListView.separated(
+                    itemCount: _localHistory.length,
+                    separatorBuilder: (_,__) => const Divider(),
+                    itemBuilder: (ctx, idx) {
+                      final file = _localHistory[idx];
+                      // Parse name or timestamp
+                      String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
+                      if (int.tryParse(name) != null) {
+                         // It's a timestamp
+                         final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
+                         name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
+                      } else {
+                         // It's a custom name
+                         name = name.replaceAll('_', ' ');
+                      }
+
+                      return ListTile(
+                        leading: Image.file(file, width: 40, height: 40, fit: BoxFit.cover),
+                        title: Text(name),
+                        onTap: () {
+                          setState(() => _currentTicketFile = file);
+                          Navigator.pop(ctx);
+                        },
+                        trailing: PopupMenuButton(
+                          onSelected: (value) {
+                            if (value == 'rename') _renameFile(file);
+                            if (value == 'delete') _deleteFile(file);
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
+                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -126,7 +239,7 @@ class _TicketPanelState extends State<TicketPanel> {
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: colors.ticketSheetBg, 
+            color: colors.ticketSheetBg, // Uses corrected untinted color
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12, offset: const Offset(0, -4))
@@ -144,6 +257,7 @@ class _TicketPanelState extends State<TicketPanel> {
                   decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
                 )
               ),
+              
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -159,20 +273,25 @@ class _TicketPanelState extends State<TicketPanel> {
               
               if (_isLoading)
                 Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
-              else if (_localTicketFile != null)
+              else if (_currentTicketFile != null)
                 Column(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Image.file(
-                        _localTicketFile!,
-                        fit: BoxFit.contain,
-                        // Force refresh if file changed
-                        key: ValueKey(_localTicketFile!.lastModifiedSync().millisecondsSinceEpoch),
-                        errorBuilder: (context, error, stackTrace) => 
-                          Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket file")),
+                    GestureDetector(
+                      onTap: () => _openFullScreen(_currentTicketFile!), // NEW: Fullscreen
+                      onLongPress: _showHistorySheet, // History
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.file(
+                          _currentTicketFile!,
+                          fit: BoxFit.contain,
+                          key: ValueKey(_currentTicketFile!.path),
+                          errorBuilder: (context, error, stackTrace) => 
+                            Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket file")),
+                        ),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    const Text("Tap for fullscreen • Hold for history", style: TextStyle(fontSize: 10, color: Colors.grey)),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
