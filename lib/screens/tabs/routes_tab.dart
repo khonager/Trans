@@ -50,7 +50,6 @@ class _RoutesTabState extends State<RoutesTab> {
   
   final FocusNode _fromFocusNode = FocusNode();
   final FocusNode _toFocusNode = FocusNode();
-  
   final ScrollController _scrollController = ScrollController();
 
   Station? _fromStation;
@@ -103,6 +102,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
+  // --- WAKE ALARM LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -120,10 +120,13 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
+    
     final prefs = await SharedPreferences.getInstance();
     final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
     final String currentLine = firstRide.line;
+
     double? targetLat = firstRide.endLat;
     double? targetLng = firstRide.endLng;
 
@@ -146,10 +149,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
-    String msg = "Wake Alarm Set!";
-    if (stopsBefore > 0) msg += " Alerting $stopsBefore stop(s) early.";
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
@@ -173,6 +172,7 @@ class _RoutesTabState extends State<RoutesTab> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
   }
 
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -324,15 +324,23 @@ class _RoutesTabState extends State<RoutesTab> {
     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
   }
   
-  void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
+  // FIX: Added 'referenceTime' parameter
+  void _showAlternatives(BuildContext context, String stationId, String finalDestinationId, DateTime referenceTime) {
       Station fromDummy = Station(id: stationId, name: "From");
       Station toDummy = Station(id: finalDestinationId, name: "To");
+
       showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(
-          future: TransportApi.searchJourneys(fromDummy, toDummy, nahverkehrOnly: widget.onlyNahverkehr, when: DateTime.now(), results: 5), 
+          future: TransportApi.searchJourneys(
+            fromDummy, 
+            toDummy, 
+            nahverkehrOnly: widget.onlyNahverkehr,
+            when: referenceTime, // FIX: Use passed time
+            results: 5
+          ), 
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes to destination found."));
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes found."));
             return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
                 final journey = snapshot.data![idx];
                 final legs = journey['legs'] as List;
@@ -341,7 +349,12 @@ class _RoutesTabState extends State<RoutesTab> {
                 final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
                 final dir = firstRide['direction'] ?? 'Destination';
                 final depTime = DateTime.parse(firstRide['departure'] ?? firstRide['plannedDeparture']);
-                return ListTile(leading: const Icon(Icons.alt_route), title: Text("$line to $dir"), subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"), onTap: () { Navigator.pop(context); _addJourneyTab(journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); });
+                return ListTile(
+                  leading: const Icon(Icons.alt_route), 
+                  title: Text("$line to $dir"), 
+                  subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"),
+                  onTap: () { Navigator.pop(context); _addJourneyTab(journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); }
+                );
               });
           }
         );
@@ -355,6 +368,7 @@ class _RoutesTabState extends State<RoutesTab> {
     DateTime? lastArrival; 
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
+    
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '') ?? DateTime.now();
@@ -363,20 +377,50 @@ class _RoutesTabState extends State<RoutesTab> {
       for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes; } catch(e) {} }
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
+      
       double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLat == null && steps.isNotEmpty) startLat = steps.last.endLat;
       double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLng == null && steps.isNotEmpty) startLng = steps.last.endLng;
-      steps.add(JourneyStep(type: (walkMinutes > 0) ? 'walk' : 'wait', line: 'Transfer', instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer", duration: FormatUtils.formatDuration(totalGapMinutes), departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}", arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}", isWalking: walkMinutes > 0, startLat: startLat, startLng: startLng, endLat: nextRideStartLat, endLng: nextRideStartLng, path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null));
+
+      steps.add(JourneyStep(
+        type: (walkMinutes > 0) ? 'walk' : 'wait',
+        line: 'Transfer',
+        instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer",
+        duration: FormatUtils.formatDuration(totalGapMinutes),
+        departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
+        arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
+        isWalking: walkMinutes > 0,
+        startLat: startLat, startLng: startLng, endLat: nextRideStartLat, endLng: nextRideStartLng,
+        path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
+        dateTime: blockStart // FIX: Store time
+      ));
       transferBuffer.clear();
     }
+
     for (var leg in legs) {
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
         try { dep = DateTime.parse(leg['departure']); arr = DateTime.parse(leg['arrival']); } catch(e) {}
         if (dep == null || arr == null) continue;
+        
         flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
-        steps.add(JourneyStep(type: 'ride', line: leg['line']?['name']?.toString() ?? '?', instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}", duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes), departureTime: DateFormat('HH:mm').format(dep), arrivalTime: DateFormat('HH:mm').format(arr), chatCount: random.nextInt(15), startStationId: leg['origin']?['id']?.toString(), platform: leg['platform']?.toString(), stopovers: leg['stopovers'], startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']), path: leg['decodedPath']));
+        
+        steps.add(JourneyStep(
+          type: 'ride',
+          line: leg['line']?['name']?.toString() ?? '?',
+          instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
+          duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes),
+          departureTime: DateFormat('HH:mm').format(dep),
+          arrivalTime: DateFormat('HH:mm').format(arr),
+          chatCount: random.nextInt(15),
+          startStationId: leg['origin']?['id']?.toString(),
+          platform: leg['platform']?.toString(),
+          stopovers: leg['stopovers'],
+          startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']),
+          path: leg['decodedPath'],
+          dateTime: dep // FIX: Store time
+        ));
         lastArrival = arr;
       } else { transferBuffer.add(leg); }
     }
@@ -409,52 +453,32 @@ class _RoutesTabState extends State<RoutesTab> {
   Future<void> _findRoutes() async {
      if (_isLoadingRoute) return;
      Station? from = _fromStation;
-     if (from == null && widget.currentPosition != null) {
-        from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
+     if (from == null) {
+        if (_fromController.text.isEmpty || _fromController.text == "Current Location") {
+           if (widget.currentPosition != null) {
+              from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
+           } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location not available."))); return; }
+        } else {
+           setState(() => _isLoadingRoute = true);
+           try { final results = await TransportApi.searchStations(_fromController.text); if (results.isNotEmpty) { from = results.first; _fromStation = from; } else { throw "Start not found"; } } catch (e) { if (mounted) { setState(() => _isLoadingRoute = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } return; }
+        }
      }
-     if (from == null || _toStation == null) { if (mounted) setState(() => _isLoadingRoute = false); return; }
+     if (_toStation == null) {
+        if (_toController.text.isNotEmpty) {
+           setState(() => _isLoadingRoute = true);
+           try { final results = await TransportApi.searchStations(_toController.text); if (results.isNotEmpty) _toStation = results.first; else throw "Destination not found"; } catch (e) { if (mounted) { setState(() => _isLoadingRoute = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } return; }
+        } else { return; }
+     }
      setState(() => _isLoadingRoute = true);
      try {
-       final res = await TransportApi.searchJourneys(from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, isArrival: _isArrival).timeout(const Duration(seconds: 15)); 
-       if (mounted) {
-         if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found"))); }
-       }
-     } catch(e) {
-       if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-     } finally {
-       if (mounted) setState(() => _isLoadingRoute = false);
-     }
+       final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
+       if (mounted) { if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found."))); } }
+     } catch(e) { if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { if (mounted) setState(() => _isLoadingRoute = false); }
   }
 
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
-    bool? hasVibrator = await Vibration.hasVibrator();
-    if (hasVibrator == null || !hasVibrator) return;
-    final prefs = await SharedPreferences.getInstance();
-    final String patternName = prefs.getString('vibration_pattern') ?? 'standard';
-    final int intensity = prefs.getInt('vibration_intensity') ?? 128;
-    List<int> pattern = [0, 500];
-    switch (patternName) {
-      case 'heartbeat': pattern = [0, 150, 150, 150]; break;
-      case 'tick': pattern = [0, 50]; break;
-      case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
-      case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
-      case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
-      case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
-      case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
-      case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
-      case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
-      case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
-      case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
-      case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
-      case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
-      case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
-    }
-    if (await Vibration.hasAmplitudeControl() ?? false) {
-      Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => intensity).toList());
-    } else {
-      Vibration.vibrate(pattern: pattern);
-    }
+    if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
   }
 
   void _showEditFavoriteDialog(Favorite fav) async {
@@ -472,11 +496,8 @@ class _RoutesTabState extends State<RoutesTab> {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
-
     return Column(children: [
-        // FIX: Dynamic Top Padding
         SizedBox(height: topPadding),
-        
         if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) Container(width: double.infinity, padding: const EdgeInsets.all(8), color: Colors.amber, child: const Text("⚠️ Weak GPS", textAlign: TextAlign.center)),
         if (_tabs.isNotEmpty) SizedBox(height: 50, child: ListView.builder(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _tabs.length + 1, itemBuilder: (ctx, idx) { if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null)); final tab = _tabs[idx]; final isActive = tab.id == _activeTabId; return GestureDetector(onTap: () => setState(() => _activeTabId = tab.id), child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))])));})),
         Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
@@ -485,7 +506,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-
     return SingleChildScrollView(
       controller: _scrollController,
       padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
@@ -501,15 +521,11 @@ class _RoutesTabState extends State<RoutesTab> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
-                  
                   _buildTextField("From", _fromController, _fromFocusNode, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
-                  
                   const SizedBox(height: 12),
-                  
                   _buildTextField("To", _toController, _toFocusNode, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
-                  
                   const SizedBox(height: 20),
                   Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
@@ -518,14 +534,7 @@ class _RoutesTabState extends State<RoutesTab> {
                     decoration: BoxDecoration(color: colors.timeContainerBg, borderRadius: BorderRadius.circular(16)),
                     child: Row(
                       children: [
-                        GestureDetector(
-                          onTap: () => setState(() => _isArrival = !_isArrival),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), 
-                            decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)),
-                            child: Text(_isArrival ? "Arrive by" : "Depart at", style: TextStyle(color: colors.timeToggleText, fontWeight: FontWeight.w600, fontSize: 13, letterSpacing: 0.5))
-                          )
-                        ),
+                        GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: TextStyle(color: colors.timeToggleText, fontWeight: FontWeight.w600, fontSize: 13, letterSpacing: 0.5)))),
                         const SizedBox(width: 12),
                         Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("Now", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
@@ -563,28 +572,126 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildActiveRouteView(RouteTab route) {
     final colors = TransColors.of(context);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destinationId, onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destinationId, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destinationId, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
   }
 }
 
-// ... [Keep _StepCard and _EditFavoriteDialog same as before] ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;
   final String finalDestinationId;
-  final Function(String) onOpenAlternatives;
+  
+  // FIX: Updated Callback Signature
+  final Function(String, DateTime) onOpenAlternatives;
+  
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
   final bool isAlarmSet;
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
+
+  const _StepCard({
+    required this.step, 
+    this.isFirst = false, 
+    required this.finalDestinationId, 
+    required this.onOpenAlternatives, 
+    required this.onChat, 
+    required this.onAlarmToggle, 
+    required this.isAlarmSet, 
+    required this.onMapTap
+  });
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    final isTransfer = step.type == 'transfer' || step.type == 'wait' || step.type == 'walk';
-    if (isTransfer) { Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText); return GestureDetector(onTap: onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); }
-    return Card(margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0, color: colors.stepCardBg, child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]), subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const SizedBox(height: 4), Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), const SizedBox(height: 8), SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_buildActionChip(context, Icons.chat_bubble_outline, "Chat", onTap: () => onChat(step.line)), const SizedBox(width: 8), if (step.startStationId != null) ...[_buildActionChip(context, Icons.alt_route, "Alt", onTap: () => onOpenAlternatives(step.startStationId!)), const SizedBox(width: 8)], _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)]))]), children: [if (step.stopovers != null && step.stopovers!.isNotEmpty) Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { final stop = step.stopovers![idx]; final name = stop['stop']['name']; final stopId = stop['stop']['id']; final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; final actualDep = stop['departure'] ?? stop['arrival']; String timeStr = "--:--"; Color timeColor = Colors.grey; if (plannedDep != null) { final p = DateTime.parse(plannedDep); timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; if (actualDep != null) { final a = DateTime.parse(actualDep); final delay = a.difference(p).inMinutes; if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } else { timeColor = colors.delayOnTime; } } } return ListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 20), leading: const Icon(Icons.circle, size: 8, color: Colors.grey), title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), const SizedBox(width: 8), IconButton(icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), onPressed: () => onOpenAlternatives(stopId))])); })) else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))])));
+    final bool isWait = step.type == 'wait';
+    final isTransfer = step.type == 'transfer' || isWait || step.type == 'walk';
+
+    if (isTransfer) { 
+      Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); 
+      if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText); 
+      return GestureDetector(onTap: isWait ? null : onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); 
+    }
+    
+    return Card(
+      margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), 
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+      elevation: 0, 
+      color: colors.stepCardBg, 
+      child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), 
+        title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]), 
+        subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(height: 4), 
+          Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
+          if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+          const SizedBox(height: 8), 
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
+            _buildActionChip(
+              context, 
+              Icons.chat_bubble_outline, 
+              "Chat", 
+              onTap: () => onChat(step.line)
+            ), 
+            const SizedBox(width: 8), 
+            if (step.startStationId != null && step.dateTime != null) ...[
+              _buildActionChip(
+                context, 
+                Icons.alt_route, 
+                "Alt", 
+                // FIX: Pass exact step time
+                onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!)
+              ), 
+              const SizedBox(width: 8)
+            ], 
+            _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
+          ]))
+        ]), 
+        children: [
+          if (step.stopovers != null && step.stopovers!.isNotEmpty) 
+            Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { 
+              final stop = step.stopovers![idx]; 
+              final name = stop['stop']['name']; 
+              final stopId = stop['stop']['id']; 
+              final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; 
+              final actualDep = stop['departure'] ?? stop['arrival']; 
+              String timeStr = "--:--"; 
+              Color timeColor = Colors.grey; 
+              DateTime? exactStopDate;
+
+              if (plannedDep != null) { 
+                final p = DateTime.parse(plannedDep); 
+                exactStopDate = p;
+                timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; 
+                if (actualDep != null) { 
+                  final a = DateTime.parse(actualDep); 
+                  final delay = a.difference(p).inMinutes; 
+                  if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } 
+                  else { timeColor = colors.delayOnTime; } 
+                } 
+              } 
+              return ListTile(
+                dense: true, 
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
+                leading: const Icon(Icons.circle, size: 8, color: Colors.grey), 
+                title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), 
+                  const SizedBox(width: 8), 
+                  if (exactStopDate != null)
+                    IconButton(
+                      icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), 
+                      // FIX: Pass exact stop time
+                      onPressed: () => onOpenAlternatives(stopId, exactStopDate!)
+                    )
+                ])
+              ); 
+            })) 
+          else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
+        ]
+      ))
+    );
   }
+  
   Widget _buildActionChip(BuildContext context, IconData icon, String label, {bool isActive = false, required VoidCallback onTap}) {
     final colors = TransColors.of(context);
     return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));

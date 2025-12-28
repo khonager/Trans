@@ -30,30 +30,18 @@ jobs:
         with:
           channel: 'stable'
 
+      # FIX: Create the .env file exactly like you have locally
+      # We assume your AppConfig reads from dotenv, so we just feed dotenv.
+      - name: Create .env file
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
+          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          
+          # Verify file creation (prints content to log, be careful or remove cat for privacy)
+          # cat .env 
+
       - name: Get Dependencies
         run: flutter pub get
-
-      # 1. Inject Secrets Safely
-      - name: Inject Secrets
-        run: |
-          touch .env
-          
-          URL="${{ secrets.SUPABASE_URL }}"
-          KEY="${{ secrets.SUPABASE_ANON_KEY }}"
-          
-          # Sanitize
-          URL=$(echo "$URL" | tr -d '\n' | xargs)
-          KEY=$(echo "$KEY" | tr -d '\n' | xargs)
-
-          # Write AppConfig
-          cat <<EOF > lib/config/app_config.dart
-          import 'package:flutter_dotenv/flutter_dotenv.dart';
-
-          class AppConfig {
-            static String get supabaseUrl => r"$URL";
-            static String get supabaseAnonKey => r"$KEY";
-          }
-          EOF
 
       - name: Build APK
         run: flutter build apk --release
@@ -73,7 +61,7 @@ jobs:
             exit 1
           fi
           
-          # 2. Sanitize Signing Keys (Remove hidden newlines)
+          # Sanitize Signing Keys
           KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
           KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
           KEY_PASS=$(echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | tr -d '\r' | tr -d '\n')
