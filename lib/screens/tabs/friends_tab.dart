@@ -27,12 +27,15 @@ class _FriendsTabState extends State<FriendsTab> {
   void initState() {
     super.initState();
     _initData();
+    // FIX: Listen for global refreshes (e.g. Ghost Mode toggled)
+    SupabaseService.friendsListRefresh.addListener(_initData);
   }
 
   @override
   void dispose() {
     _friendsSub?.cancel();
     _requestsSub?.cancel();
+    SupabaseService.friendsListRefresh.removeListener(_initData);
     super.dispose();
   }
 
@@ -52,10 +55,13 @@ class _FriendsTabState extends State<FriendsTab> {
       if (mounted) setState(() => _isLoading = false);
     }
 
+    // Cancel old subs if re-initializing
+    _friendsSub?.cancel();
     _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
     });
 
+    _requestsSub?.cancel();
     _requestsSub = SupabaseService.streamPendingRequests().listen((data) {
       if (mounted) setState(() => _requests = data);
     });
@@ -290,6 +296,29 @@ class _FriendsTabState extends State<FriendsTab> {
     final bool canSeeLoc = friend['can_see_location'] ?? true;
     final bool isGhost = friend['ghost_mode'] ?? false;
     
+    // FIX: Show active status even if no location info
+    String statusText = "Inactive";
+    Color statusColor = colors.statusOffline;
+    Widget? statusIcon;
+
+    if (isActive) {
+      statusText = "Active recently";
+      statusColor = colors.statusActive;
+      
+      // We only show specifics if permitted
+      if (currentLine != null && currentLine.isNotEmpty) {
+        statusText = "On $currentLine";
+        statusColor = colors.statusOnline;
+        statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
+      }
+    }
+
+    if (isGhost && canSeeLoc) {
+       // If friend is ghost, we might still see "Active recently" but no line info
+       // But we want to indicate they are ghosting? User said "just what bus one was/is on" should be hidden.
+       // So "Active recently" is fine.
+    }
+    
     return GestureDetector(
       onTap: () => setState(() => _expandedFriendId = isExpanded ? null : friendId),
       child: AnimatedContainer(
@@ -323,18 +352,13 @@ class _FriendsTabState extends State<FriendsTab> {
                       // Status Logic
                       if (!canSeeLoc)
                         Text("Location access required", style: TextStyle(fontSize: 12, color: Colors.orange))
-                      else if (isGhost)
-                        Text("Location hidden", style: TextStyle(fontSize: 12, color: colors.textSecondary))
-                      else if (currentLine != null && currentLine.isNotEmpty && isActive)
+                      else 
                         Row(
                           children: [
-                            Icon(Icons.directions_bus, size: 12, color: colors.statusOnline),
-                            const SizedBox(width: 4),
-                            Text("On $currentLine", style: TextStyle(fontSize: 12, color: colors.statusOnline)),
+                            if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
+                            Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
                           ],
                         )
-                      else
-                        Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? colors.statusActive : colors.statusOffline))
                     ]
                   ),
                 ),
@@ -363,8 +387,7 @@ class _FriendsTabState extends State<FriendsTab> {
                        onTap: () {
                          SupabaseService.requestLocationAccess(friendId);
                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request sent (Simulated: Access Granted)")));
-                         // Simulate immediate grant for demo
-                         setState(() => _expandedFriendId = null);
+                         // Manual refresh triggered by service in requestLocationAccess
                        }
                      ),
                    _buildActionButton(
