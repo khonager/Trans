@@ -11,16 +11,12 @@ import '../../config/app_theme.dart';
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
-  
   final bool useSystemTheme;
   final Function(bool) onSystemSyncChanged;
-
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
-  
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  
   final Function(Color) onColorChanged;
   final Color currentColor;
 
@@ -80,7 +76,6 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  // Helper to just save settings (without setState loop)
   Future<void> _persistVibrationSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vibration_pattern', _vibrationPattern);
@@ -230,19 +225,22 @@ class _SettingsTabState extends State<SettingsTab> {
     final user = SupabaseService.currentUser;
     final colors = TransColors.of(context);
     final primaryColor = Theme.of(context).primaryColor;
+    
+    // FIX: Dynamic Padding
+    final topPadding = MediaQuery.of(context).padding.top + 10;
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
-          const SizedBox(height: 60),
+          SizedBox(height: topPadding),
+          // Header Restored
           Row(
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                // FIX: Removed Container wrapper. Image renders directly (transparent).
                 child: Image.asset(
-                  'lib/assets/logo.png',
+                  'lib/assets/logo.png', // Check path
                   height: 48,
                   width: 48,
                   errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
@@ -378,11 +376,9 @@ class _SettingsTabState extends State<SettingsTab> {
                  max: 255, 
                  activeColor: primaryColor, 
                  thumbColor: primaryColor, 
-                 // FIX: Sync Update
                  onChanged: (val) {
                    setState(() => _vibrationIntensity = val.toInt());
                  },
-                 // FIX: Save & Test on End
                  onChangeEnd: (val) {
                    _persistVibrationSettings();
                    _testVibration();

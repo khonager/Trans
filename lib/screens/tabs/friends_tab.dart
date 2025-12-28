@@ -161,6 +161,7 @@ class _FriendsTabState extends State<FriendsTab> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final topPadding = MediaQuery.of(context).padding.top + 10;
     
     final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
@@ -169,7 +170,6 @@ class _FriendsTabState extends State<FriendsTab> {
     for (var f in _friends) {
       if (f['updated_at'] != null) {
         final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
-        // Active if updated in last 12 hours
         final isActive = now.difference(updated).inHours < 12;
         if (isActive) {
           activeFriends.add(f);
@@ -185,7 +185,8 @@ class _FriendsTabState extends State<FriendsTab> {
 
     return Column(
       children: [
-        const SizedBox(height: 100),
+        // FIX: Dynamic Top Padding
+        SizedBox(height: topPadding),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
@@ -206,19 +207,16 @@ class _FriendsTabState extends State<FriendsTab> {
             : ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  // 1. ACTIVE FRIENDS
                   if (activeFriends.isNotEmpty) ...[
                     _buildSectionHeader("Active Now", colors),
                     ...activeFriends.map((f) => _buildFriendCard(context, f, true)),
                   ],
 
-                  // 2. REQUESTS
                   if (_requests.isNotEmpty) ...[
                     _buildSectionHeader("Requests", colors),
                     ..._requests.map((r) => _buildRequestCard(context, r)),
                   ],
 
-                  // 3. INACTIVE FRIENDS
                   if (inactiveFriends.isNotEmpty) ...[
                     _buildSectionHeader("Offline", colors),
                     ...inactiveFriends.map((f) => _buildFriendCard(context, f, false)),
@@ -393,7 +391,6 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.blue, 
                      onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
                    ),
-                   // NEW REMOVE BUTTON
                    _buildActionButton(
                      icon: Icons.person_remove, 
                      label: "Remove", 
