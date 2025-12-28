@@ -17,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import '../map_screen.dart'; // Import the new map screen
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -58,11 +59,9 @@ class _RoutesTabState extends State<RoutesTab> {
   TimeOfDay? _selectedTime;
   bool _isArrival = false; 
 
-  // Wake Me / GPS
   bool _isWakeAlarmSet = false;
   StreamSubscription<Position>? _gpsStream;
   double? _gpsAccuracy;
-  
   List<Favorite> _favorites = [];
 
   @override
@@ -77,7 +76,7 @@ class _RoutesTabState extends State<RoutesTab> {
     _fromController.dispose();
     _toController.dispose();
     _debounce?.cancel();
-    _stopWakeAlarm();
+    _gpsStream?.cancel(); // Cancel stream directly
     super.dispose();
   }
 
@@ -86,7 +85,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC ---
+  // --- WAKE ME & GPS LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -98,36 +97,50 @@ class _RoutesTabState extends State<RoutesTab> {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
+    // FIX: Check if mounted before calling setState to prevent crash
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
   void _startWakeAlarm(RouteTab route) {
-    // Find the destination coordinates of the current step or final destination
-    // For simplicity, we use the final destination of the route
     if (route.steps.isEmpty) return;
     
-    // We need coordinates. If we don't have them in the RouteTab, we might need to fetch them
-    // But usually transport.rest returns station coords in legs.
-    // Let's assume we vibrate when we are near the NEXT transfer.
-    
-    setState(() => _isWakeAlarmSet = true);
+    if (mounted) setState(() => _isWakeAlarmSet = true);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! We'll vibrate 500m before arrival.")));
 
-    // Configure specific location settings for battery efficiency vs accuracy
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
-
-      // Check distance to destination (Mock logic: Assuming we have destination coords)
-      // Since RouteTab assumes ID, we need to ensure we have coordinates.
-      // Ideally, pass coordinates into RouteTab. For now, this logic assumes we have valid GPS.
       
-      // REAL IMPLEMENTATION NOTE:
-      // We need the lat/lng of the destination station.
-      // This data exists in the API response but wasn't fully stored in JourneyStep.
-      // I will add a simple check: if accuracy is good, show "Tracking".
+      // Simple logic: If we have destination coordinates in the last step
+      if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
+        double dist = Geolocator.distanceBetween(
+          pos.latitude, pos.longitude, 
+          route.steps.last.endLat!, route.steps.last.endLng!
+        );
+        
+        if (dist < 500) { // 500 meters
+           _triggerVibration();
+           if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Arriving soon! Wake up!")));
+             _stopWakeAlarm();
+           }
+        }
+      }
     });
+  }
+
+  void _openMap(RouteTab route, {JourneyStep? focusStep}) {
+    Navigator.push(
+      context, 
+      MaterialPageRoute(
+        builder: (_) => MapScreen(
+          steps: route.steps, 
+          focusStep: focusStep,
+          currentPosition: widget.currentPosition,
+        )
+      )
+    );
   }
 
   // --- SEARCH LOGIC ---
@@ -157,7 +170,6 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      // FIX: Ensure coordinates are valid
       if (widget.currentPosition!.latitude != 0.0) {
         final nearby = await TransportApi.getNearbyStops(
             widget.currentPosition!.latitude, widget.currentPosition!.longitude);
@@ -307,23 +319,34 @@ class _RoutesTabState extends State<RoutesTab> {
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
+    // Helper to grab coords from leg locations
+    double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
+    double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
+
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
       DateTime blockStart;
+      dynamic startLocationData;
+
       if (lastArrival != null) {
         blockStart = lastArrival!;
+        // Can't easily get previous leg info here without more state, but simplistic approach:
       } else if (transferBuffer.isNotEmpty) {
         blockStart = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
+        startLocationData = transferBuffer.first['origin'];
       } else {
         return; 
       }
 
       DateTime blockEnd;
+      dynamic endLocationData;
+
       if (nextRideDeparture != null) {
         blockEnd = nextRideDeparture;
       } else if (transferBuffer.isNotEmpty) {
         blockEnd = DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']);
+        endLocationData = transferBuffer.last['destination'];
       } else {
         blockEnd = blockStart;
       }
@@ -374,6 +397,12 @@ class _RoutesTabState extends State<RoutesTab> {
 
       String type = (walkMinutes > 0) ? 'walk' : 'wait';
 
+      // Attempt to extract coords for the transfer/walk
+      double? startLat = getLat(startLocationData);
+      double? startLng = getLng(startLocationData);
+      // For end coords, we might need context from the next loop or the buffer
+      // This is a simplification.
+
       steps.add(JourneyStep(
         type: type,
         line: 'Transfer',
@@ -382,6 +411,8 @@ class _RoutesTabState extends State<RoutesTab> {
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: type == 'walk',
+        startLat: startLat,
+        startLng: startLng,
       ));
       
       transferBuffer.clear();
@@ -406,6 +437,12 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
+        // Extract Coordinates for the Ride
+        double? startLat = getLat(leg['origin']);
+        double? startLng = getLng(leg['origin']);
+        double? endLat = getLat(leg['destination']);
+        double? endLng = getLng(leg['destination']);
+
         if (steps.isNotEmpty && steps.last.line == lineName && steps.last.type == 'ride') {
            var last = steps.removeLast();
            List<dynamic> mergedStops = [];
@@ -423,6 +460,10 @@ class _RoutesTabState extends State<RoutesTab> {
              chatCount: last.chatCount,
              startStationId: last.startStationId,
              platform: last.platform,
+             startLat: last.startLat, // Keep original start
+             startLng: last.startLng,
+             endLat: endLat,          // Update end to new leg end
+             endLng: endLng,
            ));
         } else {
           int legDurationMin = arr.difference(dep).inMinutes;
@@ -439,6 +480,10 @@ class _RoutesTabState extends State<RoutesTab> {
             startStationId: startStationId,
             platform: platform != null ? "Plat $platform" : null,
             stopovers: leg['stopovers'],
+            startLat: startLat,
+            startLng: startLng,
+            endLat: endLat,
+            endLng: endLng,
           ));
         }
         
@@ -514,13 +559,17 @@ class _RoutesTabState extends State<RoutesTab> {
     if (from == null && widget.currentPosition != null) {
        setState(() => _isLoadingRoute = true); 
        try {
+         // Fallback logic if API fails nearby search
+         if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
+
          final nearby = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-         if (nearby.isNotEmpty) from = nearby.first;
-         else {
-           // Fallback: Use current GPS coordinates as a generic "Location" start point
+         if (nearby.isNotEmpty) {
+           from = nearby.first;
+         } else {
+           // Fallback: Use raw GPS coordinates as start point
            from = Station(
-             id: "gps:${widget.currentPosition!.latitude},${widget.currentPosition!.longitude}", 
-             name: "Current Location",
+             id: "${widget.currentPosition!.latitude},${widget.currentPosition!.longitude}", 
+             name: "My Location",
              type: 'location',
              latitude: widget.currentPosition!.latitude,
              longitude: widget.currentPosition!.longitude
@@ -567,7 +616,7 @@ class _RoutesTabState extends State<RoutesTab> {
         _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
       }
     });
-    _stopWakeAlarm(); // Stop alarm if tab closes
+    _stopWakeAlarm();
   }
 
   void _showChat(BuildContext context, String lineName) {
@@ -578,8 +627,6 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
-      // Need dummy stations to satisfy new signature, though searchJourneys uses IDs for stations
-      // This is a bit hacky but works because ID check comes first in searchJourneys
       Station fromDummy = Station(id: stationId, name: "From");
       Station toDummy = Station(id: finalDestinationId, name: "To");
 
@@ -643,7 +690,6 @@ class _RoutesTabState extends State<RoutesTab> {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final colors = TransColors.of(context);
 
-    // GPS Warning Check
     bool gpsPoor = false;
     if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) {
       gpsPoor = true;
@@ -653,7 +699,6 @@ class _RoutesTabState extends State<RoutesTab> {
       children: [
         const SizedBox(height: 100),
         
-        // GPS Warning Banner
         if (gpsPoor)
           Container(
             width: double.infinity,
@@ -891,6 +936,12 @@ class _RoutesTabState extends State<RoutesTab> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
+              // MAP BUTTON
+              IconButton(
+                icon: const Icon(Icons.map, color: Colors.blue),
+                onPressed: () => _openMap(route),
+              ),
+              const SizedBox(width: 8),
               Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
             ],
           ),
@@ -905,6 +956,7 @@ class _RoutesTabState extends State<RoutesTab> {
             onChat: (line) => _showChat(context, line),
             onAlarmToggle: () => _toggleWakeAlarm(route),
             isAlarmSet: _isWakeAlarmSet,
+            onMapTap: () => _openMap(route, focusStep: route.steps[i]), // NEW: Tap walk to see map
           )
       ],
     );
@@ -918,9 +970,10 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
+  final VoidCallback onMapTap; // NEW
   final bool isAlarmSet;
 
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
 
   @override
   Widget build(BuildContext context) {
@@ -931,11 +984,14 @@ class _StepCard extends StatelessWidget {
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
       if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
 
-      return Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
-        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
+      return GestureDetector( // Make clickable for map
+        onTap: onMapTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
+          child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
+        ),
       );
     }
 
