@@ -18,28 +18,18 @@ class TransportApi {
   }
 
   static Future<http.Response> _fetch(Uri uri) async {
-    // 1. Try Direct (Works on Mobile / Server)
     try {
+      debugPrint("Fetching: $uri");
       final response = await http.get(uri);
       if (response.statusCode == 200) return response;
+      
+      debugPrint("API Error ${response.statusCode}: ${response.body}");
+      return response; // Return to let caller handle status
     } catch (e) {
-      // Direct fetch failed (CORS on Web?)
+      debugPrint("Network Error: $e");
+      // Rethrow so the UI knows it failed (and stops the spinner)
+      throw Exception("Network Error: $e");
     }
-
-    // 2. Fallback for Web (CORS Proxy)
-    if (kIsWeb) {
-      try {
-        // Try 'thingproxy' which is often more stable for this API
-        final proxyUrl = "https://thingproxy.freeboard.io/fetch/${uri.toString()}";
-        final response = await http.get(Uri.parse(proxyUrl));
-        if (response.statusCode == 200) return response;
-      } catch (e) {
-        debugPrint("Proxy failed: $e");
-      }
-    }
-    
-    // Return error if all fails
-    return http.Response('{"error": "Failed to fetch data"}', 500); 
   }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
@@ -60,14 +50,12 @@ class TransportApi {
 
     try {
       final response = await _fetch(_getUri('/locations', params));
-
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
       }
       return [];
     } catch (e) {
-      debugPrint("API Exception: $e");
       return [];
     }
   }
@@ -80,7 +68,6 @@ class TransportApi {
         'results': 5, 
         'distance': 1000
       }));
-
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
@@ -101,32 +88,40 @@ class TransportApi {
       'results': results,
       'stopovers': 'true',
       'polylines': 'true',
+      'tickets': 'false',
     };
 
+    // FROM
     if (from.id == 'gps' || from.type == 'location') {
       params['from.latitude'] = from.latitude;
       params['from.longitude'] = from.longitude;
-      params['from.address'] = "${from.latitude},${from.longitude}";
+      // Address param is optional but good for debugging
+      if (from.name != "Current Location") params['from.address'] = from.name;
     } else {
       params['from'] = from.id;
     }
 
+    // TO
     if (to.id == 'gps' || to.type == 'location') {
       params['to.latitude'] = to.latitude;
       params['to.longitude'] = to.longitude;
+      if (to.name != "Current Location") params['to.address'] = to.name;
     } else {
       params['to'] = to.id;
     }
 
+    // TIME
     if (when != null) {
       params[isArrival ? 'arrival' : 'departure'] = when.toIso8601String();
     }
 
+    // FILTERS
     if (nahverkehrOnly) {
-      params['loyaltyCard'] = 'none';
-      params['class'] = 2;
-      params['nationalExpress'] = false;
-      params['national'] = false;
+      // Exclude high-speed
+      params['nationalExpress'] = 'false';
+      params['national'] = 'false';
+      // We don't need to strictly enable the others (default is true), 
+      // but setting exclusion is critical.
     }
 
     try {
@@ -141,7 +136,6 @@ class TransportApi {
       }
       return [];
     } catch (e) {
-      debugPrint("Journey Exception: $e");
       return [];
     }
   }
