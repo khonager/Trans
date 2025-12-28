@@ -17,7 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
-import 'package:trans/utils/format_utils.dart'; // Ensure this exists
+import 'package:trans/utils/format_utils.dart'; 
 import '../map_screen.dart'; 
 
 const List<IconData> kAvailableIcons = [
@@ -47,6 +47,11 @@ class _RoutesTabState extends State<RoutesTab> {
 
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
+  
+  // NEW: Focus Nodes for Auto-Switching
+  final FocusNode _fromFocusNode = FocusNode();
+  final FocusNode _toFocusNode = FocusNode();
+
   Station? _fromStation;
   Station? _toStation;
   
@@ -76,17 +81,19 @@ class _RoutesTabState extends State<RoutesTab> {
   void dispose() {
     _fromController.dispose();
     _toController.dispose();
+    _fromFocusNode.dispose();
+    _toFocusNode.dispose();
     _debounce?.cancel();
     _gpsStream?.cancel();
     super.dispose();
   }
 
+  // ... [Keep _loadFavorites, Wake Alarm logic, _openMap same as before] ...
   Future<void> _loadFavorites() async {
     final favs = await FavoritesManager.getFavorites();
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -158,16 +165,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   void _openMap(RouteTab route, {JourneyStep? focusStep}) {
-    Navigator.push(
-      context, 
-      MaterialPageRoute(
-        builder: (_) => MapScreen(
-          steps: route.steps, 
-          focusStep: focusStep,
-          currentPosition: widget.currentPosition
-        )
-      )
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
   }
 
   // --- SEARCH LOGIC ---
@@ -249,6 +247,14 @@ class _RoutesTabState extends State<RoutesTab> {
       if (_activeSearchField == 'from') {
         _fromStation = station;
         _fromController.text = station.name;
+        
+        // AUTO-FOCUS: If To is empty, jump there
+        if (_toStation == null) {
+           _activeSearchField = 'to';
+           _suggestions = []; 
+           _toFocusNode.requestFocus();
+           return; 
+        }
       } else {
         _toStation = station;
         _toController.text = station.name;
@@ -301,17 +307,35 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (target != null && mounted) {
       setState(() {
-        if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
-          _fromStation = target;
-          _fromController.text = target!.name;
+        // If From is empty (or GPS) and we select a favorite, fill To if it's currently empty
+        // Or if user clicked on "From" field, fill "From"
+        // Logic: Try to fill empty slot smartly
+        if (_activeSearchField == 'from') {
+           _fromStation = target;
+           _fromController.text = target!.name;
+           if (_toStation == null) {
+             _activeSearchField = 'to';
+             _toFocusNode.requestFocus();
+           }
+        } else if (_activeSearchField == 'to') {
+           _toStation = target;
+           _toController.text = target!.name;
         } else {
-          _toStation = target;
-          _toController.text = target!.name;
+           // No field active? Fill destination if source exists
+           if (_fromStation != null || widget.currentPosition != null) {
+             _toStation = target;
+             _toController.text = target!.name;
+           } else {
+             _fromStation = target;
+             _fromController.text = target!.name;
+             _toFocusNode.requestFocus();
+           }
         }
       });
     }
   }
 
+  // ... [Keep _showEditFavoriteDialog, _processLegs, _addJourneyTab same as before] ...
   void _showEditFavoriteDialog(Favorite fav) async {
     await showDialog(
       context: context,
@@ -362,7 +386,7 @@ class _RoutesTabState extends State<RoutesTab> {
         type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
         instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer",
-        duration: FormatUtils.formatDuration(totalGapMinutes), // FORMAT UTILS
+        duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: walkMinutes > 0,
@@ -391,7 +415,7 @@ class _RoutesTabState extends State<RoutesTab> {
           type: 'ride',
           line: leg['line']?['name']?.toString() ?? '?',
           instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
-          duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes), // FORMAT UTILS
+          duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes),
           departureTime: DateFormat('HH:mm').format(dep),
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
@@ -424,7 +448,7 @@ class _RoutesTabState extends State<RoutesTab> {
       if (legs.isNotEmpty) {
         final start = DateTime.parse(legs.first['departure']);
         final end = DateTime.parse(legs.last['arrival']);
-        duration = FormatUtils.formatDuration(end.difference(start).inMinutes); // FORMAT UTILS
+        duration = FormatUtils.formatDuration(end.difference(start).inMinutes);
       }
       if (journeyData['arrival'] != null) arr = DateTime.parse(journeyData['arrival']);
     } catch(e) {}
@@ -566,8 +590,11 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
+    // FIX: Add padding for keyboard
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 100),
+      padding: EdgeInsets.only(bottom: 100 + bottomPadding),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -580,11 +607,17 @@ class _RoutesTabState extends State<RoutesTab> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
-                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
+                  
+                  // FROM FIELD
+                  _buildTextField("From", _fromController, _fromFocusNode, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 12),
-                  _buildTextField("To", _toController, _toStation != null, 'to'),
+                  
+                  // TO FIELD
+                  _buildTextField("To", _toController, _toFocusNode, _toStation != null, 'to'),
                   if (_activeSearchField == 'to') _buildSuggestionsList(),
+                  
                   const SizedBox(height: 20),
                   Text("Trip Time", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
@@ -628,12 +661,13 @@ class _RoutesTabState extends State<RoutesTab> {
     return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), Flexible(child: ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); }))]));
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
+  // FIX: Added FocusNode support
+  Widget _buildTextField(String label, TextEditingController controller, FocusNode focusNode, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
     else if (fieldKey == 'from' && hint.contains("Location")) iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () => setState(() => _activeSearchField = fieldKey), style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
@@ -642,6 +676,7 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 }
 
+// ... [_StepCard and _EditFavoriteDialog are same as before, no changes needed] ...
 class _StepCard extends StatelessWidget {
   final JourneyStep step;
   final bool isFirst;

@@ -37,6 +37,7 @@ class _MapScreenState extends State<MapScreen> {
         points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
       } 
       else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        // Connect intermediate stops
         if (step.startLat != null && step.startLng != null) {
           points.add(LatLng(step.startLat!, step.startLng!));
         }
@@ -52,37 +53,43 @@ class _MapScreenState extends State<MapScreen> {
           points.add(LatLng(step.endLat!, step.endLng!));
         }
       } 
+      // Fallback for Walk/Transfer steps without path data
       else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
         points.add(LatLng(step.startLat!, step.startLng!));
         points.add(LatLng(step.endLat!, step.endLng!));
       }
-    }
 
-    // --- B. Build Markers ---
-    if (stepsToShow.isNotEmpty) {
-      final first = stepsToShow.first;
-      if (first.startLat != null && first.startLng != null) {
-        markers.add(Marker(
-          point: LatLng(first.startLat!, first.startLng!),
-          width: 40, height: 40,
-          child: const Icon(Icons.flag, color: Colors.green, size: 32),
-          alignment: Alignment.topCenter,
-        ));
+      // --- B. Transfer Dots (Only if showing full route) ---
+      if (widget.focusStep == null && (step.type == 'transfer' || step.type == 'walk')) {
+         if (step.startLat != null && step.startLng != null) {
+            markers.add(Marker(
+              point: LatLng(step.startLat!, step.startLng!),
+              width: 12, height: 12,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.8),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1)
+                ),
+              ),
+            ));
+         }
       }
     }
 
-    if (stepsToShow.isNotEmpty) {
-      final last = stepsToShow.last;
-      if (last.endLat != null && last.endLng != null) {
-        markers.add(Marker(
-          point: LatLng(last.endLat!, last.endLng!),
-          width: 40, height: 40,
-          child: const Icon(Icons.location_on, color: Colors.red, size: 36),
-          alignment: Alignment.topCenter,
-        ));
-      }
+    // --- C. Destination Marker (Red Pin) ---
+    // Guaranteed to be at the very last point of the route
+    if (points.isNotEmpty) {
+      final lastPoint = points.last;
+      markers.add(Marker(
+        point: lastPoint,
+        width: 40, height: 40,
+        child: const Icon(Icons.location_on, color: Colors.red, size: 36),
+        alignment: Alignment.topCenter,
+      ));
     }
 
+    // --- D. User Position ---
     if (widget.currentPosition != null) {
       markers.add(Marker(
         point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
@@ -99,7 +106,7 @@ class _MapScreenState extends State<MapScreen> {
       ));
     }
 
-    // --- C. Camera Bounds ---
+    // --- E. Bounds ---
     LatLngBounds? bounds;
     if (points.isNotEmpty) {
       bounds = LatLngBounds.fromPoints(points);
@@ -120,7 +127,6 @@ class _MapScreenState extends State<MapScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      // NEW: Recenter Button
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           if (bounds != null) {
@@ -132,7 +138,7 @@ class _MapScreenState extends State<MapScreen> {
         child: const Icon(Icons.center_focus_strong),
       ),
       body: FlutterMap(
-        mapController: _mapController, // Linked Controller
+        mapController: _mapController,
         options: MapOptions(
           initialCenter: initialCenter,
           initialZoom: 13,
@@ -152,7 +158,6 @@ class _MapScreenState extends State<MapScreen> {
                   points: points,
                   strokeWidth: 5.0,
                   color: Colors.blueAccent,
-                  // Removed isDotted: false to fix error
                 ),
               ],
             ),

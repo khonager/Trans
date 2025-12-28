@@ -1,3 +1,4 @@
+import 'dart:ui'; // Needed for PointerDeviceKind
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -30,6 +31,16 @@ void main() async {
   runApp(const TransApp());
 }
 
+// FIX: Enable Mouse Dragging for Web/Desktop
+class CustomScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+  };
+}
+
 class TransApp extends StatefulWidget {
   const TransApp({super.key});
 
@@ -38,9 +49,8 @@ class TransApp extends StatefulWidget {
 }
 
 class _TransAppState extends State<TransApp> {
-  ThemeMode _themeMode = ThemeMode.dark; // Default fallback
-  bool _useSystemTheme = false; // Secret setting
-  
+  ThemeMode _themeMode = ThemeMode.light; 
+  bool _useSystemTheme = false;
   bool _onlyNahverkehr = false;
   bool _isGhostMode = false;
   Color _themeColor = appThemeColors[0]; 
@@ -53,36 +63,27 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // Load Simple Values
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final isGhost = prefs.getBool('ghost_mode') ?? false;
-    
-    // Load Theme Logic
     final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
     final storedIsDark = prefs.getBool('is_dark_mode');
 
     setState(() {
       _onlyNahverkehr = onlyNv;
       _isGhostMode = isGhost;
-      if (colorVal != null) _themeColor = Color(colorVal);
+      if (colorVal != null) _themeColor = Color(colorVal); else _themeColor = appThemeColors[0];
       
       _useSystemTheme = storedSystemSync;
 
       if (_useSystemTheme) {
         _themeMode = ThemeMode.system;
       } else {
-        // Manual Mode
         if (storedIsDark != null) {
-          // Restore saved preference
           _themeMode = storedIsDark ? ThemeMode.dark : ThemeMode.light;
         } else {
-          // FIRST RUN: Detect System, Default to Dark if unsure
           final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
           _themeMode = (brightness == Brightness.light) ? ThemeMode.light : ThemeMode.dark;
-          
-          // Save this initial state so it is "Manual" from now on
           prefs.setBool('is_dark_mode', _themeMode == ThemeMode.dark);
         }
       }
@@ -90,7 +91,6 @@ class _TransAppState extends State<TransApp> {
   }
 
   void _toggleTheme(bool isDark) async {
-    // If we toggle manually, we must disable system sync
     setState(() {
       _useSystemTheme = false; 
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
@@ -107,7 +107,6 @@ class _TransAppState extends State<TransApp> {
       if (enabled) {
         _themeMode = ThemeMode.system;
       } else {
-        // When disabling sync, snap to current actual brightness so it doesn't jump
         final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
         _themeMode = (brightness == Brightness.dark) ? ThemeMode.dark : ThemeMode.light;
         prefs.setBool('is_dark_mode', _themeMode == ThemeMode.dark);
@@ -147,17 +146,15 @@ class _TransAppState extends State<TransApp> {
     return MaterialApp(
       title: 'Trans',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: CustomScrollBehavior(), // APPLY FIX
       themeMode: _themeMode,
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),
       home: HomeScreen(
-        isDarkMode: _themeMode == ThemeMode.dark, // This reflects current ACTUAL mode
+        isDarkMode: _themeMode == ThemeMode.dark,
         onThemeChanged: _toggleTheme,
-        
-        // Pass Sync Logic
         useSystemTheme: _useSystemTheme,
         onSystemSyncChanged: _toggleSystemSync,
-
         onlyNahverkehr: _onlyNahverkehr,
         onNahverkehrChanged: _toggleNahverkehr,
         isGhostMode: _isGhostMode,

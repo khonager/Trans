@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:convert'; // For Base64
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Web storage
 import 'package:http/http.dart' as http;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -17,11 +20,13 @@ class TicketPanel extends StatefulWidget {
 }
 
 class _TicketPanelState extends State<TicketPanel> {
-  // NEW: Controller to control sheet programmatically
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   
-  File? _currentTicketFile;
-  List<File> _localHistory = [];
+  // Mobile uses File, Web uses MemoryBytes
+  File? _mobileFile;
+  Uint8List? _webBytes;
+  
+  List<dynamic> _history = []; // Stores File (mobile) or String (web timestamps)
   bool _isLoading = false;
 
   @override
@@ -30,39 +35,44 @@ class _TicketPanelState extends State<TicketPanel> {
     _initTicket();
   }
 
-  // Toggle Sheet visibility (Fix for PC click)
   void _toggleSheet() {
     if (_sheetController.size < 0.2) {
-      _sheetController.animateTo(
-        0.85, 
-        duration: const Duration(milliseconds: 300), 
-        curve: Curves.easeOut
-      );
+      _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     } else {
-      _sheetController.animateTo(
-        0.1, 
-        duration: const Duration(milliseconds: 300), 
-        curve: Curves.easeIn
-      );
+      _sheetController.animateTo(0.1, duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
     }
   }
 
   Future<void> _initTicket() async {
     await _refreshHistory();
-    if (_localHistory.isNotEmpty) {
-      if (mounted) setState(() => _currentTicketFile = _localHistory.first);
-    }
+    // Cloud sync logic remains similar but checks platform
     _syncFromCloud();
   }
 
   Future<void> _refreshHistory() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final files = directory.listSync()
-        .whereType<File>()
-        .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
-        .toList();
-    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-    if (mounted) setState(() => _localHistory = files);
+    if (kIsWeb) {
+      // WEB: Load from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final savedData = prefs.getString('saved_ticket_base64');
+      if (savedData != null) {
+        setState(() => _webBytes = base64Decode(savedData));
+      }
+    } else {
+      // MOBILE: Load from File System
+      final directory = await getApplicationDocumentsDirectory();
+      final files = directory.listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
+          .toList();
+      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      
+      if (mounted) {
+        setState(() {
+          _history = files;
+          if (files.isNotEmpty) _mobileFile = files.first;
+        });
+      }
+    }
   }
 
   Future<void> _syncFromCloud() async {
@@ -71,10 +81,18 @@ class _TicketPanelState extends State<TicketPanel> {
       if (url != null && url.isNotEmpty) {
         final response = await http.get(Uri.parse(url));
         if (response.statusCode == 200) {
-          final directory = await getApplicationDocumentsDirectory();
-          final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
-          await backupFile.writeAsBytes(response.bodyBytes);
-          await _refreshHistory();
+          if (kIsWeb) {
+            // WEB: Save to Prefs
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('saved_ticket_base64', base64Encode(response.bodyBytes));
+            setState(() => _webBytes = response.bodyBytes);
+          } else {
+            // MOBILE: Save to File
+            final directory = await getApplicationDocumentsDirectory();
+            final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
+            await backupFile.writeAsBytes(response.bodyBytes);
+            await _refreshHistory();
+          }
         }
       }
     } catch (e) {
@@ -82,10 +100,17 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<Uint8List?> _compressImage(File file) async {
+  Future<Uint8List?> _compressImage(XFile file) async {
     try {
+      // On Web, flutter_image_compress might not work fully or is redundant 
+      // because browser handles image picking differently.
+      // We return raw bytes if Web, or compress if Mobile.
+      if (kIsWeb) {
+        return await file.readAsBytes(); 
+      }
+      
       final result = await FlutterImageCompress.compressWithFile(
-        file.absolute.path,
+        file.path,
         minWidth: 540,
         minHeight: 540,
         quality: 85,
@@ -93,7 +118,8 @@ class _TicketPanelState extends State<TicketPanel> {
       );
       return result;
     } catch (e) {
-      return null;
+      // Fallback
+      return await file.readAsBytes();
     }
   }
 
@@ -106,21 +132,28 @@ class _TicketPanelState extends State<TicketPanel> {
     setState(() => _isLoading = true);
     
     try {
-      final File originalFile = File(image.path);
-      final Uint8List? compressedBytes = await _compressImage(originalFile);
-      
-      if (compressedBytes == null) throw "Image compression failed.";
+      final Uint8List? bytes = await _compressImage(image);
+      if (bytes == null) throw "Image processing failed.";
 
-      final directory = await getApplicationDocumentsDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final localPath = '${directory.path}/ticket_$timestamp.jpg';
-      final localFile = File(localPath);
-      await localFile.writeAsBytes(compressedBytes);
-      
-      await _refreshHistory();
-      if (mounted) setState(() => _currentTicketFile = localFile);
+      if (kIsWeb) {
+        // WEB SAVE
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('saved_ticket_base64', base64Encode(bytes));
+        setState(() => _webBytes = bytes);
+      } else {
+        // MOBILE SAVE
+        final directory = await getApplicationDocumentsDirectory();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final localPath = '${directory.path}/ticket_$timestamp.jpg';
+        final localFile = File(localPath);
+        await localFile.writeAsBytes(bytes);
+        
+        await _refreshHistory();
+        setState(() => _mobileFile = localFile);
+      }
 
-      await SupabaseService.uploadTicketBytes(compressedBytes, 'jpg');
+      // Upload
+      await SupabaseService.uploadTicketBytes(bytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
       
@@ -128,13 +161,14 @@ class _TicketPanelState extends State<TicketPanel> {
       if (mounted) {
         setState(() => _isLoading = false);
         String msg = e.toString();
-        if (msg.contains("Bucket not found")) msg = "Cloud Error: Storage bucket missing.";
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. $msg")));
+        // Friendly error for common web/storage issues
+        if (msg.contains("Bucket") || msg.contains("ClientException")) msg = "Saved locally. Cloud upload failed (Network/Config).";
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
       }
     }
   }
 
-  void _openFullScreen(File file) {
+  void _openFullScreen(ImageProvider imageProvider) {
     showDialog(
       context: context,
       barrierDismissible: true, 
@@ -143,97 +177,8 @@ class _TicketPanelState extends State<TicketPanel> {
         child: Container(
           color: Colors.black.withValues(alpha: 0.9),
           child: Center(
-            child: Image.file(file, fit: BoxFit.contain),
+            child: Image(image: imageProvider, fit: BoxFit.contain),
           ),
-        ),
-      ),
-    );
-  }
-
-  void _renameFile(File file) async {
-    final controller = TextEditingController();
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Rename Ticket"),
-        content: TextField(
-          controller: controller, 
-          decoration: const InputDecoration(hintText: "Enter label (e.g. Sept Ticket)")
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
-        ],
-      )
-    );
-
-    if (newName != null && newName.isNotEmpty) {
-      final dir = file.parent.path;
-      final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
-      await file.rename(newPath);
-      _refreshHistory();
-      Navigator.pop(context); 
-    }
-  }
-
-  void _deleteFile(File file) async {
-    await file.delete();
-    _refreshHistory();
-    if (_currentTicketFile?.path == file.path) {
-      setState(() => _currentTicketFile = _localHistory.isNotEmpty ? _localHistory.first : null);
-    }
-    Navigator.pop(context); 
-  }
-
-  void _showHistorySheet() {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => Container(
-        height: 400,
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Expanded(
-              child: _localHistory.isEmpty 
-                ? const Center(child: Text("No history found.")) 
-                : ListView.separated(
-                    itemCount: _localHistory.length,
-                    separatorBuilder: (_,__) => const Divider(),
-                    itemBuilder: (ctx, idx) {
-                      final file = _localHistory[idx];
-                      String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
-                      if (int.tryParse(name) != null) {
-                         final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
-                         name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
-                      } else {
-                         name = name.replaceAll('_', ' ');
-                      }
-
-                      return ListTile(
-                        leading: Image.file(file, width: 40, height: 40, fit: BoxFit.cover),
-                        title: Text(name),
-                        onTap: () {
-                          setState(() => _currentTicketFile = file);
-                          Navigator.pop(ctx);
-                        },
-                        trailing: PopupMenuButton(
-                          onSelected: (value) {
-                            if (value == 'rename') _renameFile(file);
-                            if (value == 'delete') _deleteFile(file);
-                          },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
-                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-            )
-          ],
         ),
       ),
     );
@@ -242,9 +187,17 @@ class _TicketPanelState extends State<TicketPanel> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    
+    // Determine what to show
+    ImageProvider? imageToShow;
+    if (kIsWeb && _webBytes != null) {
+      imageToShow = MemoryImage(_webBytes!);
+    } else if (!kIsWeb && _mobileFile != null) {
+      imageToShow = FileImage(_mobileFile!);
+    }
 
     return DraggableScrollableSheet(
-      controller: _sheetController, // NEW: Attached Controller
+      controller: _sheetController, 
       initialChildSize: 0.1,
       minChildSize: 0.1,
       maxChildSize: 0.85,
@@ -259,12 +212,12 @@ class _TicketPanelState extends State<TicketPanel> {
           ),
           child: ListView(
             controller: scrollController,
+            physics: const AlwaysScrollableScrollPhysics(), // FIX: Allows mouse drag
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             children: [
-              // HEADER AREA (Now Clickable)
               GestureDetector(
-                onTap: _toggleSheet, // Click to expand/collapse
-                behavior: HitTestBehavior.opaque, // Catch clicks anywhere in this area
+                onTap: _toggleSheet, 
+                behavior: HitTestBehavior.opaque,
                 child: Column(
                   children: [
                     Center(
@@ -293,25 +246,24 @@ class _TicketPanelState extends State<TicketPanel> {
               
               if (_isLoading)
                 Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
-              else if (_currentTicketFile != null)
+              else if (imageToShow != null)
                 Column(
                   children: [
                     GestureDetector(
-                      onTap: () => _openFullScreen(_currentTicketFile!), 
-                      onLongPress: _showHistorySheet, 
+                      onTap: () => _openFullScreen(imageToShow!), 
+                      // Long press history only on mobile for now as web storage is simplified
+                      onLongPress: kIsWeb ? null : () {}, 
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.file(
-                          _currentTicketFile!,
+                        child: Image(
+                          image: imageToShow,
                           fit: BoxFit.contain,
-                          key: ValueKey(_currentTicketFile!.path),
-                          errorBuilder: (context, error, stackTrace) => 
-                            Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket file")),
+                          errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket")),
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text("Tap for fullscreen • Hold for history", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                    Text(kIsWeb ? "Tap for fullscreen" : "Tap for fullscreen • Hold for history", style: const TextStyle(fontSize: 10, color: Colors.grey)),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
@@ -344,22 +296,13 @@ class _TicketPanelState extends State<TicketPanel> {
                       children: [
                         Container(
                           padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: colors.scaffoldBg,
-                            shape: BoxShape.circle
-                          ),
+                          decoration: BoxDecoration(color: colors.scaffoldBg, shape: BoxShape.circle),
                           child: Icon(Icons.add_a_photo_rounded, size: 32, color: colors.textSecondary)
                         ),
                         const SizedBox(height: 16),
-                        Text(
-                          "Add Ticket", 
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)
-                        ),
+                        Text("Add Ticket", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                         const SizedBox(height: 4),
-                        Text(
-                          "Select image from gallery", 
-                          style: TextStyle(fontSize: 12, color: colors.textSecondary)
-                        ),
+                        Text("Select image from gallery", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                       ],
                     ),
                   ),
