@@ -11,9 +11,12 @@ import '../../config/app_theme.dart';
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
+  final bool useSystemTheme;
+  final Function(bool) onSystemSyncChanged;
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
-  
+  final bool isGhostMode;
+  final Function(bool) onGhostModeChanged;
   final Function(Color) onColorChanged;
   final Color currentColor;
 
@@ -21,8 +24,12 @@ class SettingsTab extends StatefulWidget {
     super.key,
     required this.isDarkMode,
     required this.onThemeChanged,
+    required this.useSystemTheme,
+    required this.onSystemSyncChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
+    required this.isGhostMode,
+    required this.onGhostModeChanged,
     required this.onColorChanged,
     required this.currentColor,
   });
@@ -42,12 +49,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
-  bool _isGhostMode = false;
+  int _stopsBeforeAlarm = 1;
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    _loadProfile(); 
     _loadSettings();
   }
 
@@ -55,56 +62,55 @@ class _SettingsTabState extends State<SettingsTab> {
     final profile = await SupabaseService.getCurrentProfile();
     if (mounted) setState(() {
       _profile = profile;
-      _isGhostMode = profile?['ghost_mode'] ?? false;
     });
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
-      _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
-    });
-  }
-
-  Future<void> _toggleGhostMode(bool val) async {
-    if (val) {
-      // --- WARNING WHEN ENABLING (ENTERING) GHOST MODE ---
-      final proceed = await showDialog<bool>(
-        context: context, 
-        builder: (ctx) => AlertDialog(
-          title: const Text("Enter Ghost Mode?"),
-          content: const Text("You will disappear from your friends' maps instantly.\n\nNote: To prevent misuse, if you turn Ghost Mode OFF later, you will have to request location access from your friends again."),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Go Ghost", style: TextStyle(color: Colors.red))),
-          ],
-        )
-      );
-      if (proceed != true) return;
+    if (mounted) {
+      setState(() {
+        _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
+        _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
+        _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
+      });
     }
-
-    // Toggle logic
-    await SupabaseService.toggleGhostMode(val);
-    _loadProfile();
   }
 
-  Future<void> _saveVibrationSettings(String pattern, int intensity) async {
+  Future<void> _persistVibrationSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vibration_pattern', pattern);
-    await prefs.setInt('vibration_intensity', intensity);
+    await prefs.setString('vibration_pattern', _vibrationPattern);
+    await prefs.setInt('vibration_intensity', _vibrationIntensity);
+  }
+
+  Future<void> _saveAlarmSettings(int stops) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('alarm_stops_before', stops);
     setState(() {
-      _vibrationPattern = pattern;
-      _vibrationIntensity = intensity;
+      _stopsBeforeAlarm = stops;
     });
   }
 
   Future<void> _testVibration() async {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator() ?? false) {
-      List<int> pattern = [0, 500]; 
-      if (_vibrationPattern == 'heartbeat') pattern = [0, 200, 100, 200];
-      if (_vibrationPattern == 'tick') pattern = [0, 50];
+      List<int> pattern = [0, 500];
+
+      switch (_vibrationPattern) {
+        case 'heartbeat': pattern = [0, 150, 150, 150]; break;
+        case 'tick': pattern = [0, 50]; break;
+        case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
+        case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
+        case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
+        case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
+        case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
+        case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
+        case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
+        case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
+        case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
+        case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
+        case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
+        case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
+      }
 
       if (await Vibration.hasAmplitudeControl() ?? false) {
         Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => _vibrationIntensity).toList());
@@ -219,14 +225,32 @@ class _SettingsTabState extends State<SettingsTab> {
     final user = SupabaseService.currentUser;
     final colors = TransColors.of(context);
     final primaryColor = Theme.of(context).primaryColor;
+    
+    // FIX: Dynamic Padding
+    final topPadding = MediaQuery.of(context).padding.top + 10;
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
-          const SizedBox(height: 100),
-          Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
-          const SizedBox(height: 20),
+          SizedBox(height: topPadding),
+          // Header Restored
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'lib/assets/logo.png', // Check path
+                  height: 48,
+                  width: 48,
+                  errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text("Trans", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+            ],
+          ),
+          const SizedBox(height: 30),
           
           if (user != null) ...[
             Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
@@ -235,21 +259,39 @@ class _SettingsTabState extends State<SettingsTab> {
               SwitchListTile(
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
                 subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-                value: _isGhostMode, 
-                activeColor: Colors.red,
-                onChanged: _toggleGhostMode
+                value: widget.isGhostMode, 
+                activeTrackColor: Colors.red,
+                activeColor: Colors.white,
+                onChanged: widget.onGhostModeChanged
               ),
             ]),
             const SizedBox(height: 20),
           ],
 
           _buildSection(context, [
-            SwitchListTile(
-              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 
-              value: widget.isDarkMode, 
-              activeColor: primaryColor,
-              onChanged: widget.onThemeChanged
+            ListTile(
+              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)),
+              subtitle: widget.useSystemTheme 
+                  ? Text("Synced with System", style: TextStyle(fontSize: 12, color: primaryColor))
+                  : null,
+              trailing: Switch(
+                value: widget.isDarkMode,
+                activeColor: widget.useSystemTheme ? Colors.grey : primaryColor,
+                onChanged: widget.useSystemTheme 
+                  ? (val) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("System Sync Active. Long press to disable.")));
+                    } 
+                  : widget.onThemeChanged,
+              ),
+              onLongPress: () {
+                bool newState = !widget.useSystemTheme;
+                widget.onSystemSyncChanged(newState);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(newState ? "System Sync Enabled 🔄" : "Manual Mode Enabled 🖐️")
+                ));
+              },
             ),
+            
             SwitchListTile(
               title: Text("Deutschlandticket Mode", style: TextStyle(color: colors.textPrimary)), 
               subtitle: Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
@@ -279,8 +321,70 @@ class _SettingsTabState extends State<SettingsTab> {
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
-             ListTile(title: Text("Get-off Alarm Pattern", style: TextStyle(color: colors.textPrimary)), trailing: DropdownButton<String>(value: _vibrationPattern, dropdownColor: colors.cardBg, underline: const SizedBox(), items: const [DropdownMenuItem(value: 'standard', child: Text("Standard")), DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), DropdownMenuItem(value: 'tick', child: Text("Tick"))], onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity))),
-             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
+             ListTile(
+               title: Text("Alarm Trigger", style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Text("Alert ${_stopsBeforeAlarm == 0 ? 'at destination' : '$_stopsBeforeAlarm stops before'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               trailing: DropdownButton<int>(
+                 value: _stopsBeforeAlarm,
+                 dropdownColor: colors.cardBg,
+                 underline: const SizedBox(),
+                 items: const [
+                   DropdownMenuItem(value: 0, child: Text("At Dest")),
+                   DropdownMenuItem(value: 1, child: Text("1 Stop")),
+                   DropdownMenuItem(value: 2, child: Text("2 Stops")),
+                   DropdownMenuItem(value: 3, child: Text("3 Stops")),
+                 ],
+                 onChanged: (val) => _saveAlarmSettings(val!)
+               )
+             ),
+             Divider(color: colors.divider),
+             ListTile(
+               title: Text("Alarm Pattern", style: TextStyle(color: colors.textPrimary)), 
+               trailing: DropdownButton<String>(
+                 value: _vibrationPattern, 
+                 dropdownColor: colors.cardBg, 
+                 underline: const SizedBox(), 
+                 items: const [
+                   DropdownMenuItem(value: 'standard', child: Text("Standard")), 
+                   DropdownMenuItem(value: 'heartbeat', child: Text("Heartbeat")), 
+                   DropdownMenuItem(value: 'tick', child: Text("Tick")),
+                   DropdownMenuItem(value: 'mario', child: Text("Mario")),
+                   DropdownMenuItem(value: 'fox', child: Text("20th Century")),
+                   DropdownMenuItem(value: 'imperial', child: Text("Imperial March")),
+                   DropdownMenuItem(value: 'potter', child: Text("Harry Potter")),
+                   DropdownMenuItem(value: 'indy', child: Text("Indiana Jones")),
+                   DropdownMenuItem(value: 'mission', child: Text("Mission Impossible")),
+                   DropdownMenuItem(value: 'terminator', child: Text("Terminator")),
+                   DropdownMenuItem(value: 'future', child: Text("Back to Future")),
+                   DropdownMenuItem(value: 'eva', child: Text("Evangelion")),
+                   DropdownMenuItem(value: 'pokemon', child: Text("Pokémon")),
+                   DropdownMenuItem(value: 'titan', child: Text("Attack on Titan")),
+                   DropdownMenuItem(value: 'bebop', child: Text("Cowboy Bebop")),
+                 ], 
+                 onChanged: (val) {
+                   setState(() => _vibrationPattern = val!);
+                   _persistVibrationSettings();
+                   _testVibration();
+                 }
+               )
+             ),
+             ListTile(
+               title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Slider(
+                 value: _vibrationIntensity.toDouble(), 
+                 min: 1, 
+                 max: 255, 
+                 activeColor: primaryColor, 
+                 thumbColor: primaryColor, 
+                 onChanged: (val) {
+                   setState(() => _vibrationIntensity = val.toInt());
+                 },
+                 onChangeEnd: (val) {
+                   _persistVibrationSettings();
+                   _testVibration();
+                 }
+               )
+             ),
           ]),
           
           const SizedBox(height: 20),

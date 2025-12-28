@@ -27,12 +27,14 @@ class _FriendsTabState extends State<FriendsTab> {
   void initState() {
     super.initState();
     _initData();
+    SupabaseService.friendsListRefresh.addListener(_initData);
   }
 
   @override
   void dispose() {
     _friendsSub?.cancel();
     _requestsSub?.cancel();
+    SupabaseService.friendsListRefresh.removeListener(_initData);
     super.dispose();
   }
 
@@ -52,10 +54,12 @@ class _FriendsTabState extends State<FriendsTab> {
       if (mounted) setState(() => _isLoading = false);
     }
 
+    _friendsSub?.cancel();
     _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
     });
 
+    _requestsSub?.cancel();
     _requestsSub = SupabaseService.streamPendingRequests().listen((data) {
       if (mounted) setState(() => _requests = data);
     });
@@ -157,8 +161,8 @@ class _FriendsTabState extends State<FriendsTab> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final topPadding = MediaQuery.of(context).padding.top + 10;
     
-    // Sorting Logic
     final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
@@ -179,11 +183,10 @@ class _FriendsTabState extends State<FriendsTab> {
     _requests.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
     inactiveFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
 
-    final combinedList = [...activeFriends, ..._requests, ...inactiveFriends];
-
     return Column(
       children: [
-        const SizedBox(height: 100),
+        // FIX: Dynamic Top Padding
+        SizedBox(height: topPadding),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
@@ -201,25 +204,48 @@ class _FriendsTabState extends State<FriendsTab> {
         Expanded(
           child: _isLoading 
             ? const Center(child: CircularProgressIndicator()) 
-            : combinedList.isEmpty 
-                ? Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary)))
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: combinedList.length,
-                    itemBuilder: (ctx, idx) {
-                      final item = combinedList[idx];
-                      final bool isRequest = item.containsKey('sender_id');
+            : ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  if (activeFriends.isNotEmpty) ...[
+                    _buildSectionHeader("Active Now", colors),
+                    ...activeFriends.map((f) => _buildFriendCard(context, f, true)),
+                  ],
 
-                      if (isRequest) {
-                        return _buildRequestCard(context, item);
-                      } else {
-                        final bool isActive = activeFriends.contains(item);
-                        return _buildFriendCard(context, item, isActive);
-                      }
-                    },
-                  ),
+                  if (_requests.isNotEmpty) ...[
+                    _buildSectionHeader("Requests", colors),
+                    ..._requests.map((r) => _buildRequestCard(context, r)),
+                  ],
+
+                  if (inactiveFriends.isNotEmpty) ...[
+                    _buildSectionHeader("Offline", colors),
+                    ...inactiveFriends.map((f) => _buildFriendCard(context, f, false)),
+                  ],
+
+                  if (activeFriends.isEmpty && _requests.isEmpty && inactiveFriends.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 50),
+                      child: Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary))),
+                    )
+                ],
+              ),
         ),
       ],
+    );
+  }
+
+  Widget _buildSectionHeader(String title, TransColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+      child: Text(
+        title.toUpperCase(),
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1.0
+        ),
+      ),
     );
   }
 
@@ -254,7 +280,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: colors.requestCardBg, 
         borderRadius: BorderRadius.circular(16), 
-        border: Border.all(color: colors.requestCardBorder)
+        border: Border.all(color: Colors.blue.withOpacity(0.5), width: 1.5) 
       ),
       child: Row(
         children: [
@@ -287,8 +313,29 @@ class _FriendsTabState extends State<FriendsTab> {
     final String? currentLine = friend['current_line']; 
     final String friendId = friend['id'];
     final bool isExpanded = _expandedFriendId == friendId;
-    final bool canSeeLoc = friend['can_see_location'] ?? true;
     final bool isGhost = friend['ghost_mode'] ?? false;
+    
+    String statusText = "Inactive";
+    Color statusColor = colors.statusOffline;
+    Widget? statusIcon;
+
+    if (isActive) {
+      statusText = "Active recently";
+      statusColor = colors.statusActive;
+      
+      if (currentLine != null && currentLine.isNotEmpty) {
+        statusText = "On $currentLine";
+        statusColor = colors.statusOnline;
+        statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
+      }
+    }
+
+    if (isGhost) {
+       if (isActive && currentLine == null) {
+          statusText = "Active recently (Ghost)";
+          statusColor = colors.textSecondary;
+       }
+    }
     
     return GestureDetector(
       onTap: () => setState(() => _expandedFriendId = isExpanded ? null : friendId),
@@ -319,22 +366,12 @@ class _FriendsTabState extends State<FriendsTab> {
                     children: [
                       Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
                       const SizedBox(height: 2), 
-                      
-                      // Status Logic
-                      if (!canSeeLoc)
-                        Text("Location access required", style: TextStyle(fontSize: 12, color: Colors.orange))
-                      else if (isGhost)
-                        Text("Location hidden", style: TextStyle(fontSize: 12, color: colors.textSecondary))
-                      else if (currentLine != null && currentLine.isNotEmpty && isActive)
-                        Row(
-                          children: [
-                            Icon(Icons.directions_bus, size: 12, color: colors.statusOnline),
-                            const SizedBox(width: 4),
-                            Text("On $currentLine", style: TextStyle(fontSize: 12, color: colors.statusOnline)),
-                          ],
-                        )
-                      else
-                        Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? colors.statusActive : colors.statusOffline))
+                      Row(
+                        children: [
+                          if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
+                          Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+                        ],
+                      )
                     ]
                   ),
                 ),
@@ -342,7 +379,6 @@ class _FriendsTabState extends State<FriendsTab> {
               ],
             ),
             
-            // Expanded Options
             if (isExpanded) ...[
               const SizedBox(height: 16),
               Divider(color: colors.divider),
@@ -355,26 +391,42 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.blue, 
                      onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
                    ),
-                   if (!canSeeLoc)
-                     _buildActionButton(
-                       icon: Icons.lock_open, 
-                       label: "Request Access", 
-                       color: Colors.orange, 
-                       onTap: () {
-                         SupabaseService.requestLocationAccess(friendId);
-                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request sent (Simulated: Access Granted)")));
-                         // Simulate immediate grant for demo
-                         setState(() => _expandedFriendId = null);
+                   _buildActionButton(
+                     icon: Icons.person_remove, 
+                     label: "Remove", 
+                     color: Colors.orange, 
+                     onTap: () async {
+                       final confirm = await showDialog<bool>(
+                         context: context,
+                         builder: (ctx) => AlertDialog(
+                           title: Text("Remove ${friend['username']}?"),
+                           content: const Text("They will be removed from your friends list."),
+                           actions: [
+                             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Remove", style: TextStyle(color: Colors.red))),
+                           ],
+                         )
+                       );
+                       
+                       if (confirm == true) {
+                         await SupabaseService.removeFriend(friendId);
+                         if (mounted) {
+                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Removed ${friend['username']}")));
+                           setState(() => _expandedFriendId = null);
+                         }
                        }
-                     ),
+                     }
+                   ),
                    _buildActionButton(
                      icon: Icons.block, 
                      label: "Block", 
                      color: Colors.red, 
                      onTap: () async {
                        await SupabaseService.blockUser(friendId);
-                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
-                       setState(() => _expandedFriendId = null);
+                       if (mounted) {
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
+                         setState(() => _expandedFriendId = null);
+                       }
                      }
                    ),
                 ],
