@@ -42,39 +42,60 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
-  // FIX: Nullable to prevent toggle animation on load
-  bool? _isGhostMode; 
-  // FIX: New setting for Alarm
+  
+  // FIX: Non-nullable default for instant rendering
+  bool _isGhostMode = false; 
   int _stopsBeforeAlarm = 1;
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
-    _loadSettings();
-  }
-
-  Future<void> _loadProfile() async {
-    final profile = await SupabaseService.getCurrentProfile();
-    if (mounted) setState(() {
-      _profile = profile;
-      _isGhostMode = profile?['ghost_mode'] ?? false;
-    });
+    _loadSettings(); // Load local prefs first (instant)
+    _loadProfile();  // Then sync with DB
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
-      _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
-      _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
-    });
+    if (mounted) {
+      setState(() {
+        _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
+        _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
+        _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
+        // Load cached ghost mode state if available
+        if (prefs.containsKey('ghost_mode')) {
+          _isGhostMode = prefs.getBool('ghost_mode') ?? false;
+        }
+      });
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (mounted && profile != null) {
+      setState(() {
+        _profile = profile;
+        // Sync local state with DB source of truth
+        _isGhostMode = profile['ghost_mode'] ?? false;
+      });
+      // Update cache
+      final prefs = await SharedPreferences.getInstance();
+      prefs.setBool('ghost_mode', _isGhostMode);
+    }
   }
 
   Future<void> _toggleGhostMode(bool val) async {
-    setState(() => _isGhostMode = val); // Immediate UI update
+    // 1. Instant UI Update
+    setState(() => _isGhostMode = val);
+    
+    // 2. Cache locally
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setBool('ghost_mode', val);
+
+    // 3. Sync to Backend
     await SupabaseService.toggleGhostMode(val);
-    // Profile is reloaded in background implicitly by toggleGhostMode's notifier if needed, but we set local state.
+    
+    // 4. Refresh profile (optional, just to be sure)
+    _loadProfile();
   }
 
   Future<void> _saveVibrationSettings(String pattern, int intensity) async {
@@ -228,13 +249,10 @@ class _SettingsTabState extends State<SettingsTab> {
             Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
             const SizedBox(height: 8),
             _buildSection(context, [
-              // FIX: Handle Loading State to prevent toggle animation
-              _isGhostMode == null 
-              ? const ListTile(title: Text("Ghost Mode"), trailing: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
-              : SwitchListTile(
+              SwitchListTile(
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
-                subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-                value: _isGhostMode!, 
+                subtitle: Text("Hide live location/bus", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                value: _isGhostMode, 
                 activeColor: Colors.red,
                 onChanged: _toggleGhostMode
               ),
@@ -315,7 +333,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ... [Retain Helper Widgets: _colorCircle, _buildProfileSection, _buildAuthForm, _buildSection from previous versions] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
