@@ -240,14 +240,12 @@ class _SettingsTabState extends State<SettingsTab> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  color: colors.settingsAppIconBg, // FIX: Background color logic from theme
-                  child: Image.asset(
-                    'lib/assets/logo.png',
-                    height: 48,
-                    width: 48,
-                    errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
-                  ),
+                // FIX: Removed Container wrapper. Image renders directly (transparent).
+                child: Image.asset(
+                  'lib/assets/logo.png',
+                  height: 48,
+                  width: 48,
+                  errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
                 ),
               ),
               const SizedBox(width: 16),

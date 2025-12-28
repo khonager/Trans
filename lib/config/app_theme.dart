@@ -48,7 +48,7 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get navBarUnselected => Colors.grey;
 
   // 3. SEARCH & HOME
-  Color get searchHeaderIconBg => effectiveSeed.withValues(alpha: 0.15); // Tinted
+  Color get searchHeaderIconBg => effectiveSeed.withValues(alpha: 0.15);
   Color get searchHeaderIcon => effectiveSeed;
   Color get searchInputFill => isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200;
   Color get searchInputIcon => isDark ? effectiveSeed : Colors.grey;
@@ -57,7 +57,6 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get searchBtnBg => effectiveSeed;
   Color get searchBtnText => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
   
-  // FIX: Tinted Time Toggle
   Color get timeContainerBg => isDark ? const Color(0xFF1F2937) : Colors.grey.shade100;
   Color get timeToggleBg => effectiveSeed.withValues(alpha: 0.15);
   Color get timeToggleText => effectiveSeed; 
@@ -77,7 +76,7 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get stepTransferBg => Colors.orange.withValues(alpha: 0.1);
   Color get stepTransferBorder => Colors.orange.withValues(alpha: 0.3);
   Color get stepTransferText => Colors.orange;
-  Color get stepTimeText => effectiveSeed; // Tinted
+  Color get stepTimeText => effectiveSeed; 
   Color get stepPlatformText => Colors.greenAccent;
   Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withValues(alpha: 0.5);
   Color get delayLate => Colors.red;
@@ -113,11 +112,11 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get chatSendBtnIcon => Colors.white;
 
   // 8. TICKET PANEL
-  // FIX: Background is now tinted slightly with the theme color in light mode, or dark grey in dark mode
-  Color get ticketSheetBg => isDark ? const Color(0xFF1F2937) : effectiveSeed.withValues(alpha: 0.05);
+  // FIX: Reverted to simple White/Dark Grey. No tint.
+  Color get ticketSheetBg => isDark ? const Color(0xFF18181B) : Colors.white;
   Color get ticketHeader => baseText;
-  Color get ticketBorder => effectiveSeed.withValues(alpha: 0.2);
-  Color get ticketEmptyIcon => effectiveSeed.withValues(alpha: 0.3);
+  Color get ticketBorder => isDark ? Colors.white12 : Colors.grey.shade300;
+  Color get ticketEmptyIcon => Colors.grey;
   Color get ticketAddBtnBg => effectiveSeed;
   Color get ticketAddBtnText => Colors.white;
 
@@ -127,8 +126,6 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get iconBlock => Colors.orange;
   Color get iconDelete => Colors.red;
   Color get authFormBg => baseCard;
-  // FIX: Icon background matches card in light, slightly lighter in dark for visibility
-  Color get settingsAppIconBg => isDark ? Colors.white10 : Colors.white;
 
   @override
   TransColors copyWith({Color? seed, Brightness? brightness}) {
