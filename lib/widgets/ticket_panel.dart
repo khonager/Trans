@@ -1,11 +1,11 @@
 import 'dart:io';
-import 'dart:convert'; // For Base64
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Web storage
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -22,11 +22,10 @@ class TicketPanel extends StatefulWidget {
 class _TicketPanelState extends State<TicketPanel> {
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   
-  // Mobile uses File, Web uses MemoryBytes
   File? _mobileFile;
   Uint8List? _webBytes;
   
-  List<dynamic> _history = []; // Stores File (mobile) or String (web timestamps)
+  List<dynamic> _history = [];
   bool _isLoading = false;
 
   @override
@@ -45,32 +44,34 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<void> _initTicket() async {
     await _refreshHistory();
-    // Cloud sync logic remains similar but checks platform
     _syncFromCloud();
   }
 
   Future<void> _refreshHistory() async {
     if (kIsWeb) {
-      // WEB: Load from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       final savedData = prefs.getString('saved_ticket_base64');
       if (savedData != null) {
         setState(() => _webBytes = base64Decode(savedData));
       }
     } else {
-      // MOBILE: Load from File System
-      final directory = await getApplicationDocumentsDirectory();
-      final files = directory.listSync()
-          .whereType<File>()
-          .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
-          .toList();
-      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-      
-      if (mounted) {
-        setState(() {
-          _history = files;
-          if (files.isNotEmpty) _mobileFile = files.first;
-        });
+      // MOBILE ONLY
+      try {
+        final directory = await getApplicationDocumentsDirectory();
+        final files = directory.listSync()
+            .whereType<File>()
+            .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
+            .toList();
+        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+        
+        if (mounted) {
+          setState(() {
+            _history = files;
+            if (files.isNotEmpty) _mobileFile = files.first;
+          });
+        }
+      } catch (e) {
+        debugPrint("Local Storage Error: $e");
       }
     }
   }
@@ -82,12 +83,10 @@ class _TicketPanelState extends State<TicketPanel> {
         final response = await http.get(Uri.parse(url));
         if (response.statusCode == 200) {
           if (kIsWeb) {
-            // WEB: Save to Prefs
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('saved_ticket_base64', base64Encode(response.bodyBytes));
             setState(() => _webBytes = response.bodyBytes);
           } else {
-            // MOBILE: Save to File
             final directory = await getApplicationDocumentsDirectory();
             final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
             await backupFile.writeAsBytes(response.bodyBytes);
@@ -102,12 +101,7 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<Uint8List?> _compressImage(XFile file) async {
     try {
-      // On Web, flutter_image_compress might not work fully or is redundant 
-      // because browser handles image picking differently.
-      // We return raw bytes if Web, or compress if Mobile.
-      if (kIsWeb) {
-        return await file.readAsBytes(); 
-      }
+      if (kIsWeb) return await file.readAsBytes(); 
       
       final result = await FlutterImageCompress.compressWithFile(
         file.path,
@@ -118,7 +112,6 @@ class _TicketPanelState extends State<TicketPanel> {
       );
       return result;
     } catch (e) {
-      // Fallback
       return await file.readAsBytes();
     }
   }
@@ -136,12 +129,10 @@ class _TicketPanelState extends State<TicketPanel> {
       if (bytes == null) throw "Image processing failed.";
 
       if (kIsWeb) {
-        // WEB SAVE
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('saved_ticket_base64', base64Encode(bytes));
         setState(() => _webBytes = bytes);
       } else {
-        // MOBILE SAVE
         final directory = await getApplicationDocumentsDirectory();
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         final localPath = '${directory.path}/ticket_$timestamp.jpg';
@@ -152,7 +143,6 @@ class _TicketPanelState extends State<TicketPanel> {
         setState(() => _mobileFile = localFile);
       }
 
-      // Upload
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
@@ -161,8 +151,7 @@ class _TicketPanelState extends State<TicketPanel> {
       if (mounted) {
         setState(() => _isLoading = false);
         String msg = e.toString();
-        // Friendly error for common web/storage issues
-        if (msg.contains("Bucket") || msg.contains("ClientException")) msg = "Saved locally. Cloud upload failed (Network/Config).";
+        if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
       }
     }
@@ -184,11 +173,98 @@ class _TicketPanelState extends State<TicketPanel> {
     );
   }
 
+  // --- Mobile Management ---
+  void _renameFile(File file) async {
+    final controller = TextEditingController();
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Rename Ticket"),
+        content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Enter label")),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
+        ],
+      )
+    );
+
+    if (newName != null && newName.isNotEmpty) {
+      final dir = file.parent.path;
+      final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
+      await file.rename(newPath);
+      _refreshHistory();
+      Navigator.pop(context); 
+    }
+  }
+
+  void _deleteFile(File file) async {
+    await file.delete();
+    await _refreshHistory();
+    // If deleted the active one, refresh active
+    if (_mobileFile?.path == file.path) {
+      setState(() => _mobileFile = _history.isNotEmpty ? _history.first : null);
+    }
+    Navigator.pop(context); 
+  }
+
+  void _showHistorySheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        height: 400,
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _history.isEmpty 
+                ? const Center(child: Text("No history found.")) 
+                : ListView.separated(
+                    itemCount: _history.length,
+                    separatorBuilder: (_,__) => const Divider(),
+                    itemBuilder: (ctx, idx) {
+                      final file = _history[idx] as File;
+                      String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
+                      if (int.tryParse(name) != null) {
+                         final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
+                         name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
+                      } else {
+                         name = name.replaceAll('_', ' ');
+                      }
+
+                      return ListTile(
+                        leading: Image.file(file, width: 40, height: 40, fit: BoxFit.cover),
+                        title: Text(name),
+                        onTap: () {
+                          setState(() => _mobileFile = file);
+                          Navigator.pop(ctx);
+                        },
+                        trailing: PopupMenuButton(
+                          onSelected: (value) {
+                            if (value == 'rename') _renameFile(file);
+                            if (value == 'delete') _deleteFile(file);
+                          },
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
+                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     
-    // Determine what to show
     ImageProvider? imageToShow;
     if (kIsWeb && _webBytes != null) {
       imageToShow = MemoryImage(_webBytes!);
@@ -212,7 +288,7 @@ class _TicketPanelState extends State<TicketPanel> {
           ),
           child: ListView(
             controller: scrollController,
-            physics: const AlwaysScrollableScrollPhysics(), // FIX: Allows mouse drag
+            physics: const AlwaysScrollableScrollPhysics(), 
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             children: [
               GestureDetector(
@@ -251,8 +327,7 @@ class _TicketPanelState extends State<TicketPanel> {
                   children: [
                     GestureDetector(
                       onTap: () => _openFullScreen(imageToShow!), 
-                      // Long press history only on mobile for now as web storage is simplified
-                      onLongPress: kIsWeb ? null : () {}, 
+                      onLongPress: kIsWeb ? null : _showHistorySheet, 
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: Image(
