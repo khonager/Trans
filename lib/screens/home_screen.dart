@@ -10,10 +10,14 @@ import '../config/app_theme.dart';
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
+  
+  // NEW: Sync Logic
+  final bool useSystemTheme;
+  final Function(bool) onSystemSyncChanged;
+
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
   
-  // NEW Params
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
   
@@ -24,6 +28,8 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.isDarkMode,
     required this.onThemeChanged,
+    required this.useSystemTheme,
+    required this.onSystemSyncChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
     required this.isGhostMode,
@@ -64,7 +70,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final pos = await Geolocator.getCurrentPosition();
     setState(() => _currentPosition = pos);
     
-    // Only update DB if not ghosting (handled by service logic usually, but extra check)
     if (!widget.isGhostMode) {
       SupabaseService.updateLocation(pos);
     }
@@ -82,9 +87,12 @@ class _HomeScreenState extends State<HomeScreen> {
       SettingsTab(
         isDarkMode: widget.isDarkMode,
         onThemeChanged: widget.onThemeChanged,
+        // Pass down
+        useSystemTheme: widget.useSystemTheme,
+        onSystemSyncChanged: widget.onSystemSyncChanged,
+        
         onlyNahverkehr: widget.onlyNahverkehr,
         onNahverkehrChanged: widget.onNahverkehrChanged,
-        // Pass to Settings
         isGhostMode: widget.isGhostMode,
         onGhostModeChanged: widget.onGhostModeChanged,
         onColorChanged: widget.onColorChanged,
