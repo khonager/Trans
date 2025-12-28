@@ -120,15 +120,12 @@ class _RoutesTabState extends State<RoutesTab> {
 
     // Logic: Try to find coordinates for "X stops before"
     if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
-      // stopovers usually includes the destination as the last element (or we infer it)
       final stops = firstRide.stopovers!;
       // Index of target: Length - 1 (Destination) - stopsBefore
       int targetIndex = stops.length - 1 - stopsBefore;
       
-      // Ensure we don't go out of bounds (negative index)
       if (targetIndex >= 0) {
         final stopData = stops[targetIndex];
-        // Try to get location from stop data
         if (stopData['stop'] != null && stopData['stop']['location'] != null) {
            targetLat = stopData['stop']['location']['latitude'];
            targetLng = stopData['stop']['location']['longitude'];
@@ -149,7 +146,6 @@ class _RoutesTabState extends State<RoutesTab> {
 
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     
-    // Explicitly set the line when starting tracking
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
@@ -157,7 +153,6 @@ class _RoutesTabState extends State<RoutesTab> {
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
       
-      // Keep updating location (and the line info) as we move
       SupabaseService.updateLocation(pos, currentLine: currentLine);
       
       double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
@@ -354,7 +349,6 @@ class _RoutesTabState extends State<RoutesTab> {
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
-    // Helper to grab coords from locations
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
 
@@ -552,7 +546,6 @@ class _RoutesTabState extends State<RoutesTab> {
        try {
          if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
 
-         // Use GPS directly
          from = Station(
            id: "gps", 
            name: "Current Location",
@@ -674,7 +667,32 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
-    if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
+    
+    // Check if vibrator exists
+    bool? hasVibrator = await Vibration.hasVibrator();
+    if (hasVibrator == null || !hasVibrator) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final String patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final int intensity = prefs.getInt('vibration_intensity') ?? 128;
+
+    // Load actual pattern logic
+    List<int> pattern = [0, 500]; // Default Standard
+    if (patternName == 'heartbeat') {
+      pattern = [0, 200, 100, 200];
+    } else if (patternName == 'tick') {
+      pattern = [0, 50];
+    }
+
+    bool? hasAmplitude = await Vibration.hasAmplitudeControl();
+    if (hasAmplitude == true) {
+      Vibration.vibrate(
+        pattern: pattern, 
+        intensities: pattern.map((_) => intensity).toList()
+      );
+    } else {
+      Vibration.vibrate(pattern: pattern);
+    }
   }
 
   @override
