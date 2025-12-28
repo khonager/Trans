@@ -325,14 +325,27 @@ class _RoutesTabState extends State<RoutesTab> {
 
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
-      DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
-      DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']) : blockStart);
+      
+      // SAFE PARSING START
+      DateTime? blockStart;
+      try {
+        blockStart = (lastArrival != null) ? lastArrival! : DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
+      } catch(e) { blockStart = DateTime.now(); }
+
+      DateTime? blockEnd;
+      try {
+        blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.parse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival']) : blockStart);
+      } catch (e) { blockEnd = blockStart; }
+      // SAFE PARSING END
 
       int walkMinutes = 0;
       for (var leg in transferBuffer) {
-        walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes;
+        try {
+          walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes;
+        } catch(e) {}
       }
-      int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
+      
+      int totalGapMinutes = blockEnd!.difference(blockStart!).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
       
       double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -340,15 +353,54 @@ class _RoutesTabState extends State<RoutesTab> {
       double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLng == null && steps.isNotEmpty) startLng = steps.last.endLng;
 
-      steps.add(JourneyStep(type: (walkMinutes > 0) ? 'walk' : 'wait', line: 'Transfer', instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer", duration: "$totalGapMinutes min", departureTime: "${blockStart.hour}:${blockStart.minute.toString().padLeft(2,'0')}", arrivalTime: "${blockEnd.hour}:${blockEnd.minute.toString().padLeft(2,'0')}", isWalking: walkMinutes > 0, startLat: startLat, startLng: startLng, endLat: nextRideStartLat, endLng: nextRideStartLng, path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null));
+      steps.add(JourneyStep(
+        type: (walkMinutes > 0) ? 'walk' : 'wait',
+        line: 'Transfer',
+        instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer",
+        duration: "$totalGapMinutes min",
+        departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
+        arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
+        isWalking: walkMinutes > 0,
+        startLat: startLat,
+        startLng: startLng,
+        endLat: nextRideStartLat,
+        endLng: nextRideStartLng,
+        path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null
+      ));
       transferBuffer.clear();
     }
 
     for (var leg in legs) {
       if (leg['line'] != null && leg['line']['name'] != null) {
-        flushTransferBuffer(DateTime.parse(leg['departure']), leg['origin']['name'], getLat(leg['origin']), getLng(leg['origin']));
-        steps.add(JourneyStep(type: 'ride', line: leg['line']['name'].toString(), instruction: "${leg['line']['name']} → ${leg['direction']}", duration: "${DateTime.parse(leg['arrival']).difference(DateTime.parse(leg['departure'])).inMinutes} min", departureTime: DateFormat('HH:mm').format(DateTime.parse(leg['departure'])), arrivalTime: DateFormat('HH:mm').format(DateTime.parse(leg['arrival'])), chatCount: random.nextInt(15), startStationId: leg['origin']['id'], platform: leg['platform'], stopovers: leg['stopovers'], startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']), path: leg['decodedPath']));
-        lastArrival = DateTime.parse(leg['arrival']);
+        DateTime? dep, arr;
+        try {
+          dep = DateTime.parse(leg['departure']);
+          arr = DateTime.parse(leg['arrival']);
+        } catch(e) {}
+
+        if (dep == null || arr == null) continue; // Skip broken legs
+
+        flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
+        
+        // FIX: Strong Null Safety Checks
+        steps.add(JourneyStep(
+          type: 'ride',
+          line: leg['line']?['name']?.toString() ?? '?', // Check nesting
+          instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
+          duration: "${arr.difference(dep).inMinutes} min",
+          departureTime: DateFormat('HH:mm').format(dep),
+          arrivalTime: DateFormat('HH:mm').format(arr),
+          chatCount: random.nextInt(15),
+          startStationId: leg['origin']?['id']?.toString(),
+          platform: leg['platform']?.toString(),
+          stopovers: leg['stopovers'],
+          startLat: getLat(leg['origin']),
+          startLng: getLng(leg['origin']),
+          endLat: getLat(leg['destination']),
+          endLng: getLng(leg['destination']),
+          path: leg['decodedPath'],
+        ));
+        lastArrival = arr;
       } else {
         transferBuffer.add(leg);
       }
@@ -361,18 +413,31 @@ class _RoutesTabState extends State<RoutesTab> {
     if (journeyData['legs'] == null) return;
     final List legs = journeyData['legs'];
     final List<JourneyStep> steps = _processLegs(legs);
+    
     String duration = "";
-    if (legs.isNotEmpty) {
-      final start = DateTime.parse(legs.first['departure']);
-      final end = DateTime.parse(legs.last['arrival']);
-      duration = "${end.difference(start).inMinutes} min";
-    }
+    DateTime? arr;
+    try {
+      if (legs.isNotEmpty) {
+        final start = DateTime.parse(legs.first['departure']);
+        final end = DateTime.parse(legs.last['arrival']);
+        duration = "${end.difference(start).inMinutes} min";
+      }
+      if (journeyData['arrival'] != null) arr = DateTime.parse(journeyData['arrival']);
+    } catch(e) {}
+
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     setState(() {
-      _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: DateFormat('HH:mm').format(DateTime.parse(journeyData['arrival'])), totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps));
+      _tabs.add(RouteTab(
+        id: id, 
+        title: title == "Route" ? (_toStation?.name ?? "Route") : title, 
+        subtitle: subtitle ?? "Details", 
+        eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", 
+        totalDuration: duration, 
+        destinationId: _toStation?.id ?? "", 
+        steps: steps
+      ));
       _activeTabId = id;
       if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
-      // _isLoadingRoute = false; // Moved to finally
     });
   }
 
@@ -383,17 +448,23 @@ class _RoutesTabState extends State<RoutesTab> {
      if (from == null && widget.currentPosition != null) {
         from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
      }
-     if (from == null || _toStation == null) return;
      
+     if (from == null || _toStation == null) {
+        // Just in case, reset loading
+        if (mounted) setState(() => _isLoadingRoute = false);
+        return;
+     }
+
      setState(() => _isLoadingRoute = true);
      
      try {
+       // Added simple timeout
        final res = await TransportApi.searchJourneys(
          from, _toStation!, 
          nahverkehrOnly: widget.onlyNahverkehr, 
          when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, 
          isArrival: _isArrival
-       ).timeout(const Duration(seconds: 15)); // 15 sec timeout
+       ).timeout(const Duration(seconds: 15)); // Timeout
 
        if (mounted) {
          if (res.isNotEmpty) {
@@ -553,8 +624,7 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final colors = TransColors.of(context);
-    // FIX: Removed Flexible, used standard column+listview shrinking
-    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); })]));
+    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), Flexible(child: ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); }))]));
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
@@ -664,7 +734,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                     decoration: InputDecoration(labelText: "Search Station Name", prefixIcon: const Icon(Icons.search), suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null)),
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (val.trim().isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
+                      if (val.isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
                       _debounce = Timer(const Duration(milliseconds: 400), () async {
                         if (!mounted) return;
                         setState(() => _isLoading = true);

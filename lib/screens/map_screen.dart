@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
-import '../models/journey.dart';
-import '../config/app_theme.dart';
 
-class MapScreen extends StatefulWidget {
+class MapScreen extends StatelessWidget {
   final List<JourneyStep> steps;
-  final JourneyStep? focusStep;
+  final JourneyStep? focusStep; // NEW: Only show this part if provided
   final Position? currentPosition;
 
   const MapScreen({
@@ -18,161 +17,82 @@ class MapScreen extends StatefulWidget {
   });
 
   @override
-  State<MapScreen> createState() => _MapScreenState();
-}
-
-class _MapScreenState extends State<MapScreen> {
-  final MapController _mapController = MapController();
-  
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _fitBounds();
-    });
-  }
-
-  void _fitBounds() {
-    List<LatLng> points = [];
-
-    // Add current position
-    if (widget.currentPosition != null) {
-      points.add(LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude));
-    }
-
-    if (widget.focusStep != null) {
-      // Focus only on the specific step
-      final s = widget.focusStep!;
-      if (s.startLat != null && s.startLng != null) points.add(LatLng(s.startLat!, s.startLng!));
-      if (s.endLat != null && s.endLng != null) points.add(LatLng(s.endLat!, s.endLng!));
-      if (s.path != null) {
-        points.addAll(s.path!.map((p) => LatLng(p[0], p[1])));
-      }
-    } else {
-      // Show full route
-      for (var s in widget.steps) {
-        if (s.startLat != null && s.startLng != null) points.add(LatLng(s.startLat!, s.startLng!));
-        if (s.endLat != null && s.endLng != null) points.add(LatLng(s.endLat!, s.endLng!));
-        if (s.path != null) {
-          points.addAll(s.path!.map((p) => LatLng(p[0], p[1])));
-        }
-      }
-    }
-
-    if (points.isEmpty) return;
-    
-    // Add some padding by creating a bounds object
-    if (points.length == 1) {
-       _mapController.move(points.first, 15);
-    } else {
-       final bounds = LatLngBounds.fromPoints(points);
-       _mapController.fitCamera(
-         CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50))
-       );
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final colors = TransColors.of(context);
-
-    // Build polylines
-    List<Polyline> polylines = [];
+    final points = <LatLng>[];
+    final markers = <Marker>[];
     
-    // If focusing on a single step, dim the others
-    for (var s in widget.steps) {
-      if (s.path == null || s.path!.isEmpty) continue;
-      
-      final points = s.path!.map((p) => LatLng(p[0], p[1])).toList();
-      final isFocused = widget.focusStep == null || widget.focusStep == s;
-      
-      Color color;
-      double strokeWidth = 4.0;
+    // Determine which steps to show
+    final stepsToShow = focusStep != null ? [focusStep!] : steps;
 
-      if (s.type == 'walk' || s.type == 'transfer') {
-        // Walking: Grey or Lighter color
-        color = isFocused ? Colors.grey : Colors.grey.withValues(alpha: 0.3);
-        if (!isFocused) color = Colors.grey.withValues(alpha: 0.1); 
-        strokeWidth = 3.0; // Slightly thinner for walking
-      } else {
-        // Ride: Blue or Primary color
-        color = isFocused ? Colors.blue : Colors.blue.withValues(alpha: 0.3);
+    for (var step in stepsToShow) {
+      if (step.path != null && step.path!.isNotEmpty) {
+        // Use high-res path if available
+        points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+      } else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
+        // Fallback to straight line
+        points.add(LatLng(step.startLat!, step.startLng!));
+        points.add(LatLng(step.endLat!, step.endLng!));
       }
-      
-      polylines.add(Polyline(
-        points: points,
-        strokeWidth: strokeWidth,
-        color: color,
-        // isDotted removed as it is no longer supported in v6+
-      ));
+
+      // Add Markers
+      if (step.startLat != null && step.startLng != null) {
+        markers.add(Marker(
+          point: LatLng(step.startLat!, step.startLng!),
+          width: 40, height: 40,
+          child: const Icon(Icons.circle, size: 12, color: Colors.blue),
+        ));
+      }
     }
 
-    // Build markers
-    List<Marker> markers = [];
-    
-    // Current Location Marker
-    if (widget.currentPosition != null) {
+    // Add current user position
+    if (currentPosition != null) {
       markers.add(Marker(
-        point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
-        width: 40,
-        height: 40,
+        point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+        width: 40, height: 40,
         child: const Icon(Icons.my_location, color: Colors.blue, size: 24),
       ));
     }
 
-    // Start/End Markers for steps
-    for (var s in widget.steps) {
-       final isFocused = widget.focusStep == null || widget.focusStep == s;
-       if (!isFocused) continue;
-
-       if (s.startLat != null && s.startLng != null) {
-         markers.add(Marker(
-           point: LatLng(s.startLat!, s.startLng!),
-           width: 30,
-           height: 30,
-           child: Container(
-             decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(blurRadius: 2, color: Colors.black26)]),
-             child: const Icon(Icons.circle, color: Colors.black, size: 14),
-           ),
-         ));
-       }
-       // Only add end marker if it's the very last step or the focused step
-       if (s == widget.steps.last || isFocused) {
-         if (s.endLat != null && s.endLng != null) {
-           markers.add(Marker(
-             point: LatLng(s.endLat!, s.endLng!),
-             width: 30,
-             height: 30,
-             child: const Icon(Icons.location_on, color: Colors.red, size: 30),
-           ));
-         }
-       }
+    // Calculate Bounds
+    LatLngBounds? bounds;
+    if (points.isNotEmpty) {
+      bounds = LatLngBounds.fromPoints(points);
+    } else if (currentPosition != null) {
+      bounds = LatLngBounds(
+        LatLng(currentPosition!.latitude - 0.01, currentPosition!.longitude - 0.01),
+        LatLng(currentPosition!.latitude + 0.01, currentPosition!.longitude + 0.01)
+      );
     }
 
+    // Default center if nothing else
+    final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515); // Germany center
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.focusStep?.instruction ?? "Route Map"),
-        backgroundColor: colors.cardBg,
-        foregroundColor: colors.textPrimary,
-      ),
+      appBar: AppBar(title: Text(focusStep?.instruction ?? "Route Map")),
       body: FlutterMap(
-        mapController: _mapController,
-        options: const MapOptions(
-          initialCenter: LatLng(51.1657, 10.4515), // Center of Germany default
-          initialZoom: 6.0,
+        options: MapOptions(
+          initialCenter: initialCenter,
+          initialZoom: 13,
+          initialCameraFit: bounds != null 
+            ? CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50)) 
+            : null,
         ),
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.trans',
           ),
-          PolylineLayer(polylines: polylines),
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: points,
+                strokeWidth: 4.0,
+                color: Colors.blue,
+              ),
+            ],
+          ),
           MarkerLayer(markers: markers),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _fitBounds,
-        child: const Icon(Icons.center_focus_strong),
       ),
     );
   }
