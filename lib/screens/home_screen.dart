@@ -48,25 +48,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    try {
+      bool serviceEnabled;
+      LocationPermission permission;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
-    }
-    
-    if (permission == LocationPermission.deniedForever) return;
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return;
+      }
+      
+      if (permission == LocationPermission.deniedForever) return;
 
-    final pos = await Geolocator.getCurrentPosition();
-    setState(() => _currentPosition = pos);
-    
-    if (!widget.isGhostMode) {
-      SupabaseService.updateLocation(pos);
+      // FIX: Catch Web errors here
+      final pos = await Geolocator.getCurrentPosition();
+      setState(() => _currentPosition = pos);
+      
+      if (!widget.isGhostMode) {
+        SupabaseService.updateLocation(pos);
+      }
+    } catch (e) {
+      debugPrint("Location Error (Ignored): $e");
     }
   }
 
@@ -92,7 +97,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
-      // FIX: Prevents ticket jumping
       resizeToAvoidBottomInset: false, 
       body: Stack(
         children: [

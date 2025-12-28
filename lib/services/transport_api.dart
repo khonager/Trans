@@ -6,7 +6,6 @@ import '../models/station.dart';
 class TransportApi {
   static const String baseUrl = 'https://v6.db.transport.rest';
 
-  // FIX: Web CORS Proxy Helper
   static Uri _getUri(String endpoint, [Map<String, dynamic>? params]) {
     String url = "$baseUrl$endpoint";
     if (params != null) {
@@ -15,13 +14,31 @@ class TransportApi {
         if (value != null) url += "$key=${Uri.encodeComponent(value.toString())}&";
       });
     }
-    
-    // On Web, route through a proxy to bypass CORS
+    return Uri.parse(url);
+  }
+
+  // Helper to handle Web CORS if direct call fails
+  static Future<http.Response> _fetch(Uri uri) async {
+    try {
+      // 1. Try Direct
+      final response = await http.get(uri);
+      if (response.statusCode == 200) return response;
+    } catch (e) {
+      // Direct failed (likely CORS on Web)
+    }
+
     if (kIsWeb) {
-      return Uri.parse("https://corsproxy.io/?${Uri.encodeComponent(url)}");
+      try {
+        // 2. Fallback: allorigins (reliable JSON proxy)
+        final proxyUrl = "https://api.allorigins.win/raw?url=${Uri.encodeComponent(uri.toString())}";
+        return await http.get(Uri.parse(proxyUrl));
+      } catch (e) {
+        debugPrint("Proxy failed: $e");
+      }
     }
     
-    return Uri.parse(url);
+    // Return empty 400 if all fails
+    return http.Response('{}', 400); 
   }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
@@ -34,7 +51,6 @@ class TransportApi {
       'addresses': 'true',
     };
     
-    // If lat/lng are provided, prioritize location
     if (lat != null && lng != null) {
       params['latitude'] = lat;
       params['longitude'] = lng;
@@ -42,15 +58,13 @@ class TransportApi {
     }
 
     try {
-      final response = await http.get(_getUri('/locations', params));
+      final response = await _fetch(_getUri('/locations', params));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
-      } else {
-        debugPrint("API Error: ${response.statusCode}");
-        return [];
       }
+      return [];
     } catch (e) {
       debugPrint("API Exception: $e");
       return [];
@@ -59,7 +73,7 @@ class TransportApi {
 
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
     try {
-      final response = await http.get(_getUri('/stops/nearby', {
+      final response = await _fetch(_getUri('/stops/nearby', {
         'latitude': lat, 
         'longitude': lng, 
         'results': 5, 
@@ -110,24 +124,19 @@ class TransportApi {
     if (nahverkehrOnly) {
       params['loyaltyCard'] = 'none';
       params['class'] = 2;
-      // Exclude ICE, IC, EC (High Speed)
       params['nationalExpress'] = false;
       params['national'] = false;
     }
 
     try {
       final uri = _getUri('/journeys', params);
-      debugPrint("TransportApi Calling: $uri"); // Debug log
-      
-      final response = await http.get(uri);
+      final response = await _fetch(uri);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null) {
           return List<Map<String, dynamic>>.from(data['journeys']);
         }
-      } else {
-        debugPrint("Journey Error ${response.statusCode}: ${response.body}");
       }
       return [];
     } catch (e) {
