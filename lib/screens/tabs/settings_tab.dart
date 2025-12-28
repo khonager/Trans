@@ -42,6 +42,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
+  bool _isGhostMode = false;
 
   @override
   void initState() {
@@ -52,7 +53,10 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _loadProfile() async {
     final profile = await SupabaseService.getCurrentProfile();
-    if (mounted) setState(() => _profile = profile);
+    if (mounted) setState(() {
+      _profile = profile;
+      _isGhostMode = profile?['ghost_mode'] ?? false;
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -61,6 +65,27 @@ class _SettingsTabState extends State<SettingsTab> {
       _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
       _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
     });
+  }
+
+  Future<void> _toggleGhostMode(bool val) async {
+    if (!val) {
+      // Turning OFF ghost mode -> Warning
+      final proceed = await showDialog<bool>(
+        context: context, 
+        builder: (ctx) => AlertDialog(
+          title: const Text("Disable Ghost Mode?"),
+          content: const Text("If you turn ON location sharing again, you will lose access to all your friends' locations until you request permission from them again. This is to prevent spying."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Proceed", style: TextStyle(color: Colors.red))),
+          ],
+        )
+      );
+      if (proceed != true) return;
+    }
+
+    await SupabaseService.toggleGhostMode(val);
+    _loadProfile();
   }
 
   Future<void> _saveVibrationSettings(String pattern, int intensity) async {
@@ -202,6 +227,21 @@ class _SettingsTabState extends State<SettingsTab> {
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
           const SizedBox(height: 20),
           
+          if (user != null) ...[
+            Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+            const SizedBox(height: 8),
+            _buildSection(context, [
+              SwitchListTile(
+                title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
+                subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                value: _isGhostMode, 
+                activeColor: Colors.red,
+                onChanged: _toggleGhostMode
+              ),
+            ]),
+            const SizedBox(height: 20),
+          ],
+
           _buildSection(context, [
             SwitchListTile(
               title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 
@@ -335,7 +375,34 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); 
+                  // FIX: Explicitly reload profile after sign in
+                  await _loadProfile(); 
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Login")
+            ), 
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); 
+                  // FIX: Reload profile after sign up
+                  await _loadProfile();
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Sign Up")
+            )
+          ])
         ],
       ),
     );
