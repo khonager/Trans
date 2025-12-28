@@ -245,7 +245,8 @@ class _SettingsTabState extends State<SettingsTab> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
-          const SizedBox(height: 100),
+          // FIX: Reduced spacing here
+          const SizedBox(height: 40),
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
           const SizedBox(height: 20),
           
@@ -362,7 +363,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ... [Keep helper widgets: _colorCircle, _buildProfileSection, _buildAuthForm, _buildSection exactly as they were] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
@@ -440,7 +440,32 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () async { try { await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Login")), TextButton(onPressed: () async { try { await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); if (mounted) setState(() {}); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); } }, child: const Text("Sign Up"))])
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); 
+                  await _loadProfile(); 
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Login")
+            ), 
+            TextButton(
+              onPressed: () async { 
+                try { 
+                  await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); 
+                  await _loadProfile(); 
+                  if (mounted) setState(() {}); 
+                } catch (e) { 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                } 
+              }, 
+              child: const Text("Sign Up")
+            )
+          ])
         ],
       ),
     );
