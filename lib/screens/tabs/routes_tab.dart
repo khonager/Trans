@@ -1,4 +1,3 @@
-// ... [Imports remain same] ...
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -19,9 +18,6 @@ import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import '../map_screen.dart'; 
-
-// ... [Keep everything up to _EditFavoriteDialog same as previous] ...
-// I am pasting the updated dialog class specifically to fix the overflow and search issue.
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -89,6 +85,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
+  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -163,6 +160,7 @@ class _RoutesTabState extends State<RoutesTab> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
   }
 
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -377,20 +375,47 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _findRoutes() async {
+     // FIX: Prevent double taps
+     if (_isLoadingRoute) return;
+
      Station? from = _fromStation;
      if (from == null && widget.currentPosition != null) {
         from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
      }
-     if (from == null || _toStation == null) return;
+     
+     if (from == null || _toStation == null) {
+        // Just in case, reset loading
+        if (mounted) setState(() => _isLoadingRoute = false);
+        return;
+     }
+
      setState(() => _isLoadingRoute = true);
+     
      try {
-       final res = await TransportApi.searchJourneys(from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, isArrival: _isArrival);
+       // Added simple timeout
+       final res = await TransportApi.searchJourneys(
+         from, _toStation!, 
+         nahverkehrOnly: widget.onlyNahverkehr, 
+         when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, 
+         isArrival: _isArrival
+       ).timeout(const Duration(seconds: 15)); // Timeout
+
        if (mounted) {
-         if (res.isNotEmpty) _addJourneyTab(res.first);
-         else { setState(()=>_isLoadingRoute=false); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found"))); }
+         if (res.isNotEmpty) {
+           _addJourneyTab(res.first);
+         } else { 
+           setState(()=>_isLoadingRoute=false); 
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found"))); 
+         }
        }
      } catch(e) {
-       if(mounted) setState(()=>_isLoadingRoute=false);
+       if(mounted) {
+         setState(()=>_isLoadingRoute=false);
+         // Show error only if it's not a normal cancel
+         if (!e.toString().contains("Timeout")) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+         }
+       }
      }
   }
 
@@ -616,7 +641,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       backgroundColor: colors.cardBg,
-      // FIX: Wrap in SingleChildScrollView to prevent overflow when keyboard appears
       child: SingleChildScrollView(
         child: Container(
           padding: const EdgeInsets.all(20),
@@ -649,7 +673,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                         if (!mounted) return;
                         setState(() => _isLoading = true);
                         try {
-                          // FIX: Added timeout and error handling
                           final res = await TransportApi.searchStations(val).timeout(const Duration(seconds: 8));
                           if (mounted) setState(() { _suggestions = res; _isLoading = false; });
                         } catch (e) {
