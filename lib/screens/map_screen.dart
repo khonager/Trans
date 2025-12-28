@@ -4,7 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
 
-class MapScreen extends StatelessWidget {
+class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
   final JourneyStep? focusStep;
   final Position? currentPosition;
@@ -17,30 +17,29 @@ class MapScreen extends StatelessWidget {
   });
 
   @override
+  State<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends State<MapScreen> {
+  final MapController _mapController = MapController();
+
+  @override
   Widget build(BuildContext context) {
     final points = <LatLng>[];
     final markers = <Marker>[];
     
     // 1. Determine Scope
-    // If focusStep is provided, we only look at that single step.
-    // Otherwise, we show the whole route.
-    final stepsToShow = focusStep != null ? [focusStep!] : steps;
+    final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
 
     for (var step in stepsToShow) {
       // --- A. Build the Line (Polyline) ---
-      
-      // Option 1: High-res decoded path from API (Best)
       if (step.path != null && step.path!.isNotEmpty) {
         points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
       } 
-      // Option 2: Connect the dots between stopovers (Better than straight line)
       else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-        // Add start point
         if (step.startLat != null && step.startLng != null) {
           points.add(LatLng(step.startLat!, step.startLng!));
         }
-        
-        // Add all intermediate stops
         for (var stop in step.stopovers!) {
           if (stop['stop'] != null && stop['stop']['location'] != null) {
             points.add(LatLng(
@@ -49,13 +48,10 @@ class MapScreen extends StatelessWidget {
             ));
           }
         }
-        
-        // Add end point
         if (step.endLat != null && step.endLng != null) {
           points.add(LatLng(step.endLat!, step.endLng!));
         }
       } 
-      // Option 3: Straight line start to end (Fallback)
       else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
         points.add(LatLng(step.startLat!, step.startLng!));
         points.add(LatLng(step.endLat!, step.endLng!));
@@ -63,8 +59,6 @@ class MapScreen extends StatelessWidget {
     }
 
     // --- B. Build Markers ---
-
-    // 1. Start Marker (Green Flag) - Location of first step
     if (stepsToShow.isNotEmpty) {
       final first = stepsToShow.first;
       if (first.startLat != null && first.startLng != null) {
@@ -77,7 +71,6 @@ class MapScreen extends StatelessWidget {
       }
     }
 
-    // 2. Destination Marker (Red Pin) - Location of last step
     if (stepsToShow.isNotEmpty) {
       final last = stepsToShow.last;
       if (last.endLat != null && last.endLng != null) {
@@ -90,14 +83,13 @@ class MapScreen extends StatelessWidget {
       }
     }
 
-    // 3. User Position (Blue Dot)
-    if (currentPosition != null) {
+    if (widget.currentPosition != null) {
       markers.add(Marker(
-        point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+        point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
         width: 40, height: 40,
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.3),
+            color: Colors.blue.withValues(alpha: 0.3),
             shape: BoxShape.circle
           ),
           child: const Center(
@@ -111,31 +103,41 @@ class MapScreen extends StatelessWidget {
     LatLngBounds? bounds;
     if (points.isNotEmpty) {
       bounds = LatLngBounds.fromPoints(points);
-    } else if (currentPosition != null) {
-      // Fallback bounds around user if no route points
+    } else if (widget.currentPosition != null) {
       bounds = LatLngBounds(
-        LatLng(currentPosition!.latitude - 0.01, currentPosition!.longitude - 0.01),
-        LatLng(currentPosition!.latitude + 0.01, currentPosition!.longitude + 0.01)
+        LatLng(widget.currentPosition!.latitude - 0.01, widget.currentPosition!.longitude - 0.01),
+        LatLng(widget.currentPosition!.latitude + 0.01, widget.currentPosition!.longitude + 0.01)
       );
     }
 
-    // Default center (Germany)
     final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(focusStep?.instruction ?? "Route Map"),
+        title: Text(widget.focusStep?.instruction ?? "Route Map"),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
       ),
+      // NEW: Recenter Button
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          if (bounds != null) {
+            _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
+          } else {
+            _mapController.move(initialCenter, 13);
+          }
+        },
+        child: const Icon(Icons.center_focus_strong),
+      ),
       body: FlutterMap(
+        mapController: _mapController, // Linked Controller
         options: MapOptions(
           initialCenter: initialCenter,
           initialZoom: 13,
           initialCameraFit: bounds != null 
-            ? CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50)) 
+            ? CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)) 
             : null,
         ),
         children: [
@@ -143,7 +145,6 @@ class MapScreen extends StatelessWidget {
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.trans',
           ),
-          // Draw the path
           if (points.isNotEmpty)
             PolylineLayer(
               polylines: [
@@ -151,11 +152,10 @@ class MapScreen extends StatelessWidget {
                   points: points,
                   strokeWidth: 5.0,
                   color: Colors.blueAccent,
-                  isDotted: false,
+                  // Removed isDotted: false to fix error
                 ),
               ],
             ),
-          // Draw markers on top
           MarkerLayer(markers: markers),
         ],
       ),

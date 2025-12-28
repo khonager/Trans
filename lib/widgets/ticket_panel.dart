@@ -17,6 +17,9 @@ class TicketPanel extends StatefulWidget {
 }
 
 class _TicketPanelState extends State<TicketPanel> {
+  // NEW: Controller to control sheet programmatically
+  final DraggableScrollableController _sheetController = DraggableScrollableController();
+  
   File? _currentTicketFile;
   List<File> _localHistory = [];
   bool _isLoading = false;
@@ -25,6 +28,23 @@ class _TicketPanelState extends State<TicketPanel> {
   void initState() {
     super.initState();
     _initTicket();
+  }
+
+  // Toggle Sheet visibility (Fix for PC click)
+  void _toggleSheet() {
+    if (_sheetController.size < 0.2) {
+      _sheetController.animateTo(
+        0.85, 
+        duration: const Duration(milliseconds: 300), 
+        curve: Curves.easeOut
+      );
+    } else {
+      _sheetController.animateTo(
+        0.1, 
+        duration: const Duration(milliseconds: 300), 
+        curve: Curves.easeIn
+      );
+    }
   }
 
   Future<void> _initTicket() async {
@@ -41,10 +61,7 @@ class _TicketPanelState extends State<TicketPanel> {
         .whereType<File>()
         .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
         .toList();
-    
-    // Sort by Date Descending
     files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-    
     if (mounted) setState(() => _localHistory = files);
   }
 
@@ -117,15 +134,14 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  // --- FULL SCREEN ---
   void _openFullScreen(File file) {
     showDialog(
       context: context,
-      barrierDismissible: true, // Click outside closes
+      barrierDismissible: true, 
       builder: (_) => GestureDetector(
-        onTap: () => Navigator.pop(context), // Click image closes
+        onTap: () => Navigator.pop(context), 
         child: Container(
-          color: Colors.black.withOpacity(0.9),
+          color: Colors.black.withValues(alpha: 0.9),
           child: Center(
             child: Image.file(file, fit: BoxFit.contain),
           ),
@@ -134,7 +150,6 @@ class _TicketPanelState extends State<TicketPanel> {
     );
   }
 
-  // --- MANAGEMENT ---
   void _renameFile(File file) async {
     final controller = TextEditingController();
     final newName = await showDialog<String>(
@@ -154,11 +169,10 @@ class _TicketPanelState extends State<TicketPanel> {
 
     if (newName != null && newName.isNotEmpty) {
       final dir = file.parent.path;
-      // Keep "ticket_" prefix so our filter still finds it
       final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
       await file.rename(newPath);
       _refreshHistory();
-      Navigator.pop(context); // Close sheet
+      Navigator.pop(context); 
     }
   }
 
@@ -168,7 +182,7 @@ class _TicketPanelState extends State<TicketPanel> {
     if (_currentTicketFile?.path == file.path) {
       setState(() => _currentTicketFile = _localHistory.isNotEmpty ? _localHistory.first : null);
     }
-    Navigator.pop(context); // Close sheet
+    Navigator.pop(context); 
   }
 
   void _showHistorySheet() {
@@ -190,14 +204,11 @@ class _TicketPanelState extends State<TicketPanel> {
                     separatorBuilder: (_,__) => const Divider(),
                     itemBuilder: (ctx, idx) {
                       final file = _localHistory[idx];
-                      // Parse name or timestamp
                       String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
                       if (int.tryParse(name) != null) {
-                         // It's a timestamp
                          final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
                          name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
                       } else {
-                         // It's a custom name
                          name = name.replaceAll('_', ' ');
                       }
 
@@ -233,13 +244,14 @@ class _TicketPanelState extends State<TicketPanel> {
     final colors = TransColors.of(context);
 
     return DraggableScrollableSheet(
+      controller: _sheetController, // NEW: Attached Controller
       initialChildSize: 0.1,
       minChildSize: 0.1,
       maxChildSize: 0.85,
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: colors.ticketSheetBg, // Uses corrected untinted color
+            color: colors.ticketSheetBg, 
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12, offset: const Offset(0, -4))
@@ -249,27 +261,35 @@ class _TicketPanelState extends State<TicketPanel> {
             controller: scrollController,
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             children: [
-              Center(
-                child: Container(
-                  width: 40, 
-                  height: 4, 
-                  margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
-                )
+              // HEADER AREA (Now Clickable)
+              GestureDetector(
+                onTap: _toggleSheet, // Click to expand/collapse
+                behavior: HitTestBehavior.opaque, // Catch clicks anywhere in this area
+                child: Column(
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40, 
+                        height: 4, 
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
+                      )
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.confirmation_number_outlined, color: colors.ticketHeader),
+                        const SizedBox(width: 8),
+                        Text(
+                          "My Ticket", 
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.ticketHeader)
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
-              
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.confirmation_number_outlined, color: colors.ticketHeader),
-                  const SizedBox(width: 8),
-                  Text(
-                    "My Ticket", 
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.ticketHeader)
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
               
               if (_isLoading)
                 Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
@@ -277,8 +297,8 @@ class _TicketPanelState extends State<TicketPanel> {
                 Column(
                   children: [
                     GestureDetector(
-                      onTap: () => _openFullScreen(_currentTicketFile!), // NEW: Fullscreen
-                      onLongPress: _showHistorySheet, // History
+                      onTap: () => _openFullScreen(_currentTicketFile!), 
+                      onLongPress: _showHistorySheet, 
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: Image.file(
