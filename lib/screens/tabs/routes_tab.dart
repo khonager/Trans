@@ -97,19 +97,37 @@ class _RoutesTabState extends State<RoutesTab> {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
+    
+    // Clear the current line status when alarm/ride stops
+    if (widget.currentPosition != null) {
+      SupabaseService.updateLocation(widget.currentPosition!, currentLine: null);
+    }
+    
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
   void _startWakeAlarm(RouteTab route) {
     if (route.steps.isEmpty) return;
     
+    // Auto-detect Line: Use the first "ride" step's line name
+    final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
+    final String currentLine = firstRide.line;
+
     if (mounted) setState(() => _isWakeAlarmSet = true);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! We'll vibrate 500m before arrival.")));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! Sharing ride status with friends.")));
 
     const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
     
+    // Update location IMMEDIATELY with the new line
+    if (widget.currentPosition != null) {
+       SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
+    }
+
     _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
+      
+      // Keep updating location (and the line info) as we move
+      SupabaseService.updateLocation(pos, currentLine: currentLine);
       
       if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
         double dist = Geolocator.distanceBetween(
