@@ -27,7 +27,6 @@ class _FriendsTabState extends State<FriendsTab> {
   void initState() {
     super.initState();
     _initData();
-    // FIX: Listen for global refreshes (e.g. Ghost Mode toggled)
     SupabaseService.friendsListRefresh.addListener(_initData);
   }
 
@@ -55,7 +54,6 @@ class _FriendsTabState extends State<FriendsTab> {
       if (mounted) setState(() => _isLoading = false);
     }
 
-    // Cancel old subs if re-initializing
     _friendsSub?.cancel();
     _friendsSub = SupabaseService.streamFriends().listen((data) {
       if (mounted) setState(() => _friends = data);
@@ -164,7 +162,6 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     
-    // Sorting Logic
     final now = DateTime.now().toUtc(); 
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
@@ -293,10 +290,8 @@ class _FriendsTabState extends State<FriendsTab> {
     final String? currentLine = friend['current_line']; 
     final String friendId = friend['id'];
     final bool isExpanded = _expandedFriendId == friendId;
-    final bool canSeeLoc = friend['can_see_location'] ?? true;
     final bool isGhost = friend['ghost_mode'] ?? false;
     
-    // FIX: Show active status even if no location info
     String statusText = "Inactive";
     Color statusColor = colors.statusOffline;
     Widget? statusIcon;
@@ -305,7 +300,7 @@ class _FriendsTabState extends State<FriendsTab> {
       statusText = "Active recently";
       statusColor = colors.statusActive;
       
-      // We only show specifics if permitted
+      // We only show specifics if tracking is available (not ghosting)
       if (currentLine != null && currentLine.isNotEmpty) {
         statusText = "On $currentLine";
         statusColor = colors.statusOnline;
@@ -313,10 +308,12 @@ class _FriendsTabState extends State<FriendsTab> {
       }
     }
 
-    if (isGhost && canSeeLoc) {
-       // If friend is ghost, we might still see "Active recently" but no line info
-       // But we want to indicate they are ghosting? User said "just what bus one was/is on" should be hidden.
-       // So "Active recently" is fine.
+    if (isGhost) {
+       // If friend is in ghost mode, we might see "Active recently" but no line
+       if (isActive && currentLine == null) {
+          statusText = "Active recently (Ghost)";
+          statusColor = colors.textSecondary;
+       }
     }
     
     return GestureDetector(
@@ -348,17 +345,12 @@ class _FriendsTabState extends State<FriendsTab> {
                     children: [
                       Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
                       const SizedBox(height: 2), 
-                      
-                      // Status Logic
-                      if (!canSeeLoc)
-                        Text("Location access required", style: TextStyle(fontSize: 12, color: Colors.orange))
-                      else 
-                        Row(
-                          children: [
-                            if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
-                            Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
-                          ],
-                        )
+                      Row(
+                        children: [
+                          if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
+                          Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+                        ],
+                      )
                     ]
                   ),
                 ),
@@ -379,17 +371,7 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.blue, 
                      onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
                    ),
-                   if (!canSeeLoc)
-                     _buildActionButton(
-                       icon: Icons.lock_open, 
-                       label: "Request Access", 
-                       color: Colors.orange, 
-                       onTap: () {
-                         SupabaseService.requestLocationAccess(friendId);
-                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request sent (Simulated: Access Granted)")));
-                         // Manual refresh triggered by service in requestLocationAccess
-                       }
-                     ),
+                   // Removed "Request Access" button
                    _buildActionButton(
                      icon: Icons.block, 
                      label: "Block", 

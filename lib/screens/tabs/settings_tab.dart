@@ -68,23 +68,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _toggleGhostMode(bool val) async {
-    if (val) {
-      // --- WARNING WHEN ENABLING (ENTERING) GHOST MODE ---
-      final proceed = await showDialog<bool>(
-        context: context, 
-        builder: (ctx) => AlertDialog(
-          title: const Text("Enter Ghost Mode?"),
-          content: const Text("You will disappear from your friends' maps instantly.\n\nNote: To prevent misuse, if you turn Ghost Mode OFF later, you will have to request location access from your friends again."),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Go Ghost", style: TextStyle(color: Colors.red))),
-          ],
-        )
-      );
-      if (proceed != true) return;
-    }
-
-    // Toggle logic
+    // Simple toggle, no dialog
     await SupabaseService.toggleGhostMode(val);
     _loadProfile();
   }
@@ -242,7 +226,9 @@ class _SettingsTabState extends State<SettingsTab> {
             ]),
             const SizedBox(height: 20),
           ],
-
+          
+          // ... [Rest of the file remains same] ...
+          
           _buildSection(context, [
             SwitchListTile(
               title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)), 

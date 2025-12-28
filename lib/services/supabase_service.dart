@@ -11,7 +11,7 @@ class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
   static User? get currentUser => client.auth.currentUser;
 
-  // Notifier to force FriendsTab to reload when permissions/ghost mode changes
+  // Notifier to force FriendsTab to reload
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
 
   // --- AUTH ---
@@ -53,29 +53,20 @@ class SupabaseService {
     await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
   }
 
-  // --- GHOST MODE & PRIVACY ---
+  // --- GHOST MODE (SIMPLIFIED) ---
   static Future<void> toggleGhostMode(bool enable) async {
     final user = currentUser;
     if (user == null) return;
 
+    // Simple Toggle: No penalties, no permission revocation
+    await client.from('profiles').update({'ghost_mode': enable}).eq('id', user.id);
+    
+    // If turning ON, clear current location from DB immediately for privacy
     if (enable) {
-      await client.from('profiles').update({'ghost_mode': true}).eq('id', user.id);
       await client.from('user_locations').delete().eq('user_id', user.id);
-    } else {
-      // Trigger penalty when turning OFF
-      await client.rpc('disable_ghost_mode', params: {'user_uuid': user.id});
     }
-    // Notify UI to refresh permission states
-    friendsListRefresh.value++;
-  }
-
-  static Future<void> requestLocationAccess(String friendId) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('friends')
-      .update({'can_see_location': true})
-      .match({'user_id': user.id, 'friend_id': friendId});
-      
+    
+    // Notify UI
     friendsListRefresh.value++;
   }
 
@@ -137,16 +128,17 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
-    // 1. Check MY Ghost Mode status first
+    // 1. Check MY Ghost Mode status
     final myProfile = await client.from('profiles').select('ghost_mode').eq('id', user.id).single();
     final bool amIGhost = myProfile['ghost_mode'] ?? false;
 
-    final friendsRelation = await client.from('friends').select('friend_id, can_see_location').eq('user_id', user.id);
+    // 2. Fetch Friends
+    final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
     if (friendsRelation.isEmpty) return [];
 
     final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
-    final permissionMap = {for (var e in friendsRelation) e['friend_id']: e['can_see_location']};
 
+    // 3. Fetch Profiles & Locations
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color, ghost_mode').filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
@@ -159,17 +151,17 @@ class SupabaseService {
       if (profile == null) continue;
 
       final loc = locationMap[id];
-      final bool canSee = permissionMap[id] ?? true;
       final bool isFriendGhost = profile['ghost_mode'] ?? false;
 
-      // Logic: I can see EXACT location only if:
-      // 1. I am NOT a ghost
-      // 2. I have permission (canSee)
-      // 3. Friend is NOT a ghost
-      final bool showExactLocation = !amIGhost && canSee && !isFriendGhost;
+      // SIMPLIFIED LOGIC:
+      // If *I* am a ghost, I see nothing (to be fair).
+      // If *Friend* is a ghost, I see nothing.
+      // Otherwise, I see location.
+      final bool showExactLocation = !amIGhost && !isFriendGhost;
 
       dynamic lat, lng, currentLine;
-      dynamic updatedAt = loc != null ? loc['updated_at'] : null;
+      // "Active recently" timestamp is ALWAYS visible unless I am ghosting them
+      dynamic updatedAt = (!amIGhost && loc != null) ? loc['updated_at'] : null;
 
       if (showExactLocation && loc != null) {
         lat = loc['latitude'];
@@ -183,11 +175,8 @@ class SupabaseService {
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
-        'ghost_mode': isFriendGhost, 
-        'can_see_location': canSee, 
-        // We ALWAYS return updated_at so "Active 5m ago" still works
+        'ghost_mode': isFriendGhost,
         'updated_at': updatedAt, 
-        // These are null if hidden
         'latitude': lat,
         'longitude': lng,
         'current_line': currentLine,
@@ -374,7 +363,6 @@ class SupabaseService {
     
     final encrypted = encrypter.encrypt(content, iv: iv);
     
-    // Store IV + Ciphertext
     final storedContent = "${iv.base64}:${encrypted.base64}";
 
     await client.from('messages').insert({
@@ -386,35 +374,7 @@ class SupabaseService {
     });
   }
 
-  // --- TICKET & BLOCKING ---
-  static Future<String?> getTicketUrl() async {
-    final user = currentUser;
-    if (user == null) return null;
-    final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
-    return data?['ticket_url'] as String?;
-  }
-  
-  static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
-    final user = currentUser;
-    if (user == null) return null;
-    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    await client.storage.from('tickets').uploadBinary(fileName, bytes);
-    final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-    await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
-    return imageUrl;
-  }
-  
-  static Future<String?> uploadTicket(File imageFile) async {
-    final user = currentUser;
-    if (user == null) return null;
-    final fileExt = imageFile.path.split('.').last;
-    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-    await client.storage.from('tickets').upload(fileName, imageFile);
-    final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
-    await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
-    return imageUrl;
-  }
-  
+  // --- BLOCKING ---
   static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
     final user = currentUser;
     if (user == null) return [];
@@ -437,5 +397,32 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     await client.from('user_blocks').delete().match({'blocker_id': user.id, 'blocked_id': userId});
+  }
+  
+  // TICKET
+  static Future<String?> getTicketUrl() async {
+    final user = currentUser;
+    if (user == null) return null;
+    final data = await client.from('profiles').select('ticket_url').eq('id', user.id).maybeSingle();
+    return data?['ticket_url'] as String?;
+  }
+  static Future<String?> uploadTicketBytes(Uint8List bytes, String fileExt) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    await client.storage.from('tickets').uploadBinary(fileName, bytes);
+    final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
+    await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
+    return imageUrl;
+  }
+  static Future<String?> uploadTicket(File imageFile) async {
+    final user = currentUser;
+    if (user == null) return null;
+    final fileExt = imageFile.path.split('.').last;
+    final fileName = '${user.id}/ticket_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+    await client.storage.from('tickets').upload(fileName, imageFile);
+    final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
+    await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
+    return imageUrl;
   }
 }
