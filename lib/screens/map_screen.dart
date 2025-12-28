@@ -28,129 +28,138 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.focusStep != null && 
-          widget.focusStep!.startLat != null && 
-          widget.focusStep!.endLat != null) {
-        
-        final centerLat = (widget.focusStep!.startLat! + widget.focusStep!.endLat!) / 2;
-        final centerLng = (widget.focusStep!.startLng! + widget.focusStep!.endLng!) / 2;
-        _mapController.move(LatLng(centerLat, centerLng), 15);
-      } else if (widget.steps.isNotEmpty) {
-        double sumLat = 0;
-        double sumLng = 0;
-        int count = 0;
-        for(var s in widget.steps) {
-          if(s.startLat != null) { sumLat += s.startLat!; sumLng += s.startLng!; count++; }
-          if(s.endLat != null) { sumLat += s.endLat!; sumLng += s.endLng!; count++; }
-        }
-        if(count > 0) {
-          _mapController.move(LatLng(sumLat/count, sumLng/count), 12);
+      _fitBounds();
+    });
+  }
+
+  void _fitBounds() {
+    List<LatLng> points = [];
+    
+    // If focused, only look at that step's geometry
+    if (widget.focusStep != null) {
+      // Add start/end
+      if (widget.focusStep!.startLat != null) points.add(LatLng(widget.focusStep!.startLat!, widget.focusStep!.startLng!));
+      if (widget.focusStep!.endLat != null) points.add(LatLng(widget.focusStep!.endLat!, widget.focusStep!.endLng!));
+      
+      // Add detailed path points if available
+      if (widget.focusStep!.path != null) {
+        for (var p in widget.focusStep!.path!) {
+          points.add(LatLng(p[0], p[1]));
         }
       }
-    });
+    } else {
+      // Add all points from all steps
+      for (var s in widget.steps) {
+        if (s.startLat != null) points.add(LatLng(s.startLat!, s.startLng!));
+        if (s.endLat != null) points.add(LatLng(s.endLat!, s.endLng!));
+        if (s.path != null) {
+          for (var p in s.path!) {
+            points.add(LatLng(p[0], p[1]));
+          }
+        }
+      }
+    }
+
+    if (points.isNotEmpty) {
+      // Calculate bounds manually to ensure LatLngBounds works with any version
+      double minLat = points.first.latitude;
+      double maxLat = points.first.latitude;
+      double minLng = points.first.longitude;
+      double maxLng = points.first.longitude;
+
+      for (var p in points) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLng) minLng = p.longitude;
+        if (p.longitude > maxLng) maxLng = p.longitude;
+      }
+
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng)),
+          padding: const EdgeInsets.all(50),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     
-    // 1. Build Markers
+    // 1. Build Markers & Polylines
     List<Marker> markers = [];
-    
-    if (widget.currentPosition != null) {
-      markers.add(
-        Marker(
-          point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
-          width: 40,
-          height: 40,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.3),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: const Center(
-              child: Icon(Icons.my_location, color: Colors.blue, size: 20),
-            ),
-          ),
-        ),
-      );
-    }
-
-    for (var step in widget.steps) {
-      if (step.startLat != null && step.startLng != null) {
-        markers.add(Marker(
-          point: LatLng(step.startLat!, step.startLng!),
-          width: 30,
-          height: 30,
-          child: Icon(
-            step.type == 'walk' ? Icons.directions_walk : Icons.circle, 
-            color: step.type == 'walk' ? Colors.orange : Colors.indigo,
-            size: step.type == 'walk' ? 20 : 12,
-          ),
-        ));
-      }
-    }
-
-    // 2. Build Polylines
     List<Polyline> polylines = [];
     
+    if (widget.currentPosition != null) {
+      markers.add(Marker(
+        point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
+        width: 40, height: 40,
+        child: Container(
+          decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.3), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
+          child: const Center(child: Icon(Icons.my_location, color: Colors.blue, size: 20)),
+        ),
+      ));
+    }
+
     for (var step in widget.steps) {
-      if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
-        final isFocus = widget.focusStep == step;
-        
+      // Only draw if we are showing all, or this is the focused step
+      if (widget.focusStep != null && widget.focusStep != step) continue;
+
+      // Draw Path
+      if (step.path != null && step.path!.isNotEmpty) {
+        List<LatLng> linePoints = step.path!.map((p) => LatLng(p[0], p[1])).toList();
         polylines.add(Polyline(
-          points: [
-            LatLng(step.startLat!, step.startLng!),
-            LatLng(step.endLat!, step.endLng!),
-          ],
-          strokeWidth: isFocus ? 6.0 : 4.0,
-          // Walking = Orange, Ride = Indigo
-          color: step.type == 'walk' 
-              ? (isFocus ? Colors.orange : Colors.orange.withValues(alpha: 0.7))
-              : (isFocus ? Colors.indigo : Colors.indigo.withValues(alpha: 0.7)),
+          points: linePoints,
+          strokeWidth: 5.0,
+          color: step.type == 'walk' ? Colors.orange : Colors.indigo,
+        ));
+      } else if (step.startLat != null && step.startLng != null && step.endLat != null) {
+        // Fallback to straight line
+        polylines.add(Polyline(
+          points: [LatLng(step.startLat!, step.startLng!), LatLng(step.endLat!, step.endLng!)],
+          strokeWidth: 4.0,
+          color: step.type == 'walk' ? Colors.orange.withValues(alpha: 0.5) : Colors.indigo.withValues(alpha: 0.5),
+        ));
+      }
+
+      // Draw Stop Markers (Small dots for intermediate stops)
+      if (step.stopovers != null) {
+        for (var stop in step.stopovers!) {
+          var loc = stop['stop'] != null ? stop['stop']['location'] : null;
+          if (loc != null) {
+            markers.add(Marker(
+              point: LatLng(loc['latitude'], loc['longitude']),
+              width: 8, height: 8,
+              child: Container(decoration: const BoxDecoration(color: Colors.grey, shape: BoxShape.circle)),
+            ));
+          }
+        }
+      }
+
+      // Draw Main Station Markers
+      if (step.startLat != null) {
+        markers.add(Marker(
+          point: LatLng(step.startLat!, step.startLng!),
+          width: 30, height: 30,
+          child: Icon(step.type == 'walk' ? Icons.directions_walk : Icons.circle, color: step.type == 'walk' ? Colors.orange : Colors.indigo, size: 18),
         ));
       }
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.focusStep != null ? "Walking Directions" : "Route Overview"),
+        title: Text(widget.focusStep != null ? "Step Details" : "Route Map"),
         backgroundColor: colors.appBarBg,
         foregroundColor: colors.textPrimary,
       ),
       body: FlutterMap(
         mapController: _mapController,
-        options: const MapOptions(
-          initialCenter: LatLng(51.1657, 10.4515), 
-          initialZoom: 6.0,
-        ),
+        options: const MapOptions(initialCenter: LatLng(51.16, 10.45), initialZoom: 6.0),
         children: [
-          TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.trans',
-          ),
+          TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.example.trans'),
           PolylineLayer(polylines: polylines),
           MarkerLayer(markers: markers),
-          
-          if (widget.focusStep != null && widget.focusStep!.isWalking)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                margin: const EdgeInsets.all(20),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colors.cardBg.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [BoxShadow(blurRadius: 10, color: Colors.black.withValues(alpha: 0.1))]
-                ),
-                child: Text(
-                  "Displaying straight line direction.\nFollow local street signs.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                ),
-              ),
-            )
         ],
       ),
     );

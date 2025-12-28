@@ -11,11 +11,12 @@ class JourneyStep {
   final List<dynamic>? stopovers;
   final int? chatCount;
 
-  // New fields for Map
+  // Map Data
   final double? startLat;
   final double? startLng;
   final double? endLat;
   final double? endLng;
+  final List<List<double>>? path; // [[lat, lng], [lat, lng], ...]
 
   JourneyStep({
     required this.type,
@@ -33,6 +34,7 @@ class JourneyStep {
     this.startLng,
     this.endLat,
     this.endLng,
+    this.path,
   });
 }
 
