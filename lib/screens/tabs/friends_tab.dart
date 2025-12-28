@@ -169,7 +169,7 @@ class _FriendsTabState extends State<FriendsTab> {
     for (var f in _friends) {
       if (f['updated_at'] != null) {
         final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
-        // Considered active if updated in last 12 hours
+        // Active if updated in last 12 hours
         final isActive = now.difference(updated).inHours < 12;
         if (isActive) {
           activeFriends.add(f);
@@ -182,9 +182,6 @@ class _FriendsTabState extends State<FriendsTab> {
     activeFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
     _requests.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
     inactiveFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
-
-    // Combine strictly: Active -> Requests -> Inactive
-    final combinedList = [...activeFriends, ..._requests, ...inactiveFriends];
 
     return Column(
       children: [
@@ -206,26 +203,51 @@ class _FriendsTabState extends State<FriendsTab> {
         Expanded(
           child: _isLoading 
             ? const Center(child: CircularProgressIndicator()) 
-            : combinedList.isEmpty 
-                ? Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary)))
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: combinedList.length,
-                    itemBuilder: (ctx, idx) {
-                      final item = combinedList[idx];
-                      final bool isRequest = item.containsKey('sender_id');
+            : ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  // 1. ACTIVE FRIENDS
+                  if (activeFriends.isNotEmpty) ...[
+                    _buildSectionHeader("Active Now", colors),
+                    ...activeFriends.map((f) => _buildFriendCard(context, f, true)),
+                  ],
 
-                      // Visual Separator logic could go here if you wanted headers
-                      if (isRequest) {
-                        return _buildRequestCard(context, item);
-                      } else {
-                        final bool isActive = activeFriends.contains(item);
-                        return _buildFriendCard(context, item, isActive);
-                      }
-                    },
-                  ),
+                  // 2. REQUESTS
+                  if (_requests.isNotEmpty) ...[
+                    _buildSectionHeader("Requests", colors),
+                    ..._requests.map((r) => _buildRequestCard(context, r)),
+                  ],
+
+                  // 3. INACTIVE FRIENDS
+                  if (inactiveFriends.isNotEmpty) ...[
+                    _buildSectionHeader("Offline", colors),
+                    ...inactiveFriends.map((f) => _buildFriendCard(context, f, false)),
+                  ],
+
+                  if (activeFriends.isEmpty && _requests.isEmpty && inactiveFriends.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 50),
+                      child: Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary))),
+                    )
+                ],
+              ),
         ),
       ],
+    );
+  }
+
+  Widget _buildSectionHeader(String title, TransColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+      child: Text(
+        title.toUpperCase(),
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1.0
+        ),
+      ),
     );
   }
 
@@ -260,7 +282,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: colors.requestCardBg, 
         borderRadius: BorderRadius.circular(16), 
-        border: Border.all(color: colors.requestCardBorder, width: 2) // Thicker border for visibility
+        border: Border.all(color: Colors.blue.withOpacity(0.5), width: 1.5) 
       ),
       child: Row(
         children: [
@@ -359,7 +381,6 @@ class _FriendsTabState extends State<FriendsTab> {
               ],
             ),
             
-            // Expanded Options
             if (isExpanded) ...[
               const SizedBox(height: 16),
               Divider(color: colors.divider),
@@ -372,16 +393,30 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.blue, 
                      onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
                    ),
-                   // NEW: Remove Friend Button
+                   // NEW REMOVE BUTTON
                    _buildActionButton(
                      icon: Icons.person_remove, 
                      label: "Remove", 
                      color: Colors.orange, 
                      onTap: () async {
-                       await SupabaseService.removeFriend(friendId);
-                       if (mounted) {
-                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Removed ${friend['username']}")));
-                         setState(() => _expandedFriendId = null);
+                       final confirm = await showDialog<bool>(
+                         context: context,
+                         builder: (ctx) => AlertDialog(
+                           title: Text("Remove ${friend['username']}?"),
+                           content: const Text("They will be removed from your friends list."),
+                           actions: [
+                             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Remove", style: TextStyle(color: Colors.red))),
+                           ],
+                         )
+                       );
+                       
+                       if (confirm == true) {
+                         await SupabaseService.removeFriend(friendId);
+                         if (mounted) {
+                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Removed ${friend['username']}")));
+                           setState(() => _expandedFriendId = null);
+                         }
                        }
                      }
                    ),
