@@ -85,7 +85,6 @@ class _RoutesTabState extends State<RoutesTab> {
     if (mounted) setState(() => _favorites = favs);
   }
 
-  // --- WAKE ME LOGIC ---
   void _toggleWakeAlarm(RouteTab route) {
     if (_isWakeAlarmSet) {
       _stopWakeAlarm();
@@ -160,7 +159,6 @@ class _RoutesTabState extends State<RoutesTab> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(steps: route.steps, focusStep: focusStep, currentPosition: widget.currentPosition)));
   }
 
-  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -201,19 +199,23 @@ class _RoutesTabState extends State<RoutesTab> {
       if (query.length > 2) {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
-        final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
-        if (mounted) {
-          setState(() { 
-            for (var s in apiResults) {
-               bool exists = _suggestions.any((existing) {
-                 if (existing is Station) return existing.id == s.id;
-                 if (existing is Favorite) return existing.station?.id == s.id;
-                 return false;
-               });
-               if (!exists) _suggestions.add(s);
-            }
-            _isSuggestionsLoading = false; 
-          });
+        try {
+          final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
+          if (mounted) {
+            setState(() { 
+              for (var s in apiResults) {
+                 bool exists = _suggestions.any((existing) {
+                   if (existing is Station) return existing.id == s.id;
+                   if (existing is Favorite) return existing.station?.id == s.id;
+                   return false;
+                 });
+                 if (!exists) _suggestions.add(s);
+              }
+              _isSuggestionsLoading = false; 
+            });
+          }
+        } catch (e) {
+          if (mounted) setState(() => _isSuggestionsLoading = false);
         }
       } else {
         if (mounted) setState(() => _isSuggestionsLoading = false);
@@ -370,52 +372,45 @@ class _RoutesTabState extends State<RoutesTab> {
       _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: DateFormat('HH:mm').format(DateTime.parse(journeyData['arrival'])), totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps));
       _activeTabId = id;
       if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
-      _isLoadingRoute = false;
+      // _isLoadingRoute = false; // Moved to finally
     });
   }
 
   Future<void> _findRoutes() async {
-     // FIX: Prevent double taps
      if (_isLoadingRoute) return;
 
      Station? from = _fromStation;
      if (from == null && widget.currentPosition != null) {
         from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
      }
+     if (from == null || _toStation == null) return;
      
-     if (from == null || _toStation == null) {
-        // Just in case, reset loading
-        if (mounted) setState(() => _isLoadingRoute = false);
-        return;
-     }
-
      setState(() => _isLoadingRoute = true);
      
      try {
-       // Added simple timeout
        final res = await TransportApi.searchJourneys(
          from, _toStation!, 
          nahverkehrOnly: widget.onlyNahverkehr, 
          when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, 
          isArrival: _isArrival
-       ).timeout(const Duration(seconds: 15)); // Timeout
+       ).timeout(const Duration(seconds: 15)); // 15 sec timeout
 
        if (mounted) {
          if (res.isNotEmpty) {
            _addJourneyTab(res.first);
          } else { 
-           setState(()=>_isLoadingRoute=false); 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found"))); 
          }
        }
      } catch(e) {
        if(mounted) {
-         setState(()=>_isLoadingRoute=false);
-         // Show error only if it's not a normal cancel
          if (!e.toString().contains("Timeout")) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
          }
        }
+     } finally {
+       // FIX: ALWAYS reset loading, no matter what
+       if (mounted) setState(() => _isLoadingRoute = false);
      }
   }
 
@@ -558,7 +553,8 @@ class _RoutesTabState extends State<RoutesTab> {
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final colors = TransColors.of(context);
-    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), Flexible(child: ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); }))]));
+    // FIX: Removed Flexible, used standard column+listview shrinking
+    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); })]));
   }
 
   Widget _buildTextField(String label, TextEditingController controller, bool isSelected, String fieldKey, {String hint = "Station..."}) {
@@ -668,12 +664,12 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                     decoration: InputDecoration(labelText: "Search Station Name", prefixIcon: const Icon(Icons.search), suffix: SizedBox(width: 16, height: 16, child: _isLoading ? const CircularProgressIndicator(strokeWidth: 2) : null)),
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (val.isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
+                      if (val.trim().isEmpty) { if (mounted) setState(() => _suggestions = []); return; }
                       _debounce = Timer(const Duration(milliseconds: 400), () async {
                         if (!mounted) return;
                         setState(() => _isLoading = true);
                         try {
-                          final res = await TransportApi.searchStations(val).timeout(const Duration(seconds: 8));
+                          final res = await TransportApi.searchStations(val).timeout(const Duration(seconds: 10));
                           if (mounted) setState(() { _suggestions = res; _isLoading = false; });
                         } catch (e) {
                           if (mounted) setState(() => _isLoading = false);
