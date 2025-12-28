@@ -30,13 +30,13 @@ class SupabaseService {
     _msgSubscription = client
         .from('messages')
         .stream(primaryKey: ['id'])
-        .eq('receiver_id', user.id) // Listen for messages sent TO me
+        .eq('receiver_id', user.id)
         .limit(1)
         .listen((List<Map<String, dynamic>> data) {
           if (data.isNotEmpty) {
             final msg = data.first;
-            // Check if this message is new (created in the last 10 seconds to avoid spam on restart)
             final created = DateTime.parse(msg['created_at']);
+            // Only notify if message is recent (last 10s)
             if (DateTime.now().toUtc().difference(created).inSeconds < 10) {
               NotificationManager.showNotification(
                 id: msg['id'].hashCode,
@@ -98,7 +98,12 @@ class SupabaseService {
     await client.from('profiles').update({'ghost_mode': enable}).eq('id', user.id);
     
     if (enable) {
-      await client.from('user_locations').delete().eq('user_id', user.id);
+      // FIX: Do NOT delete row. Just clear sensitive data so updated_at remains.
+      await client.from('user_locations').update({
+        'latitude': null,
+        'longitude': null,
+        'current_line': null
+      }).eq('user_id', user.id);
     }
     
     friendsListRefresh.value++;
@@ -162,17 +167,14 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
-    // 1. Check MY Ghost Mode status
     final myProfile = await client.from('profiles').select('ghost_mode').eq('id', user.id).single();
     final bool amIGhost = myProfile['ghost_mode'] ?? false;
 
-    // 2. Fetch Friends
     final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
     if (friendsRelation.isEmpty) return [];
 
     final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
 
-    // 3. Fetch Profiles & Locations
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color, ghost_mode').filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
@@ -187,15 +189,11 @@ class SupabaseService {
       final loc = locationMap[id];
       final bool isFriendGhost = profile['ghost_mode'] ?? false;
 
-      // --- LOGIC UPDATE ---
-      // 1. "Active recently" (updated_at) is ALWAYS visible if data exists.
-      dynamic updatedAt = (loc != null) ? loc['updated_at'] : null;
-
-      // 2. Detailed Location/Bus (lat, lng, current_line) is ONLY visible if:
-      //    - I am NOT a ghost
-      //    - Friend is NOT a ghost
+      // Logic: Show details (bus/loc) ONLY if neither is ghost.
       final bool showDetails = !amIGhost && !isFriendGhost;
 
+      // Always show updated_at if available
+      dynamic updatedAt = (loc != null) ? loc['updated_at'] : null;
       dynamic lat, lng, currentLine;
 
       if (showDetails && loc != null) {
@@ -273,19 +271,22 @@ class SupabaseService {
     if (user == null) return;
     
     final profile = await getCurrentProfile();
-    if (profile != null && profile['ghost_mode'] == true) {
-      return; 
-    }
+    final bool isGhost = profile != null && profile['ghost_mode'] == true;
+    
+    // If ghost: UPDATE ONLY updated_at. Do NOT update lat/lng.
+    // If not ghost: Update everything.
     
     final Map<String, dynamic> updateData = {
       'user_id': user.id,
-      'latitude': pos.latitude,
-      'longitude': pos.longitude,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
-    if (currentLine != null) {
-      updateData['current_line'] = currentLine;
+    if (!isGhost) {
+      updateData['latitude'] = pos.latitude;
+      updateData['longitude'] = pos.longitude;
+      if (currentLine != null) {
+        updateData['current_line'] = currentLine;
+      }
     }
 
     await client.from('user_locations').upsert(updateData);
@@ -397,7 +398,6 @@ class SupabaseService {
     final encrypter = enc.Encrypter(enc.AES(key));
     
     final encrypted = encrypter.encrypt(content, iv: iv);
-    
     final storedContent = "${iv.base64}:${encrypted.base64}";
 
     await client.from('messages').insert({
