@@ -14,6 +14,10 @@ class SettingsTab extends StatefulWidget {
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
   
+  // Received from parent
+  final bool isGhostMode;
+  final Function(bool) onGhostModeChanged;
+  
   final Function(Color) onColorChanged;
   final Color currentColor;
 
@@ -23,6 +27,8 @@ class SettingsTab extends StatefulWidget {
     required this.onThemeChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
+    required this.isGhostMode,
+    required this.onGhostModeChanged,
     required this.onColorChanged,
     required this.currentColor,
   });
@@ -42,15 +48,20 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
-  
-  bool _isGhostMode = false; 
   int _stopsBeforeAlarm = 1;
 
   @override
   void initState() {
     super.initState();
+    _loadProfile(); 
     _loadSettings();
-    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (mounted) setState(() {
+      _profile = profile;
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -60,31 +71,8 @@ class _SettingsTabState extends State<SettingsTab> {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
-        if (prefs.containsKey('ghost_mode')) {
-          _isGhostMode = prefs.getBool('ghost_mode') ?? false;
-        }
       });
     }
-  }
-
-  Future<void> _loadProfile() async {
-    final profile = await SupabaseService.getCurrentProfile();
-    if (mounted && profile != null) {
-      setState(() {
-        _profile = profile;
-        _isGhostMode = profile['ghost_mode'] ?? false;
-      });
-      final prefs = await SharedPreferences.getInstance();
-      prefs.setBool('ghost_mode', _isGhostMode);
-    }
-  }
-
-  Future<void> _toggleGhostMode(bool val) async {
-    setState(() => _isGhostMode = val);
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setBool('ghost_mode', val);
-    await SupabaseService.toggleGhostMode(val);
-    _loadProfile();
   }
 
   Future<void> _saveVibrationSettings(String pattern, int intensity) async {
@@ -108,7 +96,7 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _testVibration() async {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator() ?? false) {
-      List<int> pattern = [0, 500]; // Standard
+      List<int> pattern = [0, 500];
 
       switch (_vibrationPattern) {
         case 'heartbeat': pattern = [0, 150, 150, 150]; break;
@@ -245,7 +233,6 @@ class _SettingsTabState extends State<SettingsTab> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
-          // FIX: Reduced spacing here
           const SizedBox(height: 40),
           Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
           const SizedBox(height: 20),
@@ -257,9 +244,9 @@ class _SettingsTabState extends State<SettingsTab> {
               SwitchListTile(
                 title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
                 subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-                value: _isGhostMode, 
+                value: widget.isGhostMode, 
                 activeColor: Colors.red,
-                onChanged: _toggleGhostMode
+                onChanged: widget.onGhostModeChanged
               ),
             ]),
             const SizedBox(height: 20),
@@ -363,6 +350,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  // Helper Methods Restored
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
