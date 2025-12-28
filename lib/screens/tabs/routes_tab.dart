@@ -26,9 +26,6 @@ const List<IconData> kAvailableIcons = [
   Icons.fitness_center, Icons.local_cafe, Icons.local_airport
 ];
 
-// -----------------------------------------------------------------------------
-// MAIN ROUTES TAB WIDGET
-// -----------------------------------------------------------------------------
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -144,6 +141,7 @@ class _RoutesTabState extends State<RoutesTab> {
     );
   }
 
+  // --- SEARCH LOGIC ---
   Future<void> _fetchSuggestions({bool forceHistory = false}) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
@@ -170,13 +168,8 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      if (widget.currentPosition!.latitude != 0.0) {
-        final nearby = await TransportApi.getNearbyStops(
-            widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-        for (var s in nearby) {
-          if (!results.any((h) => h is Station && h.id == s.id)) results.insert(0, s);
-        }
-      }
+      // Don't auto-fetch stations if we have GPS, we will use GPS directly
+      // Just show "Current Location" option is implicitly handled by UI
     }
 
     if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
@@ -268,7 +261,6 @@ class _RoutesTabState extends State<RoutesTab> {
           final lat = data['latitude'] as double;
           final lng = data['longitude'] as double;
           
-          // FIX: Add mounted check before using context or setState
           final stops = await TransportApi.getNearbyStops(lat, lng);
           if (!mounted) return;
 
@@ -301,7 +293,6 @@ class _RoutesTabState extends State<RoutesTab> {
     }
   }
 
-  // --- CALLING THE DIALOG ---
   void _showEditFavoriteDialog(Favorite fav) async {
     await showDialog(
       context: context,
@@ -316,7 +307,6 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE PROCESSING ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
@@ -354,61 +344,42 @@ class _RoutesTabState extends State<RoutesTab> {
       for (var leg in transferBuffer) {
         final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
         final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
-        int dur = arr.difference(dep).inMinutes;
-        
-        final origin = leg['origin']?['name'];
-        final dest = leg['destination']?['name'];
-        
-        if (origin != null && dest != null && origin == dest) {
-        } else {
-          walkMinutes += dur;
-        }
+        walkMinutes += arr.difference(dep).inMinutes;
       }
 
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
-
       int waitMinutes = totalGapMinutes - walkMinutes;
       if (waitMinutes < 1) waitMinutes = 0;
 
-      List<String> breakdownParts = [];
-      if (walkMinutes > 0) breakdownParts.add("Walk $walkMinutes min");
-      if (waitMinutes > 0) breakdownParts.add("Wait $waitMinutes min");
-      
-      String breakdownText = breakdownParts.join(" • ");
-      if (breakdownText.isEmpty) {
-        if (totalGapMinutes > 0) breakdownText = "$totalGapMinutes min transfer";
-        else breakdownText = "Immediate connection";
-      }
+      String breakdownText = "";
+      if (walkMinutes > 0) breakdownText += "Walk $walkMinutes min ";
+      if (waitMinutes > 0) breakdownText += "Wait $waitMinutes min";
+      if (breakdownText.isEmpty) breakdownText = "$totalGapMinutes min transfer";
 
       String actionText = "Transfer";
-      if (walkMinutes > 0) {
-        if (nextStationName != null && nextStationName.isNotEmpty && nextStationName != "Destination") {
-           actionText = "Walk to $nextStationName";
-        } else if (nextStationName == "Destination") {
-           actionText = "Walk to Destination";
-        } else {
-           actionText = "Walk to connection";
-        }
-      } else {
-        actionText = "Wait for connection";
-      }
-
-      String type = (walkMinutes > 0) ? 'walk' : 'wait';
-
+      if (walkMinutes > 0) actionText = nextStationName != null ? "Walk to $nextStationName" : "Walk";
+      
       double? startLat = getLat(startLocationData);
       double? startLng = getLng(startLocationData);
 
+      // Extract polyline for walking if available
+      List<List<double>>? path;
+      if (transferBuffer.isNotEmpty && transferBuffer.first['decodedPath'] != null) {
+        path = transferBuffer.first['decodedPath'];
+      }
+
       steps.add(JourneyStep(
-        type: type,
+        type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
         instruction: actionText,
         duration: breakdownText,
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: type == 'walk',
+        isWalking: walkMinutes > 0,
         startLat: startLat,
         startLng: startLng,
+        path: path,
       ));
       
       transferBuffer.clear();
@@ -437,50 +408,30 @@ class _RoutesTabState extends State<RoutesTab> {
         double? startLng = getLng(leg['origin']);
         double? endLat = getLat(leg['destination']);
         double? endLng = getLng(leg['destination']);
+        
+        // Grab decoded path
+        List<List<double>>? path = leg['decodedPath'];
 
-        if (steps.isNotEmpty && steps.last.line == lineName && steps.last.type == 'ride') {
-           var last = steps.removeLast();
-           List<dynamic> mergedStops = [];
-           if (last.stopovers != null) mergedStops.addAll(last.stopovers!);
-           if (leg['stopovers'] != null) mergedStops.addAll(leg['stopovers']);
+        int legDurationMin = arr.difference(dep).inMinutes;
+        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
 
-           steps.add(JourneyStep(
-             type: 'ride',
-             line: lineName,
-             instruction: last.instruction, 
-             duration: "Updated", 
-             departureTime: last.departureTime,
-             arrivalTime: "${arr.hour.toString().padLeft(2,'0')}:${arr.minute.toString().padLeft(2,'0')}",
-             stopovers: mergedStops,
-             chatCount: last.chatCount,
-             startStationId: last.startStationId,
-             platform: last.platform,
-             startLat: last.startLat,
-             startLng: last.startLng,
-             endLat: endLat,
-             endLng: endLng,
-           ));
-        } else {
-          int legDurationMin = arr.difference(dep).inMinutes;
-          String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
-
-          steps.add(JourneyStep(
-            type: 'ride',
-            line: lineName,
-            instruction: "$lineName → $destName",
-            duration: durationDisplay,
-            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-            arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
-            chatCount: random.nextInt(15) + 1,
-            startStationId: startStationId,
-            platform: platform != null ? "Plat $platform" : null,
-            stopovers: leg['stopovers'],
-            startLat: startLat,
-            startLng: startLng,
-            endLat: endLat,
-            endLng: endLng,
-          ));
-        }
+        steps.add(JourneyStep(
+          type: 'ride',
+          line: lineName,
+          instruction: "$lineName → $destName",
+          duration: durationDisplay,
+          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+          arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
+          chatCount: random.nextInt(15) + 1,
+          startStationId: startStationId,
+          platform: platform != null ? "Plat $platform" : null,
+          stopovers: leg['stopovers'],
+          startLat: startLat,
+          startLng: startLng,
+          endLat: endLat,
+          endLng: endLng,
+          path: path,
+        ));
         
         lastArrival = arr;
       }
@@ -498,8 +449,6 @@ class _RoutesTabState extends State<RoutesTab> {
     final List<JourneyStep> steps = _processLegs(legs);
     
     String totalDurationStr = "";
-    String routeSubtitle = subtitle ?? "Detail";
-    
     if (legs.isNotEmpty) {
        var firstLeg = legs.first;
        var lastLeg = legs.last;
@@ -508,12 +457,6 @@ class _RoutesTabState extends State<RoutesTab> {
          DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
          int totalMin = routeEnd.difference(routeStart).inMinutes;
          totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-         
-         if (subtitle == null) {
-            String startName = firstLeg['origin']['name'] ?? 'Start';
-            String endName = lastLeg['destination']['name'] ?? 'End';
-            routeSubtitle = "$startName → $endName";
-         }
        }
     }
 
@@ -529,7 +472,7 @@ class _RoutesTabState extends State<RoutesTab> {
     final newTab = RouteTab(
       id: newTabId, 
       title: title == "Route" && _toStation != null ? _toStation!.name : title, 
-      subtitle: routeSubtitle, 
+      subtitle: subtitle ?? "Detail", 
       eta: eta, 
       totalDuration: totalDurationStr, 
       destinationId: finalDestId, 
@@ -556,22 +499,15 @@ class _RoutesTabState extends State<RoutesTab> {
        try {
          if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
 
-         final nearby = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-         // FIX: Added mounted check
-         if (!mounted) return;
-
-         if (nearby.isNotEmpty) {
-           from = nearby.first;
-         } else {
-           // Fallback: Use raw GPS coordinates as start point
-           from = Station(
-             id: "${widget.currentPosition!.latitude},${widget.currentPosition!.longitude}", 
-             name: "My Location",
-             type: 'location',
-             latitude: widget.currentPosition!.latitude,
-             longitude: widget.currentPosition!.longitude
-           );
-         }
+         // We now default to sending GPS coords directly to searchJourneys
+         // We do NOT call getNearbyStops here to avoid the extra step failing
+         from = Station(
+           id: "gps", // ID ignored by API logic for addresses
+           name: "Current Location",
+           type: 'address', // Force address type so logic handles it
+           latitude: widget.currentPosition!.latitude,
+           longitude: widget.currentPosition!.longitude
+         );
        } catch (e) {
          if (mounted) setState(() => _isLoadingRoute = false);
          return;
@@ -595,7 +531,6 @@ class _RoutesTabState extends State<RoutesTab> {
           from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
 
-      // FIX: Vital mounted check
       if (!mounted) return;
 
       if (journeys.isNotEmpty) {
@@ -966,7 +901,7 @@ class _RoutesTabState extends State<RoutesTab> {
 }
 
 // -----------------------------------------------------------------------------
-// HELPER WIDGETS (Outside State Class)
+// HELPER WIDGETS
 // -----------------------------------------------------------------------------
 
 class _StepCard extends StatelessWidget {

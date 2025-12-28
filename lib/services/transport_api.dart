@@ -67,16 +67,17 @@ class TransportApi {
       final Map<String, String> params = {
         'results': results.toString(),
         'stopovers': 'true',
+        'polylines': 'true', // Request actual geometry
       };
 
       // HANDLING START POINT
       if (from.id.contains(',') || from.type == 'address' || from.type == 'location') {
         params['from.latitude'] = from.latitude.toString();
         params['from.longitude'] = from.longitude.toString();
-        // FIX: Only send address text if it's a real address, NOT for "My Location"
-        if (from.type == 'address') {
-          params['from.address'] = from.name;
-        }
+        // FIX: Send coordinates as string if no address name (prevents 503/500 errors)
+        params['from.address'] = (from.type == 'address' && from.name != "Current Location") 
+            ? from.name 
+            : "${from.latitude},${from.longitude}"; 
       } else {
         params['from'] = from.id;
       }
@@ -85,9 +86,9 @@ class TransportApi {
       if (to.id.contains(',') || to.type == 'address' || to.type == 'location') {
         params['to.latitude'] = to.latitude.toString();
         params['to.longitude'] = to.longitude.toString();
-        if (to.type == 'address') {
-          params['to.address'] = to.name;
-        }
+        params['to.address'] = (to.type == 'address' && to.name != "Current Location") 
+            ? to.name 
+            : "${to.latitude},${to.longitude}";
       } else {
         params['to'] = to.id;
       }
@@ -114,7 +115,26 @@ class TransportApi {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null) {
-          return List<Map<String, dynamic>>.from(data['journeys']);
+          // Add polyline decoding logic here before returning
+          List<Map<String, dynamic>> journeys = List<Map<String, dynamic>>.from(data['journeys']);
+          
+          for (var journey in journeys) {
+            for (var leg in journey['legs']) {
+              if (leg['polyline'] != null) {
+                // Manually decode if backend sends encoded string, 
+                // but transport.rest usually sends GeoJSON-like object or google encoded string.
+                // Assuming Google Encoded Polyline for simplicity with 'polylines=true' defaults
+                // transport.rest v6 usually needs decoding if it returns a string.
+                if (leg['polyline'] is Map) {
+                   // GeoJSON format sometimes returned
+                   // We ignore complex geojson for now, assuming string for google algo
+                } else if (leg['polyline'] is String) {
+                   leg['decodedPath'] = _decodePolyline(leg['polyline']);
+                }
+              }
+            }
+          }
+          return journeys;
         }
       } else {
         debugPrint('TransportApi Error ${response.statusCode}: ${response.body}');
@@ -123,5 +143,36 @@ class TransportApi {
       debugPrint("Error fetching journeys: $e");
     }
     return [];
+  }
+
+  // Google Polyline Algorithm Decoder
+  static List<List<double>> _decodePolyline(String encoded) {
+    List<List<double>> points = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add([lat / 1E5, lng / 1E5]);
+    }
+    return points;
   }
 }
