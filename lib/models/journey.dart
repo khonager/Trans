@@ -1,22 +1,23 @@
 class JourneyStep {
-  final String type; // 'ride', 'walk', 'wait', 'transfer'
+  final String type; // 'ride', 'wait', 'transfer', 'walk'
   final String line;
   final String instruction;
   final String duration;
   final String departureTime;
   final String arrivalTime;
   final bool isWalking;
-  final String? platform;
-  final String? startStationId;
-  final List<dynamic>? stopovers;
-  final int? chatCount;
-
-  // Map Data
   final double? startLat;
   final double? startLng;
   final double? endLat;
   final double? endLng;
-  final List<List<double>>? path; // [[lat, lng], [lat, lng], ...]
+  final List<dynamic>? path; // [[lat, lng], ...]
+  final String? startStationId;
+  final String? platform;
+  final List<dynamic>? stopovers;
+  final int? chatCount;
+  
+  // NEW: Store exact time for alternatives search
+  final DateTime? dateTime;
 
   JourneyStep({
     required this.type,
@@ -26,15 +27,16 @@ class JourneyStep {
     required this.departureTime,
     required this.arrivalTime,
     this.isWalking = false,
-    this.platform,
-    this.startStationId,
-    this.stopovers,
-    this.chatCount,
     this.startLat,
     this.startLng,
     this.endLat,
     this.endLng,
     this.path,
+    this.startStationId,
+    this.platform,
+    this.stopovers,
+    this.chatCount,
+    this.dateTime,
   });
 }
 
