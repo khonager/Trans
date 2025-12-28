@@ -67,14 +67,13 @@ class TransportApi {
       final Map<String, String> params = {
         'results': results.toString(),
         'stopovers': 'true',
-        'polylines': 'true', // Request actual geometry
+        'polylines': 'true', // Request geometry
       };
 
       // HANDLING START POINT
       if (from.id.contains(',') || from.type == 'address' || from.type == 'location') {
         params['from.latitude'] = from.latitude.toString();
         params['from.longitude'] = from.longitude.toString();
-        // FIX: Send coordinates as string if no address name (prevents 503/500 errors)
         params['from.address'] = (from.type == 'address' && from.name != "Current Location") 
             ? from.name 
             : "${from.latitude},${from.longitude}"; 
@@ -115,21 +114,22 @@ class TransportApi {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null) {
-          // Add polyline decoding logic here before returning
           List<Map<String, dynamic>> journeys = List<Map<String, dynamic>>.from(data['journeys']);
           
+          // Parse Polylines
           for (var journey in journeys) {
             for (var leg in journey['legs']) {
               if (leg['polyline'] != null) {
-                // Manually decode if backend sends encoded string, 
-                // but transport.rest usually sends GeoJSON-like object or google encoded string.
-                // Assuming Google Encoded Polyline for simplicity with 'polylines=true' defaults
-                // transport.rest v6 usually needs decoding if it returns a string.
-                if (leg['polyline'] is Map) {
-                   // GeoJSON format sometimes returned
-                   // We ignore complex geojson for now, assuming string for google algo
+                String? encoded;
+                // API V6 sometimes returns object { points: "..." }
+                if (leg['polyline'] is Map && leg['polyline']['points'] != null) {
+                  encoded = leg['polyline']['points'];
                 } else if (leg['polyline'] is String) {
-                   leg['decodedPath'] = _decodePolyline(leg['polyline']);
+                  encoded = leg['polyline'];
+                }
+
+                if (encoded != null) {
+                  leg['decodedPath'] = _decodePolyline(encoded);
                 }
               }
             }
