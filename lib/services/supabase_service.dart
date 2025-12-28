@@ -11,6 +11,9 @@ class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
   static User? get currentUser => client.auth.currentUser;
 
+  // Notifier to force FriendsTab to reload when permissions/ghost mode changes
+  static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
+
   // --- AUTH ---
   static Future<void> signUp(String email, String password, String username) async {
     String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
@@ -62,6 +65,8 @@ class SupabaseService {
       // Trigger penalty when turning OFF
       await client.rpc('disable_ghost_mode', params: {'user_uuid': user.id});
     }
+    // Notify UI to refresh permission states
+    friendsListRefresh.value++;
   }
 
   static Future<void> requestLocationAccess(String friendId) async {
@@ -70,6 +75,8 @@ class SupabaseService {
     await client.from('friends')
       .update({'can_see_location': true})
       .match({'user_id': user.id, 'friend_id': friendId});
+      
+    friendsListRefresh.value++;
   }
 
   // --- PROFILES & EMOJIS ---
@@ -155,14 +162,18 @@ class SupabaseService {
       final bool canSee = permissionMap[id] ?? true;
       final bool isFriendGhost = profile['ghost_mode'] ?? false;
 
-      // FIX: If I am a ghost, I see NOTHING.
-      final bool showLocation = !amIGhost && canSee && !isFriendGhost;
+      // Logic: I can see EXACT location only if:
+      // 1. I am NOT a ghost
+      // 2. I have permission (canSee)
+      // 3. Friend is NOT a ghost
+      final bool showExactLocation = !amIGhost && canSee && !isFriendGhost;
 
-      dynamic lat, lng, updatedAt, currentLine;
-      if (showLocation && loc != null) {
+      dynamic lat, lng, currentLine;
+      dynamic updatedAt = loc != null ? loc['updated_at'] : null;
+
+      if (showExactLocation && loc != null) {
         lat = loc['latitude'];
         lng = loc['longitude'];
-        updatedAt = loc['updated_at'];
         currentLine = loc['current_line'];
       }
 
@@ -172,11 +183,13 @@ class SupabaseService {
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
-        'ghost_mode': isFriendGhost, // Keep seeing friend's status, just not location
+        'ghost_mode': isFriendGhost, 
         'can_see_location': canSee, 
+        // We ALWAYS return updated_at so "Active 5m ago" still works
+        'updated_at': updatedAt, 
+        // These are null if hidden
         'latitude': lat,
         'longitude': lng,
-        'updated_at': updatedAt, 
         'current_line': currentLine,
       });
     }
@@ -235,7 +248,6 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     
-    // Check local ghost mode to avoid unnecessary DB calls, but DB policy handles it too
     final profile = await getCurrentProfile();
     if (profile != null && profile['ghost_mode'] == true) {
       return; 
@@ -248,38 +260,19 @@ class SupabaseService {
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
-    // Allow updating ONLY location without changing line if currentLine is NOT passed
-    // But if currentLine IS passed (even if null), update it.
     if (currentLine != null) {
       updateData['current_line'] = currentLine;
-    } 
-    // If explicitly null (to clear it), we handle it. But Dart optional params default to null.
-    // So we need a way to distinguish "Don't change" vs "Clear".
-    // For this app: if we call this, we usually want to set the line. 
-    // If we want to CLEAR it, pass an empty string or handle logic in RoutesTab.
-    // Logic: If currentLine is passed, use it. If not, don't overwrite existing line.
-    
-    // However, the caller RoutesTab passes it.
-    // To allow clearing, let's assume if it's passed as 'null', we don't send it?
-    // No, we need to be able to clear it.
-    // Let's rely on upsert behavior.
-    
-    // Revised Logic for Active Status:
-    // We update 'current_line' whenever we have a new value. 
-    if (currentLine != null) {
-        updateData['current_line'] = currentLine;
     }
 
     await client.from('user_locations').upsert(updateData);
   }
   
-  // Method to explicitly clear line status (when ride ends)
   static Future<void> clearJourneyStatus() async {
     final user = currentUser;
     if (user == null) return;
     await client.from('user_locations').upsert({
       'user_id': user.id,
-      'current_line': null // Explicitly clear it
+      'current_line': null 
     });
   }
 
@@ -304,7 +297,7 @@ class SupabaseService {
   static Stream<List<Map<String, dynamic>>> getPrivateMessages(String otherUserId) {
     final myId = currentUser!.id;
     return client.from('messages').stream(primaryKey: ['id'])
-      .eq('is_encrypted', true)
+      .eq('is_encrypted', true) 
       .order('created_at', ascending: true)
       .limit(50)
       .asyncMap((rawMessages) async {
@@ -436,7 +429,6 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
-    // Delete relationship BOTH ways
     await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
     await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
   }
