@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart'; // For kIsWeb
+import 'package:flutter/foundation.dart';
 import '../models/station.dart';
 
 class TransportApi {
@@ -17,28 +17,29 @@ class TransportApi {
     return Uri.parse(url);
   }
 
-  // Helper to handle Web CORS if direct call fails
   static Future<http.Response> _fetch(Uri uri) async {
+    // 1. Try Direct (Works on Mobile / Server)
     try {
-      // 1. Try Direct
       final response = await http.get(uri);
       if (response.statusCode == 200) return response;
     } catch (e) {
-      // Direct failed (likely CORS on Web)
+      // Direct fetch failed (CORS on Web?)
     }
 
+    // 2. Fallback for Web (CORS Proxy)
     if (kIsWeb) {
       try {
-        // 2. Fallback: allorigins (reliable JSON proxy)
-        final proxyUrl = "https://api.allorigins.win/raw?url=${Uri.encodeComponent(uri.toString())}";
-        return await http.get(Uri.parse(proxyUrl));
+        // Try 'thingproxy' which is often more stable for this API
+        final proxyUrl = "https://thingproxy.freeboard.io/fetch/${uri.toString()}";
+        final response = await http.get(Uri.parse(proxyUrl));
+        if (response.statusCode == 200) return response;
       } catch (e) {
         debugPrint("Proxy failed: $e");
       }
     }
     
-    // Return empty 400 if all fails
-    return http.Response('{}', 400); 
+    // Return error if all fails
+    return http.Response('{"error": "Failed to fetch data"}', 500); 
   }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
