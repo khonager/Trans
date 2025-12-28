@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http; // For downloading backup
+import 'package:http/http.dart' as http;
+import 'package:flutter_image_compress/flutter_image_compress.dart'; // NEW
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/config/app_theme.dart';
 
@@ -24,17 +26,16 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _initTicket() async {
-    // 1. Check Local Storage First (Offline Support)
+    // 1. Check Local Storage (Offline First)
     final directory = await getApplicationDocumentsDirectory();
-    final localPath = '${directory.path}/saved_ticket.png';
+    final localPath = '${directory.path}/saved_ticket.jpg'; // Changed to jpg for consistency
     final localFile = File(localPath);
 
     if (await localFile.exists()) {
       if (mounted) setState(() => _localTicketFile = localFile);
     } 
     
-    // 2. Check Cloud Backup (Sync)
-    // We do this silently in background to update if needed
+    // 2. Check Cloud Backup (Silent Sync)
     _syncFromCloud(localFile);
   }
 
@@ -42,7 +43,6 @@ class _TicketPanelState extends State<TicketPanel> {
     try {
       final url = await SupabaseService.getTicketUrl();
       if (url != null && url.isNotEmpty) {
-        // Download and compare/save
         final response = await http.get(Uri.parse(url));
         if (response.statusCode == 200) {
           await localFile.writeAsBytes(response.bodyBytes);
@@ -50,47 +50,67 @@ class _TicketPanelState extends State<TicketPanel> {
         }
       }
     } catch (e) {
-      // Offline or error, just ignore and keep using local file if it exists
       debugPrint("Cloud sync failed: $e");
+    }
+  }
+
+  // NEW: Helper to resize and compress
+  Future<Uint8List?> _compressImage(File file) async {
+    try {
+      final result = await FlutterImageCompress.compressWithFile(
+        file.absolute.path,
+        minWidth: 540,
+        minHeight: 540,
+        quality: 85, // 85% quality usually results in very small files (<100kB) for 540px
+        format: CompressFormat.jpeg,
+      );
+      return result;
+    } catch (e) {
+      debugPrint("Compression error: $e");
+      return null;
     }
   }
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
-    // Pick image
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 50); // Quality 50 = "Low Res" backup
+    // Pick raw image (high quality initially)
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     
     if (image == null) return;
 
     setState(() => _isLoading = true);
     
     try {
-      final bytes = await image.readAsBytes();
+      final File originalFile = File(image.path);
       
-      // 1. Save Locally (High Priority)
+      // 1. Compress & Resize locally
+      final Uint8List? compressedBytes = await _compressImage(originalFile);
+      
+      if (compressedBytes == null) throw "Image compression failed.";
+
+      // 2. Save Compressed Version Locally
       final directory = await getApplicationDocumentsDirectory();
-      final localPath = '${directory.path}/saved_ticket.png';
+      final localPath = '${directory.path}/saved_ticket.jpg';
       final localFile = File(localPath);
-      await localFile.writeAsBytes(bytes);
+      await localFile.writeAsBytes(compressedBytes);
       
-      // Update UI immediately
       if (mounted) {
         setState(() {
           _localTicketFile = localFile;
         });
       }
 
-      // 2. Upload to Cloud (Backup)
-      final fileExt = image.path.split('.').last;
-      await SupabaseService.uploadTicketBytes(bytes, fileExt);
+      // 3. Upload Compressed Version to Cloud
+      // We force 'jpg' extension since we compressed to JPEG
+      await SupabaseService.uploadTicketBytes(compressedBytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
       
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        // Even if upload fails, we have the local file, so we just warn the user
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Cloud backup failed: $e")));
+        // If local save worked but upload failed, we still show the local ticket
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Cloud upload issue: $e")));
       }
     }
   }
@@ -116,7 +136,6 @@ class _TicketPanelState extends State<TicketPanel> {
             controller: scrollController,
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             children: [
-              // Handle
               Center(
                 child: Container(
                   width: 40, 
@@ -125,8 +144,6 @@ class _TicketPanelState extends State<TicketPanel> {
                   decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
                 )
               ),
-              
-              // Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -140,7 +157,6 @@ class _TicketPanelState extends State<TicketPanel> {
               ),
               const SizedBox(height: 24),
               
-              // Content
               if (_isLoading)
                 Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
               else if (_localTicketFile != null)
@@ -151,6 +167,8 @@ class _TicketPanelState extends State<TicketPanel> {
                       child: Image.file(
                         _localTicketFile!,
                         fit: BoxFit.contain,
+                        // Force refresh if file changed
+                        key: ValueKey(_localTicketFile!.lastModifiedSync().millisecondsSinceEpoch),
                         errorBuilder: (context, error, stackTrace) => 
                           Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket file")),
                       ),
@@ -173,13 +191,11 @@ class _TicketPanelState extends State<TicketPanel> {
                   ],
                 )
               else
-                // Empty State
                 GestureDetector(
                   onTap: _pickAndUploadImage,
                   child: Container(
                     height: 220,
                     decoration: BoxDecoration(
-                      // Clean look: Light grey/dark grey fill with dashed-style border effect
                       color: colors.isDark ? Colors.white10 : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(color: colors.ticketBorder, width: 2),
