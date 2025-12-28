@@ -12,8 +12,8 @@ class TransportApi {
       final Map<String, String> params = {
         'query': query,
         'results': '10',
-        'poi': 'true',       // Allow Points of Interest
-        'addresses': 'true', // Allow Addresses
+        'poi': 'true',       
+        'addresses': 'true', 
       };
       if (lat != null && lng != null) {
         params['latitude'] = lat.toString();
@@ -38,8 +38,8 @@ class TransportApi {
       final uri = Uri.parse('$_baseUrl/stops/nearby').replace(queryParameters: {
         'latitude': lat.toString(),
         'longitude': lng.toString(),
-        'results': '10',    // Fetch more results to filter bad ones
-        'distance': '2000', // Standard 2km walking distance
+        'results': '10',    
+        'distance': '2000', 
       });
       
       final response = await http.get(uri);
@@ -69,19 +69,25 @@ class TransportApi {
         'stopovers': 'true',
       };
 
-      // HANDLING ADDRESSES: If ID contains comma (our coordinate hack) or it's an address, use lat/long
-      if (from.id.contains(',') || from.type == 'address') {
+      // HANDLING START POINT
+      if (from.id.contains(',') || from.type == 'address' || from.type == 'location') {
         params['from.latitude'] = from.latitude.toString();
         params['from.longitude'] = from.longitude.toString();
-        params['from.address'] = from.name;
+        // FIX: Only send address text if it's a real address, NOT for "My Location"
+        if (from.type == 'address') {
+          params['from.address'] = from.name;
+        }
       } else {
         params['from'] = from.id;
       }
 
-      if (to.id.contains(',') || to.type == 'address') {
+      // HANDLING DESTINATION
+      if (to.id.contains(',') || to.type == 'address' || to.type == 'location') {
         params['to.latitude'] = to.latitude.toString();
         params['to.longitude'] = to.longitude.toString();
-        params['to.address'] = to.name;
+        if (to.type == 'address') {
+          params['to.address'] = to.name;
+        }
       } else {
         params['to'] = to.id;
       }
