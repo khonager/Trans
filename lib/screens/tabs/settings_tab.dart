@@ -12,7 +12,6 @@ class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
   
-  // Sync Logic
   final bool useSystemTheme;
   final Function(bool) onSystemSyncChanged;
 
@@ -81,14 +80,11 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  Future<void> _saveVibrationSettings(String pattern, int intensity) async {
+  // Helper to just save settings (without setState loop)
+  Future<void> _persistVibrationSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vibration_pattern', pattern);
-    await prefs.setInt('vibration_intensity', intensity);
-    setState(() {
-      _vibrationPattern = pattern;
-      _vibrationIntensity = intensity;
-    });
+    await prefs.setString('vibration_pattern', _vibrationPattern);
+    await prefs.setInt('vibration_intensity', _vibrationIntensity);
   }
 
   Future<void> _saveAlarmSettings(int stops) async {
@@ -239,9 +235,26 @@ class _SettingsTabState extends State<SettingsTab> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
-          const SizedBox(height: 40),
-          Text("Settings", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.textPrimary)),
-          const SizedBox(height: 20),
+          const SizedBox(height: 60),
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: colors.settingsAppIconBg, // FIX: Background color logic from theme
+                  child: Image.asset(
+                    'lib/assets/logo.png',
+                    height: 48,
+                    width: 48,
+                    errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text("Trans", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+            ],
+          ),
+          const SizedBox(height: 30),
           
           if (user != null) ...[
             Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
@@ -260,7 +273,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ],
 
           _buildSection(context, [
-            // FIX: Manual ListTile to handle onLongPress for Secret Sync
             ListTile(
               title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)),
               subtitle: widget.useSystemTheme 
@@ -276,7 +288,6 @@ class _SettingsTabState extends State<SettingsTab> {
                   : widget.onThemeChanged,
               ),
               onLongPress: () {
-                // Toggle Secret Sync Mode
                 bool newState = !widget.useSystemTheme;
                 widget.onSystemSyncChanged(newState);
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -310,7 +321,6 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           ]),
 
-          // ... [Rest of file unchanged] ...
           const SizedBox(height: 20),
           Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
@@ -355,10 +365,32 @@ class _SettingsTabState extends State<SettingsTab> {
                    DropdownMenuItem(value: 'titan', child: Text("Attack on Titan")),
                    DropdownMenuItem(value: 'bebop', child: Text("Cowboy Bebop")),
                  ], 
-                 onChanged: (val) => _saveVibrationSettings(val!, _vibrationIntensity)
+                 onChanged: (val) {
+                   setState(() => _vibrationPattern = val!);
+                   _persistVibrationSettings();
+                   _testVibration();
+                 }
                )
              ),
-             ListTile(title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), subtitle: Slider(value: _vibrationIntensity.toDouble(), min: 1, max: 255, activeColor: primaryColor, thumbColor: primaryColor, onChanged: (val) => _saveVibrationSettings(_vibrationPattern, val.toInt()), onChangeEnd: (_) => _testVibration())),
+             ListTile(
+               title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Slider(
+                 value: _vibrationIntensity.toDouble(), 
+                 min: 1, 
+                 max: 255, 
+                 activeColor: primaryColor, 
+                 thumbColor: primaryColor, 
+                 // FIX: Sync Update
+                 onChanged: (val) {
+                   setState(() => _vibrationIntensity = val.toInt());
+                 },
+                 // FIX: Save & Test on End
+                 onChangeEnd: (val) {
+                   _persistVibrationSettings();
+                   _testVibration();
+                 }
+               )
+             ),
           ]),
           
           const SizedBox(height: 20),
@@ -377,7 +409,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  // ... [Retain Helper Widgets] ...
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.value == color.value;
     return GestureDetector(
