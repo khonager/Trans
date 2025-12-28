@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../services/supabase_service.dart';
 import '../../config/app_theme.dart';
+import '../../widgets/private_chat_sheet.dart'; 
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
@@ -17,6 +18,7 @@ class _FriendsTabState extends State<FriendsTab> {
   List<Map<String, dynamic>> _friends = [];
   List<Map<String, dynamic>> _requests = [];
   bool _isLoading = true;
+  String? _expandedFriendId; 
 
   StreamSubscription? _friendsSub;
   StreamSubscription? _requestsSub;
@@ -140,6 +142,15 @@ class _FriendsTabState extends State<FriendsTab> {
           );
         }
       ),
+    );
+  }
+
+  void _openPrivateChat(String friendId, String username) {
+    showModalBottomSheet(
+      context: context, 
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => PrivateChatSheet(friendId: friendId, friendName: username)
     );
   }
 
@@ -274,46 +285,119 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget _buildFriendCard(BuildContext context, Map<String, dynamic> friend, bool isActive) {
     final colors = TransColors.of(context);
     final String? currentLine = friend['current_line']; 
+    final String friendId = friend['id'];
+    final bool isExpanded = _expandedFriendId == friendId;
+    final bool canSeeLoc = friend['can_see_location'] ?? true;
+    final bool isGhost = friend['ghost_mode'] ?? false;
     
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isActive ? colors.friendCardActiveBg : colors.friendCardInactiveBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isActive ? colors.friendCardActiveBorder : colors.friendCardInactiveBorder)
-      ),
-      child: Row(
-        children: [
-          Stack(
-            children: [
-              _buildAvatarHelper(friend),
-              if (isActive)
-                Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: colors.statusActive, shape: BoxShape.circle, border: Border.all(color: colors.cardBg, width: 2))))
-            ],
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, 
+    return GestureDetector(
+      onTap: () => setState(() => _expandedFriendId = isExpanded ? null : friendId),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isActive ? colors.friendCardActiveBg : colors.friendCardInactiveBg,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isActive ? colors.friendCardActiveBorder : colors.friendCardInactiveBorder)
+        ),
+        child: Column(
+          children: [
+            Row(
               children: [
-                Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
-                const SizedBox(height: 2), 
-                
-                if (currentLine != null && currentLine.isNotEmpty && isActive)
-                  Row(
+                Stack(
+                  children: [
+                    _buildAvatarHelper(friend),
+                    if (isActive)
+                      Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(color: colors.statusActive, shape: BoxShape.circle, border: Border.all(color: colors.cardBg, width: 2))))
+                  ],
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, 
                     children: [
-                      Icon(Icons.directions_bus, size: 12, color: colors.statusOnline),
-                      const SizedBox(width: 4),
-                      Text("On $currentLine", style: TextStyle(fontSize: 12, color: colors.statusOnline)),
-                    ],
-                  )
-                else
-                  Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? colors.statusActive : colors.statusOffline))
-              ]
+                      Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
+                      const SizedBox(height: 2), 
+                      
+                      // Status Logic
+                      if (!canSeeLoc)
+                        Text("Location access required", style: TextStyle(fontSize: 12, color: Colors.orange))
+                      else if (isGhost)
+                        Text("Location hidden", style: TextStyle(fontSize: 12, color: colors.textSecondary))
+                      else if (currentLine != null && currentLine.isNotEmpty && isActive)
+                        Row(
+                          children: [
+                            Icon(Icons.directions_bus, size: 12, color: colors.statusOnline),
+                            const SizedBox(width: 4),
+                            Text("On $currentLine", style: TextStyle(fontSize: 12, color: colors.statusOnline)),
+                          ],
+                        )
+                      else
+                        Text(isActive ? "Active recently" : "Inactive", style: TextStyle(fontSize: 12, color: isActive ? colors.statusActive : colors.statusOffline))
+                    ]
+                  ),
+                ),
+                Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: colors.textSecondary),
+              ],
             ),
-          ),
-        ],
+            
+            // Expanded Options
+            if (isExpanded) ...[
+              const SizedBox(height: 16),
+              Divider(color: colors.divider),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                   _buildActionButton(
+                     icon: Icons.chat_bubble_outline, 
+                     label: "Chat", 
+                     color: Colors.blue, 
+                     onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
+                   ),
+                   if (!canSeeLoc)
+                     _buildActionButton(
+                       icon: Icons.lock_open, 
+                       label: "Request Access", 
+                       color: Colors.orange, 
+                       onTap: () {
+                         SupabaseService.requestLocationAccess(friendId);
+                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request sent (Simulated: Access Granted)")));
+                         // Simulate immediate grant for demo
+                         setState(() => _expandedFriendId = null);
+                       }
+                     ),
+                   _buildActionButton(
+                     icon: Icons.block, 
+                     label: "Block", 
+                     color: Colors.red, 
+                     onTap: () async {
+                       await SupabaseService.blockUser(friendId);
+                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
+                       setState(() => _expandedFriendId = null);
+                     }
+                   ),
+                ],
+              )
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(color: color, fontSize: 12))
+          ],
+        ),
       ),
     );
   }
