@@ -18,18 +18,15 @@ class TransportApi {
   }
 
   static Future<http.Response> _fetch(Uri uri) async {
-    // 1. Try Direct (Works on Mobile / Server)
     try {
       final response = await http.get(uri);
       if (response.statusCode == 200) return response;
     } catch (e) {
-      // Direct fetch failed (CORS on Web?)
+      // Direct failed
     }
 
-    // 2. Fallback for Web (CORS Proxy)
     if (kIsWeb) {
       try {
-        // Try 'thingproxy' which is often more stable for this API
         final proxyUrl = "https://thingproxy.freeboard.io/fetch/${uri.toString()}";
         final response = await http.get(Uri.parse(proxyUrl));
         if (response.statusCode == 200) return response;
@@ -37,8 +34,6 @@ class TransportApi {
         debugPrint("Proxy failed: $e");
       }
     }
-    
-    // Return error if all fails
     return http.Response('{"error": "Failed to fetch data"}', 500); 
   }
 
@@ -60,14 +55,12 @@ class TransportApi {
 
     try {
       final response = await _fetch(_getUri('/locations', params));
-
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
       }
       return [];
     } catch (e) {
-      debugPrint("API Exception: $e");
       return [];
     }
   }
@@ -80,7 +73,6 @@ class TransportApi {
         'results': 5, 
         'distance': 1000
       }));
-
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         return data.map((json) => Station.fromJson(json)).toList();
@@ -101,6 +93,7 @@ class TransportApi {
       'results': results,
       'stopovers': 'true',
       'polylines': 'true',
+      'tickets': 'false', // Optimize response size
     };
 
     if (from.id == 'gps' || from.type == 'location') {
@@ -122,15 +115,23 @@ class TransportApi {
       params[isArrival ? 'arrival' : 'departure'] = when.toIso8601String();
     }
 
+    // FIX: Deutschlandticket / Regional Only Logic
     if (nahverkehrOnly) {
-      params['loyaltyCard'] = 'none';
-      params['class'] = 2;
-      params['nationalExpress'] = false;
-      params['national'] = false;
+      // Exclude High Speed Trains
+      params['nationalExpress'] = 'false'; // ICE
+      params['national'] = 'false';        // IC/EC
+      // Ensure local transport is enabled (usually default, but good to be explicit)
+      params['regional'] = 'true';
+      params['suburban'] = 'true';
+      params['bus'] = 'true';
+      params['subway'] = 'true';
+      params['tram'] = 'true';
     }
 
     try {
       final uri = _getUri('/journeys', params);
+      debugPrint("Searching Route: $uri"); 
+      
       final response = await _fetch(uri);
 
       if (response.statusCode == 200) {
@@ -141,7 +142,7 @@ class TransportApi {
       }
       return [];
     } catch (e) {
-      debugPrint("Journey Exception: $e");
+      debugPrint("Journey Error: $e");
       return [];
     }
   }

@@ -28,48 +28,56 @@ class _MapScreenState extends State<MapScreen> {
     final points = <LatLng>[];
     final markers = <Marker>[];
     
-    // 1. Determine Scope
     final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
 
     for (var step in stepsToShow) {
-      // --- A. Build the Line (Polyline) ---
+      // 1. PATH LINE
       if (step.path != null && step.path!.isNotEmpty) {
         points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
-      } 
-      else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-        // Connect intermediate stops
-        if (step.startLat != null && step.startLng != null) {
-          points.add(LatLng(step.startLat!, step.startLng!));
-        }
+      } else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        if (step.startLat != null && step.startLng != null) points.add(LatLng(step.startLat!, step.startLng!));
         for (var stop in step.stopovers!) {
           if (stop['stop'] != null && stop['stop']['location'] != null) {
-            points.add(LatLng(
-              stop['stop']['location']['latitude'], 
-              stop['stop']['location']['longitude']
-            ));
+            points.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
           }
         }
-        if (step.endLat != null && step.endLng != null) {
-          points.add(LatLng(step.endLat!, step.endLng!));
-        }
-      } 
-      // Fallback for Walk/Transfer steps without path data
-      else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
+        if (step.endLat != null && step.endLng != null) points.add(LatLng(step.endLat!, step.endLng!));
+      } else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
         points.add(LatLng(step.startLat!, step.startLng!));
         points.add(LatLng(step.endLat!, step.endLng!));
       }
 
-      // --- B. Transfer Dots (Only if showing full route) ---
+      // 2. STOP MARKERS (Small Dots for every intermediate stop)
+      if (step.stopovers != null) {
+        for (var stop in step.stopovers!) {
+          if (stop['stop'] != null && stop['stop']['location'] != null) {
+            markers.add(Marker(
+              point: LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']),
+              width: 10, height: 10,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.8),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5)
+                ),
+              ),
+            ));
+          }
+        }
+      }
+
+      // 3. TRANSFER POINTS (Larger Orange Dots)
+      // We check if this step is a transfer or walk, AND we are viewing the full route
       if (widget.focusStep == null && (step.type == 'transfer' || step.type == 'walk')) {
          if (step.startLat != null && step.startLng != null) {
             markers.add(Marker(
               point: LatLng(step.startLat!, step.startLng!),
-              width: 12, height: 12,
+              width: 16, height: 16,
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.8),
+                  color: Colors.orange,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1)
+                  border: Border.all(color: Colors.white, width: 2)
                 ),
               ),
             ));
@@ -77,19 +85,18 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    // --- C. Destination Marker (Red Pin) ---
-    // Guaranteed to be at the very last point of the route
+    // 4. DESTINATION PIN (Only one at the very end)
     if (points.isNotEmpty) {
       final lastPoint = points.last;
       markers.add(Marker(
         point: lastPoint,
         width: 40, height: 40,
-        child: const Icon(Icons.location_on, color: Colors.red, size: 36),
+        child: const Icon(Icons.location_on, color: Colors.red, size: 40),
         alignment: Alignment.topCenter,
       ));
     }
 
-    // --- D. User Position ---
+    // 5. USER POSITION
     if (widget.currentPosition != null) {
       markers.add(Marker(
         point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
@@ -99,14 +106,12 @@ class _MapScreenState extends State<MapScreen> {
             color: Colors.blue.withValues(alpha: 0.3),
             shape: BoxShape.circle
           ),
-          child: const Center(
-            child: Icon(Icons.my_location, color: Colors.blue, size: 20),
-          ),
+          child: const Center(child: Icon(Icons.my_location, color: Colors.blue, size: 20)),
         ),
       ));
     }
 
-    // --- E. Bounds ---
+    // Bounds Calculation
     LatLngBounds? bounds;
     if (points.isNotEmpty) {
       bounds = LatLngBounds.fromPoints(points);
@@ -116,7 +121,6 @@ class _MapScreenState extends State<MapScreen> {
         LatLng(widget.currentPosition!.latitude + 0.01, widget.currentPosition!.longitude + 0.01)
       );
     }
-
     final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515);
 
     return Scaffold(
