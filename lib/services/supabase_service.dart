@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data'; 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:crypto/crypto.dart';
+import 'package:encrypt/encrypt.dart' as enc;
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
@@ -41,11 +44,36 @@ class SupabaseService {
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
   
-  // NEW: Update Theme Color
   static Future<void> updateThemeColor(int colorValue) async {
     final user = currentUser;
     if (user == null) return;
     await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
+  }
+
+  // --- GHOST MODE & PRIVACY ---
+  static Future<void> toggleGhostMode(bool enable) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    if (enable) {
+      // Just turn it on
+      await client.from('profiles').update({'ghost_mode': true}).eq('id', user.id);
+      // When Ghost Mode is ON, we also stop sharing location immediately
+      await client.from('user_locations').delete().eq('user_id', user.id);
+    } else {
+      // Turn it OFF -> Trigger the Penalty (SQL Function)
+      await client.rpc('disable_ghost_mode', params: {'user_uuid': user.id});
+    }
+  }
+
+  static Future<void> requestLocationAccess(String friendId) async {
+    final user = currentUser;
+    if (user == null) return;
+    
+    // Simulating friend approval:
+    await client.from('friends')
+      .update({'can_see_location': true})
+      .match({'user_id': user.id, 'friend_id': friendId});
   }
 
   // --- PROFILES & EMOJIS ---
@@ -62,7 +90,6 @@ class SupabaseService {
   static Future<void> updateAvatarEmoji(String emoji) async {
     final user = currentUser;
     if (user == null) return;
-    // Clear image URL if setting emoji
     await client.from('profiles').update({
       'avatar_emoji': emoji, 
       'avatar_url': null 
@@ -82,7 +109,6 @@ class SupabaseService {
     if (data.isEmpty) return [];
     
     final senderIds = (data as List).map((r) => r['sender_id']).toList();
-    // Fetch theme_color too
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', senderIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
@@ -93,7 +119,7 @@ class SupabaseService {
         'sender_username': sender?['username'] ?? 'Unknown',
         'sender_avatar': sender?['avatar_url'],
         'sender_emoji': sender?['avatar_emoji'],
-        'theme_color': sender?['theme_color'], // Added
+        'theme_color': sender?['theme_color'],
       };
     }).toList();
   }
@@ -108,13 +134,13 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
-    final friendsRelation = await client.from('friends').select('friend_id').eq('user_id', user.id);
+    final friendsRelation = await client.from('friends').select('friend_id, can_see_location').eq('user_id', user.id);
     if (friendsRelation.isEmpty) return [];
 
     final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
+    final permissionMap = {for (var e in friendsRelation) e['friend_id']: e['can_see_location']};
 
-    // Fetch theme_color too
-    final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', friendIds);
+    final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color, ghost_mode').filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
@@ -126,16 +152,30 @@ class SupabaseService {
       if (profile == null) continue;
 
       final loc = locationMap[id];
+      final bool canSee = permissionMap[id] ?? true;
+      final bool isGhost = profile['ghost_mode'] ?? false;
+      final bool showLocation = canSee && !isGhost;
+
+      dynamic lat, lng, updatedAt, currentLine;
+      if (showLocation && loc != null) {
+        lat = loc['latitude'];
+        lng = loc['longitude'];
+        updatedAt = loc['updated_at'];
+        currentLine = loc['current_line'];
+      }
+
       result.add({
         'id': id,
         'username': profile['username'] ?? 'Unknown',
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
-        'theme_color': profile['theme_color'], // Added
-        'latitude': loc?['latitude'],
-        'longitude': loc?['longitude'],
-        'updated_at': loc?['updated_at'], 
-        'current_line': loc?['current_line'],
+        'theme_color': profile['theme_color'],
+        'ghost_mode': isGhost,
+        'can_see_location': canSee, 
+        'latitude': lat,
+        'longitude': lng,
+        'updated_at': updatedAt, 
+        'current_line': currentLine,
       });
     }
     return result;
@@ -193,7 +233,12 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     
-    final updateData = {
+    final profile = await getCurrentProfile();
+    if (profile != null && profile['ghost_mode'] == true) {
+      return; 
+    }
+    
+    final Map<String, dynamic> updateData = {
       'user_id': user.id,
       'latitude': pos.latitude,
       'longitude': pos.longitude,
@@ -202,39 +247,128 @@ class SupabaseService {
     
     if (currentLine != null) {
       updateData['current_line'] = currentLine;
+    } else {
+      updateData['current_line'] = null; 
     }
 
     await client.from('user_locations').upsert(updateData);
   }
 
-  // --- CHAT ---
+  // --- CHAT (Public & Private) ---
+  static String _getPrivateKey(String otherUserId) {
+    final myId = currentUser!.id;
+    final List<String> ids = [myId, otherUserId]..sort();
+    final combined = ids.join('_');
+    final bytes = utf8.encode(combined);
+    final digest = sha256.convert(bytes);
+    return digest.toString().substring(0, 32); 
+  }
+
   static Stream<List<Map<String, dynamic>>> getMessages(String lineId) {
-    return client.from('messages').stream(primaryKey: ['id']).eq('line_id', lineId).order('created_at', ascending: true).limit(50).asyncMap((List<Map<String, dynamic>> messages) async {
-          if (messages.isEmpty) return [];
-          final userIds = messages.map((m) => m['user_id'] as String).toSet().toList();
-          // Fetch theme_color too
-          final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', userIds);
-          final profileMap = {for (var p in profiles) p['id']: p};
-          return messages.map((m) {
-            final sender = profileMap[m['user_id']];
-            return {
-              ...m,
-              'username': sender?['username'] ?? 'Unknown',
-              'avatar_url': sender?['avatar_url'],
-              'avatar_emoji': sender?['avatar_emoji'],
-              'theme_color': sender?['theme_color'], // Added
-            };
-          }).toList();
-        });
+    return client.from('messages').stream(primaryKey: ['id'])
+      .eq('line_id', lineId)
+      .order('created_at', ascending: true)
+      .limit(50)
+      .asyncMap(_enrichMessages);
+  }
+
+  static Stream<List<Map<String, dynamic>>> getPrivateMessages(String otherUserId) {
+    final myId = currentUser!.id;
+    return client.from('messages').stream(primaryKey: ['id'])
+      .eq('is_encrypted', true) 
+      .order('created_at', ascending: true)
+      .limit(50)
+      .asyncMap((rawMessages) async {
+        final filtered = rawMessages.where((m) {
+          final uid = m['user_id'];
+          final rid = m['receiver_id'];
+          return (uid == myId && rid == otherUserId) || (uid == otherUserId && rid == myId);
+        }).toList();
+
+        return _enrichMessages(filtered, decryptForUser: otherUserId);
+      });
+  }
+
+  static Future<List<Map<String, dynamic>>> _enrichMessages(List<Map<String, dynamic>> messages, {String? decryptForUser}) async {
+    if (messages.isEmpty) return [];
+    
+    final userIds = messages.map((m) => m['user_id'] as String).toSet().toList();
+    final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', userIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    final keyString = decryptForUser != null ? _getPrivateKey(decryptForUser) : null;
+    final enc.Key? key = keyString != null ? enc.Key.fromUtf8(keyString) : null;
+    final encrypter = key != null ? enc.Encrypter(enc.AES(key)) : null;
+
+    return messages.map((m) {
+      final sender = profileMap[m['user_id']];
+      String content = m['content'];
+      
+      if (m['is_encrypted'] == true && encrypter != null) {
+        try {
+          // --- DECRYPTION FIX ---
+          // Format expected: "iv:ciphertext"
+          final parts = content.split(':');
+          if (parts.length == 2) {
+            final iv = enc.IV.fromBase64(parts[0]);
+            final cipher = parts[1];
+            content = encrypter.decrypt64(cipher, iv: iv);
+          } else {
+             // Fallback if message format is old or invalid
+             content = "[Corrupt Message]";
+          }
+        } catch (e) {
+          content = "[Error decrypting]";
+        }
+      }
+
+      return {
+        ...m,
+        'content': content, 
+        'username': sender?['username'] ?? 'Unknown',
+        'avatar_url': sender?['avatar_url'],
+        'avatar_emoji': sender?['avatar_emoji'],
+        'theme_color': sender?['theme_color'],
+      };
+    }).toList();
   }
 
   static Future<void> sendMessage(String lineId, String content) async {
     final user = currentUser;
     if (user == null) return;
-    await client.from('messages').insert({'line_id': lineId, 'user_id': user.id, 'content': content});
+    await client.from('messages').insert({
+      'line_id': lineId, 
+      'user_id': user.id, 
+      'content': content,
+      'is_encrypted': false
+    });
   }
 
-  // --- TICKET ---
+  static Future<void> sendPrivateMessage(String targetUserId, String content) async {
+    final user = currentUser;
+    if (user == null) return;
+    
+    final keyString = _getPrivateKey(targetUserId);
+    final key = enc.Key.fromUtf8(keyString);
+    final iv = enc.IV.fromLength(16); // Random IV
+    final encrypter = enc.Encrypter(enc.AES(key));
+    
+    final encrypted = encrypter.encrypt(content, iv: iv);
+    
+    // --- ENCRYPTION FIX ---
+    // Store IV + Ciphertext joined by a colon
+    final storedContent = "${iv.base64}:${encrypted.base64}";
+
+    await client.from('messages').insert({
+      'line_id': null, 
+      'user_id': user.id, 
+      'receiver_id': targetUserId,
+      'content': storedContent,
+      'is_encrypted': true
+    });
+  }
+
+  // --- TICKET & BLOCKING ---
   static Future<String?> getTicketUrl() async {
     final user = currentUser;
     if (user == null) return null;
@@ -276,7 +410,15 @@ class SupabaseService {
   static Future<void> blockUser(String userId) async {
     final user = currentUser;
     if (user == null) return;
+    
+    // 1. Insert block record
     await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
+    
+    // 2. Delete relationship (BOTH WAYS)
+    // Deleting "Me -> You"
+    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
+    // Deleting "You -> Me"
+    await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
   }
   
   static Future<void> unblockUser(String userId) async {

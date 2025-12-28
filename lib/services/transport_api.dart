@@ -12,8 +12,8 @@ class TransportApi {
       final Map<String, String> params = {
         'query': query,
         'results': '10',
-        'poi': 'false',      
-        'addresses': 'false' 
+        'poi': 'true',       
+        'addresses': 'true', 
       };
       if (lat != null && lng != null) {
         params['latitude'] = lat.toString();
@@ -25,10 +25,7 @@ class TransportApi {
       
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
-        return data
-            .where((d) => d['type'] == 'station' || d['type'] == 'stop')
-            .map((json) => Station.fromJson(json))
-            .toList();
+        return data.map((json) => Station.fromJson(json)).toList();
       }
     } catch (e) {
       debugPrint("Error fetching stations: $e");
@@ -41,8 +38,8 @@ class TransportApi {
       final uri = Uri.parse('$_baseUrl/stops/nearby').replace(queryParameters: {
         'latitude': lat.toString(),
         'longitude': lng.toString(),
-        'results': '5',
-        'distance': '2000',
+        'results': '10',    
+        'distance': '2000', 
       });
       
       final response = await http.get(uri);
@@ -57,8 +54,8 @@ class TransportApi {
   }
 
   static Future<List<Map<String, dynamic>>> searchJourneys(
-    String fromId, 
-    String toId, 
+    Station from, 
+    Station to, 
     {
       bool nahverkehrOnly = false,
       DateTime? when,      
@@ -68,11 +65,32 @@ class TransportApi {
   ) async {
     try {
       final Map<String, String> params = {
-        'from': fromId,
-        'to': toId,
         'results': results.toString(),
         'stopovers': 'true',
+        'polylines': 'true', // Request geometry
       };
+
+      // HANDLING START POINT
+      if (from.id.contains(',') || from.type == 'address' || from.type == 'location') {
+        params['from.latitude'] = from.latitude.toString();
+        params['from.longitude'] = from.longitude.toString();
+        params['from.address'] = (from.type == 'address' && from.name != "Current Location") 
+            ? from.name 
+            : "${from.latitude},${from.longitude}"; 
+      } else {
+        params['from'] = from.id;
+      }
+
+      // HANDLING DESTINATION
+      if (to.id.contains(',') || to.type == 'address' || to.type == 'location') {
+        params['to.latitude'] = to.latitude.toString();
+        params['to.longitude'] = to.longitude.toString();
+        params['to.address'] = (to.type == 'address' && to.name != "Current Location") 
+            ? to.name 
+            : "${to.latitude},${to.longitude}";
+      } else {
+        params['to'] = to.id;
+      }
 
       if (when != null) {
         final iso = when.toIso8601String().split('.').first;
@@ -83,12 +101,9 @@ class TransportApi {
         }
       }
 
-      // Exact match to your working request:
-      // nationalExpress=false&national=false
       if (nahverkehrOnly) {
         params['nationalExpress'] = 'false';
         params['national'] = 'false';
-        // params['regional'] = 'true'; // Optional, but usually implied by removing others
       }
 
       final uri = Uri.parse('$_baseUrl/journeys').replace(queryParameters: params);
@@ -99,7 +114,27 @@ class TransportApi {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['journeys'] != null) {
-          return List<Map<String, dynamic>>.from(data['journeys']);
+          List<Map<String, dynamic>> journeys = List<Map<String, dynamic>>.from(data['journeys']);
+          
+          // Parse Polylines
+          for (var journey in journeys) {
+            for (var leg in journey['legs']) {
+              if (leg['polyline'] != null) {
+                String? encoded;
+                // API V6 sometimes returns object { points: "..." }
+                if (leg['polyline'] is Map && leg['polyline']['points'] != null) {
+                  encoded = leg['polyline']['points'];
+                } else if (leg['polyline'] is String) {
+                  encoded = leg['polyline'];
+                }
+
+                if (encoded != null) {
+                  leg['decodedPath'] = _decodePolyline(encoded);
+                }
+              }
+            }
+          }
+          return journeys;
         }
       } else {
         debugPrint('TransportApi Error ${response.statusCode}: ${response.body}');
@@ -108,5 +143,36 @@ class TransportApi {
       debugPrint("Error fetching journeys: $e");
     }
     return [];
+  }
+
+  // Google Polyline Algorithm Decoder
+  static List<List<double>> _decodePolyline(String encoded) {
+    List<List<double>> points = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add([lat / 1E5, lng / 1E5]);
+    }
+    return points;
   }
 }

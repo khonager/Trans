@@ -17,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import '../map_screen.dart'; 
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -59,6 +60,8 @@ class _RoutesTabState extends State<RoutesTab> {
   bool _isArrival = false; 
 
   bool _isWakeAlarmSet = false;
+  StreamSubscription<Position>? _gpsStream;
+  double? _gpsAccuracy;
   List<Favorite> _favorites = [];
 
   @override
@@ -73,12 +76,87 @@ class _RoutesTabState extends State<RoutesTab> {
     _fromController.dispose();
     _toController.dispose();
     _debounce?.cancel();
+    _gpsStream?.cancel();
     super.dispose();
   }
 
   Future<void> _loadFavorites() async {
     final favs = await FavoritesManager.getFavorites();
     if (mounted) setState(() => _favorites = favs);
+  }
+
+  // --- WAKE ME LOGIC ---
+  void _toggleWakeAlarm(RouteTab route) {
+    if (_isWakeAlarmSet) {
+      _stopWakeAlarm();
+    } else {
+      _startWakeAlarm(route);
+    }
+  }
+
+  void _stopWakeAlarm() {
+    _gpsStream?.cancel();
+    _gpsStream = null;
+    
+    // Clear the current line status when alarm/ride stops
+    if (widget.currentPosition != null) {
+      SupabaseService.updateLocation(widget.currentPosition!, currentLine: null);
+    }
+    
+    if (mounted) setState(() => _isWakeAlarmSet = false);
+  }
+
+  void _startWakeAlarm(RouteTab route) {
+    if (route.steps.isEmpty) return;
+    
+    // Auto-detect Line: Use the first "ride" step's line name
+    final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
+    final String currentLine = firstRide.line;
+
+    if (mounted) setState(() => _isWakeAlarmSet = true);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Alarm Set! Sharing ride status with friends.")));
+
+    const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
+    
+    // Update location IMMEDIATELY with the new line
+    if (widget.currentPosition != null) {
+       SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
+    }
+
+    _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
+      if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
+      
+      // Keep updating location (and the line info) as we move
+      SupabaseService.updateLocation(pos, currentLine: currentLine);
+      
+      if (route.steps.last.endLat != null && route.steps.last.endLng != null) {
+        double dist = Geolocator.distanceBetween(
+          pos.latitude, pos.longitude, 
+          route.steps.last.endLat!, route.steps.last.endLng!
+        );
+        
+        if (dist < 500) { 
+           _triggerVibration();
+           if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Arriving soon! Wake up!")));
+             _stopWakeAlarm();
+           }
+        }
+      }
+    });
+  }
+
+  void _openMap(RouteTab route, {JourneyStep? focusStep}) {
+    Navigator.push(
+      context, 
+      MaterialPageRoute(
+        builder: (_) => MapScreen(
+          steps: route.steps, 
+          focusStep: focusStep,
+          currentPosition: widget.currentPosition,
+        )
+      )
+    );
   }
 
   // --- SEARCH LOGIC ---
@@ -108,11 +186,7 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     if (widget.currentPosition != null && _activeSearchField == 'from' && query.isEmpty) {
-      final nearby = await TransportApi.getNearbyStops(
-          widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-      for (var s in nearby) {
-        if (!results.any((h) => h is Station && h.id == s.id)) results.insert(0, s);
-      }
+      // Logic handled in findRoutes
     }
 
     if (mounted) setState(() { _suggestions = results; _isSuggestionsLoading = false; });
@@ -131,11 +205,6 @@ class _RoutesTabState extends State<RoutesTab> {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
         
-        if (field == 'to' && _fromStation != null) {
-          refLat = _fromStation!.latitude;
-          refLng = _fromStation!.longitude;
-        }
-
         final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
         
         if (mounted) {
@@ -210,9 +279,11 @@ class _RoutesTabState extends State<RoutesTab> {
           final lng = data['longitude'] as double;
           
           final stops = await TransportApi.getNearbyStops(lat, lng);
+          if (!mounted) return;
+
           if (stops.isNotEmpty) {
             target = stops.first;
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Routing to ${fav.label}'s location near ${target.name}")));
           } else {
             throw "No stations found near friend.";
           }
@@ -222,11 +293,11 @@ class _RoutesTabState extends State<RoutesTab> {
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       } finally {
-        setState(() => _isLoadingRoute = false);
+        if (mounted) setState(() => _isLoadingRoute = false);
       }
     }
 
-    if (target != null) {
+    if (target != null && mounted) {
       setState(() {
         if (_activeSearchField == 'from' || (_fromStation == null && _toStation != null)) {
           _fromStation = target;
@@ -253,21 +324,29 @@ class _RoutesTabState extends State<RoutesTab> {
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  // --- ROUTE LOGIC ---
+  // --- ROUTE PROCESSING (Fixing coordinates) ---
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival; 
 
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName) {
+    // Helper to grab coords from locations
+    double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
+    double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
+
+    // Updated flush function accepting End Coordinates
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
 
       DateTime blockStart;
+      dynamic startLocationData;
+
       if (lastArrival != null) {
         blockStart = lastArrival!;
       } else if (transferBuffer.isNotEmpty) {
         blockStart = DateTime.parse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture']);
+        startLocationData = transferBuffer.first['origin'];
       } else {
         return; 
       }
@@ -285,56 +364,56 @@ class _RoutesTabState extends State<RoutesTab> {
       for (var leg in transferBuffer) {
         final dep = DateTime.parse(leg['departure'] ?? leg['plannedDeparture']);
         final arr = DateTime.parse(leg['arrival'] ?? leg['plannedArrival']);
-        int dur = arr.difference(dep).inMinutes;
-        
-        final origin = leg['origin']?['name'];
-        final dest = leg['destination']?['name'];
-        
-        if (origin != null && dest != null && origin == dest) {
-        } else {
-          walkMinutes += dur;
-        }
+        walkMinutes += arr.difference(dep).inMinutes;
       }
 
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
-
       int waitMinutes = totalGapMinutes - walkMinutes;
       if (waitMinutes < 1) waitMinutes = 0;
 
-      List<String> breakdownParts = [];
-      if (walkMinutes > 0) breakdownParts.add("Walk $walkMinutes min");
-      if (waitMinutes > 0) breakdownParts.add("Wait $waitMinutes min");
-      
-      String breakdownText = breakdownParts.join(" • ");
-      if (breakdownText.isEmpty) {
-        if (totalGapMinutes > 0) breakdownText = "$totalGapMinutes min transfer";
-        else breakdownText = "Immediate connection";
-      }
+      String breakdownText = "";
+      if (walkMinutes > 0) breakdownText += "Walk $walkMinutes min ";
+      if (waitMinutes > 0) breakdownText += "Wait $waitMinutes min";
+      if (breakdownText.isEmpty) breakdownText = "$totalGapMinutes min transfer";
 
       String actionText = "Transfer";
-      if (walkMinutes > 0) {
-        if (nextStationName != null && nextStationName.isNotEmpty && nextStationName != "Destination") {
-           actionText = "Walk to $nextStationName";
-        } else if (nextStationName == "Destination") {
-           actionText = "Walk to Destination";
-        } else {
-           actionText = "Walk to connection";
-        }
-      } else {
-        actionText = "Wait for connection";
+      if (walkMinutes > 0) actionText = nextStationName != null ? "Walk to $nextStationName" : "Walk";
+      
+      // Determine Start Coords (Start of walk/transfer)
+      double? startLat = getLat(startLocationData);
+      double? startLng = getLng(startLocationData);
+      
+      // Fallback: If this is the very first step, try grabbing from previous ride end if available
+      if (startLat == null && steps.isNotEmpty && steps.last.endLat != null) {
+        startLat = steps.last.endLat;
+        startLng = steps.last.endLng;
       }
 
-      String type = (walkMinutes > 0) ? 'walk' : 'wait';
+      // Determine End Coords (End of walk = Start of next ride)
+      // This is passed into the function now!
+      double? endLat = nextRideStartLat;
+      double? endLng = nextRideStartLng;
+
+      // Polyline for walking?
+      List<List<double>>? path;
+      if (transferBuffer.isNotEmpty && transferBuffer.first['decodedPath'] != null) {
+        path = transferBuffer.first['decodedPath'];
+      }
 
       steps.add(JourneyStep(
-        type: type,
+        type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
         instruction: actionText,
         duration: breakdownText,
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: type == 'walk',
+        isWalking: walkMinutes > 0,
+        startLat: startLat,
+        startLng: startLng,
+        endLat: endLat, // FIX: Now we have an end coordinate!
+        endLng: endLng, // FIX: Now we have an end coordinate!
+        path: path,
       ));
       
       transferBuffer.clear();
@@ -350,7 +429,11 @@ class _RoutesTabState extends State<RoutesTab> {
         DateTime currentRideDeparture = DateTime.parse(leg['departure']);
         String startStationName = leg['origin']?['name'] ?? 'Station';
         
-        flushTransferBuffer(currentRideDeparture, startStationName);
+        // FIX: Extract coordinates for the upcoming ride to pass to the transfer logic
+        double? nextRideStartLat = getLat(leg['origin']);
+        double? nextRideStartLng = getLng(leg['origin']);
+        
+        flushTransferBuffer(currentRideDeparture, startStationName, nextRideStartLat, nextRideStartLng);
 
         final String lineName = leg['line']['name'].toString();
         final String destName = leg['direction'] ?? leg['destination']['name'] ?? 'Unknown';
@@ -359,52 +442,46 @@ class _RoutesTabState extends State<RoutesTab> {
         final dep = DateTime.parse(leg['departure']);
         final arr = DateTime.parse(leg['arrival']);
         
-        if (steps.isNotEmpty && steps.last.line == lineName && steps.last.type == 'ride') {
-           var last = steps.removeLast();
-           List<dynamic> mergedStops = [];
-           if (last.stopovers != null) mergedStops.addAll(last.stopovers!);
-           if (leg['stopovers'] != null) mergedStops.addAll(leg['stopovers']);
+        double? startLat = getLat(leg['origin']);
+        double? startLng = getLng(leg['origin']);
+        double? endLat = getLat(leg['destination']);
+        double? endLng = getLng(leg['destination']);
+        
+        List<List<double>>? path = leg['decodedPath'];
 
-           steps.add(JourneyStep(
-             type: 'ride',
-             line: lineName,
-             instruction: last.instruction, 
-             duration: "Updated", 
-             departureTime: last.departureTime,
-             arrivalTime: "${arr.hour.toString().padLeft(2,'0')}:${arr.minute.toString().padLeft(2,'0')}",
-             stopovers: mergedStops,
-             chatCount: last.chatCount,
-             startStationId: last.startStationId,
-             platform: last.platform,
-           ));
-        } else {
-          int legDurationMin = arr.difference(dep).inMinutes;
-          String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
+        int legDurationMin = arr.difference(dep).inMinutes;
+        String durationDisplay = legDurationMin > 60 ? "${legDurationMin ~/ 60}h ${legDurationMin % 60}min" : "$legDurationMin min";
 
-          steps.add(JourneyStep(
-            type: 'ride',
-            line: lineName,
-            instruction: "$lineName → $destName",
-            duration: durationDisplay,
-            departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
-            arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
-            chatCount: random.nextInt(15) + 1,
-            startStationId: startStationId,
-            platform: platform != null ? "Plat $platform" : null,
-            stopovers: leg['stopovers'],
-          ));
-        }
+        steps.add(JourneyStep(
+          type: 'ride',
+          line: lineName,
+          instruction: "$lineName → $destName",
+          duration: durationDisplay,
+          departureTime: "${dep.hour.toString().padLeft(2, '0')}:${dep.minute.toString().padLeft(2, '0')}",
+          arrivalTime: "${arr.hour.toString().padLeft(2, '0')}:${arr.minute.toString().padLeft(2, '0')}",
+          chatCount: random.nextInt(15) + 1,
+          startStationId: startStationId,
+          platform: platform != null ? "Plat $platform" : null,
+          stopovers: leg['stopovers'],
+          startLat: startLat,
+          startLng: startLng,
+          endLat: endLat,
+          endLng: endLng,
+          path: path,
+        ));
         
         lastArrival = arr;
       }
     }
     
-    flushTransferBuffer(null, "Destination");
+    // Final buffer flush (walk to destination)
+    // We don't have a "next ride", but we might have coordinates from the very last leg's destination if available
+    // For simplicity, pass nulls or try to grab from transferBuffer last element
+    flushTransferBuffer(null, "Destination", null, null);
 
     return steps;
   }
   
-  // Refactored helper to create a tab from a journey object
   void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
     if (journeyData['legs'] == null) return;
     
@@ -412,8 +489,6 @@ class _RoutesTabState extends State<RoutesTab> {
     final List<JourneyStep> steps = _processLegs(legs);
     
     String totalDurationStr = "";
-    String routeSubtitle = subtitle ?? "Detail";
-    
     if (legs.isNotEmpty) {
        var firstLeg = legs.first;
        var lastLeg = legs.last;
@@ -422,12 +497,6 @@ class _RoutesTabState extends State<RoutesTab> {
          DateTime routeEnd = DateTime.parse(lastLeg['arrival']);
          int totalMin = routeEnd.difference(routeStart).inMinutes;
          totalDurationStr = totalMin > 60 ? "${totalMin ~/ 60}h ${totalMin % 60}min" : "${totalMin}min";
-         
-         if (subtitle == null) {
-            String startName = firstLeg['origin']['name'] ?? 'Start';
-            String endName = lastLeg['destination']['name'] ?? 'End';
-            routeSubtitle = "$startName → $endName";
-         }
        }
     }
 
@@ -443,7 +512,7 @@ class _RoutesTabState extends State<RoutesTab> {
     final newTab = RouteTab(
       id: newTabId, 
       title: title == "Route" && _toStation != null ? _toStation!.name : title, 
-      subtitle: routeSubtitle, 
+      subtitle: subtitle ?? "Detail", 
       eta: eta, 
       totalDuration: totalDurationStr, 
       destinationId: finalDestId, 
@@ -453,7 +522,6 @@ class _RoutesTabState extends State<RoutesTab> {
     setState(() {
       _tabs.add(newTab);
       _activeTabId = newTabId;
-      // Only clear inputs if it's the main route search, not an alternative
       if (title != "Alternative") {
         _fromStation = null;
         _toStation = null;
@@ -469,24 +537,28 @@ class _RoutesTabState extends State<RoutesTab> {
     if (from == null && widget.currentPosition != null) {
        setState(() => _isLoadingRoute = true); 
        try {
-         final nearby = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-         if (nearby.isNotEmpty) from = nearby.first;
-         else {
-           setState(() => _isLoadingRoute = false);
-           if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No nearby stations found.")));
-           return;
-         }
+         if (widget.currentPosition!.latitude == 0.0) throw "Invalid GPS";
+
+         // Use GPS directly
+         from = Station(
+           id: "gps", 
+           name: "Current Location",
+           type: 'location', 
+           latitude: widget.currentPosition!.latitude,
+           longitude: widget.currentPosition!.longitude
+         );
        } catch (e) {
-         setState(() => _isLoadingRoute = false);
+         if (mounted) setState(() => _isLoadingRoute = false);
          return;
        }
     }
 
     if (from == null || _toStation == null) {
-      setState(() => _isLoadingRoute = false);
+      if (mounted) setState(() => _isLoadingRoute = false);
       return;
     }
-    setState(() => _isLoadingRoute = true);
+    
+    if (mounted) setState(() => _isLoadingRoute = true);
 
     DateTime? searchTime;
     if (_selectedDate != null && _selectedTime != null) {
@@ -494,20 +566,22 @@ class _RoutesTabState extends State<RoutesTab> {
     }
 
     try {
-      // Changed to use searchJourneys (List)
       final journeys = await TransportApi.searchJourneys(
-          from.id, _toStation!.id, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
+          from, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: searchTime, isArrival: _isArrival
       );
+
+      if (!mounted) return;
 
       if (journeys.isNotEmpty) {
         _addJourneyTab(journeys.first);
       } else {
         setState(() => _isLoadingRoute = false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found.")));
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoadingRoute = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error finding routes.")));
     }
   }
 
@@ -518,21 +592,27 @@ class _RoutesTabState extends State<RoutesTab> {
         _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
       }
     });
+    _stopWakeAlarm();
   }
 
   void _showChat(BuildContext context, String lineName) {
+    if (widget.currentPosition != null) {
+      SupabaseService.updateLocation(widget.currentPosition!, currentLine: lineName);
+    }
     showModalBottomSheet(context: context, backgroundColor: Theme.of(context).scaffoldBackgroundColor, isScrollControlled: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))), builder: (ctx) => ChatSheet(lineId: lineName, title: lineName));
   }
 
   void _showAlternatives(BuildContext context, String stationId, String finalDestinationId) {
+      Station fromDummy = Station(id: stationId, name: "From");
+      Station toDummy = Station(id: finalDestinationId, name: "To");
+
       showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        // FIX: Use searchJourneys instead of getDepartures to ensure routes go to the final destination
         return FutureBuilder<List<Map<String, dynamic>>>(
           future: TransportApi.searchJourneys(
-            stationId, 
-            finalDestinationId, 
+            fromDummy, 
+            toDummy, 
             nahverkehrOnly: widget.onlyNahverkehr,
-            when: DateTime.now(), // Assume looking for connections from now
+            when: DateTime.now(), 
             results: 5
           ), 
           builder: (context, snapshot) {
@@ -547,7 +627,6 @@ class _RoutesTabState extends State<RoutesTab> {
                 final legs = journey['legs'] as List;
                 if (legs.isEmpty) return const SizedBox.shrink();
 
-                // Find first ride leg for display info
                 final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
                 
                 final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
@@ -567,7 +646,6 @@ class _RoutesTabState extends State<RoutesTab> {
                   trailing: Text(timeDisplay, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), 
                   onTap: () { 
                     Navigator.pop(context); 
-                    // FIX: Pass the specific journey object directly to create the tab
                     _addJourneyTab(journey, title: "Alternative", subtitle: "Departs $timeDisplay");
                   }
                 );
@@ -588,9 +666,23 @@ class _RoutesTabState extends State<RoutesTab> {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final colors = TransColors.of(context);
 
+    bool gpsPoor = false;
+    if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) {
+      gpsPoor = true;
+    }
+
     return Column(
       children: [
         const SizedBox(height: 100),
+        
+        if (gpsPoor)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            color: Colors.amber.withValues(alpha: 0.8),
+            child: const Text("⚠️ GPS Signal Weak. Alarm may be inaccurate.", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+          ),
+
         if (_tabs.isNotEmpty)
           SizedBox(
             height: 50,
@@ -634,7 +726,7 @@ class _RoutesTabState extends State<RoutesTab> {
                 children: [
                   Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.searchHeaderIconBg, borderRadius: BorderRadius.circular(8)), child: Icon(Icons.search, color: colors.searchHeaderIcon)), const SizedBox(width: 12), Text("Plan Journey", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary))]),
                   const SizedBox(height: 20),
-                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station..."),
+                  _buildTextField("From", _fromController, _fromStation != null, 'from', hint: (_fromStation == null && widget.currentPosition != null) ? "Current Location" : "Station or Address..."),
                   if (_activeSearchField == 'from') _buildSuggestionsList(),
                   const SizedBox(height: 12),
                   _buildTextField("To", _toController, _toStation != null, 'to'),
@@ -746,8 +838,11 @@ class _RoutesTabState extends State<RoutesTab> {
                 final item = _suggestions[idx];
                 if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item));
                 final station = item as Station;
+                IconData leadingIcon = Icons.place;
+                if (station.type == 'address') leadingIcon = Icons.home_work;
+                
                 return ListTile(
-                  leading: const Icon(Icons.place, size: 16, color: Colors.grey), 
+                  leading: Icon(leadingIcon, size: 16, color: Colors.grey), 
                   title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
                   onTap: () => _selectItem(station),
                   onLongPress: () {
@@ -773,7 +868,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
-    else if (fieldKey == 'from' && hint == "Current Location") iconColor = Colors.blue;
+    else if (fieldKey == 'from' && hint.contains("Location")) iconColor = Colors.blue;
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start, 
@@ -797,7 +892,7 @@ class _RoutesTabState extends State<RoutesTab> {
             ), 
             hintText: hint, 
             hintStyle: TextStyle(
-              color: hint == "Current Location" ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText
+              color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText
             ), 
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
           )
@@ -817,6 +912,12 @@ class _RoutesTabState extends State<RoutesTab> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])),
+              // MAP BUTTON
+              IconButton(
+                icon: const Icon(Icons.map, color: Colors.blue),
+                onPressed: () => _openMap(route),
+              ),
+              const SizedBox(width: 8),
               Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))
             ],
           ),
@@ -829,8 +930,9 @@ class _RoutesTabState extends State<RoutesTab> {
             finalDestinationId: route.destinationId,
             onOpenAlternatives: (stationId) => _showAlternatives(context, stationId, route.destinationId),
             onChat: (line) => _showChat(context, line),
-            onAlarmToggle: () => setState(() => _isWakeAlarmSet = !_isWakeAlarmSet),
+            onAlarmToggle: () => _toggleWakeAlarm(route),
             isAlarmSet: _isWakeAlarmSet,
+            onMapTap: () => _openMap(route, focusStep: route.steps[i]), 
           )
       ],
     );
@@ -844,9 +946,10 @@ class _StepCard extends StatelessWidget {
   final Function(String) onOpenAlternatives;
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
+  final VoidCallback onMapTap;
   final bool isAlarmSet;
 
-  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet});
+  const _StepCard({required this.step, this.isFirst = false, required this.finalDestinationId, required this.onOpenAlternatives, required this.onChat, required this.onAlarmToggle, required this.isAlarmSet, required this.onMapTap});
 
   @override
   Widget build(BuildContext context) {
@@ -857,11 +960,14 @@ class _StepCard extends StatelessWidget {
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText);
       if (step.type == 'wait') iconWidget = Icon(Icons.man, color: colors.stepTransferText);
 
-      return Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
-        child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
+      return GestureDetector(
+        onTap: onMapTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)),
+          child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]),
+        ),
       );
     }
 
