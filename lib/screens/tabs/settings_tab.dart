@@ -68,22 +68,23 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _toggleGhostMode(bool val) async {
-    if (!val) {
-      // Turning OFF ghost mode -> Warning
+    if (val) {
+      // --- WARNING WHEN ENABLING (ENTERING) GHOST MODE ---
       final proceed = await showDialog<bool>(
         context: context, 
         builder: (ctx) => AlertDialog(
-          title: const Text("Disable Ghost Mode?"),
-          content: const Text("If you turn ON location sharing again, you will lose access to all your friends' locations until you request permission from them again. This is to prevent spying."),
+          title: const Text("Enter Ghost Mode?"),
+          content: const Text("You will disappear from your friends' maps instantly.\n\nNote: To prevent misuse, if you turn Ghost Mode OFF later, you will have to request location access from your friends again."),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Proceed", style: TextStyle(color: Colors.red))),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Go Ghost", style: TextStyle(color: Colors.red))),
           ],
         )
       );
       if (proceed != true) return;
     }
 
+    // Toggle logic
     await SupabaseService.toggleGhostMode(val);
     _loadProfile();
   }
@@ -380,7 +381,6 @@ class _SettingsTabState extends State<SettingsTab> {
               onPressed: () async { 
                 try { 
                   await SupabaseService.signIn(_emailCtrl.text, _passwordCtrl.text); 
-                  // FIX: Explicitly reload profile after sign in
                   await _loadProfile(); 
                   if (mounted) setState(() {}); 
                 } catch (e) { 
@@ -393,8 +393,7 @@ class _SettingsTabState extends State<SettingsTab> {
               onPressed: () async { 
                 try { 
                   await SupabaseService.signUp(_emailCtrl.text, _passwordCtrl.text, _usernameCtrl.text); 
-                  // FIX: Reload profile after sign up
-                  await _loadProfile();
+                  await _loadProfile(); 
                   if (mounted) setState(() {}); 
                 } catch (e) { 
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 

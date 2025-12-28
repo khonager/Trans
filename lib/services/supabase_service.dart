@@ -109,7 +109,6 @@ class SupabaseService {
     if (data.isEmpty) return [];
     
     final senderIds = (data as List).map((r) => r['sender_id']).toList();
-    // FIX: Replaced .in_ with .filter('id', 'in', ...)
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', senderIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
@@ -141,11 +140,9 @@ class SupabaseService {
     final friendIds = (friendsRelation as List).map((e) => e['friend_id']).toList();
     final permissionMap = {for (var e in friendsRelation) e['friend_id']: e['can_see_location']};
 
-    // FIX: Replaced .in_ with .filter
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color, ghost_mode').filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
-    // FIX: Replaced .in_ with .filter
     final locations = await client.from('user_locations').select().filter('user_id', 'in', friendIds);
     final locationMap = {for (var l in locations) l['user_id']: l};
 
@@ -159,7 +156,6 @@ class SupabaseService {
       final bool isGhost = profile['ghost_mode'] ?? false;
       final bool showLocation = canSee && !isGhost;
 
-      // FIX: Explicit null check to avoid parser syntax errors
       dynamic lat, lng, updatedAt, currentLine;
       if (showLocation && loc != null) {
         lat = loc['latitude'];
@@ -242,7 +238,6 @@ class SupabaseService {
       return; 
     }
     
-    // FIX: Explicitly typed as Map<String, dynamic> to allow null values
     final Map<String, dynamic> updateData = {
       'user_id': user.id,
       'latitude': pos.latitude,
@@ -280,7 +275,7 @@ class SupabaseService {
   static Stream<List<Map<String, dynamic>>> getPrivateMessages(String otherUserId) {
     final myId = currentUser!.id;
     return client.from('messages').stream(primaryKey: ['id'])
-      .eq('is_encrypted', true) // Using eq instead of filter for stream
+      .eq('is_encrypted', true) 
       .order('created_at', ascending: true)
       .limit(50)
       .asyncMap((rawMessages) async {
@@ -298,13 +293,11 @@ class SupabaseService {
     if (messages.isEmpty) return [];
     
     final userIds = messages.map((m) => m['user_id'] as String).toSet().toList();
-    // FIX: Replaced .in_ with .filter
     final profiles = await client.from('profiles').select('id, username, avatar_url, avatar_emoji, theme_color').filter('id', 'in', userIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     final keyString = decryptForUser != null ? _getPrivateKey(decryptForUser) : null;
     final enc.Key? key = keyString != null ? enc.Key.fromUtf8(keyString) : null;
-    final iv = enc.IV.fromLength(16); 
     final encrypter = key != null ? enc.Encrypter(enc.AES(key)) : null;
 
     return messages.map((m) {
@@ -313,7 +306,17 @@ class SupabaseService {
       
       if (m['is_encrypted'] == true && encrypter != null) {
         try {
-          content = encrypter.decrypt64(content, iv: iv);
+          // --- DECRYPTION FIX ---
+          // Format expected: "iv:ciphertext"
+          final parts = content.split(':');
+          if (parts.length == 2) {
+            final iv = enc.IV.fromBase64(parts[0]);
+            final cipher = parts[1];
+            content = encrypter.decrypt64(cipher, iv: iv);
+          } else {
+             // Fallback if message format is old or invalid
+             content = "[Corrupt Message]";
+          }
         } catch (e) {
           content = "[Error decrypting]";
         }
@@ -347,15 +350,20 @@ class SupabaseService {
     
     final keyString = _getPrivateKey(targetUserId);
     final key = enc.Key.fromUtf8(keyString);
-    final iv = enc.IV.fromLength(16); 
+    final iv = enc.IV.fromLength(16); // Random IV
     final encrypter = enc.Encrypter(enc.AES(key));
+    
     final encrypted = encrypter.encrypt(content, iv: iv);
+    
+    // --- ENCRYPTION FIX ---
+    // Store IV + Ciphertext joined by a colon
+    final storedContent = "${iv.base64}:${encrypted.base64}";
 
     await client.from('messages').insert({
       'line_id': null, 
       'user_id': user.id, 
       'receiver_id': targetUserId,
-      'content': encrypted.base64,
+      'content': storedContent,
       'is_encrypted': true
     });
   }
@@ -395,7 +403,6 @@ class SupabaseService {
     final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
     final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
     if (blockedIds.isEmpty) return [];
-    // FIX: Replaced .in_ with .filter
     final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
     return List<Map<String, dynamic>>.from(profiles);
   }
@@ -403,8 +410,15 @@ class SupabaseService {
   static Future<void> blockUser(String userId) async {
     final user = currentUser;
     if (user == null) return;
+    
+    // 1. Insert block record
     await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
+    
+    // 2. Delete relationship (BOTH WAYS)
+    // Deleting "Me -> You"
     await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
+    // Deleting "You -> Me"
+    await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
   }
   
   static Future<void> unblockUser(String userId) async {
