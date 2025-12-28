@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data'; 
@@ -6,13 +7,46 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import 'notification_manager.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
   static User? get currentUser => client.auth.currentUser;
 
-  // Notifier to force FriendsTab to reload
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
+  static StreamSubscription? _msgSubscription;
+
+  // --- INITIALIZATION ---
+  static Future<void> init() async {
+    await NotificationManager.init();
+    _startMessageListener();
+  }
+
+  static void _startMessageListener() {
+    final user = currentUser;
+    if (user == null) return;
+
+    _msgSubscription?.cancel();
+    _msgSubscription = client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('receiver_id', user.id) // Listen for messages sent TO me
+        .limit(1)
+        .listen((List<Map<String, dynamic>> data) {
+          if (data.isNotEmpty) {
+            final msg = data.first;
+            // Check if this message is new (created in the last 10 seconds to avoid spam on restart)
+            final created = DateTime.parse(msg['created_at']);
+            if (DateTime.now().toUtc().difference(created).inSeconds < 10) {
+              NotificationManager.showNotification(
+                id: msg['id'].hashCode,
+                title: 'New Private Message',
+                body: 'You received a secure message.',
+              );
+            }
+          }
+        });
+  }
 
   // --- AUTH ---
   static Future<void> signUp(String email, String password, String username) async {
@@ -25,14 +59,17 @@ class SupabaseService {
     );
     if (response.user != null) {
       await client.from('profiles').upsert({'id': response.user!.id, 'username': username});
+      _startMessageListener();
     }
   }
 
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
+    _startMessageListener();
   }
 
   static Future<void> signOut() async {
+    _msgSubscription?.cancel();
     await client.auth.signOut();
   }
 
@@ -53,20 +90,17 @@ class SupabaseService {
     await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
   }
 
-  // --- GHOST MODE (SIMPLIFIED) ---
+  // --- GHOST MODE ---
   static Future<void> toggleGhostMode(bool enable) async {
     final user = currentUser;
     if (user == null) return;
 
-    // Simple Toggle: No penalties, no permission revocation
     await client.from('profiles').update({'ghost_mode': enable}).eq('id', user.id);
     
-    // If turning ON, clear current location from DB immediately for privacy
     if (enable) {
       await client.from('user_locations').delete().eq('user_id', user.id);
     }
     
-    // Notify UI
     friendsListRefresh.value++;
   }
 
@@ -153,17 +187,18 @@ class SupabaseService {
       final loc = locationMap[id];
       final bool isFriendGhost = profile['ghost_mode'] ?? false;
 
-      // SIMPLIFIED LOGIC:
-      // If *I* am a ghost, I see nothing (to be fair).
-      // If *Friend* is a ghost, I see nothing.
-      // Otherwise, I see location.
-      final bool showExactLocation = !amIGhost && !isFriendGhost;
+      // --- LOGIC UPDATE ---
+      // 1. "Active recently" (updated_at) is ALWAYS visible if data exists.
+      dynamic updatedAt = (loc != null) ? loc['updated_at'] : null;
+
+      // 2. Detailed Location/Bus (lat, lng, current_line) is ONLY visible if:
+      //    - I am NOT a ghost
+      //    - Friend is NOT a ghost
+      final bool showDetails = !amIGhost && !isFriendGhost;
 
       dynamic lat, lng, currentLine;
-      // "Active recently" timestamp is ALWAYS visible unless I am ghosting them
-      dynamic updatedAt = (!amIGhost && loc != null) ? loc['updated_at'] : null;
 
-      if (showExactLocation && loc != null) {
+      if (showDetails && loc != null) {
         lat = loc['latitude'];
         lng = loc['longitude'];
         currentLine = loc['current_line'];
@@ -265,7 +300,7 @@ class SupabaseService {
     });
   }
 
-  // --- CHAT (Public & Private) ---
+  // --- CHAT ---
   static String _getPrivateKey(String otherUserId) {
     final myId = currentUser!.id;
     final List<String> ids = [myId, otherUserId]..sort();
@@ -374,32 +409,7 @@ class SupabaseService {
     });
   }
 
-  // --- BLOCKING ---
-  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
-    final user = currentUser;
-    if (user == null) return [];
-    final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
-    final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
-    if (blockedIds.isEmpty) return [];
-    final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
-    return List<Map<String, dynamic>>.from(profiles);
-  }
-  
-  static Future<void> blockUser(String userId) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
-    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
-    await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
-  }
-  
-  static Future<void> unblockUser(String userId) async {
-    final user = currentUser;
-    if (user == null) return;
-    await client.from('user_blocks').delete().match({'blocker_id': user.id, 'blocked_id': userId});
-  }
-  
-  // TICKET
+  // --- TICKET & BLOCKING ---
   static Future<String?> getTicketUrl() async {
     final user = currentUser;
     if (user == null) return null;
@@ -424,5 +434,26 @@ class SupabaseService {
     final imageUrl = client.storage.from('tickets').getPublicUrl(fileName);
     await client.from('profiles').update({'ticket_url': imageUrl}).eq('id', user.id);
     return imageUrl;
+  }
+  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
+    final user = currentUser;
+    if (user == null) return [];
+    final response = await client.from('user_blocks').select('blocked_id').eq('blocker_id', user.id);
+    final List blockedIds = (response as List).map((e) => e['blocked_id']).toList();
+    if (blockedIds.isEmpty) return [];
+    final profiles = await client.from('profiles').select().filter('id', 'in', blockedIds);
+    return List<Map<String, dynamic>>.from(profiles);
+  }
+  static Future<void> blockUser(String userId) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').insert({'blocker_id': user.id, 'blocked_id': userId});
+    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': userId});
+    await client.from('friends').delete().match({'user_id': userId, 'friend_id': user.id});
+  }
+  static Future<void> unblockUser(String userId) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('user_blocks').delete().match({'blocker_id': user.id, 'blocked_id': userId});
   }
 }
