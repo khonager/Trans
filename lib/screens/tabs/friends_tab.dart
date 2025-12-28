@@ -169,6 +169,7 @@ class _FriendsTabState extends State<FriendsTab> {
     for (var f in _friends) {
       if (f['updated_at'] != null) {
         final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
+        // Considered active if updated in last 12 hours
         final isActive = now.difference(updated).inHours < 12;
         if (isActive) {
           activeFriends.add(f);
@@ -182,6 +183,7 @@ class _FriendsTabState extends State<FriendsTab> {
     _requests.sort((a, b) => (b['created_at'] as String).compareTo(a['created_at'] as String));
     inactiveFriends.sort((a, b) => (a['username'] as String).compareTo(b['username'] as String));
 
+    // Combine strictly: Active -> Requests -> Inactive
     final combinedList = [...activeFriends, ..._requests, ...inactiveFriends];
 
     return Column(
@@ -213,6 +215,7 @@ class _FriendsTabState extends State<FriendsTab> {
                       final item = combinedList[idx];
                       final bool isRequest = item.containsKey('sender_id');
 
+                      // Visual Separator logic could go here if you wanted headers
                       if (isRequest) {
                         return _buildRequestCard(context, item);
                       } else {
@@ -257,7 +260,7 @@ class _FriendsTabState extends State<FriendsTab> {
       decoration: BoxDecoration(
         color: colors.requestCardBg, 
         borderRadius: BorderRadius.circular(16), 
-        border: Border.all(color: colors.requestCardBorder)
+        border: Border.all(color: colors.requestCardBorder, width: 2) // Thicker border for visibility
       ),
       child: Row(
         children: [
@@ -300,7 +303,6 @@ class _FriendsTabState extends State<FriendsTab> {
       statusText = "Active recently";
       statusColor = colors.statusActive;
       
-      // We only show specifics if tracking is available (not ghosting)
       if (currentLine != null && currentLine.isNotEmpty) {
         statusText = "On $currentLine";
         statusColor = colors.statusOnline;
@@ -309,7 +311,6 @@ class _FriendsTabState extends State<FriendsTab> {
     }
 
     if (isGhost) {
-       // If friend is in ghost mode, we might see "Active recently" but no line
        if (isActive && currentLine == null) {
           statusText = "Active recently (Ghost)";
           statusColor = colors.textSecondary;
@@ -371,15 +372,29 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.blue, 
                      onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
                    ),
-                   // Removed "Request Access" button
+                   // NEW: Remove Friend Button
+                   _buildActionButton(
+                     icon: Icons.person_remove, 
+                     label: "Remove", 
+                     color: Colors.orange, 
+                     onTap: () async {
+                       await SupabaseService.removeFriend(friendId);
+                       if (mounted) {
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Removed ${friend['username']}")));
+                         setState(() => _expandedFriendId = null);
+                       }
+                     }
+                   ),
                    _buildActionButton(
                      icon: Icons.block, 
                      label: "Block", 
                      color: Colors.red, 
                      onTap: () async {
                        await SupabaseService.blockUser(friendId);
-                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
-                       setState(() => _expandedFriendId = null);
+                       if (mounted) {
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
+                         setState(() => _expandedFriendId = null);
+                       }
                      }
                    ),
                 ],
