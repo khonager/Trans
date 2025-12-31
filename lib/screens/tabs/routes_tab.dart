@@ -494,13 +494,14 @@ class _RoutesTabState extends State<RoutesTab> {
      }
      setState(() => _isLoadingRoute = true);
      try {
-       DateTime? when;
+       DateTime when;
        if (_selectedDate != null) {
-          final dt = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0);
-          if (dt.difference(DateTime.now()).abs().inMinutes > 2) {
-             when = dt;
-          }
+          when = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0);
+       } else {
+          when = DateTime.now();
        }
+       // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
+       // But searchJourneys handles 'when'.
        final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
        if (mounted) { if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found."))); } }
      } catch(e) { if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { if (mounted) setState(() => _isLoadingRoute = false); }
