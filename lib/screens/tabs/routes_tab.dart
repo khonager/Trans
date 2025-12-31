@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'package:trans/models/station.dart';
 import 'package:trans/models/journey.dart';
@@ -69,12 +70,21 @@ class _RoutesTabState extends State<RoutesTab> {
   StreamSubscription<Position>? _gpsStream;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
     super.initState();
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
+    _initNotifications();
+  }
+
+  void _initNotifications() async {
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const ios = DarwinInitializationSettings();
+    const initSettings = InitializationSettings(android: android, iOS: ios);
+    await _notificationsPlugin.initialize(initSettings);
   }
 
   @override
@@ -160,6 +170,7 @@ class _RoutesTabState extends State<RoutesTab> {
       double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
       if (dist < 500) { 
          _triggerVibration();
+         _showNotification();
          if (mounted) {
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Up! Approaching your stop!"), backgroundColor: Colors.red));
            _stopWakeAlarm();
@@ -446,7 +457,7 @@ class _RoutesTabState extends State<RoutesTab> {
     setState(() {
       _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps));
       _activeTabId = id;
-      if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
+      // if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
     });
   }
 
@@ -455,8 +466,20 @@ class _RoutesTabState extends State<RoutesTab> {
      Station? from = _fromStation;
      if (from == null) {
         if (_fromController.text.isEmpty || _fromController.text == "Current Location") {
-           if (widget.currentPosition != null) {
-              from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: widget.currentPosition!.latitude, longitude: widget.currentPosition!.longitude);
+           Position? pos = widget.currentPosition;
+           if (pos == null) {
+              try { pos = await Geolocator.getCurrentPosition(timeLimit: const Duration(seconds: 3)); } catch(_) {}
+           }
+           if (pos != null) {
+              from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: pos.latitude, longitude: pos.longitude);
+              // Resolve address for better UX
+              try {
+                final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
+                if (nearby.isNotEmpty) {
+                   from = Station(id: 'gps', name: nearby.first.name, type: 'location', latitude: pos.latitude, longitude: pos.longitude);
+                   if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
+                }
+              } catch (_) {}
            } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location not available."))); return; }
         } else {
            setState(() => _isLoadingRoute = true);
@@ -471,7 +494,14 @@ class _RoutesTabState extends State<RoutesTab> {
      }
      setState(() => _isLoadingRoute = true);
      try {
-       final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: _selectedDate != null ? DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0) : null, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
+       DateTime? when;
+       if (_selectedDate != null) {
+          final dt = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, _selectedTime?.hour ?? 0, _selectedTime?.minute ?? 0);
+          if (dt.difference(DateTime.now()).abs().inMinutes > 2) {
+             when = dt;
+          }
+       }
+       final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
        if (mounted) { if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found."))); } }
      } catch(e) { if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { if (mounted) setState(() => _isLoadingRoute = false); }
   }
@@ -479,6 +509,19 @@ class _RoutesTabState extends State<RoutesTab> {
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
     if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
+  }
+
+  Future<void> _showNotification() async {
+    const androidDetails = AndroidNotificationDetails(
+      'wake_alarm_channel', 
+      'Wake Alarm', 
+      channelDescription: 'Alarms for arriving at station',
+      importance: Importance.max,
+      priority: Priority.high,
+      enableVibration: true,
+    );
+    const details = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(0, 'Wake Up!', 'Approaching your stop!', details);
   }
 
   void _showEditFavoriteDialog(Favorite fav) async {
@@ -566,7 +609,7 @@ class _RoutesTabState extends State<RoutesTab> {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
-    else if (fieldKey == 'from' && hint.contains("Location")) iconColor = Colors.blue;
+    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || hint.contains("Location"))) iconColor = Colors.blue;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () { setState(() => _activeSearchField = fieldKey); _scrollToTop(); }, style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 

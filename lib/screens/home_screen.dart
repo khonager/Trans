@@ -100,8 +100,11 @@ class _HomeScreenState extends State<HomeScreen> {
       resizeToAvoidBottomInset: false, 
       body: Stack(
         children: [
-          screens[_currentIndex],
-          const TicketPanel(), // Removed Positioned wrapper
+          IndexedStack(
+            index: _currentIndex,
+            children: screens,
+          ),
+          const TicketPanel(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
