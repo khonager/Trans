@@ -21,25 +21,39 @@
           };
         };
 
-        androidSdk = android-nixpkgs.sdk.${system} (sdkPkgs: with sdkPkgs; [
-          cmdline-tools-latest
-          build-tools-35-0-0
-          platform-tools
+        isLinux = pkgs.stdenv.isLinux;
+        isDarwin = pkgs.stdenv.isDarwin;
 
-          # Platforms
-          platforms-android-36
-          platforms-android-35
-          platforms-android-34
-          platforms-android-33
+        # Android SDK - only include emulator on Linux (not available on macOS via nix)
+        androidSdk = android-nixpkgs.sdk.${system} (sdkPkgs: with sdkPkgs;
+          [
+            cmdline-tools-latest
+            build-tools-35-0-0
+            platform-tools
 
-          # Native tools
-          ndk-27-0-12077973
-          cmake-3-22-1
+            # Platforms
+            platforms-android-36
+            platforms-android-35
+            platforms-android-34
+            platforms-android-33
 
-          emulator
-        ]);
+            # Native tools
+            ndk-27-0-12077973
+            cmake-3-22-1
+          ] ++ pkgs.lib.optionals isLinux [
+            emulator
+          ]
+        );
 
-        fhs = pkgs.buildFHSEnv {
+        # Common environment variables
+        commonEnvVars = {
+          ANDROID_HOME = "${androidSdk}/share/android-sdk";
+          ANDROID_SDK_ROOT = "${androidSdk}/share/android-sdk";
+          JAVA_HOME = "${pkgs.jdk17}";
+        };
+
+        # Linux-specific: Use FHS environment for binary compatibility
+        linuxDevShell = pkgs.buildFHSEnv {
           name = "flutter-dev-env";
           targetPkgs = pkgs: (with pkgs; [
             androidSdk
@@ -50,10 +64,10 @@
             glibc
             zlib
             ncurses5
-            stdenv.cc.cc.lib # FIX: Replaces 'stdcxx'
+            stdenv.cc.cc.lib
             openssl
             expat
-            chromium # Added chromium for web support
+            chromium
           ]);
 
           runScript = "bash";
@@ -63,13 +77,40 @@
             export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
             export JAVA_HOME="${pkgs.jdk17}"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}"
-            export CHROME_EXECUTABLE="chromium" # Tell Flutter where to find the browser
+            export CHROME_EXECUTABLE="chromium"
+          '';
+        };
+
+        # macOS-specific: Standard devShell (no FHS needed, binaries are native)
+        darwinDevShell = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            androidSdk
+            flutter
+            jdk17
+            cocoapods  # Required for iOS development on macOS
+          ];
+
+          shellHook = ''
+            export ANDROID_HOME="${androidSdk}/share/android-sdk"
+            export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
+            export JAVA_HOME="${pkgs.jdk17}"
+
+            # macOS-specific: Use system Chrome or installed browser
+            if [ -e "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+              export CHROME_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            elif [ -e "/Applications/Chromium.app/Contents/MacOS/Chromium" ]; then
+              export CHROME_EXECUTABLE="/Applications/Chromium.app/Contents/MacOS/Chromium"
+            fi
+
+            echo "Flutter development environment ready!"
+            echo "  ANDROID_HOME: $ANDROID_HOME"
+            echo "  JAVA_HOME: $JAVA_HOME"
           '';
         };
 
       in
       {
-        devShells.default = fhs.env;
+        devShells.default = if isLinux then linuxDevShell.env else darwinDevShell;
       }
     );
 }
