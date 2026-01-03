@@ -188,13 +188,9 @@ flutter clean && flutter pub get
 
 ---
 
-## 🤝 Contributing
+## 🍴 Forking
 
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+This project does not accept contributions, but you're welcome to fork it and make it your own!
 
 ---
 
