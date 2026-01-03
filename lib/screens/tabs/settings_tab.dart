@@ -7,6 +7,7 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
+import '../../services/transport_api.dart';
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
@@ -50,6 +51,7 @@ class _SettingsTabState extends State<SettingsTab> {
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
   int _stopsBeforeAlarm = 1;
+  String _apiMode = 'auto';
 
   @override
   void initState() {
@@ -72,6 +74,8 @@ class _SettingsTabState extends State<SettingsTab> {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
+        _apiMode = prefs.getString('api_mode') ?? 'auto';
+        TransportApi.apiMode = _apiMode;
       });
     }
   }
@@ -93,6 +97,15 @@ class _SettingsTabState extends State<SettingsTab> {
       _stopsBeforeAlarm = stops;
     });
     await SupabaseService.updateSettings({'alarm_stops_before': stops});
+  }
+
+  Future<void> _saveApiMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('api_mode', mode);
+    setState(() {
+      _apiMode = mode;
+      TransportApi.apiMode = mode;
+    });
   }
 
   Future<void> _testVibration() async {
@@ -413,6 +426,27 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(leading: Icon(Icons.block, color: colors.iconBlock), title: Text("Blocked Users", style: TextStyle(color: colors.textPrimary)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
             Divider(height: 1, color: colors.divider),
             ListTile(leading: Icon(Icons.delete_outline, color: colors.iconDelete), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
+          ]),
+          
+          const SizedBox(height: 20),
+          Text("Data Source (Advanced)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+          const SizedBox(height: 8),
+          _buildSection(context, [
+             ListTile(
+               title: Text("Transport API", style: TextStyle(color: colors.textPrimary)),
+               subtitle: Text("Selected: ${_apiMode == 'auto' ? 'Auto (Recommended)' : _apiMode == 'motis' ? 'Transitous (Open Source)' : 'Deutsche Bahn (Legacy)'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               trailing: DropdownButton<String>(
+                 value: _apiMode,
+                 dropdownColor: colors.cardBg,
+                 underline: const SizedBox(),
+                 items: const [
+                   DropdownMenuItem(value: 'auto', child: Text("Auto")),
+                   DropdownMenuItem(value: 'motis', child: Text("Transitous")),
+                   DropdownMenuItem(value: 'v6', child: Text("DB (v6)")),
+                 ],
+                 onChanged: (val) => _saveApiMode(val!),
+               ),
+             )
           ]),
           const SizedBox(height: 20),
           if (user == null) _buildAuthForm(context, colors) else _buildProfileSection(context, user, colors),
