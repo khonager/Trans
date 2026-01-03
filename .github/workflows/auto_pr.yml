@@ -1,0 +1,22 @@
+name: Sync Unstable to Stable
+
+on:
+  push:
+    branches:
+      - unstable
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Pull Request
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create --base stable --head unstable --title "🚀 Sync Unstable to Stable" --body "Automated PR from unstable branch to stable." || echo "PR likely already exists, skipping."
