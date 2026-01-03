@@ -31,7 +31,7 @@ class TransportApi {
         final sessionId = const Uuid().v4().substring(0, 8);
         _userAgent = '${info.appName}/${info.version} (${info.packageName}; user-$sessionId@transapp.local)'; 
       } catch (e) {
-        _userAgent = 'TransApp/1.0 (contact@example.com)';
+        _userAgent = 'TransApp/2.0 (contact@example.com)';
       }
     }
 
@@ -198,5 +198,16 @@ class TransportApi {
       debugPrint("OSRM Error: $e");
     }
     return [[startLat, startLng], [endLat, endLng]];
+  }
+
+  static Future<bool> testConnection() async {
+    final uri = Uri.parse('$baseUrl/locations?query=Berlin&results=1');
+    try {
+      final response = await _fetch(uri); 
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("Connection test failed: $e");
+      return false;
+    }
   }
 }
