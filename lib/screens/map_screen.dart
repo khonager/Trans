@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -22,6 +23,25 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
+
+  void _openGoogleMaps(double lat, double lng) async {
+    // Try Google Maps app first with geo intent
+    final geoUrl = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+    final webUrl = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=walking');
+    
+    try {
+      // Try geo: intent first (opens in any maps app)
+      if (await canLaunchUrl(geoUrl)) {
+        await launchUrl(geoUrl);
+      } else {
+        // Fallback to web URL
+        await launchUrl(webUrl, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      // Last resort: open in browser
+      await launchUrl(webUrl, mode: LaunchMode.inAppBrowserView);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +143,12 @@ class _MapScreenState extends State<MapScreen> {
     }
     final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515);
 
+    // Determine if this is a walking route
+    final isWalkingRoute = widget.focusStep != null && 
+        (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking);
+    final destinationLat = points.isNotEmpty ? points.last.latitude : null;
+    final destinationLng = points.isNotEmpty ? points.last.longitude : null;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.focusStep?.instruction ?? "Route Map"),
@@ -131,15 +157,33 @@ class _MapScreenState extends State<MapScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          if (bounds != null) {
-            _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
-          } else {
-            _mapController.move(initialCenter, 13);
-          }
-        },
-        child: const Icon(Icons.center_focus_strong),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          if (isWalkingRoute && destinationLat != null && destinationLng != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 32),
+              child: FloatingActionButton(
+                heroTag: 'google_maps',
+                onPressed: () => _openGoogleMaps(destinationLat, destinationLng),
+                child: const Icon(Icons.map_outlined),
+              ),
+            ),
+          if (!isWalkingRoute || destinationLat == null || destinationLng == null)
+            const SizedBox(), // Spacer when no left button
+          FloatingActionButton(
+            heroTag: 'recenter',
+            onPressed: () {
+              if (bounds != null) {
+                _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
+              } else {
+                _mapController.move(initialCenter, 13);
+              }
+            },
+            child: const Icon(Icons.center_focus_strong),
+          ),
+        ],
       ),
       body: FlutterMap(
         mapController: _mapController,
