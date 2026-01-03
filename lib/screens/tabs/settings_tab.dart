@@ -250,6 +250,18 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const SizedBox(width: 16),
               Text("Trans", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+              // DEV badge - only shows on dev builds
+              if (const bool.fromEnvironment('IS_DEV', defaultValue: false)) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text("DEV", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 30),
