@@ -24,23 +24,35 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
 
-  void _openGoogleMaps(double lat, double lng) async {
-    // Try Google Maps app first with geo intent
-    final geoUrl = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
-    final webUrl = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=walking');
+  void _openGoogleMaps(double startLat, double startLng, double destLat, double destLng) async {
+    // Google Maps URL with origin and destination
+    final webUrl = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1'
+      '&origin=$startLat,$startLng'
+      '&destination=$destLat,$destLng'
+      '&travelmode=walking'
+    );
     
     try {
-      // Try geo: intent first (opens in any maps app)
-      if (await canLaunchUrl(geoUrl)) {
-        await launchUrl(geoUrl);
-      } else {
-        // Fallback to web URL
-        await launchUrl(webUrl, mode: LaunchMode.externalApplication);
-      }
+      await launchUrl(webUrl, mode: LaunchMode.externalApplication);
     } catch (e) {
-      // Last resort: open in browser
+      // Fallback: open in browser
       await launchUrl(webUrl, mode: LaunchMode.inAppBrowserView);
     }
+  }
+
+  // Google Maps-style pin icon with signature colors
+  Widget _buildGoogleMapsIcon() {
+    return Container(
+      width: 24,
+      height: 24,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+      ),
+      child: CustomPaint(
+        painter: _GoogleMapsPinPainter(),
+      ),
+    );
   }
 
   @override
@@ -146,6 +158,8 @@ class _MapScreenState extends State<MapScreen> {
     // Determine if this is a walking route
     final isWalkingRoute = widget.focusStep != null && 
         (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking);
+    final startLat = points.isNotEmpty ? points.first.latitude : null;
+    final startLng = points.isNotEmpty ? points.first.longitude : null;
     final destinationLat = points.isNotEmpty ? points.last.latitude : null;
     final destinationLng = points.isNotEmpty ? points.last.longitude : null;
 
@@ -161,16 +175,17 @@ class _MapScreenState extends State<MapScreen> {
       floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (isWalkingRoute && destinationLat != null && destinationLng != null)
+          if (isWalkingRoute && startLat != null && startLng != null && destinationLat != null && destinationLng != null)
             Padding(
               padding: const EdgeInsets.only(left: 32),
               child: FloatingActionButton(
                 heroTag: 'google_maps',
-                onPressed: () => _openGoogleMaps(destinationLat, destinationLng),
-                child: const Icon(Icons.map_outlined),
+                backgroundColor: Colors.white,
+                onPressed: () => _openGoogleMaps(startLat, startLng, destinationLat, destinationLng),
+                child: _buildGoogleMapsIcon(),
               ),
             ),
-          if (!isWalkingRoute || destinationLat == null || destinationLng == null)
+          if (!isWalkingRoute || startLat == null || destinationLat == null)
             const SizedBox(), // Spacer when no left button
           FloatingActionButton(
             heroTag: 'recenter',
@@ -214,4 +229,69 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
   }
+}
+
+// Custom painter for Google Maps-style location pin icon
+class _GoogleMapsPinPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    
+    // Google Maps pin colors
+    const red = Color(0xFFEA4335);
+    const blue = Color(0xFF4285F4);
+    const green = Color(0xFF34A853);
+    const yellow = Color(0xFFFBBC05);
+    
+    // Draw four quadrants
+    final paint = Paint()..style = PaintingStyle.fill;
+    
+    // Top-right (Red)
+    paint.color = red;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -1.5708, // -90 degrees in radians
+      1.5708,  // 90 degrees
+      true,
+      paint,
+    );
+    
+    // Bottom-right (Blue)
+    paint.color = blue;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      0,
+      1.5708,
+      true,
+      paint,
+    );
+    
+    // Bottom-left (Green)
+    paint.color = green;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      1.5708,
+      1.5708,
+      true,
+      paint,
+    );
+    
+    // Top-left (Yellow)
+    paint.color = yellow;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      3.1416,
+      1.5708,
+      true,
+      paint,
+    );
+    
+    // White center circle
+    paint.color = Colors.white;
+    canvas.drawCircle(center, radius * 0.35, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
