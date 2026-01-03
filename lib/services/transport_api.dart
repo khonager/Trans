@@ -17,19 +17,36 @@ class TransportApi {
     return Uri.parse(url);
   }
 
-  static Future<http.Response> _fetch(Uri uri) async {
-    try {
-      debugPrint("Fetching: $uri");
-      final response = await http.get(uri);
-      if (response.statusCode == 200) return response;
-      
-      debugPrint("API Error ${response.statusCode}: ${response.body}");
-      return response; // Return to let caller handle status
-    } catch (e) {
-      debugPrint("Network Error: $e");
-      // Rethrow so the UI knows it failed (and stops the spinner)
-      throw Exception("Network Error: $e");
+  static Future<http.Response> _fetch(Uri uri, {int retries = 2}) async {
+    for (int attempt = 0; attempt <= retries; attempt++) {
+      try {
+        debugPrint("Fetching: $uri");
+        final response = await http.get(uri);
+        if (response.statusCode == 200) return response;
+        
+        // Retry on 503 (Service Unavailable) with backoff
+        if (response.statusCode == 503 && attempt < retries) {
+          final delay = Duration(milliseconds: 500 * (attempt + 1));
+          debugPrint("API returned 503, retrying in ${delay.inMilliseconds}ms...");
+          await Future.delayed(delay);
+          continue;
+        }
+        
+        debugPrint("API Error ${response.statusCode}: ${response.body}");
+        return response; // Return to let caller handle status
+      } catch (e) {
+        if (attempt < retries) {
+          final delay = Duration(milliseconds: 500 * (attempt + 1));
+          debugPrint("Network Error: $e, retrying in ${delay.inMilliseconds}ms...");
+          await Future.delayed(delay);
+          continue;
+        }
+        debugPrint("Network Error: $e");
+        // Rethrow so the UI knows it failed (and stops the spinner)
+        throw Exception("Network Error: $e");
+      }
     }
+    throw Exception("Max retries exceeded");
   }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
