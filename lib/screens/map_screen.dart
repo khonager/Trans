@@ -3,7 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -23,39 +23,101 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
+  late final WebViewController? _webViewController;
+  bool _isWalkingRoute = false;
+  double? _startLat, _startLng, _destLat, _destLng;
 
-  void _openGoogleMaps(double startLat, double startLng, double destLat, double destLng) async {
-    // Google Maps URL with origin and destination
-    final webUrl = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1'
-      '&origin=$startLat,$startLng'
-      '&destination=$destLat,$destLng'
-      '&travelmode=walking'
-    );
+  @override
+  void initState() {
+    super.initState();
+    _calculateRouteData();
     
-    try {
-      await launchUrl(webUrl, mode: LaunchMode.externalApplication);
-    } catch (e) {
-      // Fallback: open in browser
-      await launchUrl(webUrl, mode: LaunchMode.inAppBrowserView);
+    // Initialize WebView controller for walking routes
+    if (_isWalkingRoute && _startLat != null && _destLat != null) {
+      _webViewController = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onProgress: (int progress) {},
+            onPageStarted: (String url) {},
+            onPageFinished: (String url) {},
+            // Handle navigation requests - block external app schemes
+            onNavigationRequest: (NavigationRequest request) {
+              if (request.url.startsWith('intent://') || 
+                  request.url.startsWith('market://') ||
+                  !request.url.startsWith('http')) {
+                return NavigationDecision.prevent;
+              }
+              return NavigationDecision.navigate;
+            },
+          ),
+        )
+        // Use Google Maps mobile web (no API key required)
+        ..loadRequest(Uri.parse(
+          'https://www.google.com/maps/dir/$_startLat,$_startLng/$_destLat,$_destLng/@$_startLat,$_startLng,15z/data=!4m2!4m1!3e2'
+        ));
+    } else {
+      _webViewController = null;
     }
   }
 
-  // Cached Google Maps icon loaded from the internet
-  static final Widget _googleMapsIcon = ClipRRect(
-    borderRadius: BorderRadius.circular(4),
-    child: Image.network(
-      'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
-      width: 28,
-      height: 28,
-      cacheWidth: 56, // Cache at 2x for crisp display
-      cacheHeight: 56,
-      errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.green),
-    ),
-  );
+  void _calculateRouteData() {
+    final points = <LatLng>[];
+    final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
+
+    for (var step in stepsToShow) {
+      if (step.path != null && step.path!.isNotEmpty) {
+        points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+      } else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        if (step.startLat != null && step.startLng != null) {
+          points.add(LatLng(step.startLat!, step.startLng!));
+        }
+        for (var stop in step.stopovers!) {
+          if (stop['stop'] != null && stop['stop']['location'] != null) {
+            points.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
+          }
+        }
+        if (step.endLat != null && step.endLng != null) {
+          points.add(LatLng(step.endLat!, step.endLng!));
+        }
+      } else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
+        points.add(LatLng(step.startLat!, step.startLng!));
+        points.add(LatLng(step.endLat!, step.endLng!));
+      }
+    }
+
+    _isWalkingRoute = widget.focusStep != null && 
+        (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking);
+    
+    if (points.isNotEmpty) {
+      _startLat = points.first.latitude;
+      _startLng = points.first.longitude;
+      _destLat = points.last.latitude;
+      _destLng = points.last.longitude;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    // For walking routes, show Google Maps WebView
+    if (_isWalkingRoute && _webViewController != null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.focusStep?.instruction ?? "Walk"),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: WebViewWidget(controller: _webViewController!),
+      );
+    }
+
+    // For non-walking routes, show FlutterMap
+    return _buildFlutterMap();
+  }
+
+  Widget _buildFlutterMap() {
     final points = <LatLng>[];
     final markers = <Marker>[];
     
@@ -98,7 +160,6 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       // 3. TRANSFER POINTS (Larger Orange Dots)
-      // We check if this step is a transfer or walk, AND we are viewing the full route
       if (widget.focusStep == null && (step.type == 'transfer' || step.type == 'walk')) {
          if (step.startLat != null && step.startLng != null) {
             markers.add(Marker(
@@ -116,7 +177,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    // 4. DESTINATION PIN (Only one at the very end)
+    // 4. DESTINATION PIN
     if (points.isNotEmpty) {
       final lastPoint = points.last;
       markers.add(Marker(
@@ -154,14 +215,6 @@ class _MapScreenState extends State<MapScreen> {
     }
     final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515);
 
-    // Determine if this is a walking route
-    final isWalkingRoute = widget.focusStep != null && 
-        (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking);
-    final startLat = points.isNotEmpty ? points.first.latitude : null;
-    final startLng = points.isNotEmpty ? points.first.longitude : null;
-    final destinationLat = points.isNotEmpty ? points.last.latitude : null;
-    final destinationLng = points.isNotEmpty ? points.last.longitude : null;
-
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.focusStep?.instruction ?? "Route Map"),
@@ -170,34 +223,15 @@ class _MapScreenState extends State<MapScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          if (isWalkingRoute && startLat != null && startLng != null && destinationLat != null && destinationLng != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 32),
-              child: FloatingActionButton(
-                heroTag: 'google_maps',
-                backgroundColor: Colors.white,
-                onPressed: () => _openGoogleMaps(startLat, startLng, destinationLat, destinationLng),
-                child: _googleMapsIcon,
-              ),
-            ),
-          if (!isWalkingRoute || startLat == null || destinationLat == null)
-            const SizedBox(), // Spacer when no left button
-          FloatingActionButton(
-            heroTag: 'recenter',
-            onPressed: () {
-              if (bounds != null) {
-                _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
-              } else {
-                _mapController.move(initialCenter, 13);
-              }
-            },
-            child: const Icon(Icons.center_focus_strong),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          if (bounds != null) {
+            _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
+          } else {
+            _mapController.move(initialCenter, 13);
+          }
+        },
+        child: const Icon(Icons.center_focus_strong),
       ),
       body: FlutterMap(
         mapController: _mapController,
