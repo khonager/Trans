@@ -228,9 +228,11 @@ class _SettingsTabState extends State<SettingsTab> {
     
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
+    // FIX: Keyboard padding - get keyboard height from viewInsets
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 + keyboardHeight),
       child: ListView(
         children: [
           SizedBox(height: topPadding),
