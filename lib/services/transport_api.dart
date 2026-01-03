@@ -271,9 +271,10 @@ class TransportApi {
     }
 
     // TRANSIT MODES - filter for local transit if requested
+    // Must include WALK to allow walking to/from stations!
     if (nahverkehrOnly) {
       params['transitModes'] =
-          'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS';
+          'WALK,REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS';
     }
 
     final response = await _fetch(_getMotisUri('/api/v5/plan', params));
@@ -281,11 +282,12 @@ class TransportApi {
 
     final itineraries = data['itineraries'] as List? ?? [];
 
-    // Convert MOTIS itineraries to v6.db journey format
-    return itineraries
-        .map((it) =>
-            journeyFromMotisItinerary(it as Map<String, dynamic>))
-        .toList();
+    // Convert MOTIS itineraries to v6.db journey format and tag source
+    return itineraries.map((it) {
+      final j = journeyFromMotisItinerary(it as Map<String, dynamic>);
+      j['source'] = 'motis';
+      return j;
+    }).toList();
   }
 
   // ============================================================
@@ -385,7 +387,7 @@ class TransportApi {
       debugPrint('Transitous searchJourneys failed: $e, trying v6.db...');
       try {
         // Fallback to v6.db
-        return await _searchJourneysV6(
+        final res = await _searchJourneysV6(
           from,
           to,
           nahverkehrOnly: nahverkehrOnly,
@@ -393,6 +395,11 @@ class TransportApi {
           isArrival: isArrival,
           results: results,
         );
+        // Tag valid results with v6 source
+        return res.map((j) {
+           j['source'] = 'v6';
+           return j;
+        }).toList();
       } catch (e2) {
         debugPrint('v6.db searchJourneys also failed: $e2');
         return [];

@@ -48,6 +48,7 @@ class RouteTab {
   final String totalDuration;
   final String destinationId;
   final List<JourneyStep> steps;
+  final String? source;
 
   RouteTab({
     required this.id,
@@ -57,5 +58,6 @@ class RouteTab {
     required this.totalDuration,
     required this.destinationId,
     required this.steps,
+    this.source,
   });
 }
