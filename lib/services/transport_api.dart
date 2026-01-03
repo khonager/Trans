@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../models/station.dart';
 
 class TransportApi {
@@ -17,19 +19,55 @@ class TransportApi {
     return Uri.parse(url);
   }
 
-  static Future<http.Response> _fetch(Uri uri) async {
-    try {
-      debugPrint("Fetching: $uri");
-      final response = await http.get(uri);
-      if (response.statusCode == 200) return response;
-      
-      debugPrint("API Error ${response.statusCode}: ${response.body}");
-      return response; // Return to let caller handle status
-    } catch (e) {
-      debugPrint("Network Error: $e");
-      // Rethrow so the UI knows it failed (and stops the spinner)
-      throw Exception("Network Error: $e");
+  // Cache the User-Agent
+  static String? _userAgent;
+
+  static Future<http.Response> _fetch(Uri uri, {int retries = 2}) async {
+    // Initialize User-Agent if not set
+    if (_userAgent == null) {
+      try {
+        final info = await PackageInfo.fromPlatform();
+        // Generate a random session ID to distribute rate limits
+        final sessionId = const Uuid().v4().substring(0, 8);
+        _userAgent = '${info.appName}/${info.version} (${info.packageName}; user-$sessionId@transapp.local)'; 
+      } catch (e) {
+        _userAgent = 'TransApp/2.0 (contact@example.com)';
+      }
     }
+
+    for (int attempt = 0; attempt <= retries; attempt++) {
+      try {
+        debugPrint("Fetching: $uri");
+        final response = await http.get(uri, headers: {
+          'User-Agent': _userAgent!,
+          'Content-Type': 'application/json',
+        });
+
+        if (response.statusCode == 200) return response;
+        
+        // Retry on 503 (Service Unavailable) with backoff
+        if (response.statusCode == 503 && attempt < retries) {
+          final delay = Duration(milliseconds: 500 * (attempt + 1));
+          debugPrint("API returned 503, retrying in ${delay.inMilliseconds}ms...");
+          await Future.delayed(delay);
+          continue;
+        }
+        
+        debugPrint("API Error ${response.statusCode}: ${response.body}");
+        return response; // Return to let caller handle status
+      } catch (e) {
+        if (attempt < retries) {
+          final delay = Duration(milliseconds: 500 * (attempt + 1));
+          debugPrint("Network Error: $e, retrying in ${delay.inMilliseconds}ms...");
+          await Future.delayed(delay);
+          continue;
+        }
+        debugPrint("Network Error: $e");
+        // Rethrow so the UI knows it failed (and stops the spinner)
+        throw Exception("Network Error: $e");
+      }
+    }
+    throw Exception("Max retries exceeded");
   }
 
   static Future<List<Station>> searchStations(String query, {double? lat, double? lng}) async {
@@ -137,6 +175,39 @@ class TransportApi {
       return [];
     } catch (e) {
       return [];
+    }
+  }
+
+  static Future<List<List<double>>> getWalkingRoute(double startLat, double startLng, double endLat, double endLng) async {
+    final uri = Uri.parse(
+      'http://router.project-osrm.org/route/v1/foot/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson'
+    );
+    
+    try {
+      final response = await _fetch(uri);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['routes'] != null && (data['routes'] as List).isNotEmpty) {
+          final coordinates = data['routes'][0]['geometry']['coordinates'] as List;
+          return coordinates.map<List<double>>((point) {
+            return [(point[1] as num).toDouble(), (point[0] as num).toDouble()];
+          }).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint("OSRM Error: $e");
+    }
+    return [[startLat, startLng], [endLat, endLng]];
+  }
+
+  static Future<bool> testConnection() async {
+    final uri = Uri.parse('$baseUrl/locations?query=Berlin&results=1');
+    try {
+      final response = await _fetch(uri); 
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("Connection test failed: $e");
+      return false;
     }
   }
 }

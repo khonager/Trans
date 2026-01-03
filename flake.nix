@@ -67,7 +67,13 @@
             stdenv.cc.cc.lib
             openssl
             expat
-            chromium
+            chromium # Added chromium for web support
+            
+            # Utilities
+            glib # Fixes libglib-2.0.so.0 error for host binaries
+            github-cli # wrapper for git auth
+            nspr
+            nss
           ]);
 
           runScript = "bash";
