@@ -434,11 +434,12 @@ class _RoutesTabState extends State<RoutesTab> {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
-    DateTime? lastArrival; 
+    DateTime? lastArrival;
+    bool isFirstStep = true; // Track if this is the first step in the journey
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
     
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng) {
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '') ?? DateTime.now();
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '') ?? blockStart : blockStart);
@@ -460,20 +461,43 @@ class _RoutesTabState extends State<RoutesTab> {
           endLat = getLat(transferBuffer.last['destination']);
           endLng = getLng(transferBuffer.last['destination']);
       }
+      
+      // Get destination name from transfer buffer if not provided
+      String? destName = nextStationName;
+      if (destName == null && transferBuffer.isNotEmpty) {
+        destName = transferBuffer.last['destination']?['name'];
+      }
+
+      // Determine instruction text based on context
+      String instruction;
+      if (walkMinutes > 0) {
+        if (isFirstStep && destName != null) {
+          instruction = "Walk to $destName"; // Initial walk to station
+        } else if (isFinalWalk && destName != null) {
+          instruction = "Walk to destination"; // Final walk to destination
+        } else if (destName != null) {
+          instruction = "Walk to $destName"; // Transfer walk
+        } else {
+          instruction = "Walk";
+        }
+      } else {
+        instruction = "Wait for connection";
+      }
 
       steps.add(JourneyStep(
         type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
-        instruction: walkMinutes > 0 ? (nextStationName != null ? "Walk to $nextStationName" : "Walk") : "Transfer",
+        instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: walkMinutes > 0,
         startLat: startLat, startLng: startLng, endLat: endLat, endLng: endLng,
         path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
-        dateTime: blockStart // FIX: Store time
+        dateTime: blockStart
       ));
       transferBuffer.clear();
+      isFirstStep = false; // After first flush, no longer first step
     }
 
     for (var leg in legs) {
@@ -502,7 +526,7 @@ class _RoutesTabState extends State<RoutesTab> {
         lastArrival = arr;
       } else { transferBuffer.add(leg); }
     }
-    flushTransferBuffer(null, "Destination", null, null);
+    flushTransferBuffer(null, null, null, null, isFinalWalk: true);
     return steps;
   }
   
