@@ -16,6 +16,7 @@ import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart'; 
@@ -130,6 +131,21 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
+
+    // 1. Request Permissions
+    await NotificationManager.requestPermissions();
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location permission denied. Alarm cannot work.")));
+        return;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location permission permanently denied.")));
+       return;
+    }
     
     final prefs = await SharedPreferences.getInstance();
     final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
@@ -159,12 +175,43 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
-    const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
+    // 2. Configure Background Location (Foreground Service)
+    AndroidSettings androidSettings = AndroidSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 50,
+      forceLocationManager: true,
+      intervalDuration: const Duration(seconds: 10),
+      // Foreground Notification to keep service alive
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
+        notificationTitle: "Trans Wake Alarm",
+        notificationText: "Tracking your journey...",
+        notificationIcon: AndroidResource(name: 'ic_launcher'),
+        enableWakeLock: true,
+      ),
+    );
+
+    AppleSettings appleSettings = AppleSettings(
+      accuracy: LocationAccuracy.high,
+      activityType: ActivityType.fitness,
+      distanceFilter: 50,
+      pauseLocationUpdatesAutomatically: false,
+      showBackgroundLocationIndicator: true,
+    );
+
+    const LocationSettings settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 50,
+    );
+
+    LocationSettings activeSettings = settings;
+    if (defaultTargetPlatform == TargetPlatform.android) activeSettings = androidSettings;
+    if (defaultTargetPlatform == TargetPlatform.iOS) activeSettings = appleSettings;
+
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
 
-    _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
+    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
       SupabaseService.updateLocation(pos, currentLine: currentLine);
       double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
