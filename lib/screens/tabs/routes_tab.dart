@@ -394,6 +394,15 @@ class _RoutesTabState extends State<RoutesTab> {
       double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLng == null && steps.isNotEmpty) startLng = steps.last.endLng;
 
+      double? endLat = nextRideStartLat;
+      double? endLng = nextRideStartLng;
+      
+      // If we are at the end (no next ride), try to get coordinates from the last transfer leg (e.g. walk to address)
+      if (endLat == null && transferBuffer.isNotEmpty) {
+          endLat = getLat(transferBuffer.last['destination']);
+          endLng = getLng(transferBuffer.last['destination']);
+      }
+
       steps.add(JourneyStep(
         type: (walkMinutes > 0) ? 'walk' : 'wait',
         line: 'Transfer',
@@ -402,7 +411,7 @@ class _RoutesTabState extends State<RoutesTab> {
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
         isWalking: walkMinutes > 0,
-        startLat: startLat, startLng: startLng, endLat: nextRideStartLat, endLng: nextRideStartLng,
+        startLat: startLat, startLng: startLng, endLat: endLat, endLng: endLng,
         path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
         dateTime: blockStart // FIX: Store time
       ));
