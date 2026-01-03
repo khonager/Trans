@@ -98,6 +98,8 @@ List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
       'stop': _placeToLocation(s),
       'arrival': s['arrival'],
       'departure': s['departure'],
+      'plannedArrival': s['scheduledArrival'],
+      'plannedDeparture': s['scheduledDeparture'],
       'arrivalDelay': _calculateDelay(s['scheduledArrival'], s['arrival']),
       'departureDelay': _calculateDelay(s['scheduledDeparture'], s['departure']),
       if (s['cancelled'] == true) 'cancelled': true,
