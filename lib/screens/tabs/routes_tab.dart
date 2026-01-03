@@ -16,6 +16,7 @@ import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart'; 
@@ -130,6 +131,21 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
+
+    // 1. Request Permissions
+    await NotificationManager.requestPermissions();
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location permission denied. Alarm cannot work.")));
+        return;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location permission permanently denied.")));
+       return;
+    }
     
     final prefs = await SharedPreferences.getInstance();
     final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
@@ -159,12 +175,43 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
-    const settings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 50);
+    // 2. Configure Background Location (Foreground Service)
+    AndroidSettings androidSettings = AndroidSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 50,
+      forceLocationManager: true,
+      intervalDuration: const Duration(seconds: 10),
+      // Foreground Notification to keep service alive
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
+        notificationTitle: "Trans Wake Alarm",
+        notificationText: "Tracking your journey...",
+        notificationIcon: AndroidResource(name: 'ic_launcher'),
+        enableWakeLock: true,
+      ),
+    );
+
+    AppleSettings appleSettings = AppleSettings(
+      accuracy: LocationAccuracy.high,
+      activityType: ActivityType.fitness,
+      distanceFilter: 50,
+      pauseLocationUpdatesAutomatically: false,
+      showBackgroundLocationIndicator: true,
+    );
+
+    const LocationSettings settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 50,
+    );
+
+    LocationSettings activeSettings = settings;
+    if (defaultTargetPlatform == TargetPlatform.android) activeSettings = androidSettings;
+    if (defaultTargetPlatform == TargetPlatform.iOS) activeSettings = appleSettings;
+
     if (widget.currentPosition != null) {
        SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
     }
 
-    _gpsStream = Geolocator.getPositionStream(locationSettings: settings).listen((Position pos) {
+    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings).listen((Position pos) {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
       SupabaseService.updateLocation(pos, currentLine: currentLine);
       double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
@@ -214,7 +261,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (query.isEmpty) return;
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () async {
+    _debounce = Timer(const Duration(milliseconds: 600), () async {
       if (query.length > 2) {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
@@ -222,6 +269,12 @@ class _RoutesTabState extends State<RoutesTab> {
           final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
           if (mounted) {
             setState(() { 
+              if (apiResults.isEmpty && _suggestions.isEmpty) {
+                // Show message if no results at all
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Service temporarily busy. Try again or type more characters."), duration: Duration(seconds: 2))
+                );
+              }
               for (var s in apiResults) {
                  bool exists = _suggestions.any((existing) {
                    if (existing is Station) return existing.id == s.id;
@@ -234,7 +287,12 @@ class _RoutesTabState extends State<RoutesTab> {
             });
           }
         } catch (e) {
-          if (mounted) setState(() => _isSuggestionsLoading = false);
+          if (mounted) {
+            setState(() => _isSuggestionsLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Service temporarily busy. Please try again."), duration: Duration(seconds: 2))
+            );
+          }
         }
       } else {
         if (mounted) setState(() => _isSuggestionsLoading = false);
@@ -512,8 +570,20 @@ class _RoutesTabState extends State<RoutesTab> {
        // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
        // But searchJourneys handles 'when'.
        final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
-       if (mounted) { if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found."))); } }
-     } catch(e) { if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { if (mounted) setState(() => _isLoadingRoute = false); }
+       if (mounted) { 
+         if (res.isNotEmpty) { 
+           _addJourneyTab(res.first); 
+         } else { 
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
+         } 
+       }
+     } on TimeoutException catch(_) {
+       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request timed out. Please try again.")));
+     } catch(e) { 
+       if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Service temporarily busy. Please try again in a moment."))); 
+       }
+     } finally { if (mounted) setState(() => _isLoadingRoute = false); }
   }
 
   Future<void> _triggerVibration() async {

@@ -16,12 +16,14 @@ class SupabaseService {
 
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
   static final ValueNotifier<int> settingsRefreshNotifier = ValueNotifier(0);
+  static StreamSubscription? _friendReqSubscription;
   static StreamSubscription? _msgSubscription;
 
   // --- INITIALIZATION ---
   static Future<void> init() async {
     await NotificationManager.init();
     _startMessageListener();
+    _startFriendRequestListener();
   }
 
   static void _startMessageListener() {
@@ -32,20 +34,63 @@ class SupabaseService {
     _msgSubscription = client
         .from('messages')
         .stream(primaryKey: ['id'])
-        .eq('receiver_id', user.id)
-        .limit(1)
+        .order('created_at', ascending: false)
+        .limit(5)
         .listen((List<Map<String, dynamic>> data) {
-          if (data.isNotEmpty) {
-            final msg = data.first;
+          for (final msg in data) {
+            if (msg['receiver_id'] != user.id) continue;
             final created = DateTime.parse(msg['created_at']);
-            if (DateTime.now().toUtc().difference(created).inSeconds < 10) {
+            // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
+            if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+              // Simple dedupe by ID hash or just rely on OS to update if ID is same
+              // If we really want to avoid re-notifying for the same message we've already shown in this session,
+              // we could keep a Set<String> _notifiedMessageIds.
+              // For now, the time check is a crude but effective filter for "live" updates.
+              
+              String body = 'You received a secure message.';
+              // If it's NOT encrypted, show content. If it IS, keeping it generic is safer/easier unless we decrypt here.
+              // Decryption requires keys which depends on sender.
+              if (msg['is_encrypted'] == false) {
+                 body = msg['content'];
+              }
+
               NotificationManager.showNotification(
                 id: msg['id'].hashCode,
                 title: 'New Private Message',
-                body: 'You received a secure message.',
+                body: body,
+                channelId: 'private_messages',
+                channelName: 'Private Messages',
               );
             }
           }
+        });
+  }
+
+  static void _startFriendRequestListener() {
+    final user = currentUser;
+    if (user == null) return;
+
+    _friendReqSubscription?.cancel();
+    _friendReqSubscription = client
+        .from('friend_requests')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false)
+        .limit(5)
+        .listen((List<Map<String, dynamic>> data) {
+           for (final req in data) {
+             if (req['receiver_id'] != user.id || req['status'] != 'pending') continue;
+             
+             final created = DateTime.parse(req['created_at']);
+             if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+                NotificationManager.showNotification(
+                  id: req['id'].hashCode,
+                  title: 'New Friend Request',
+                  body: 'Someone wants to be your friend!',
+                  channelId: 'friend_requests',
+                  channelName: 'Friend Requests',
+                );
+             }
+           }
         });
   }
 
@@ -61,17 +106,20 @@ class SupabaseService {
     if (response.user != null) {
       await client.from('profiles').upsert({'id': response.user!.id, 'username': username});
       _startMessageListener();
+      _startFriendRequestListener();
     }
   }
 
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
     _startMessageListener();
+    _startFriendRequestListener();
     await loadAndSyncSettings(); 
   }
 
   static Future<void> signOut() async {
     _msgSubscription?.cancel();
+    _friendReqSubscription?.cancel();
     await client.auth.signOut();
   }
 
@@ -310,7 +358,41 @@ class SupabaseService {
   static Stream<List<Map<String, dynamic>>> streamFriends() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
-    return client.from('user_locations').stream(primaryKey: ['user_id']).asyncMap((_) => getFriends());
+
+    late StreamController<List<Map<String, dynamic>>> controller;
+    StreamSubscription? sub1;
+    StreamSubscription? sub2;
+
+    controller = StreamController<List<Map<String, dynamic>>>(
+      onListen: () {
+        Future<void> update([dynamic _]) async {
+           try {
+             final friends = await getFriends();
+             if (!controller.isClosed) controller.add(friends);
+           } catch (e) {
+             debugPrint("Error streaming friends: $e");
+           }
+        }
+
+        // 1. Listen for location updates
+        sub1 = client.from('user_locations').stream(primaryKey: ['user_id']).listen(update);
+        
+        // 2. Listen for friend list changes (add/remove)
+        // Assuming primary key is composite (user_id, friend_id)
+        sub2 = client.from('friends').stream(primaryKey: ['user_id', 'friend_id'])
+            .eq('user_id', user.id)
+            .listen(update);
+        
+        // Initial fetch
+        update();
+      },
+      onCancel: () async {
+        await sub1?.cancel();
+        await sub2?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   static Future<void> sendFriendRequest(String targetUserId) async {
@@ -325,7 +407,14 @@ class SupabaseService {
       .or('and(sender_id.eq.${user.id},receiver_id.eq.$targetUserId),and(sender_id.eq.$targetUserId,receiver_id.eq.${user.id})')
       .maybeSingle();
       
-    if (checkReq != null) throw "Request already pending!";
+    if (checkReq != null) {
+      if (checkReq['status'] == 'pending') {
+         throw "Request already pending!";
+      } else {
+         // Old request exists (accepted/rejected/etc), clear it to allow new request
+         await client.from('friend_requests').delete().eq('id', checkReq['id']);
+      }
+    }
 
     await client.from('friend_requests').insert({
       'sender_id': user.id,
@@ -357,9 +446,12 @@ class SupabaseService {
   static Future<void> removeFriend(String friendId) async {
     final user = currentUser;
     if (user == null) return;
-    await client.from('friends').delete().match({'user_id': user.id, 'friend_id': friendId});
-    await client.from('friends').delete().match({'user_id': friendId, 'friend_id': user.id});
-    friendsListRefresh.value++;
+    try {
+      await client.rpc('remove_friend', params: {'target_friend_id': friendId});
+      friendsListRefresh.value++; 
+    } catch(e) {
+      debugPrint("Error removing friend: $e");
+    }
   }
 
   // --- LOCATION ---

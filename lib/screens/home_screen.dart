@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart'; // Added import for persistence
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -44,7 +45,26 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _loadSavedTab(); // Load saved tab on startup
     _determinePosition();
+  }
+
+  // Load the saved tab index from SharedPreferences
+  Future<void> _loadSavedTab() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedIndex = prefs.getInt('current_tab_index') ?? 0;
+    if (mounted) {
+      setState(() {
+        _currentIndex = savedIndex;
+      });
+    }
+  }
+
+  // Save the tab index whenever it changes
+  Future<void> _onTabChanged(int index) async {
+    setState(() => _currentIndex = index);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('current_tab_index', index);
   }
 
   Future<void> _determinePosition() async {
@@ -109,7 +129,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (index) => setState(() => _currentIndex = index),
+        onDestinationSelected: _onTabChanged, // Updated to use the new method
         backgroundColor: colors.navBarBg,
         indicatorColor: colors.navBarSelected,
         destinations: const [
