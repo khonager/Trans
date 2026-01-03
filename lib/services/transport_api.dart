@@ -21,6 +21,9 @@ class TransportApi {
   static const String _motisUrl = 'https://api.transitous.org';
   static const String _v6Url = 'https://v6.db.transport.rest';
 
+  /// API Mode: 'auto', 'motis', or 'v6'
+  static String apiMode = 'auto';
+
   // In-memory caches with TTL
   static final Map<String, _CacheEntry<List<Station>>> _stationCache = {};
   static final Map<String, _CacheEntry<List<Station>>> _nearbyCache = {};
@@ -147,8 +150,9 @@ class TransportApi {
       'tickets': 'false',
     };
 
-    // FROM: Use coordinates for GPS, locations (POIs), and addresses
-    if (from.id == 'gps' || from.type == 'location' || from.type == 'address') {
+    // FROM: Use coordinates for GPS, locations (POIs), addresses, OR non-numeric IDs
+    final fromIsNumeric = RegExp(r'^[0-9]+$').hasMatch(from.id);
+    if (from.id == 'gps' || from.type == 'location' || from.type == 'address' || !fromIsNumeric) {
       params['from.latitude'] = from.latitude;
       params['from.longitude'] = from.longitude;
       params['from.address'] = from.name;
@@ -156,8 +160,9 @@ class TransportApi {
       params['from'] = from.id;
     }
 
-    // TO: Use coordinates for GPS, locations (POIs), and addresses
-    if (to.id == 'gps' || to.type == 'location' || to.type == 'address') {
+    // TO: Use coordinates for GPS, locations (POIs), addresses, OR non-numeric IDs
+    final toIsNumeric = RegExp(r'^[0-9]+$').hasMatch(to.id);
+    if (to.id == 'gps' || to.type == 'location' || to.type == 'address' || !toIsNumeric) {
       params['to.latitude'] = to.latitude;
       params['to.longitude'] = to.longitude;
       params['to.address'] = to.name;
@@ -266,7 +271,8 @@ class TransportApi {
 
     // TIME
     if (when != null) {
-      params['time'] = when.toUtc().toIso8601String();
+      // MOTIS expects ISO8601 without microseconds
+      params['time'] = when.toUtc().toIso8601String().split('.').first + 'Z';
       params['arriveBy'] = isArrival.toString();
     }
 
@@ -373,8 +379,20 @@ class TransportApi {
     bool isArrival = false,
     int results = 3,
   }) async {
+    if (apiMode == 'v6') {
+      final res = await _searchJourneysV6(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      );
+      return res.map((j) { j['source'] = 'v6'; return j; }).toList();
+    }
+
     try {
-      // Try MOTIS/Transitous first
+      // Try MOTIS/Transitous (unless disabled)
       final motisResults = await _searchJourneysMotis(
         from,
         to,
@@ -383,11 +401,13 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
-      if (motisResults.isNotEmpty) return motisResults;
+      if (motisResults.isNotEmpty || apiMode == 'motis') return motisResults;
       
-      debugPrint("Transitous returned 0 routes. Trying fallback...");
+      debugPrint("Transitous returned 0 routes and mode is auto. Trying fallback...");
       throw Exception("No routes found on primary API");
     } catch (e) {
+      if (apiMode == 'motis') rethrow; // Don't fallback in strict mode
+      
       debugPrint('Transitous searchJourneys failed: $e, trying v6.db...');
       try {
         // Fallback to v6.db
