@@ -37,6 +37,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="io.supabase.trans" android:host="login-callback" />
             </intent-filter>
+            <!-- App Links (Web URL) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="khonager.github.io" android:pathPrefix="/Trans" />
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"

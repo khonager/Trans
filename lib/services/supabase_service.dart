@@ -141,7 +141,10 @@ class SupabaseService {
   }
 
   static Future<void> resetPassword(String email) async {
-    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
+    // configured Site URL (which should be https://khonager.github.io/Trans).
+    // This allows the link to work on devices without the app (opens web app),
+    // and devices with the app can intercept it via Universal Links / App Links.
+    const redirectUrl = 'https://khonager.github.io/Trans/';
     await client.auth.resetPasswordForEmail(email, redirectTo: redirectUrl);
   }
   
