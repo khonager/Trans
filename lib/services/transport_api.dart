@@ -397,7 +397,7 @@ class TransportApi {
           final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
           if (departure == null) return true;
           final depTime = DateTime.parse(departure);
-          return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+          return depTime.isAfter(now);
         } catch (e) {
           return true;
         }
@@ -423,8 +423,8 @@ class TransportApi {
           final departure = journey['departure'];
           if (departure == null) return true;
           final depTime = DateTime.parse(departure);
-          // Allow 1 minute grace period
-          return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+          // Strict filtering: only future departures
+          return depTime.isAfter(now);
         } catch (e) {
           return true; // Keep if we can't parse
         }
@@ -458,7 +458,7 @@ class TransportApi {
             final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
             if (departure == null) return true;
             final depTime = DateTime.parse(departure);
-            return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+            return depTime.isAfter(now);
           } catch (e) {
             return true;
           }

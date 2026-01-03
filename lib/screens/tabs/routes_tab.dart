@@ -410,9 +410,9 @@ class _RoutesTabState extends State<RoutesTab> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
             if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes found."));
-            return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
+              return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
                 final journey = snapshot.data![idx];
-                final legs = journey['legs'] as List;
+                final legs = (journey['legs'] as List).cast<Map<String, dynamic>>();
                 if (legs.isEmpty) return const SizedBox.shrink();
                 final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
                 final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
