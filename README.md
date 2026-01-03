@@ -10,6 +10,34 @@ Whether you are commuting to work or exploring a new city, Travel Companion ensu
 
 ---
 
+## 📲 Install via Obtainium
+
+[Obtainium](https://github.com/ImranR98/Obtainium) allows you to install and update apps directly from their GitHub releases. Here's how to add this app:
+
+### Quick Install (Recommended)
+Click the button below to automatically add the app to Obtainium:
+
+[![Add to Obtainium](https://img.shields.io/badge/Add%20to-Obtainium-blue?logo=android)](https://apps.obtainium.imranr.dev/redirect?app=%7B%22id%22%3A%22io.github.khonager.trans%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fkhonager%2FTrans%22%2C%22author%22%3A%22khonager%22%2C%22name%22%3A%22Trans%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Afalse%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22filterReleaseTitlesByRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22filterReleaseNotesByRegEx%5C%22%3A%5C%22%5C%22%2C%5C%22verifyLatestTag%5C%22%3Afalse%2C%5C%22dontSortReleasesList%5C%22%3Afalse%7D%22%7D)
+
+### Manual Setup
+
+1. **Install Obtainium** from [GitHub](https://github.com/ImranR98/Obtainium/releases) or [F-Droid](https://f-droid.org/packages/dev.imranr.obtainium.fdroid/)
+
+2. **Open Obtainium** and tap the **+** button to add a new app
+
+3. **Paste the repository URL:**
+   ```
+   https://github.com/khonager/Trans
+   ```
+
+4. Tap **Add** and Obtainium will automatically detect and download the latest APK release
+
+5. **Install** the app when prompted
+
+> **Note:** Make sure "Unknown sources" is enabled for Obtainium in your Android settings to allow installation.
+
+---
+
 ## ✨ Features
 
 ### 🎫 Digital Ticket Wallet
