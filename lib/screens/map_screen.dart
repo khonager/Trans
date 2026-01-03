@@ -41,18 +41,18 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  // Google Maps icon loaded from the internet
-  Widget _buildGoogleMapsIcon() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: Image.network(
-        'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
-        width: 28,
-        height: 28,
-        errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.green),
-      ),
-    );
-  }
+  // Cached Google Maps icon loaded from the internet
+  static final Widget _googleMapsIcon = ClipRRect(
+    borderRadius: BorderRadius.circular(4),
+    child: Image.network(
+      'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
+      width: 28,
+      height: 28,
+      cacheWidth: 56, // Cache at 2x for crisp display
+      cacheHeight: 56,
+      errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.green),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +181,7 @@ class _MapScreenState extends State<MapScreen> {
                 heroTag: 'google_maps',
                 backgroundColor: Colors.white,
                 onPressed: () => _openGoogleMaps(startLat, startLng, destinationLat, destinationLng),
-                child: _buildGoogleMapsIcon(),
+                child: _googleMapsIcon,
               ),
             ),
           if (!isWalkingRoute || startLat == null || destinationLat == null)
