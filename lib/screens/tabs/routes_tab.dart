@@ -543,7 +543,7 @@ class _RoutesTabState extends State<RoutesTab> {
               try {
                 final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
                 if (nearby.isNotEmpty) {
-                   from = Station(id: 'gps', name: nearby.first.name, type: 'location', latitude: pos.latitude, longitude: pos.longitude);
+                   from = nearby.first; // Use the actual station with its coordinates/ID
                    if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
                 }
               } catch (_) {}
