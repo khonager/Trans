@@ -21,7 +21,10 @@ class TransportApi {
     for (int attempt = 0; attempt <= retries; attempt++) {
       try {
         debugPrint("Fetching: $uri");
-        final response = await http.get(uri);
+        final response = await http.get(uri, headers: {
+          'User-Agent': 'TransApp/1.0 (contact@example.com)',
+          'Content-Type': 'application/json',
+        });
         if (response.statusCode == 200) return response;
         
         // Retry on 503 (Service Unavailable) with backoff
