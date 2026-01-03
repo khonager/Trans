@@ -59,6 +59,13 @@ class _TransAppState extends State<TransApp> {
   void initState() {
     super.initState();
     _loadPreferences();
+    SupabaseService.settingsRefreshNotifier.addListener(_loadPreferences);
+  }
+
+  @override
+  void dispose() {
+    SupabaseService.settingsRefreshNotifier.removeListener(_loadPreferences);
+    super.dispose();
   }
 
   Future<void> _loadPreferences() async {

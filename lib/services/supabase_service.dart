@@ -15,6 +15,7 @@ class SupabaseService {
   static User? get currentUser => client.auth.currentUser;
 
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
+  static final ValueNotifier<int> settingsRefreshNotifier = ValueNotifier(0);
   static StreamSubscription? _msgSubscription;
 
   // --- INITIALIZATION ---
@@ -155,11 +156,13 @@ class SupabaseService {
         await prefs.setInt('alarm_stops_before', settings['alarm_stops_before']);
       }
 
-      // Favorites
       if (favorites.isNotEmpty) {
         final List<String> favs = favorites.map((f) => json.encode(f)).toList().cast<String>();
         await prefs.setStringList('saved_favorites', favs);
       }
+      
+      // Notify app to reload settings
+      settingsRefreshNotifier.value++;
       
     } catch (e) {
       debugPrint("Error syncing settings: $e");
