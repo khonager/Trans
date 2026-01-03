@@ -91,21 +91,21 @@ class TransportApi {
       'tickets': 'false',
     };
 
-    // FROM
-    if (from.id == 'gps' || from.type == 'location') {
+    // FROM: Use coordinates for GPS, locations (POIs), and addresses
+    if (from.id == 'gps' || from.type == 'location' || from.type == 'address') {
       params['from.latitude'] = from.latitude;
       params['from.longitude'] = from.longitude;
-      // Address param is optional but good for debugging
-      if (from.name != "Current Location") params['from.address'] = from.name;
+      // Address param seems required by v6 API when using coordinates
+      params['from.address'] = from.name;
     } else {
       params['from'] = from.id;
     }
 
-    // TO
-    if (to.id == 'gps' || to.type == 'location') {
+    // TO: Use coordinates for GPS, locations (POIs), and addresses
+    if (to.id == 'gps' || to.type == 'location' || to.type == 'address') {
       params['to.latitude'] = to.latitude;
       params['to.longitude'] = to.longitude;
-      if (to.name != "Current Location") params['to.address'] = to.name;
+      params['to.address'] = to.name;
     } else {
       params['to'] = to.id;
     }

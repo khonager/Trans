@@ -80,6 +80,10 @@ class _SettingsTabState extends State<SettingsTab> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vibration_pattern', _vibrationPattern);
     await prefs.setInt('vibration_intensity', _vibrationIntensity);
+    await SupabaseService.updateSettings({
+      'vibration_pattern': _vibrationPattern,
+      'vibration_intensity': _vibrationIntensity
+    });
   }
 
   Future<void> _saveAlarmSettings(int stops) async {
@@ -88,6 +92,7 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() {
       _stopsBeforeAlarm = stops;
     });
+    await SupabaseService.updateSettings({'alarm_stops_before': stops});
   }
 
   Future<void> _testVibration() async {
@@ -228,9 +233,11 @@ class _SettingsTabState extends State<SettingsTab> {
     
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
+    // FIX: Keyboard padding - get keyboard height from viewInsets
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 + keyboardHeight),
       child: ListView(
         children: [
           SizedBox(height: topPadding),
@@ -248,6 +255,18 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const SizedBox(width: 16),
               Text("Trans", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+              // DEV badge - only shows on dev builds
+              if (const bool.fromEnvironment('IS_DEV', defaultValue: false)) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text("DEV", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 30),
@@ -450,12 +469,13 @@ class _SettingsTabState extends State<SettingsTab> {
           child: Column(
             children: [
               if (!_isEditing) ...[
-                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; setState(() => _isEditing = true); })),
+                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; _emailCtrl.text = user.email ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
                 TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: "Username")),
+                TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email")), // Added Email Field
                 TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: "New Password (Optional)"), obscureText: true),
                 const SizedBox(height: 10),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated!"))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated! Check email for confirmation if changed."))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
               ],
               Divider(color: colors.divider),
               ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); })
@@ -479,6 +499,13 @@ class _SettingsTabState extends State<SettingsTab> {
           TextField(controller: _usernameCtrl, decoration: const InputDecoration(hintText: "Username (Sign Up)")),
           const SizedBox(height: 10),
           TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => _showForgotPasswordDialog(context),
+              child: const Text("Forgot Password?", style: TextStyle(fontSize: 12)),
+            ),
+          ),
           const SizedBox(height: 10),
           Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
             TextButton(
@@ -514,5 +541,55 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget _buildSection(BuildContext context, List<Widget> children) {
     final colors = TransColors.of(context);
     return Container(decoration: BoxDecoration(color: colors.settingsSectionBg, borderRadius: BorderRadius.circular(16)), child: Column(children: children));
+  }
+
+  void _showForgotPasswordDialog(BuildContext context) {
+    final emailCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Reset Password"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Enter your email to receive a password reset link."),
+            const SizedBox(height: 10),
+            TextField(
+              controller: emailCtrl,
+              decoration: const InputDecoration(labelText: "Email"),
+              keyboardType: TextInputType.emailAddress,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final email = emailCtrl.text.trim();
+              if (email.isEmpty) return;
+              try {
+                await SupabaseService.resetPassword(email);
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Password reset email sent (if account exists).")),
+                  );
+                }
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Error: $e")),
+                  );
+                }
+              }
+            },
+            child: const Text("Send"),
+          ),
+        ],
+      ),
+    );
   }
 }

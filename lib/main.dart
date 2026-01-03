@@ -58,16 +58,31 @@ class _TransAppState extends State<TransApp> {
   @override
   void initState() {
     super.initState();
-    _loadPreferences();
+    _readPreferences(); // Show immediate local state
+    _initSync();        // Start cloud sync
+    SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
   }
 
-  Future<void> _loadPreferences() async {
+  @override
+  void dispose() {
+    SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
+    super.dispose();
+  }
+
+  Future<void> _initSync() async {
+    await SupabaseService.loadAndSyncSettings();
+  }
+
+  Future<void> _readPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final isGhost = prefs.getBool('ghost_mode') ?? false;
     final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
     final storedIsDark = prefs.getBool('is_dark_mode');
+
+    if (!mounted) return;
 
     setState(() {
       _onlyNahverkehr = onlyNv;
@@ -98,6 +113,7 @@ class _TransAppState extends State<TransApp> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_dark_mode', isDark);
     await prefs.setBool('use_system_theme', false);
+    await SupabaseService.updateSettings({'is_dark_mode': isDark, 'use_system_theme': false});
   }
 
   void _toggleSystemSync(bool enabled) async {
@@ -113,6 +129,7 @@ class _TransAppState extends State<TransApp> {
       }
     });
     await prefs.setBool('use_system_theme', enabled);
+    await SupabaseService.updateSettings({'use_system_theme': enabled});
   }
 
   void _toggleNahverkehr(bool enabled) async {
@@ -121,6 +138,7 @@ class _TransAppState extends State<TransApp> {
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('only_nahverkehr', enabled);
+    await SupabaseService.updateSettings({'only_nahverkehr': enabled});
   }
   
   void _toggleGhostMode(bool enabled) async {
@@ -130,6 +148,7 @@ class _TransAppState extends State<TransApp> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('ghost_mode', enabled);
     await SupabaseService.toggleGhostMode(enabled);
+    await SupabaseService.updateSettings({'ghost_mode': enabled});
   }
   
   void _updateThemeColor(Color color) async {
