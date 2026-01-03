@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart'; // Added import for persistence
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
