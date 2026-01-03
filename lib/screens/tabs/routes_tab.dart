@@ -541,6 +541,7 @@ class _RoutesTabState extends State<RoutesTab> {
               from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: pos.latitude, longitude: pos.longitude);
               // Resolve address for better UX
               try {
+                final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
                 if (nearby.isNotEmpty) {
                    from = Station(id: 'gps', name: nearby.first.name, type: 'location', latitude: pos.latitude, longitude: pos.longitude);
                    if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
