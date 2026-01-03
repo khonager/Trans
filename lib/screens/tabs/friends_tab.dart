@@ -352,9 +352,18 @@ class _FriendsTabState extends State<FriendsTab> {
       statusColor = colors.statusActive;
       
       if (currentLine != null && currentLine.isNotEmpty) {
-        statusText = "On $currentLine";
-        statusColor = colors.statusOnline;
-        statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
+        final lastUpdate = DateTime.tryParse(friend['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
+        final diff = DateTime.now().toUtc().difference(lastUpdate);
+
+        if (diff.inMinutes < 10) {
+          statusText = "On $currentLine";
+          statusColor = colors.statusOnline;
+          statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
+        } else {
+          statusText = "Last on $currentLine";
+          statusColor = colors.textSecondary;
+          statusIcon = Icon(Icons.history, size: 12, color: colors.textSecondary);
+        }
       }
     }
 
