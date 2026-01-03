@@ -522,7 +522,7 @@ class _RoutesTabState extends State<RoutesTab> {
     } catch(e) {}
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     setState(() {
-      _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps));
+      _tabs.add(RouteTab(id: id, title: title == "Route" ? (_toStation?.name ?? "Route") : title, subtitle: subtitle ?? "Details", eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", totalDuration: duration, destinationId: _toStation?.id ?? "", steps: steps, source: journeyData['source']));
       _activeTabId = id;
       // if (title != "Alternative") { _fromStation = null; _toStation = null; _fromController.clear(); _toController.clear(); }
     });
@@ -541,9 +541,8 @@ class _RoutesTabState extends State<RoutesTab> {
               from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: pos.latitude, longitude: pos.longitude);
               // Resolve address for better UX
               try {
-                final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
                 if (nearby.isNotEmpty) {
-                   from = nearby.first; // Use the actual station with its coordinates/ID
+                   from = Station(id: 'gps', name: nearby.first.name, type: 'location', latitude: pos.latitude, longitude: pos.longitude);
                    if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
                 }
               } catch (_) {}
@@ -695,7 +694,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildActiveRouteView(RouteTab route) {
     final colors = TransColors.of(context);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(route.subtitle, style: TextStyle(color: colors.textSecondary))])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destinationId, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destinationId, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destinationId, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destinationId, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
   }
 }
 
