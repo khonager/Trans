@@ -297,11 +297,39 @@ class _FriendsTabState extends State<FriendsTab> {
           ),
           IconButton(
             icon: Icon(Icons.check_circle, color: colors.actionIconSuccess),
-            onPressed: () => SupabaseService.acceptFriendRequest(req['sender_id']),
+            onPressed: () async {
+               try {
+                 await SupabaseService.acceptFriendRequest(req['sender_id']);
+                 if (context.mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Friend request accepted!")));
+                   setState(() {
+                     _requests.removeWhere((r) => r['id'] == req['id']);
+                   });
+                 }
+               } catch (e) {
+                 if (context.mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                 }
+               }
+            },
           ),
           IconButton(
             icon: Icon(Icons.cancel, color: colors.actionIconError),
-            onPressed: () => SupabaseService.rejectFriendRequest(req['sender_id']),
+            onPressed: () async {
+               try {
+                 await SupabaseService.rejectFriendRequest(req['sender_id']);
+                 if (context.mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Friend request denied.")));
+                   setState(() {
+                     _requests.removeWhere((r) => r['id'] == req['id']);
+                   });
+                 }
+               } catch (e) {
+                 if (context.mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                 }
+               }
+            },
           ),
         ],
       ),
