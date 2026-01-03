@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:trans/services/transport_api.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -23,207 +24,200 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
-
-  void _openGoogleMaps(double startLat, double startLng, double destLat, double destLng) async {
-    // Google Maps URL with origin and destination
-    final webUrl = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1'
-      '&origin=$startLat,$startLng'
-      '&destination=$destLat,$destLng'
-      '&travelmode=walking'
-    );
-    
-    try {
-      await launchUrl(webUrl, mode: LaunchMode.externalApplication);
-    } catch (e) {
-      // Fallback: open in browser
-      await launchUrl(webUrl, mode: LaunchMode.inAppBrowserView);
-    }
-  }
-
-  // Cached Google Maps icon loaded from the internet
-  static final Widget _googleMapsIcon = ClipRRect(
-    borderRadius: BorderRadius.circular(4),
-    child: Image.network(
-      'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
-      width: 28,
-      height: 28,
-      cacheWidth: 56, // Cache at 2x for crisp display
-      cacheHeight: 56,
-      errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.green),
-    ),
-  );
+  List<LatLng> _routePoints = [];
+  List<Marker> _markers = [];
+  LatLngBounds? _bounds;
+  bool _isLoadingPath = true;
 
   @override
-  Widget build(BuildContext context) {
-    final points = <LatLng>[];
-    final markers = <Marker>[];
-    
+  void initState() {
+    super.initState();
+    _loadRoute();
+  }
+
+  Future<void> _loadRoute() async {
     final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
+    List<LatLng> allPoints = [];
+    List<Marker> markers = [];
 
     for (var step in stepsToShow) {
-      // 1. PATH LINE
-      if (step.path != null && step.path!.isNotEmpty) {
-        points.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
-      } else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-        if (step.startLat != null && step.startLng != null) points.add(LatLng(step.startLat!, step.startLng!));
+      // 1. Walking Path (Fetch via OSRM)
+      if (widget.focusStep != null && (step.type == 'walk' || step.isWalking) && step.startLat != null && step.endLat != null) {
+        try {
+          // Fetch real walking path
+          final path = await TransportApi.getWalkingRoute(step.startLat!, step.startLng!, step.endLat!, step.endLng!);
+          allPoints.addAll(path.map((p) => LatLng(p[0], p[1])));
+        } catch (_) {
+          // Fallback
+          allPoints.add(LatLng(step.startLat!, step.startLng!));
+          allPoints.add(LatLng(step.endLat!, step.endLng!));
+        }
+      } 
+      // 2. Existing path (bus/train)
+      else if (step.path != null && step.path!.isNotEmpty) {
+        allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+      } 
+      // 3. Fallback for stopovers
+      else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        if (step.startLat != null) allPoints.add(LatLng(step.startLat!, step.startLng!));
         for (var stop in step.stopovers!) {
           if (stop['stop'] != null && stop['stop']['location'] != null) {
-            points.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
+            allPoints.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
           }
         }
-        if (step.endLat != null && step.endLng != null) points.add(LatLng(step.endLat!, step.endLng!));
-      } else if (step.startLat != null && step.startLng != null && step.endLat != null && step.endLng != null) {
-        points.add(LatLng(step.startLat!, step.startLng!));
-        points.add(LatLng(step.endLat!, step.endLng!));
+        if (step.endLat != null) allPoints.add(LatLng(step.endLat!, step.endLng!));
+      } 
+      // 4. Simple straight line fallback
+      else if (step.startLat != null && step.endLat != null) {
+        allPoints.add(LatLng(step.startLat!, step.startLng!));
+        allPoints.add(LatLng(step.endLat!, step.endLng!));
       }
 
-      // 2. STOP MARKERS (Small Dots for every intermediate stop)
+      // Add Markers
+      // Start Marker
+      if (step.startLat != null) {
+        markers.add(Marker(
+            point: LatLng(step.startLat!, step.startLng!),
+            width: 16, height: 16,
+            child: Container(decoration: BoxDecoration(color: step.type == 'walk' ? Colors.orange : Colors.blue, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))
+        ));
+      }
+      // Stopover markers
       if (step.stopovers != null) {
         for (var stop in step.stopovers!) {
           if (stop['stop'] != null && stop['stop']['location'] != null) {
             markers.add(Marker(
               point: LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']),
               width: 10, height: 10,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.8),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1.5)
-                ),
-              ),
+              child: Container(decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.blue, width: 2))),
             ));
           }
         }
       }
-
-      // 3. TRANSFER POINTS (Larger Orange Dots)
-      // We check if this step is a transfer or walk, AND we are viewing the full route
-      if (widget.focusStep == null && (step.type == 'transfer' || step.type == 'walk')) {
-         if (step.startLat != null && step.startLng != null) {
-            markers.add(Marker(
-              point: LatLng(step.startLat!, step.startLng!),
-              width: 16, height: 16,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.orange,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2)
-                ),
-              ),
-            ));
-         }
-      }
     }
 
-    // 4. DESTINATION PIN (Only one at the very end)
-    if (points.isNotEmpty) {
-      final lastPoint = points.last;
-      markers.add(Marker(
-        point: lastPoint,
-        width: 40, height: 40,
-        child: const Icon(Icons.location_on, color: Colors.red, size: 40),
-        alignment: Alignment.topCenter,
-      ));
+    // Destination Marker
+    if (allPoints.isNotEmpty) {
+       markers.add(Marker(
+         point: allPoints.last,
+         width: 32, height: 32,
+         alignment: Alignment.topCenter,
+         child: const Icon(Icons.location_on, color: Colors.red, size: 32),
+       ));
     }
-
-    // 5. USER POSITION
+    
+    // User Position
     if (widget.currentPosition != null) {
       markers.add(Marker(
         point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
-        width: 40, height: 40,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.blue.withValues(alpha: 0.3),
-            shape: BoxShape.circle
-          ),
-          child: const Center(child: Icon(Icons.my_location, color: Colors.blue, size: 20)),
-        ),
+        width: 32, height: 32,
+        child: Container(decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.3), shape: BoxShape.circle), child: const Icon(Icons.my_location, color: Colors.blue, size: 16)),
       ));
     }
 
-    // Bounds Calculation
+    // Calculate Bounds
     LatLngBounds? bounds;
-    if (points.isNotEmpty) {
-      bounds = LatLngBounds.fromPoints(points);
+    if (allPoints.isNotEmpty) {
+      bounds = LatLngBounds.fromPoints(allPoints);
     } else if (widget.currentPosition != null) {
-      bounds = LatLngBounds(
-        LatLng(widget.currentPosition!.latitude - 0.01, widget.currentPosition!.longitude - 0.01),
-        LatLng(widget.currentPosition!.latitude + 0.01, widget.currentPosition!.longitude + 0.01)
-      );
+       final p = LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+       bounds = LatLngBounds(LatLng(p.latitude-0.01, p.longitude-0.01), LatLng(p.latitude+0.01, p.longitude+0.01));
     }
-    final initialCenter = bounds?.center ?? const LatLng(51.1657, 10.4515);
 
-    // Determine if this is a walking route
-    final isWalkingRoute = widget.focusStep != null && 
-        (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking);
-    final startLat = points.isNotEmpty ? points.first.latitude : null;
-    final startLng = points.isNotEmpty ? points.first.longitude : null;
-    final destinationLat = points.isNotEmpty ? points.last.latitude : null;
-    final destinationLng = points.isNotEmpty ? points.last.longitude : null;
+    if (mounted) {
+      setState(() {
+        _routePoints = allPoints;
+        _markers = markers;
+        _bounds = bounds;
+        _isLoadingPath = false;
+      });
+    }
+  }
+
+  void _openGoogleMaps() async {
+    if (_routePoints.isEmpty) return;
+    final start = _routePoints.first;
+    final end = _routePoints.last;
+    final url = Uri.parse("https://www.google.com/maps/dir/?api=1&origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&travelmode=walking");
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoadingPath) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final initialCenter = _bounds?.center ?? const LatLng(51.1657, 10.4515);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.focusStep?.instruction ?? "Route Map"),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          if (isWalkingRoute && startLat != null && startLng != null && destinationLat != null && destinationLng != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 32),
-              child: FloatingActionButton(
-                heroTag: 'google_maps',
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Google Maps Button (Left)
+            if (widget.focusStep != null && (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking))
+              FloatingActionButton(
+                heroTag: "gmaps",
                 backgroundColor: Colors.white,
-                onPressed: () => _openGoogleMaps(startLat, startLng, destinationLat, destinationLng),
-                child: _googleMapsIcon,
-              ),
+                onPressed: _openGoogleMaps,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Image.network(
+                    'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              )
+            else
+              const SizedBox(), // Spacer to keep recenter button on right
+
+            // Recenter Button (Right)
+            FloatingActionButton(
+              heroTag: "center",
+              onPressed: () {
+                if (_bounds != null) {
+                  _mapController.fitCamera(CameraFit.bounds(bounds: _bounds!, padding: const EdgeInsets.all(50)));
+                }
+              },
+              child: const Icon(Icons.center_focus_strong),
             ),
-          if (!isWalkingRoute || startLat == null || destinationLat == null)
-            const SizedBox(), // Spacer when no left button
-          FloatingActionButton(
-            heroTag: 'recenter',
-            onPressed: () {
-              if (bounds != null) {
-                _mapController.fitCamera(CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)));
-              } else {
-                _mapController.move(initialCenter, 13);
-              }
-            },
-            child: const Icon(Icons.center_focus_strong),
-          ),
-        ],
+          ],
+        ),
       ),
       body: FlutterMap(
         mapController: _mapController,
         options: MapOptions(
           initialCenter: initialCenter,
           initialZoom: 13,
-          initialCameraFit: bounds != null 
-            ? CameraFit.bounds(bounds: bounds!, padding: const EdgeInsets.all(50)) 
-            : null,
+          initialCameraFit: _bounds != null ? CameraFit.bounds(bounds: _bounds!, padding: const EdgeInsets.all(50)) : null,
         ),
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.trans',
           ),
-          if (points.isNotEmpty)
-            PolylineLayer(
+          if (_routePoints.isNotEmpty)
+            PolylineLayer<Object>(
               polylines: [
                 Polyline(
-                  points: points,
+                  points: _routePoints,
                   strokeWidth: 5.0,
-                  color: Colors.blueAccent,
+                  color: (widget.focusStep?.type == 'walk' || (widget.focusStep?.isWalking ?? false)) 
+                      ? Theme.of(context).colorScheme.primary 
+                      : Colors.blueAccent,
                 ),
               ],
             ),
-          MarkerLayer(markers: markers),
+          MarkerLayer(markers: _markers),
         ],
       ),
     );
