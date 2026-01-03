@@ -58,27 +58,31 @@ class _TransAppState extends State<TransApp> {
   @override
   void initState() {
     super.initState();
-    _loadPreferences();
-    SupabaseService.settingsRefreshNotifier.addListener(_loadPreferences);
+    _readPreferences(); // Show immediate local state
+    _initSync();        // Start cloud sync
+    SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
   }
 
   @override
   void dispose() {
-    SupabaseService.settingsRefreshNotifier.removeListener(_loadPreferences);
+    SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
     super.dispose();
   }
 
-  Future<void> _loadPreferences() async {
+  Future<void> _initSync() async {
+    await SupabaseService.loadAndSyncSettings();
+  }
+
+  Future<void> _readPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Try to sync from cloud if logged in
-    await SupabaseService.loadAndSyncSettings();
-
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final isGhost = prefs.getBool('ghost_mode') ?? false;
     final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
     final storedIsDark = prefs.getBool('is_dark_mode');
+
+    if (!mounted) return;
 
     setState(() {
       _onlyNahverkehr = onlyNv;
