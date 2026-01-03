@@ -1,16 +1,16 @@
-name: Production Web Build & Deploy
+name: Dev Web Build & Deploy
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "stable" ]
+    branches: [ "unstable" ]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-and-deploy:
-    name: Build & Deploy Production
+    name: Build & Deploy Dev Web
     runs-on: ubuntu-latest
 
     steps:
@@ -31,13 +31,11 @@ jobs:
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
       - name: Build Web Release
-        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/dev/"
 
-      # Deploy to gh-pages root (production)
-      - name: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages (Dev)
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/web
-          # Keep /dev/ directory from dev deployments
-          keep_files: true
+          destination_dir: dev
