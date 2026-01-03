@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/favorite.dart';
+import 'supabase_service.dart';
 
 class FavoritesManager {
   static const _key = 'saved_favorites';
@@ -31,6 +32,9 @@ class FavoritesManager {
 
     final encoded = current.map((f) => json.encode(f.toJson())).toList();
     await prefs.setStringList(_key, encoded);
+    
+    // Sync to Supabase
+    await _syncToSupabase(current);
   }
 
   static Future<void> deleteFavorite(String id) async {
@@ -41,5 +45,18 @@ class FavoritesManager {
     
     final encoded = current.map((f) => json.encode(f.toJson())).toList();
     await prefs.setStringList(_key, encoded);
+
+    // Sync to Supabase
+    await _syncToSupabase(current);
+  }
+
+  static Future<void> _syncToSupabase(List<Favorite> favorites) async {
+    try {
+      final List<Map<String, dynamic>> favsData = favorites.map((f) => f.toJson()).toList();
+      await SupabaseService.updateFavoritesInfo(favsData);
+    } catch (e) {
+      // Fail silently or log
+      print("Error syncing favorites: $e");
+    }
   }
 }

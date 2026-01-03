@@ -63,6 +63,10 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // Try to sync from cloud if logged in
+    await SupabaseService.loadAndSyncSettings();
+
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final isGhost = prefs.getBool('ghost_mode') ?? false;
@@ -98,6 +102,7 @@ class _TransAppState extends State<TransApp> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_dark_mode', isDark);
     await prefs.setBool('use_system_theme', false);
+    await SupabaseService.updateSettings({'is_dark_mode': isDark, 'use_system_theme': false});
   }
 
   void _toggleSystemSync(bool enabled) async {
@@ -113,6 +118,7 @@ class _TransAppState extends State<TransApp> {
       }
     });
     await prefs.setBool('use_system_theme', enabled);
+    await SupabaseService.updateSettings({'use_system_theme': enabled});
   }
 
   void _toggleNahverkehr(bool enabled) async {
@@ -121,6 +127,7 @@ class _TransAppState extends State<TransApp> {
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('only_nahverkehr', enabled);
+    await SupabaseService.updateSettings({'only_nahverkehr': enabled});
   }
   
   void _toggleGhostMode(bool enabled) async {
@@ -130,6 +137,7 @@ class _TransAppState extends State<TransApp> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('ghost_mode', enabled);
     await SupabaseService.toggleGhostMode(enabled);
+    await SupabaseService.updateSettings({'ghost_mode': enabled});
   }
   
   void _updateThemeColor(Color color) async {

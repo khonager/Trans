@@ -80,6 +80,10 @@ class _SettingsTabState extends State<SettingsTab> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vibration_pattern', _vibrationPattern);
     await prefs.setInt('vibration_intensity', _vibrationIntensity);
+    await SupabaseService.updateSettings({
+      'vibration_pattern': _vibrationPattern,
+      'vibration_intensity': _vibrationIntensity
+    });
   }
 
   Future<void> _saveAlarmSettings(int stops) async {
@@ -88,6 +92,7 @@ class _SettingsTabState extends State<SettingsTab> {
     setState(() {
       _stopsBeforeAlarm = stops;
     });
+    await SupabaseService.updateSettings({'alarm_stops_before': stops});
   }
 
   Future<void> _testVibration() async {
