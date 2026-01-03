@@ -35,6 +35,23 @@ Click the button below to automatically add the app to Obtainium:
 
 ---
 
+## 🧪 Bleeding Edge / Dev Builds
+
+For those who want the absolute latest features (and bugs!), you can install the **Dev Build**. This version is updated automatically with every change to the source code.
+
+> [!CAUTION]
+> **Expect Bugs!** Dev builds are unstable and may crash or have broken features. We recommend keeping the stable version installed as a backup.
+
+### Install Dev Build via Obtainium
+
+1. In Obtainium, **Add App** -> **Paste URL**: `https://github.com/khonager/Trans`
+2. Scroll down to **"Additional Settings"**
+3. Enable **"Include Prereleases"**
+4. Set **"Filter Release Titles by Regular Expression"** to `Latest Dev Build`
+5. Tap **Add**
+
+---
+
 ## ✨ Features
 
 ### 🚆 Route Planning
