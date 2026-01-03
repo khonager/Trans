@@ -1,4 +1,4 @@
-name: Android Release
+name: Production Android Release
 
 on:
   push:
@@ -11,7 +11,6 @@ jobs:
     name: Build & Release APK
     runs-on: ubuntu-latest
 
-    # FIX: Grant permission to create Releases and upload files
     permissions:
       contents: write
 
@@ -30,15 +29,10 @@ jobs:
         with:
           channel: 'stable'
 
-      # FIX: Create the .env file exactly like you have locally
-      # We assume your AppConfig reads from dotenv, so we just feed dotenv.
       - name: Create .env file
         run: |
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
-          
-          # Verify file creation (prints content to log, be careful or remove cat for privacy)
-          # cat .env 
 
       - name: Get Dependencies
         run: flutter pub get
@@ -73,7 +67,10 @@ jobs:
             --key-pass "pass:$KEY_PASS" \
             "$APK_PATH"
 
-          echo "SIGNED_APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          # Rename to clean production name
+          APK_DIR=$(dirname "$APK_PATH")
+          mv "$APK_PATH" "$APK_DIR/trans.apk"
+          echo "SIGNED_APK_PATH=$APK_DIR/trans.apk" >> $GITHUB_ENV
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
