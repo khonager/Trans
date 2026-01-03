@@ -274,7 +274,7 @@ class TransportApi {
     // Must include WALK to allow walking to/from stations!
     if (nahverkehrOnly) {
       params['transitModes'] =
-          'WALK,REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS';
+          'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS';
     }
 
     final response = await _fetch(_getMotisUri('/api/v5/plan', params));
@@ -283,7 +283,7 @@ class TransportApi {
     final itineraries = data['itineraries'] as List? ?? [];
 
     // Convert MOTIS itineraries to v6.db journey format and tag source
-    return itineraries.map((it) {
+    return itineraries.map<Map<String, dynamic>>((it) {
       final j = journeyFromMotisItinerary(it as Map<String, dynamic>);
       j['source'] = 'motis';
       return j;
@@ -375,7 +375,7 @@ class TransportApi {
   }) async {
     try {
       // Try MOTIS/Transitous first
-      return await _searchJourneysMotis(
+      final motisResults = await _searchJourneysMotis(
         from,
         to,
         nahverkehrOnly: nahverkehrOnly,
@@ -383,6 +383,10 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
+      if (motisResults.isNotEmpty) return motisResults;
+      
+      debugPrint("Transitous returned 0 routes. Trying fallback...");
+      throw Exception("No routes found on primary API");
     } catch (e) {
       debugPrint('Transitous searchJourneys failed: $e, trying v6.db...');
       try {
