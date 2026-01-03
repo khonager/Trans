@@ -83,11 +83,19 @@ jobs:
           name: trans-dev-${{ github.run_number }}
           path: ${{ env.SIGNED_APK_PATH }}
 
+      - name: Delete Old Dev Release
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 0
+          delete_tag_pattern: dev-latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Dev Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-${{ github.run_number }}
-          name: Dev Build #${{ github.run_number }}
+          tag_name: dev-latest
+          name: Latest Dev Build
           prerelease: true
           files: ${{ env.SIGNED_APK_PATH }}
         env:

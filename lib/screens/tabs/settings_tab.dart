@@ -304,7 +304,7 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)),
               subtitle: widget.useSystemTheme 
-                  ? Text("Synced with System", style: TextStyle(fontSize: 12, color: primaryColor))
+                  ? Text("Synced with System", style: TextStyle(fontSize: 12, color: colors.textSecondary))
                   : null,
               trailing: Switch(
                 value: widget.isDarkMode,

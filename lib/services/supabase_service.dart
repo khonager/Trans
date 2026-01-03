@@ -428,6 +428,7 @@ class SupabaseService {
 
   static Future<void> acceptFriendRequest(String senderId) async {
     await client.rpc('accept_friend_request', params: {'request_sender_id': senderId});
+    friendsListRefresh.value++;
   }
 
   static Future<void> rejectFriendRequest(String senderId) async {
