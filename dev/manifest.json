@@ -1,11 +1,11 @@
 {
-    "name": "trans",
-    "short_name": "trans",
+    "name": "Trans",
+    "short_name": "Trans",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
+    "background_color": "#ffffff",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Public transit companion app",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
