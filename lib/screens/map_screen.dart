@@ -41,16 +41,15 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  // Google Maps-style pin icon with signature colors
+  // Google Maps icon loaded from the internet
   Widget _buildGoogleMapsIcon() {
-    return Container(
-      width: 24,
-      height: 24,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-      ),
-      child: CustomPaint(
-        painter: _GoogleMapsPinPainter(),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
+        width: 28,
+        height: 28,
+        errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.green),
       ),
     );
   }
@@ -229,69 +228,4 @@ class _MapScreenState extends State<MapScreen> {
       ),
     );
   }
-}
-
-// Custom painter for Google Maps-style location pin icon
-class _GoogleMapsPinPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
-    
-    // Google Maps pin colors
-    const red = Color(0xFFEA4335);
-    const blue = Color(0xFF4285F4);
-    const green = Color(0xFF34A853);
-    const yellow = Color(0xFFFBBC05);
-    
-    // Draw four quadrants
-    final paint = Paint()..style = PaintingStyle.fill;
-    
-    // Top-right (Red)
-    paint.color = red;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      -1.5708, // -90 degrees in radians
-      1.5708,  // 90 degrees
-      true,
-      paint,
-    );
-    
-    // Bottom-right (Blue)
-    paint.color = blue;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      0,
-      1.5708,
-      true,
-      paint,
-    );
-    
-    // Bottom-left (Green)
-    paint.color = green;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      1.5708,
-      1.5708,
-      true,
-      paint,
-    );
-    
-    // Top-left (Yellow)
-    paint.color = yellow;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      3.1416,
-      1.5708,
-      true,
-      paint,
-    );
-    
-    // White center circle
-    paint.color = Colors.white;
-    canvas.drawCircle(center, radius * 0.35, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
