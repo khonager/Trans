@@ -261,7 +261,7 @@ class _RoutesTabState extends State<RoutesTab> {
     if (query.isEmpty) return;
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () async {
+    _debounce = Timer(const Duration(milliseconds: 600), () async {
       if (query.length > 2) {
         double? refLat = widget.currentPosition?.latitude;
         double? refLng = widget.currentPosition?.longitude;
@@ -269,6 +269,12 @@ class _RoutesTabState extends State<RoutesTab> {
           final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
           if (mounted) {
             setState(() { 
+              if (apiResults.isEmpty && _suggestions.isEmpty) {
+                // Show message if no results at all
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Service temporarily busy. Try again or type more characters."), duration: Duration(seconds: 2))
+                );
+              }
               for (var s in apiResults) {
                  bool exists = _suggestions.any((existing) {
                    if (existing is Station) return existing.id == s.id;
@@ -281,7 +287,12 @@ class _RoutesTabState extends State<RoutesTab> {
             });
           }
         } catch (e) {
-          if (mounted) setState(() => _isSuggestionsLoading = false);
+          if (mounted) {
+            setState(() => _isSuggestionsLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Service temporarily busy. Please try again."), duration: Duration(seconds: 2))
+            );
+          }
         }
       } else {
         if (mounted) setState(() => _isSuggestionsLoading = false);
@@ -559,8 +570,20 @@ class _RoutesTabState extends State<RoutesTab> {
        // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
        // But searchJourneys handles 'when'.
        final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
-       if (mounted) { if (res.isNotEmpty) { _addJourneyTab(res.first); } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found."))); } }
-     } catch(e) { if(mounted && !e.toString().contains("Timeout")) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } finally { if (mounted) setState(() => _isLoadingRoute = false); }
+       if (mounted) { 
+         if (res.isNotEmpty) { 
+           _addJourneyTab(res.first); 
+         } else { 
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
+         } 
+       }
+     } on TimeoutException catch(_) {
+       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Request timed out. Please try again.")));
+     } catch(e) { 
+       if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Service temporarily busy. Please try again in a moment."))); 
+       }
+     } finally { if (mounted) setState(() => _isLoadingRoute = false); }
   }
 
   Future<void> _triggerVibration() async {
