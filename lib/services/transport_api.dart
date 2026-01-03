@@ -388,7 +388,21 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
-      return res.map((j) { j['source'] = 'v6'; return j; }).toList();
+      // Filter out past journeys and tag with source
+      final now = DateTime.now();
+      final filtered = isArrival ? res : res.where((journey) {
+        try {
+          final legs = journey['legs'] as List?;
+          if (legs == null || legs.isEmpty) return true;
+          final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
+          if (departure == null) return true;
+          final depTime = DateTime.parse(departure);
+          return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+        } catch (e) {
+          return true;
+        }
+      }).toList();
+      return filtered.map((j) { j['source'] = 'v6'; return j; }).toList();
     }
 
     try {
@@ -401,7 +415,22 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
-      if (motisResults.isNotEmpty || apiMode == 'motis') return motisResults;
+      
+      // Filter out journeys with past departure times (unless searching by arrival time)
+      final now = DateTime.now();
+      final filteredResults = isArrival ? motisResults : motisResults.where((journey) {
+        try {
+          final departure = journey['departure'];
+          if (departure == null) return true;
+          final depTime = DateTime.parse(departure);
+          // Allow 1 minute grace period
+          return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+        } catch (e) {
+          return true; // Keep if we can't parse
+        }
+      }).toList();
+      
+      if (filteredResults.isNotEmpty || apiMode == 'motis') return filteredResults;
       
       debugPrint("Transitous returned 0 routes and mode is auto. Trying fallback...");
       throw Exception("No routes found on primary API");
@@ -419,8 +448,23 @@ class TransportApi {
           isArrival: isArrival,
           results: results,
         );
-        // Tag valid results with v6 source
-        return res.map((j) {
+        
+        // Filter out past journeys and tag with source
+        final now = DateTime.now();
+        final filtered = isArrival ? res : res.where((journey) {
+          try {
+            final legs = journey['legs'] as List?;
+            if (legs == null || legs.isEmpty) return true;
+            final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
+            if (departure == null) return true;
+            final depTime = DateTime.parse(departure);
+            return depTime.isAfter(now.subtract(const Duration(minutes: 1)));
+          } catch (e) {
+            return true;
+          }
+        }).toList();
+        
+        return filtered.map((j) {
            j['source'] = 'v6';
            return j;
         }).toList();
