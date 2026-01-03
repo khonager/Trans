@@ -63,4 +63,31 @@ class Station {
       longitude: lng,
     );
   }
+
+  /// Parse from MOTIS geocode response format
+  /// MOTIS uses: { type: "STOP"|"ADDRESS"|"PLACE", name, id, lat, lon }
+  factory Station.fromMotis(Map<String, dynamic> json) {
+    String type = 'station';
+    final motisType = json['type'] as String?;
+    if (motisType == 'ADDRESS') type = 'address';
+    if (motisType == 'PLACE') type = 'location';
+    if (motisType == 'STOP') type = 'stop';
+
+    String id = json['id']?.toString() ?? '';
+    final lat = (json['lat'] as num?)?.toDouble();
+    final lon = (json['lon'] as num?)?.toDouble();
+
+    // Fallback ID from coordinates
+    if (id.isEmpty && lat != null && lon != null) {
+      id = '$lat,$lon';
+    }
+
+    return Station(
+      id: id,
+      name: json['name'] ?? 'Unknown',
+      type: type,
+      latitude: lat,
+      longitude: lon,
+    );
+  }
 }
