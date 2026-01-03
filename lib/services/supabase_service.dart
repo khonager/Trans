@@ -85,6 +85,17 @@ class SupabaseService {
     await client.auth.updateUser(UserAttributes(data: {'username': newUsername}));
     await client.from('profiles').update({'username': newUsername}).eq('id', user.id);
   }
+
+  static Future<void> updateEmail(String newEmail) async {
+    // This will trigger a confirmation email to both old and new email addresses 
+    // depending on Supabase project settings.
+    await client.auth.updateUser(UserAttributes(email: newEmail));
+  }
+
+  static Future<void> resetPassword(String email) async {
+    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
+    await client.auth.resetPasswordForEmail(email, redirectTo: redirectUrl);
+  }
   
   static Future<void> updateThemeColor(int colorValue) async {
     final user = currentUser;
