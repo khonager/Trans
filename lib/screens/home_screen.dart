@@ -42,11 +42,62 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   Position? _currentPosition;
 
+  StreamSubscription<AuthState>? _authSubscription;
+
   @override
   void initState() {
     super.initState();
     _loadSavedTab(); // Load saved tab on startup
     _determinePosition();
+    _setupAuthListener();
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _setupAuthListener() {
+    _authSubscription = SupabaseService.client.auth.onAuthStateChange.listen((data) {
+      final AuthChangeEvent event = data.event;
+      if (event == AuthChangeEvent.passwordRecovery) {
+        _handlePasswordRecovery();
+      }
+    });
+  }
+
+  void _handlePasswordRecovery() {
+    // Switch to Settings Tab
+    _onTabChanged(2); // 2 is SettingsTab index
+    
+    // Show Password Reset Dialog
+    // We need to wait for the tab switch to settle or just show a global dialog
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text("Reset Password"),
+          content: const Text("You have securely logged in via the password reset link. Please set a new password now."),
+          actions: [
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // The user is already on the settings tab, they can use the profile edit form.
+                // Optionally we could trigger the edit mode in SettingsTab if we had access to it,
+                // but for now, directing them to the tab is a good start. 
+                // We'll show a snackbar to guide them.
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Tap the 'Edit' icon in your profile to set a new password.")),
+                );
+              },
+              child: const Text("OK"),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   // Load the saved tab index from SharedPreferences
