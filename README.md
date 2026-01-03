@@ -143,6 +143,21 @@ flutter pub get
 flutter run
 ```
 
+### Using Nix (Recommended)
+
+If you have [Nix](https://nixos.org/) installed, you can use the included `flake.nix` to get a complete development environment with all dependencies:
+
+```bash
+# Enter the development shell
+nix develop
+
+# Then run as usual
+flutter pub get
+flutter run
+```
+
+This automatically provides Flutter, Dart, Android SDK, and all other required tools without manual installation.
+
 ---
 
 ## 🏗 Building
