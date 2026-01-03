@@ -1,3 +1,5 @@
+import 'package:trans/models/station.dart';
+
 class JourneyStep {
   final String type; // 'ride', 'wait', 'transfer', 'walk'
   final String line;
@@ -46,8 +48,9 @@ class RouteTab {
   final String subtitle;
   final String eta;
   final String totalDuration;
-  final String destinationId;
+  final Station destination; // Changed from destinationId string
   final List<JourneyStep> steps;
+  final String? source;
 
   RouteTab({
     required this.id,
@@ -55,7 +58,8 @@ class RouteTab {
     required this.subtitle,
     required this.eta,
     required this.totalDuration,
-    required this.destinationId,
+    required this.destination,
     required this.steps,
+    this.source,
   });
 }
