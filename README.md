@@ -1,7 +1,8 @@
 # Trans – Public Transit Companion
 
+
 [![Flutter](https://img.shields.io/badge/Flutter-3.0%2B-blue?logo=flutter)](https://flutter.dev)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-iOS%20%7C%20Android%20%7C%20Web%20%7C%20Desktop-lightgrey)]()
 
 A cross-platform public transit app built with **Flutter**. Plan routes, track your journey with wake-up alarms, share your location with friends, and never miss your stop again.
@@ -207,8 +208,17 @@ flutter clean && flutter pub get
 
 This project does not accept contributions, but you're welcome to fork it and make it your own!
 
+
 ---
 
 ## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+This project is licensed under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)**.
+
+### Summary
+- ✅ **Share**: You are free to copy and redistribute the material.
+- ✅ **Adapt**: You are free to remix, transform, and build upon the material.
+- ❌ **NonCommercial**: You may **NOT** use the material for commercial purposes (selling the app).
+- 🔄 **ShareAlike**: If you remix, transform, or build upon the material, you must distribute your contributions under the same license.
+
+See the `LICENSE` file for the full legal text.
