@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data'; 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
@@ -65,6 +66,7 @@ class SupabaseService {
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
     _startMessageListener();
+    await loadAndSyncSettings(); 
   }
 
   static Future<void> signOut() async {
@@ -87,6 +89,81 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     await client.from('profiles').update({'theme_color': colorValue}).eq('id', user.id);
+    // Also update settings json for consistency if we move fully there, but for now keep theme_color column usage primarily
+    // or we can mirror it to settings. Let's mirror it to make settings the source of truth eventually.
+    await updateSettings({'theme_color_value': colorValue});
+  }
+
+  // --- SETTINGS SYNC ---
+  static Future<void> updateSettings(Map<String, dynamic> newSettings) async {
+    final user = currentUser;
+    if (user == null) return;
+    
+    // Get current settings first to merge (shallow merge)
+    try {
+      final res = await client.from('profiles').select('settings').eq('id', user.id).single();
+      final currentSettings = res['settings'] ?? {};
+      final updatedSettings = Map<String, dynamic>.from(currentSettings)..addAll(newSettings);
+      
+      await client.from('profiles').update({'settings': updatedSettings}).eq('id', user.id);
+    } catch (e) {
+      debugPrint("Error updating settings: $e");
+    }
+  }
+
+  static Future<void> updateFavoritesInfo(List<Map<String, dynamic>> favorites) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('profiles').update({'favorites': favorites}).eq('id', user.id);
+  }
+
+  static Future<void> loadAndSyncSettings() async {
+    final user = currentUser;
+    if (user == null) return;
+
+    try {
+      final data = await client.from('profiles').select('settings, favorites').eq('id', user.id).single();
+      final settings = data['settings'] as Map<String, dynamic>? ?? {};
+      final favorites = data['favorites'] as List<dynamic>? ?? [];
+
+      // Apply to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+
+      // Settings
+      if (settings.containsKey('theme_color_value')) {
+        await prefs.setInt('theme_color_value', settings['theme_color_value']);
+      }
+      if (settings.containsKey('is_dark_mode')) {
+        await prefs.setBool('is_dark_mode', settings['is_dark_mode']);
+      }
+      if (settings.containsKey('use_system_theme')) {
+        await prefs.setBool('use_system_theme', settings['use_system_theme']);
+      }
+      if (settings.containsKey('only_nahverkehr')) {
+        await prefs.setBool('only_nahverkehr', settings['only_nahverkehr']);
+      }
+      if (settings.containsKey('ghost_mode')) {
+        await prefs.setBool('ghost_mode', settings['ghost_mode']);
+      }
+      if (settings.containsKey('vibration_pattern')) {
+        await prefs.setString('vibration_pattern', settings['vibration_pattern']);
+      }
+      if (settings.containsKey('vibration_intensity')) {
+        await prefs.setInt('vibration_intensity', settings['vibration_intensity']);
+      }
+      if (settings.containsKey('alarm_stops_before')) {
+        await prefs.setInt('alarm_stops_before', settings['alarm_stops_before']);
+      }
+
+      // Favorites
+      if (favorites.isNotEmpty) {
+        final List<String> favs = favorites.map((f) => json.encode(f)).toList().cast<String>();
+        await prefs.setStringList('saved_favorites', favs);
+      }
+      
+    } catch (e) {
+      debugPrint("Error syncing settings: $e");
+    }
   }
 
   // --- GHOST MODE ---
