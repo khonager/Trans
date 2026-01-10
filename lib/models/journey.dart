@@ -42,15 +42,43 @@ class JourneyStep {
   });
 }
 
+
+class Journey {
+  final List<JourneyStep> steps;
+  final DateTime departure;
+  final DateTime arrival;
+  final Duration duration;
+  final int transferCount;
+  final Duration totalWaitTime;
+  final Map<String, dynamic> rawSource;
+  final String source; // 'motis', 'v6'
+
+  Journey({
+    required this.steps,
+    required this.departure,
+    required this.arrival,
+    required this.duration,
+    required this.transferCount,
+    required this.totalWaitTime,
+    required this.rawSource,
+    required this.source,
+  });
+}
+
 class RouteTab {
   final String id;
   final String title;
   final String subtitle;
   final String eta;
   final String totalDuration;
-  final Station destination; // Changed from destinationId string
-  final List<JourneyStep> steps;
+  final Station destination;
+  final List<JourneyStep> steps; // Kept for legacy/active view
   final String? source;
+  
+  // NEW: Multiple candidates
+  final List<Journey>? candidates;
+  // NEW: Currently selected journey (if any)
+  final Journey? activeJourney;
 
   RouteTab({
     required this.id,
@@ -61,5 +89,34 @@ class RouteTab {
     required this.destination,
     required this.steps,
     this.source,
+    this.candidates,
+    this.activeJourney,
   });
+  
+  RouteTab copyWith({
+    String? id,
+    String? title,
+    String? subtitle,
+    String? eta,
+    String? totalDuration,
+    Station? destination,
+    List<JourneyStep>? steps,
+    String? source,
+    List<Journey>? candidates,
+    Journey? activeJourney,
+    bool clearActiveJourney = false,
+  }) {
+    return RouteTab(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      eta: eta ?? this.eta,
+      totalDuration: totalDuration ?? this.totalDuration,
+      destination: destination ?? this.destination,
+      steps: steps ?? this.steps,
+      source: source ?? this.source,
+      candidates: candidates ?? this.candidates,
+      activeJourney: clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
+    );
+  }
 }
