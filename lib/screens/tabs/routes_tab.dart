@@ -21,6 +21,7 @@ import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart'; 
 import '../map_screen.dart'; 
+import 'route_results_view.dart';
 
 const List<IconData> kAvailableIcons = [
   Icons.star, Icons.home, Icons.work, Icons.favorite, 
@@ -423,7 +424,8 @@ class _RoutesTabState extends State<RoutesTab> {
                   leading: const Icon(Icons.alt_route), 
                   title: Text("$line to $dir"), 
                   subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"),
-                  onTap: () { Navigator.pop(context); _addJourneyTab(journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); }
+                  onTap: () { Navigator.pop(context); _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); }
+
                 );
               });
           }
@@ -531,30 +533,93 @@ class _RoutesTabState extends State<RoutesTab> {
     return steps;
   }
 
-  void _addJourneyTab(Map<String, dynamic> journeyData, {String title = "Route", String? subtitle}) {
-    if (journeyData['legs'] == null) return;
+
+  Journey _createJourney(Map<String, dynamic> journeyData) {
+    if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
     final List<JourneyStep> steps = _processLegs(legs);
-    String duration = "";
-    DateTime? arr;
+    
+    DateTime? dep, arr;
     try {
       if (legs.isNotEmpty) {
-        final start = DateTime.parse(legs.first['departure']);
-        final end = DateTime.parse(legs.last['arrival']);
-        duration = FormatUtils.formatDuration(end.difference(start).inMinutes);
+        dep = DateTime.parse(legs.first['departure'] ?? legs.first['plannedDeparture']);
+        arr = DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival']);
+      } else if (journeyData['departure'] != null && journeyData['arrival'] != null) {
+        dep = DateTime.parse(journeyData['departure']);
+        arr = DateTime.parse(journeyData['arrival']);
       }
-      if (journeyData['arrival'] != null) arr = DateTime.parse(journeyData['arrival']);
     } catch(e) {}
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
     
-    // Construct valid destination station if _toStation is null (e.g. valid backup)
-    Station dest = _toStation ?? Station(id: journeyData['legs'].last['destination']['id'], name: journeyData['legs'].last['destination']['name'] ?? "Destination", type: "station"); // basic fallback
+    // Calculate transfer count (rides - 1)
+    int rides = steps.where((s) => s.type == 'ride').length;
+    int transfers = (rides > 0) ? rides - 1 : 0;
+    
+    int waitMinutes = 0;
+    for (var step in steps) {
+       if (step.type == 'wait' || step.type == 'transfer') {
+         try {
+           final parts = step.duration.split(' ');
+           if (parts.isNotEmpty) waitMinutes += int.tryParse(parts[0]) ?? 0;
+         } catch(_) {}
+       }
+    }
+
+    return Journey(
+      steps: steps,
+      departure: dep ?? DateTime.now(),
+      arrival: arr ?? DateTime.now(),
+      duration: (dep != null && arr != null) ? arr.difference(dep) : Duration.zero,
+      transferCount: transfers,
+      totalWaitTime: Duration(minutes: waitMinutes),
+      rawSource: journeyData,
+      source: journeyData['source'] ?? 'unknown',
+    );
+  }
+
+  void _addJourneyTab({Map<String, dynamic>? singleJourneyData, List<Map<String, dynamic>>? candidatesData, String title = "Route", String? subtitle}) {
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    List<Journey> candidates = [];
+    Journey? activeJourney;
+    Station? dest;
+
+    if (candidatesData != null) {
+      for (var d in candidatesData) {
+         try { candidates.add(_createJourney(d)); } catch(_) {}
+      }
+      if (candidates.isNotEmpty) {
+         final lastLeg = candidates.first.rawSource['legs'].last;
+         dest = Station(id: lastLeg['destination']['id'], name: lastLeg['destination']['name'] ?? "Destination", type: "station");
+      }
+    } else if (singleJourneyData != null) {
+      try {
+        activeJourney = _createJourney(singleJourneyData);
+        candidates = [activeJourney];
+        final lastLeg = singleJourneyData['legs'].last;
+        dest = Station(id: lastLeg['destination']['id'], name: lastLeg['destination']['name'] ?? "Destination", type: "station");
+      } catch(_) { return; }
+    }
+    
+    if (dest == null) return;
+    
+    if (_toStation != null) dest = _toStation;
 
     setState(() {
-      _tabs.add(RouteTab(id: id, title: title == "Route" ? (dest.name) : title, subtitle: subtitle ?? "Details", eta: arr != null ? DateFormat('HH:mm').format(arr) : "--:--", totalDuration: duration, destination: dest, steps: steps, source: journeyData['source']));
+      _tabs.add(RouteTab(
+          id: id, 
+          title: title == "Route" ? dest!.name : title, 
+          subtitle: subtitle ?? "Details", 
+          eta: activeJourney != null ? DateFormat('HH:mm').format(activeJourney.arrival) : "--:--", 
+          totalDuration: activeJourney != null ? FormatUtils.formatDuration(activeJourney.duration.inMinutes) : "", 
+          destination: dest!, 
+          steps: activeJourney?.steps ?? [], 
+          source: activeJourney?.source,
+          candidates: candidates,
+          activeJourney: activeJourney
+      ));
       _activeTabId = id;
     });
   }
+
 
   Future<void> _findRoutes() async {
      if (_isLoadingRoute) return;
@@ -600,7 +665,7 @@ class _RoutesTabState extends State<RoutesTab> {
        final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
        if (mounted) { 
          if (res.isNotEmpty) { 
-           _addJourneyTab(res.first); 
+           _addJourneyTab(candidatesData: res); 
          } else { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
@@ -722,8 +787,34 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
+    if (route.activeJourney == null && route.candidates != null && route.candidates!.isNotEmpty) {
+      return RouteResultsView(
+        candidates: route.candidates!,
+        onSelect: (journey) {
+          setState(() {
+            final idx = _tabs.indexWhere((t) => t.id == route.id);
+            if (idx != -1) {
+              _tabs[idx] = route.copyWith(activeJourney: journey, steps: journey.steps);
+            }
+          });
+        },
+        onBack: () => _closeTab(route.id),
+      );
+    }
+    
     final colors = TransColors.of(context);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destination, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))]);
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [
+        Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            if (route.candidates != null && route.candidates!.length > 1) 
+               IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.arrow_back), onPressed: () => setState(() {
+                 final idx = _tabs.indexWhere((t) => t.id == route.id);
+                 if (idx != -1) _tabs[idx] = route.copyWith(clearActiveJourney: true);
+               })),
+            if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
+
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
+        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destination, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))
+    ]);
   }
 }
 
