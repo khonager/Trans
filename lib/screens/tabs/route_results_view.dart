@@ -16,12 +16,18 @@ class RouteResultsView extends StatefulWidget {
   final List<Journey> candidates;
   final Function(Journey) onSelect;
   final VoidCallback onBack;
+  final Future<void> Function()? onLoadEarlier;
+  final Future<void> Function()? onLoadLater;
+  final Future<void> Function()? onRefresh;
 
   const RouteResultsView({
     super.key,
     required this.candidates,
     required this.onSelect,
     required this.onBack,
+    this.onLoadEarlier,
+    this.onLoadLater,
+    this.onRefresh,
   });
 
   @override
@@ -31,11 +37,19 @@ class RouteResultsView extends StatefulWidget {
 class _RouteResultsViewState extends State<RouteResultsView> {
   RouteSortOption _currentSort = RouteSortOption.earliestDeparture;
   late List<Journey> _sortedCandidates;
+  bool _isLoadingMoreEarlier = false;
+  bool _isLoadingMoreLater = false;
 
   @override
   void initState() {
     super.initState();
     _sortCandidates();
+  }
+  
+  @override
+  void didUpdateWidget(RouteResultsView oldWidget) {
+     super.didUpdateWidget(oldWidget);
+     _sortCandidates();
   }
 
   void _sortCandidates() {
@@ -64,6 +78,20 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _currentSort = option;
       _sortCandidates();
     });
+  }
+  
+  Future<void> _handleLoadEarlier() async {
+    if (_isLoadingMoreEarlier) return;
+    setState(() => _isLoadingMoreEarlier = true);
+    await widget.onLoadEarlier?.call();
+    if (mounted) setState(() => _isLoadingMoreEarlier = false);
+  }
+
+  Future<void> _handleLoadLater() async {
+    if (_isLoadingMoreLater) return;
+    setState(() => _isLoadingMoreLater = true);
+    await widget.onLoadLater?.call();
+    if (mounted) setState(() => _isLoadingMoreLater = false);
   }
 
   @override
@@ -141,16 +169,58 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
         // List of Routes
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _sortedCandidates.length,
-            itemBuilder: (ctx, idx) {
-              final journey = _sortedCandidates[idx];
-              return _JourneyCard(
-                journey: journey,
-                onTap: () => widget.onSelect(journey),
-              );
-            },
+          child: RefreshIndicator(
+            onRefresh: widget.onRefresh ?? () async {},
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // Extra bottom padding
+              // Items: "Load Earlier" button + routes + "Load Later" button
+              itemCount: _sortedCandidates.length + 2,
+              itemBuilder: (ctx, idx) {
+                if (idx == 0) {
+                  // Load Earlier Button
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: _isLoadingMoreEarlier
+                          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                          : OutlinedButton(
+                              onPressed: _handleLoadEarlier,
+                              style: OutlinedButton.styleFrom(
+                                shape: const StadiumBorder(),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              child: const Text("Load Earlier"),
+                            ),
+                    ),
+                  );
+                }
+                
+                if (idx == _sortedCandidates.length + 1) {
+                  // Load Later Button
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: _isLoadingMoreLater
+                          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                          : OutlinedButton(
+                              onPressed: _handleLoadLater,
+                              style: OutlinedButton.styleFrom(
+                                shape: const StadiumBorder(),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              child: const Text("Load Later"),
+                            ),
+                    ),
+                  );
+                }
+
+                final journey = _sortedCandidates[idx - 1];
+                return _JourneyCard(
+                  journey: journey,
+                  onTap: () => widget.onSelect(journey),
+                );
+              },
+            ),
           ),
         ),
       ],
