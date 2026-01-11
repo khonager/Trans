@@ -611,6 +611,7 @@ class _RoutesTabState extends State<RoutesTab> {
           eta: activeJourney != null ? DateFormat('HH:mm').format(activeJourney.arrival) : "--:--", 
           totalDuration: activeJourney != null ? FormatUtils.formatDuration(activeJourney.duration.inMinutes) : "", 
           destination: dest!, 
+          origin: _fromStation, // Store origin
           steps: activeJourney?.steps ?? [], 
           source: activeJourney?.source,
           candidates: candidates,
@@ -786,6 +787,124 @@ class _RoutesTabState extends State<RoutesTab> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); }, style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
   }
 
+
+  Future<void> _loadMoreRoutes(RouteTab route, {required bool earlier}) async {
+    if (_isLoadingRoute) return;
+    
+    // Determine reference time
+    DateTime refDate;
+    bool isArrival;
+    
+    if (earlier) {
+      if (route.candidates == null || route.candidates!.isEmpty) return;
+      refDate = route.candidates!.first.departure.subtract(const Duration(minutes: 1));
+      isArrival = true; // Find connections arriving before the first one's departure
+    } else {
+      if (route.candidates == null || route.candidates!.isEmpty) return;
+      refDate = route.candidates!.last.departure.add(const Duration(minutes: 1));
+      isArrival = false; // Find connections departing after the last one
+    }
+    
+    setState(() => _isLoadingRoute = true);
+    
+    try {
+      final Station? originStation = route.origin ?? _fromStation;
+      if (originStation == null) throw Exception("Origin station lost");
+
+      final newResults = await TransportApi.searchJourneys(
+        originStation,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: refDate,
+        isArrival: isArrival,
+        results: 5
+      );
+      
+      if (newResults.isNotEmpty && mounted) {
+        final List<Journey> newJourneys = [];
+        for (var d in newResults) {
+             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+        }
+        
+        // Filter duplicates
+        final currentIds = route.candidates!.map((j) => "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}").toSet();
+        final uniqueNew = newJourneys.where((j) => !currentIds.contains("${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}")).toList();
+        
+        if (uniqueNew.isNotEmpty) {
+           setState(() {
+             final idx = _tabs.indexWhere((t) => t.id == route.id);
+             if (idx != -1) {
+               final updatedCandidates = List<Journey>.from(route.candidates!);
+               if (earlier) {
+                 updatedCandidates.insertAll(0, uniqueNew);
+               } else {
+                 updatedCandidates.addAll(uniqueNew);
+               }
+               _tabs[idx] = route.copyWith(candidates: updatedCandidates);
+             }
+           });
+        }
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not load more routes: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoadingRoute = false);
+    }
+  }
+
+  Future<void> _refreshRoutes(RouteTab route) async {
+    if (_isLoadingRoute) return;
+    
+    // We want to reset pagination and reload the initial search window.
+    // Since we don't store the exact initial time, we'll use a best guess:
+    // If the user hasn't changed the search inputs, we could use them.
+    // Or we could use the route's origin/destination and "now" or the *arrival* time of the active journey?
+    // Safer bet for "Refresh" is to assume the user wants updated info for the *current* list.
+    // But usually Pull-to-Refresh means "Reload from scratch", typically based on "Now".
+    
+    // Let's use the route's first departure time as the "when" to keep context, 
+    // or just effectively restart the search.
+    // Decision: Restart search from "Now" logic or original time parameter.
+    
+    setState(() => _isLoadingRoute = true);
+    
+    try {
+      final Station? originStation = route.origin ?? _fromStation;
+      if (originStation == null) throw Exception("Origin station lost");
+      
+      // Use "Now" for refresh context for now
+      final DateTime refDate = DateTime.now(); 
+
+      final newResults = await TransportApi.searchJourneys(
+        originStation,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: refDate,
+        isArrival: false, // Default to departure now
+        results: 5
+      );
+      
+      if (newResults.isNotEmpty && mounted) {
+        final List<Journey> newJourneys = [];
+        for (var d in newResults) {
+             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+        }
+        
+        setState(() {
+             final idx = _tabs.indexWhere((t) => t.id == route.id);
+             if (idx != -1) {
+               // Replace candidates entirely
+               _tabs[idx] = route.copyWith(candidates: newJourneys);
+             }
+        });
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not refresh routes: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoadingRoute = false);
+    }
+  }
+
   Widget _buildActiveRouteView(RouteTab route) {
     if (route.activeJourney == null && route.candidates != null && route.candidates!.isNotEmpty) {
       return RouteResultsView(
@@ -799,6 +918,9 @@ class _RoutesTabState extends State<RoutesTab> {
           });
         },
         onBack: () => _closeTab(route.id),
+        onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
+        onLoadLater: () => _loadMoreRoutes(route, earlier: false),
+        onRefresh: () => _refreshRoutes(route),
       );
     }
     

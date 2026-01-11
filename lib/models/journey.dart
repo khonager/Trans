@@ -72,6 +72,7 @@ class RouteTab {
   final String eta;
   final String totalDuration;
   final Station destination;
+  final Station? origin; // NEW: Store origin station for pagination context
   final List<JourneyStep> steps; // Kept for legacy/active view
   final String? source;
   
@@ -87,6 +88,7 @@ class RouteTab {
     required this.eta,
     required this.totalDuration,
     required this.destination,
+    this.origin,
     required this.steps,
     this.source,
     this.candidates,
@@ -100,6 +102,7 @@ class RouteTab {
     String? eta,
     String? totalDuration,
     Station? destination,
+    Station? origin,
     List<JourneyStep>? steps,
     String? source,
     List<Journey>? candidates,
@@ -113,6 +116,7 @@ class RouteTab {
       eta: eta ?? this.eta,
       totalDuration: totalDuration ?? this.totalDuration,
       destination: destination ?? this.destination,
+      origin: origin ?? this.origin,
       steps: steps ?? this.steps,
       source: source ?? this.source,
       candidates: candidates ?? this.candidates,
