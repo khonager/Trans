@@ -183,13 +183,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       padding: const EdgeInsets.only(bottom: 8.0),
                       child: _isLoadingMoreEarlier
                           ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                          : OutlinedButton(
-                              onPressed: _handleLoadEarlier,
-                              style: OutlinedButton.styleFrom(
-                                shape: const StadiumBorder(),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              child: const Text("Load Earlier"),
+                          : _LoadTrigger(
+                              label: "Load Earlier",
+                              icon: Icons.keyboard_arrow_up,
+                              onTap: _handleLoadEarlier,
                             ),
                     ),
                   );
@@ -202,13 +199,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       padding: const EdgeInsets.only(top: 8.0),
                       child: _isLoadingMoreLater
                           ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                          : OutlinedButton(
-                              onPressed: _handleLoadLater,
-                              style: OutlinedButton.styleFrom(
-                                shape: const StadiumBorder(),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              child: const Text("Load Later"),
+                          : _LoadTrigger(
+                              label: "Load Later",
+                              icon: Icons.keyboard_arrow_down,
+                              onTap: _handleLoadLater,
                             ),
                     ),
                   );
@@ -224,6 +218,50 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LoadTrigger extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _LoadTrigger({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.cardBg.withValues(alpha: 0.5), // Semi-transparent glass effect
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: colors.textSecondary),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
