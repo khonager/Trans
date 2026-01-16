@@ -419,7 +419,7 @@ class _RoutesTabState extends State<RoutesTab> {
                 final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
                 final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
                 final dir = firstRide['direction'] ?? 'Destination';
-                final depTime = DateTime.parse(firstRide['departure'] ?? firstRide['plannedDeparture']);
+                final depTime = DateTime.parse(firstRide['departure'] ?? firstRide['plannedDeparture']).toLocal();
                 return ListTile(
                   leading: const Icon(Icons.alt_route), 
                   title: Text("$line to $dir"), 
@@ -444,10 +444,10 @@ class _RoutesTabState extends State<RoutesTab> {
     
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
-      DateTime blockStart = (lastArrival != null) ? lastArrival! : DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '') ?? DateTime.now();
-      DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '') ?? blockStart : blockStart);
+      DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
+      DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
       int walkMinutes = 0;
-      for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture'])).inMinutes; } catch(e) {} }
+      for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).toLocal().difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture']).toLocal()).inMinutes; } catch(e) {} }
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
       
@@ -506,7 +506,7 @@ class _RoutesTabState extends State<RoutesTab> {
     for (var leg in legs) {
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
-        try { dep = DateTime.parse(leg['departure']); arr = DateTime.parse(leg['arrival']); } catch(e) {}
+        try { dep = DateTime.parse(leg['departure']).toLocal(); arr = DateTime.parse(leg['arrival']).toLocal(); } catch(e) {}
         if (dep == null || arr == null) continue;
         
         flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
@@ -542,11 +542,11 @@ class _RoutesTabState extends State<RoutesTab> {
     DateTime? dep, arr;
     try {
       if (legs.isNotEmpty) {
-        dep = DateTime.parse(legs.first['departure'] ?? legs.first['plannedDeparture']);
-        arr = DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival']);
+        dep = DateTime.parse(legs.first['departure'] ?? legs.first['plannedDeparture']).toLocal();
+        arr = DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival']).toLocal();
       } else if (journeyData['departure'] != null && journeyData['arrival'] != null) {
-        dep = DateTime.parse(journeyData['departure']);
-        arr = DateTime.parse(journeyData['arrival']);
+        dep = DateTime.parse(journeyData['departure']).toLocal();
+        arr = DateTime.parse(journeyData['arrival']).toLocal();
       }
     } catch(e) {}
     
