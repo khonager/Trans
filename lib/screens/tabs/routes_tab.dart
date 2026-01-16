@@ -991,6 +991,7 @@ class _RoutesTabState extends State<RoutesTab> {
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
         onLoadLater: () => _loadMoreRoutes(route, earlier: false),
         onRefresh: () => _refreshRoutes(route),
+        showTrainNumbers: widget.showTrainNumbers, // Pass the setting
       );
     }
     

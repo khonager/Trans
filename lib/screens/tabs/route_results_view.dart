@@ -19,6 +19,7 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onLoadEarlier;
   final Future<void> Function()? onLoadLater;
   final Future<void> Function()? onRefresh;
+  final bool showTrainNumbers;
 
   const RouteResultsView({
     super.key,
@@ -28,6 +29,7 @@ class RouteResultsView extends StatefulWidget {
     this.onLoadEarlier,
     this.onLoadLater,
     this.onRefresh,
+    this.showTrainNumbers = false,
   });
 
   @override
@@ -212,6 +214,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 return _JourneyCard(
                   journey: journey,
                   onTap: () => widget.onSelect(journey),
+                  showTrainNumbers: widget.showTrainNumbers,
                 );
               },
             ),
@@ -319,8 +322,13 @@ class _SortChip extends StatelessWidget {
 class _JourneyCard extends StatelessWidget {
   final Journey journey;
   final VoidCallback onTap;
+  final bool showTrainNumbers;
 
-  const _JourneyCard({required this.journey, required this.onTap});
+  const _JourneyCard({
+    required this.journey, 
+    required this.onTap,
+    this.showTrainNumbers = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -458,6 +466,22 @@ class _JourneyCard extends StatelessWidget {
                   .where((s) => s.type == 'ride')
                   .take(4)
                   .map((step) {
+                
+                String displayLine = step.line.trim();
+                // Clean train numbers if disabled
+                if (!showTrainNumbers) {
+                   final regexParens = RegExp(r'\s*\(\d+\)$');
+                   displayLine = displayLine.replaceAll(regexParens, '').trim();
+                   if (step.tripId != null) {
+                       displayLine = displayLine.replaceAll(step.tripId!, "").trim();
+                   }
+                } else {
+                   // Ensure it's there if enabled
+                   if (step.tripId != null && !displayLine.contains(step.tripId!)) {
+                      displayLine += " (${step.tripId})";
+                   }
+                }
+
                 return Container(
                   margin: const EdgeInsets.only(right: 6),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -466,7 +490,7 @@ class _JourneyCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    step.line,
+                    displayLine,
                     style: TextStyle(
                       color: colors.textPrimary,
                       fontSize: 12,
