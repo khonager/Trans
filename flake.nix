@@ -62,6 +62,8 @@
 
             # Common libraries needed by unpatched binaries (like aapt2)
             glibc
+            pkg-config # Required for finding libraries during build
+            zlib
             zlib
             ncurses5
             stdenv.cc.cc.lib
@@ -71,6 +73,9 @@
             
             # Utilities
             glib # Fixes libglib-2.0.so.0 error for host binaries
+            gtk3 # Required for file chooser and GUI elements
+            gsettings-desktop-schemas # Required for file chooser settings schema
+            geoclue2 # Required for geolocator
             github-cli # wrapper for git auth
             nspr
             nss
