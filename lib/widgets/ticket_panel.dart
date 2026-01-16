@@ -262,7 +262,7 @@ class _TicketPanelState extends State<TicketPanel> {
       if (image == null) return null;
 
       // Add some padding
-      const padding = 20;
+      const padding = 60;
       int x = (box.left - padding).toInt().clamp(0, image.width);
       int y = (box.top - padding).toInt().clamp(0, image.height);
       int w = (box.width + (padding * 2)).toInt();
@@ -553,6 +553,7 @@ class _TicketPanelState extends State<TicketPanel> {
                         child: Image(
                           image: imageToShow,
                           fit: BoxFit.contain,
+                          width: double.infinity,
                           errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket")),
                         ),
                       ),
