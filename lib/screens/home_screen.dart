@@ -42,16 +42,33 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  bool _showTrainNumbers = false; 
   Position? _currentPosition;
-
   StreamSubscription<AuthState>? _authSubscription;
+
 
   @override
   void initState() {
     super.initState();
     _loadSavedTab(); // Load saved tab on startup
+    _loadSettings(); // Load other settings
     _determinePosition();
     _setupAuthListener();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _showTrainNumbers = prefs.getBool('show_train_numbers') ?? false;
+      });
+    }
+  }
+
+  Future<void> _updateShowTrainNumbers(bool value) async {
+    setState(() => _showTrainNumbers = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_train_numbers', value);
   }
 
   @override
@@ -151,7 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final screens = [
-      RoutesTab(currentPosition: _currentPosition, onlyNahverkehr: widget.onlyNahverkehr),
+      RoutesTab(
+        currentPosition: _currentPosition, 
+        onlyNahverkehr: widget.onlyNahverkehr,
+        showTrainNumbers: _showTrainNumbers,
+      ),
       FriendsTab(currentPosition: _currentPosition),
       SettingsTab(
         isDarkMode: widget.isDarkMode,
@@ -164,6 +185,8 @@ class _HomeScreenState extends State<HomeScreen> {
         onGhostModeChanged: widget.onGhostModeChanged,
         onColorChanged: widget.onColorChanged,
         currentColor: widget.currentColor,
+        showTrainNumbers: _showTrainNumbers,
+        onShowTrainNumbersChanged: _updateShowTrainNumbers,
       ),
     ];
 
