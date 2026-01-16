@@ -20,6 +20,10 @@ class JourneyStep {
   
   // NEW: Store exact time for alternatives search
   final DateTime? dateTime;
+  
+  // NEW: UI refinements
+  final String? destinationName;
+  final String? headsign;
 
   // Real-time data
   final int? departureDelay; // minutes
@@ -51,6 +55,8 @@ class JourneyStep {
     this.isCancelled = false,
     this.plannedDeparture,
     this.plannedArrival,
+    this.destinationName,
+    this.headsign,
   });
 }
 
