@@ -110,64 +110,57 @@ class _TicketPanelState extends State<TicketPanel> {
     
     if (image == null) return;
 
-    if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
-      // Web or Desktop fallback (no ML Kit/Cropper support)
-      await _processAndUpload(File(image.path), isWebFile: image);
-      return;
-    }
-
     if (kIsWeb) {
-      // Redundant but keeps structure if I remove the above combined check later
-      await _processAndUpload(File(image.path), isWebFile: image);
-      return;
+      // Web fallback
+       await _processAndUpload(File(image.path), isWebFile: image);
+       return;
     }
 
     setState(() => _isLoading = true);
     
     try {
       final File originalFile = File(image.path);
-      
-      // 1. Scan for QR Code
-      final inputImage = InputImage.fromFile(originalFile);
-      final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
-      final barcodes = await barcodeScanner.processImage(inputImage);
-      
       File? processedFile;
-
-      if (barcodes.isNotEmpty) {
-        // 2. Auto-Crop if QR found
-        final barcode = barcodes.first;
-        final box = barcode.boundingBox;
+      
+      // 1. Scan for QR Code (Mobile Only)
+      if (Platform.isAndroid || Platform.isIOS) {
+        final inputImage = InputImage.fromFile(originalFile);
+        final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+        final barcodes = await barcodeScanner.processImage(inputImage);
         
-        if (box != null) {
-          processedFile = await _autoCropImage(originalFile, box);
+        if (barcodes.isNotEmpty) {
+          final barcode = barcodes.first;
+          final box = barcode.boundingBox;
+          if (box != null) {
+            processedFile = await _autoCropImage(originalFile, box);
+          }
         }
+        barcodeScanner.close(); 
       }
 
-      barcodeScanner.close(); 
+      if (mounted) setState(() => _isLoading = false);
 
       if (processedFile != null) {
-        // 3. Ask for confirmation
-        if (mounted) {
-             setState(() => _isLoading = false); // Hide loader for dialog
-             final confirmed = await _showCropConfirmation(processedFile);
-             setState(() => _isLoading = true); // Show loader again
-
-             if (confirmed == true) {
-               await _processAndUpload(processedFile);
-               return;
-             } else if (confirmed == false) {
-               // User rejected auto-crop, go to manual
-               await _triggerManualCrop(originalFile);
-               return;
-             }
-             // confirmed == null (dismissed), do nothing
-             return;
+        // 2. Auto-Crop Successful -> Confirm
+        final confirmed = await _showCropConfirmation(processedFile, isAutoCrop: true);
+        
+        if (confirmed == true) {
+           await _processAndUpload(processedFile);
+        } else if (confirmed == false) {
+           // Rejected Auto-Crop -> Manual
+           await _triggerManualCrop(originalFile);
         }
-      } 
-      
-      // Fallback: No QR found OR auto-crop failed -> Manual Crop
-      await _triggerManualCrop(originalFile);
+      } else {
+        // 3. No QR Found OR Desktop -> Show Confirmation with Original
+        
+        final confirmed = await _showCropConfirmation(originalFile, isAutoCrop: false);
+        
+        if (confirmed == true) {
+          await _processAndUpload(originalFile);
+        } else if (confirmed == false) {
+          await _triggerManualCrop(originalFile);
+        }
+      }
 
     } catch (e) {
        _handleError(e);
@@ -175,6 +168,29 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _triggerManualCrop(File imageFile) async {
+    // Manual cropping is generally Mobile-only via image_cropper default impl
+    if (!(Platform.isAndroid || Platform.isIOS)) {
+       // On Desktop, offer a basic "Use Original" fallback or specialized message
+       final confirmOriginal = await showDialog<bool>(
+         context: context,
+         builder: (ctx) => AlertDialog(
+           title: const Text("Cropping Not Available"),
+           content: const Text("Manual cropping is currently optimized for mobile devices. Use the original image?"),
+           actions: [
+             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+             ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Use Original")),
+           ],
+         )
+       );
+       
+       if (confirmOriginal == true) {
+         await _processAndUpload(imageFile);
+       } else {
+         setState(() => _isLoading = false);
+       }
+       return;
+    }
+
     try {
       final croppedFile = await ImageCropper().cropImage(
         sourcePath: imageFile.path,
@@ -234,31 +250,33 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<bool?> _showCropConfirmation(File croppedFile) async {
+  Future<bool?> _showCropConfirmation(File file, {required bool isAutoCrop}) async {
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text("Is this correct?"),
+        title: Text(isAutoCrop ? "QR Code Detected" : "Confirm Ticket"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-             const Text("We detected a code. Use this?"),
+             Text(isAutoCrop 
+               ? "We detected a QR code. Use this crop?" 
+               : "No QR code detected. Use this image?"),
              const SizedBox(height: 10),
              Container(
                constraints: const BoxConstraints(maxHeight: 200),
-               child: Image.file(croppedFile),
+               child: Image.file(file),
              )
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false), // No -> Manual Crop
-            child: const Text("Edit (No)"), // Clarify "X" functionality
+            child: Text(isAutoCrop ? "No, Edit Crop" : "Crop / Edit"),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
-            child: const Text("Yes"),
+            child: const Text("Use Image"),
           ),
         ],
       ),
