@@ -14,7 +14,8 @@ import 'package:intl/intl.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image/image.dart' as img;
-import 'package:zxing_lib/zxing_lib.dart' as zxing;
+import 'package:zxing_lib/zxing.dart' as zxing;
+import 'package:zxing_lib/common.dart' as zxing;
 import 'package:trans/widgets/desktop_crop_wrapper.dart';
 
 class TicketPanel extends StatefulWidget {
@@ -159,12 +160,12 @@ class _TicketPanelState extends State<TicketPanel> {
                   
                   // If we are here, we found it!
                   // result.resultPoints gives corners.
-                  // We need a bounding box.
-                  if (result.resultPoints.isNotEmpty) {
+                  final points = result.resultPoints;
+                  if (points != null && points.isNotEmpty) {
                     double minX = double.infinity, minY = double.infinity;
                     double maxX = 0, maxY = 0;
                     
-                    for (var p in result.resultPoints) {
+                    for (var p in points) {
                        if ((p?.x ?? 0) < minX) minX = p!.x;
                        if ((p?.y ?? 0) < minY) minY = p!.y;
                        if ((p?.x ?? 0) > maxX) maxX = p!.x;
