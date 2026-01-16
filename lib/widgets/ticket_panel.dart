@@ -14,6 +14,8 @@ import 'package:intl/intl.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image/image.dart' as img;
+import 'package:zxing_lib/zxing_lib.dart' as zxing;
+import 'package:trans/widgets/desktop_crop_wrapper.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -111,7 +113,6 @@ class _TicketPanelState extends State<TicketPanel> {
     if (image == null) return;
 
     if (kIsWeb) {
-      // Web fallback
        await _processAndUpload(File(image.path), isWebFile: image);
        return;
     }
@@ -122,20 +123,63 @@ class _TicketPanelState extends State<TicketPanel> {
       final File originalFile = File(image.path);
       File? processedFile;
       
-      // 1. Scan for QR Code (Mobile Only)
+      // 1. Scan for QR Code
       if (Platform.isAndroid || Platform.isIOS) {
+        // Mobile: ML Kit
         final inputImage = InputImage.fromFile(originalFile);
         final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
         final barcodes = await barcodeScanner.processImage(inputImage);
         
         if (barcodes.isNotEmpty) {
-          final barcode = barcodes.first;
-          final box = barcode.boundingBox;
-          if (box != null) {
-            processedFile = await _autoCropImage(originalFile, box);
-          }
+          final box = barcodes.first.boundingBox;
+          if (box != null) processedFile = await _autoCropImage(originalFile, box);
         }
         barcodeScanner.close(); 
+      } else {
+        // Desktop: zxing_lib
+        try {
+          final bytes = await originalFile.readAsBytes();
+          final image = img.decodeImage(bytes);
+          if (image != null) {
+              // Convert to LuminanceSource
+              // Image package v4 uses a flat buffer for data. 
+              // We need functionality equivalent to RGBLuminanceSource from the int buffer
+              // or simple greyscale if possible.
+              // For simplicity in v4, toInt() on pixels might reduce performance, 
+              // so let's try a direct approach if zxing supports it.
+              
+              // Note: zxing_lib expects int[] of ARGB/RGB
+              final intList = image.data?.buffer.asUint32List().toList(); 
+              
+              if (intList != null) {
+                  final luminance = zxing.RGBLuminanceSource(image.width, image.height, intList);
+                  final binarizer = zxing.HybridBinarizer(luminance);
+                  final bitmap = zxing.BinaryBitmap(binarizer);
+                  final result = zxing.MultiFormatReader().decode(bitmap);
+                  
+                  // If we are here, we found it!
+                  // result.resultPoints gives corners.
+                  // We need a bounding box.
+                  if (result.resultPoints.isNotEmpty) {
+                    double minX = double.infinity, minY = double.infinity;
+                    double maxX = 0, maxY = 0;
+                    
+                    for (var p in result.resultPoints) {
+                       if ((p?.x ?? 0) < minX) minX = p!.x;
+                       if ((p?.y ?? 0) < minY) minY = p!.y;
+                       if ((p?.x ?? 0) > maxX) maxX = p!.x;
+                       if ((p?.y ?? 0) > maxY) maxY = p!.y;
+                    }
+                    
+                    final box = Rect.fromLTRB(minX, minY, maxX, maxY);
+                    processedFile = await _autoCropImage(originalFile, box);
+                  }
+              }
+          }
+        } catch (e) {
+          debugPrint("ZXing scan failed: $e");
+          // Continue to fallback
+        }
       }
 
       if (mounted) setState(() => _isLoading = false);
@@ -147,12 +191,10 @@ class _TicketPanelState extends State<TicketPanel> {
         if (confirmed == true) {
            await _processAndUpload(processedFile);
         } else if (confirmed == false) {
-           // Rejected Auto-Crop -> Manual
            await _triggerManualCrop(originalFile);
         }
       } else {
-        // 3. No QR Found OR Desktop -> Show Confirmation with Original
-        
+        // 3. No QR Found -> Confirm Original
         final confirmed = await _showCropConfirmation(originalFile, isAutoCrop: false);
         
         if (confirmed == true) {
@@ -168,29 +210,23 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _triggerManualCrop(File imageFile) async {
-    // Manual cropping is generally Mobile-only via image_cropper default impl
+    // Desktop Manual Crop
     if (!(Platform.isAndroid || Platform.isIOS)) {
-       // On Desktop, offer a basic "Use Original" fallback or specialized message
-       final confirmOriginal = await showDialog<bool>(
-         context: context,
-         builder: (ctx) => AlertDialog(
-           title: const Text("Cropping Not Available"),
-           content: const Text("Manual cropping is currently optimized for mobile devices. Use the original image?"),
-           actions: [
-             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-             ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Use Original")),
-           ],
-         )
+       final result = await Navigator.push<Uint8List>(
+         context,
+         MaterialPageRoute(builder: (_) => DesktopCropWrapper(imageFile: imageFile)),
        );
-       
-       if (confirmOriginal == true) {
-         await _processAndUpload(imageFile);
+
+       if (result != null) {
+         // Desktop crop returns bytes directly
+         await _processAndUpload(imageFile, directBytes: result);
        } else {
          setState(() => _isLoading = false);
        }
        return;
     }
 
+    // Mobile Manual Crop
     try {
       final croppedFile = await ImageCropper().cropImage(
         sourcePath: imageFile.path,
@@ -283,14 +319,16 @@ class _TicketPanelState extends State<TicketPanel> {
     );
   }
 
-  Future<void> _processAndUpload(File file, {XFile? isWebFile}) async {
+  Future<void> _processAndUpload(File file, {XFile? isWebFile, Uint8List? directBytes}) async {
     setState(() => _isLoading = true);
     try {
       Uint8List bytes;
-      if (kIsWeb && isWebFile != null) {
+      if (directBytes != null) {
+        bytes = directBytes;
+      } else if (kIsWeb && isWebFile != null) {
         bytes = await isWebFile.readAsBytes();
       } else {
-        // Compress if on Mobile/Mac (Linux/Windows often lack support)
+        // Compress if on Mobile/Mac
         Uint8List? compressed;
         if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
             try {
