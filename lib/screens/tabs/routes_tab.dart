@@ -1050,29 +1050,43 @@ class _StepCard extends StatelessWidget {
       color: colors.stepCardBg, 
       child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), 
-        title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Expanded(child: Row(
-            children: [
-              Text(step.line, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(step.destinationName ?? step.instruction.split('→').last.trim(), style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary), overflow: TextOverflow.ellipsis)),
-            ],
-          )), 
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
-              if (step.isCancelled)
-                 const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
-              else if (step.departureDelay != null && step.departureDelay != 0)
-                 Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
-            ],
-          )
-        ]), 
+        title: Builder(
+          builder: (context) {
+             final dest = (step.destinationName ?? step.instruction.split('→').last.trim());
+             final head = (step.headsign ?? '').trim();
+             // Check if destination is practically the headsign (End of Line)
+             // Use simple string containment or equality check
+             final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
+             final displayDest = isEnd ? "End of Line" : dest;
+
+             return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Expanded(child: Row(
+                children: [
+                  Text(step.line, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                  const SizedBox(width: 8),
+                  Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(displayDest, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary), overflow: TextOverflow.ellipsis)),
+                ],
+              )), 
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
+                  if (step.isCancelled)
+                     const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                  else if (step.departureDelay != null && step.departureDelay != 0)
+                     Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
+                ],
+              )
+            ]);
+          }
+        ), 
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 4), 
-          // Bus number | Headsign | Total min
-          Text("${step.line} ${step.headsign ?? ''}  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
+          // Bottom Line: Headsign • Duration
+          // Removed bus number as requested ("remove the gray bus number on the bottom part")
+          Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
           if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
           const SizedBox(height: 8), 
           SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
