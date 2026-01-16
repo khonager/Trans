@@ -110,8 +110,14 @@ class _TicketPanelState extends State<TicketPanel> {
     
     if (image == null) return;
 
+    if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
+      // Web or Desktop fallback (no ML Kit/Cropper support)
+      await _processAndUpload(File(image.path), isWebFile: image);
+      return;
+    }
+
     if (kIsWeb) {
-      // Web fallback (no ML Kit support)
+      // Redundant but keeps structure if I remove the above combined check later
       await _processAndUpload(File(image.path), isWebFile: image);
       return;
     }
@@ -266,15 +272,19 @@ class _TicketPanelState extends State<TicketPanel> {
       if (kIsWeb && isWebFile != null) {
         bytes = await isWebFile.readAsBytes();
       } else {
-        // Compress handled here or we can skip strictly if we want high quality QR
-        // But let's keep compression for storage optimization
-        final compressed = await FlutterImageCompress.compressWithFile(
-          file.path,
-          minWidth: 800, // Slightly higher valid scan
-          minHeight: 800,
-          quality: 85,
-          format: CompressFormat.jpeg,
-        );
+        // Compress if on Mobile/Mac (Linux/Windows often lack support)
+        Uint8List? compressed;
+        if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+            try {
+              compressed = await FlutterImageCompress.compressWithFile(
+                file.path,
+                minWidth: 800,
+                minHeight: 800,
+                quality: 85,
+                format: CompressFormat.jpeg,
+              );
+            } catch (_) {} 
+        }
         bytes = compressed ?? await file.readAsBytes();
       }
 
