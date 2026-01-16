@@ -242,6 +242,7 @@ class TransportApi {
     final Map<String, dynamic> params = {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
+      'showIntermediateStops': 'true',
     };
 
     // FROM: Use coordinates if ID is GPS, location, address, empty, or a v6.db numeric ID
