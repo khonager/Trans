@@ -261,7 +261,17 @@ class _RoutesTabState extends State<RoutesTab> {
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
-    if (query.isEmpty) return;
+    if (query.isEmpty) {
+      if (field == 'from') {
+         setState(() {
+           _fromStation = null;
+           _suggestions = [];
+           _isSuggestionsLoading = false;
+         });
+         return;
+      }
+      return; 
+    }
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 600), () async {
