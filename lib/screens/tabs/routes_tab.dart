@@ -33,11 +33,13 @@ const List<IconData> kAvailableIcons = [
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
+  final bool showTrainNumbers;
 
   const RoutesTab({
     super.key,
     required this.currentPosition,
-    required this.onlyNahverkehr
+    required this.onlyNahverkehr,
+    this.showTrainNumbers = false,
   });
 
   @override
@@ -395,8 +397,19 @@ class _RoutesTabState extends State<RoutesTab> {
   }
   
   // FIX: Accept full Station object
-  void _showAlternatives(BuildContext context, String stationId, Station destination, DateTime referenceTime) {
-      Station fromDummy = Station(id: stationId, name: "From");
+  void _showAlternatives(BuildContext context, String stationId, Station destination, DateTime referenceTime, {double? lat, double? lng, String? stationName}) {
+      Station fromDummy;
+      // If we have coordinates, use them (Location based)
+      if (lat != null && lng != null) {
+         fromDummy = Station(id: stationId, name: stationName ?? "Origin", type: "location", latitude: lat, longitude: lng);
+      } else {
+         // Otherwise hope the ID is valid. If it's just a name, V6 API might fail if it's ambiguous, but usually ID is passed.
+         // However, the previous error 'Missing origin' suggests the ID was empty or the API couldn't resolve "From".
+         // The previous code was: Station(id: stationId, name: "From");
+         // If stationId was "gps", we need coords.
+         fromDummy = Station(id: stationId, name: stationName ?? "Origin", type: "station");
+      }
+
       // Use destination station directly to preserve coordinates
       Station toDummy = destination;
 
@@ -506,14 +519,63 @@ class _RoutesTabState extends State<RoutesTab> {
     for (var leg in legs) {
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
-        try { dep = DateTime.parse(leg['departure']).toLocal(); arr = DateTime.parse(leg['arrival']).toLocal(); } catch(e) {}
+        DateTime? scheduledDep, scheduledArr;
+        bool isCancelled = leg['cancelled'] == true;
+        
+        // Parse scheduled times first
+        try {
+          // Check both standard keys (scheduledDeparture) and V6/HAFAS keys (plannedDeparture)
+          final sDep = leg['scheduledDeparture'] ?? leg['plannedDeparture'];
+          if (sDep != null) {
+            scheduledDep = DateTime.parse(sDep).toLocal();
+          }
+          final sArr = leg['scheduledArrival'] ?? leg['plannedArrival'];
+          if (sArr != null) {
+             scheduledArr = DateTime.parse(sArr).toLocal();
+          }
+        } catch(e) {}
+
+        // Parse real-time times, fallback to scheduled
+        try { 
+          if (leg['departure'] != null) {
+             dep = DateTime.parse(leg['departure']).toLocal();
+          }
+          if (leg['arrival'] != null) {
+             arr = DateTime.parse(leg['arrival']).toLocal();
+          }
+        } catch(e) {}
+        
+        // Fallbacks
+        dep ??= scheduledDep;
+        arr ??= scheduledArr;
+        
+        // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
         flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
-        
+
+        int? depDelay;
+        int? arrDelay;
+
+        // Calculate delays if scheduled times are available AND we have real times
+        // If cancelled, delay calculation might be irrelevant or we assume 0 relative to scheduled
+        if (scheduledDep != null && !isCancelled) {
+           depDelay = dep.difference(scheduledDep).inMinutes;
+        }
+        if (scheduledArr != null && !isCancelled) {
+           arrDelay = arr.difference(scheduledArr).inMinutes;
+        }
+
+        // Special handling for Motis: sometimes 'departureDelay' integer is provided directly
+        if (depDelay == null && leg['departureDelay'] is int) {
+           depDelay = (leg['departureDelay'] as int) ~/ 60; // Motis often uses seconds? Or check API. Usually it's ms or s. Motis V1 is min.
+           // actually Motis v1 usually min.
+        }
+
         steps.add(JourneyStep(
           type: 'ride',
           line: leg['line']?['name']?.toString() ?? '?',
+          // If cancelled, show as cancelled in instruction or just handle in UI
           instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
           duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes),
           departureTime: DateFormat('HH:mm').format(dep),
@@ -524,7 +586,15 @@ class _RoutesTabState extends State<RoutesTab> {
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']),
           path: leg['decodedPath'],
-          dateTime: dep // FIX: Store time
+          dateTime: dep, // FIX: Store time
+          departureDelay: depDelay,
+          arrivalDelay: arrDelay,
+          isCancelled: isCancelled,
+          plannedDeparture: scheduledDep,
+          plannedArrival: scheduledArr,
+          destinationName: leg['destination']?['name'],
+          headsign: leg['direction'],
+          tripId: leg['line']?['fahrtNr']?.toString() ?? leg['tripId']?.toString(), // Populating tripId
         ));
         lastArrival = arr;
       } else { transferBuffer.add(leg); }
@@ -532,7 +602,7 @@ class _RoutesTabState extends State<RoutesTab> {
     flushTransferBuffer(null, null, null, null, isFinalWalk: true);
     return steps;
   }
-
+ 
 
   Journey _createJourney(Map<String, dynamic> journeyData) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
@@ -921,6 +991,7 @@ class _RoutesTabState extends State<RoutesTab> {
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
         onLoadLater: () => _loadMoreRoutes(route, earlier: false),
         onRefresh: () => _refreshRoutes(route),
+        showTrainNumbers: widget.showTrainNumbers, // Pass the setting
       );
     }
     
@@ -934,8 +1005,8 @@ class _RoutesTabState extends State<RoutesTab> {
                })),
             if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
 
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
-        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time) => _showAlternatives(context, stationId, route.destination, time), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]))
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
+        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
     ]);
   }
 }
@@ -946,12 +1017,13 @@ class _StepCard extends StatelessWidget {
   final String finalDestinationId;
   
   // FIX: Updated Callback Signature
-  final Function(String, DateTime) onOpenAlternatives;
+  final Function(String, DateTime, {double? lat, double? lng, String? name}) onOpenAlternatives;
   
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
   final bool isAlarmSet;
+  final bool showTrainNumbers;
 
   const _StepCard({
     required this.step, 
@@ -961,7 +1033,8 @@ class _StepCard extends StatelessWidget {
     required this.onChat, 
     required this.onAlarmToggle, 
     required this.isAlarmSet, 
-    required this.onMapTap
+    required this.onMapTap,
+    required this.showTrainNumbers,
   });
 
   @override
@@ -983,10 +1056,79 @@ class _StepCard extends StatelessWidget {
       color: colors.stepCardBg, 
       child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), 
-        title: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary))), Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: colors.stepTimeText))]), 
+        title: Builder(
+          builder: (context) {
+             final dest = (step.destinationName ?? step.instruction.split('→').last.trim());
+             final head = (step.headsign ?? '').trim();
+             // Check if destination is practically the headsign (End of Line)
+             // Use simple string containment or equality check
+             final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
+             final displayDest = isEnd ? "End of Line" : dest;
+
+             return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Expanded(child: Row(
+                children: [
+                  Builder(
+                    builder: (context) {
+                      String displayLine = step.line.trim();
+                      
+                      // 1. Clean the display line if we are NOT showing train numbers.
+                      //    We want to remove patterns like " (12345)" or " 12345" if safe.
+                      //    Common pattern: "Name (Number)"
+                      if (!showTrainNumbers) {
+                         // Regex to match " (digits)" at the end
+                         final regexParens = RegExp(r'\s*\(\d+\)$');
+                         displayLine = displayLine.replaceAll(regexParens, '').trim();
+
+                         // If tripId is explicitly known, remove it specifically too (just in case of no parens)
+                         if (step.tripId != null) {
+                             displayLine = displayLine.replaceAll(step.tripId!, "").trim();
+                         }
+                      }
+
+                      // 2. Re-add tripId if we ARE showing numbers and it's not already in there
+                      //    (Note: if we stripped it above, we stripped it. If showTrainNumbers is true, we didn't strip it.)
+                      //    Wait, if showTrainNumbers is TRUE, we want to ensure it IS there.
+                      //    If showTrainNumbers is FALSE, we want to ensure it is NOT there.
+                      
+                      String suffix = "";
+                      if (showTrainNumbers && step.tripId != null) {
+                         // Only add if not already present in the displayLine to avoid duplication
+                         if (!displayLine.contains(step.tripId!)) {
+                            suffix = " (${step.tripId})";
+                         }
+                      }
+                      
+                      return Text(
+                        "$displayLine$suffix",
+                        style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
+                      );
+                    }
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(displayDest, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary), overflow: TextOverflow.ellipsis)),
+                ],
+              )), 
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
+                  if (step.isCancelled)
+                     const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                  else if (step.departureDelay != null && step.departureDelay != 0)
+                     Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
+                ],
+              )
+            ]);
+          }
+        ), 
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 4), 
-          Text("${step.line} • ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
+          // Bottom Line: Headsign • Duration
+          // Removed bus number as requested ("remove the gray bus number on the bottom part")
+          Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
           if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
           const SizedBox(height: 8), 
           SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
@@ -1002,8 +1144,8 @@ class _StepCard extends StatelessWidget {
                 context, 
                 Icons.alt_route, 
                 "Alt", 
-                // FIX: Pass exact step time
-                onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!)
+                // FIX: Pass exact step time and coordinates
+                onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
               ), 
               const SizedBox(width: 8)
             ], 
@@ -1016,7 +1158,7 @@ class _StepCard extends StatelessWidget {
               final stop = step.stopovers![idx]; 
               final name = stop['stop']['name']; 
               final stopId = stop['stop']['id']; 
-              final plannedDep = stop['plannedDeparture'] ?? stop['plannedArrival']; 
+              final plannedDep = stop['plannedDeparture'] ?? stop['scheduledDeparture'] ?? stop['plannedArrival'] ?? stop['scheduledArrival']; 
               final actualDep = stop['departure'] ?? stop['arrival']; 
               String timeStr = "--:--"; 
               Color timeColor = Colors.grey; 
@@ -1044,8 +1186,8 @@ class _StepCard extends StatelessWidget {
                   if (exactStopDate != null)
                     IconButton(
                       icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), 
-                      // FIX: Pass exact stop time
-                      onPressed: () => onOpenAlternatives(stopId, exactStopDate!)
+                      // FIX: Pass exact stop time and location if available
+                      onPressed: () => onOpenAlternatives(stopId, exactStopDate!, lat: stop['stop']['location']?['latitude'], lng: stop['stop']['location']?['longitude'], name: name)
                     )
                 ])
               ); 
