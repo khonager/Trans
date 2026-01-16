@@ -119,6 +119,14 @@ class _MapScreenState extends State<MapScreen> {
     LatLngBounds? bounds;
     if (allPoints.isNotEmpty) {
       bounds = LatLngBounds.fromPoints(allPoints);
+      // Fix: If bounds are a single point (zero area), expand them to avoid "Camera zoom must be finite" crash
+      if (bounds.south == bounds.north && bounds.west == bounds.east) {
+        final center = bounds.center;
+        bounds = LatLngBounds(
+          LatLng(center.latitude - 0.002, center.longitude - 0.002),
+          LatLng(center.latitude + 0.002, center.longitude + 0.002),
+        );
+      }
     } else if (widget.currentPosition != null) {
        final p = LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
        bounds = LatLngBounds(LatLng(p.latitude-0.01, p.longitude-0.01), LatLng(p.latitude+0.01, p.longitude+0.01));

@@ -377,7 +377,7 @@ class TransportApi {
     bool nahverkehrOnly = false,
     DateTime? when,
     bool isArrival = false,
-    int results = 3,
+    int results = 7,
   }) async {
     if (apiMode == 'v6') {
       final res = await _searchJourneysV6(
@@ -396,7 +396,14 @@ class TransportApi {
           if (legs == null || legs.isEmpty) return true;
           final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
           if (departure == null) return true;
-          final depTime = DateTime.parse(departure);
+          
+          DateTime depTime;
+          if (departure is int) {
+             depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
+          } else {
+             depTime = DateTime.parse(departure.toString());
+          }
+          
           return depTime.isAfter(now);
         } catch (e) {
           return true;
@@ -422,11 +429,22 @@ class TransportApi {
         try {
           final departure = journey['departure'];
           if (departure == null) return true;
-          final depTime = DateTime.parse(departure);
+          
+          DateTime depTime;
+          if (departure is int) {
+             depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
+          } else {
+             depTime = DateTime.parse(departure.toString());
+          }
+
           // Strict filtering: only future departures
           return depTime.isAfter(now);
         } catch (e) {
-          return true; // Keep if we can't parse
+          // If we can't parse the time, we probably shouldn't show it if we are strict about "future", 
+          // but logically it's better to show potential errors than hide them. 
+          // However, user specifically asked to hide past results.
+          // If parsing fails, we assume it's valid to avoid filtering valid but weird formats.
+          return true; 
         }
       }).toList();
       
@@ -457,7 +475,14 @@ class TransportApi {
             if (legs == null || legs.isEmpty) return true;
             final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
             if (departure == null) return true;
-            final depTime = DateTime.parse(departure);
+            
+            DateTime depTime;
+            if (departure is int) {
+               depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
+            } else {
+               depTime = DateTime.parse(departure.toString());
+            }
+
             return depTime.isAfter(now);
           } catch (e) {
             return true;
