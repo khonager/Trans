@@ -40,6 +40,11 @@ dependencies:
   package_info_plus: ^8.0.0
   uuid: ^4.2.2
 
+  # Ticket Logic
+  google_mlkit_barcode_scanning: ^0.13.0
+  image_cropper: ^8.0.0
+  image: ^4.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

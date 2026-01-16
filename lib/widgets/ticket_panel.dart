@@ -11,6 +11,9 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:intl/intl.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image/image.dart' as img;
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -99,22 +102,7 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<Uint8List?> _compressImage(XFile file) async {
-    try {
-      if (kIsWeb) return await file.readAsBytes(); 
-      
-      final result = await FlutterImageCompress.compressWithFile(
-        file.path,
-        minWidth: 540,
-        minHeight: 540,
-        quality: 85,
-        format: CompressFormat.jpeg,
-      );
-      return result;
-    } catch (e) {
-      return await file.readAsBytes();
-    }
-  }
+
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
@@ -122,11 +110,173 @@ class _TicketPanelState extends State<TicketPanel> {
     
     if (image == null) return;
 
+    if (kIsWeb) {
+      // Web fallback (no ML Kit support)
+      await _processAndUpload(File(image.path), isWebFile: image);
+      return;
+    }
+
     setState(() => _isLoading = true);
     
     try {
-      final Uint8List? bytes = await _compressImage(image);
-      if (bytes == null) throw "Image processing failed.";
+      final File originalFile = File(image.path);
+      
+      // 1. Scan for QR Code
+      final inputImage = InputImage.fromFile(originalFile);
+      final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+      final barcodes = await barcodeScanner.processImage(inputImage);
+      
+      File? processedFile;
+
+      if (barcodes.isNotEmpty) {
+        // 2. Auto-Crop if QR found
+        final barcode = barcodes.first;
+        final box = barcode.boundingBox;
+        
+        if (box != null) {
+          processedFile = await _autoCropImage(originalFile, box);
+        }
+      }
+
+      barcodeScanner.close(); 
+
+      if (processedFile != null) {
+        // 3. Ask for confirmation
+        if (mounted) {
+             setState(() => _isLoading = false); // Hide loader for dialog
+             final confirmed = await _showCropConfirmation(processedFile);
+             setState(() => _isLoading = true); // Show loader again
+
+             if (confirmed == true) {
+               await _processAndUpload(processedFile);
+               return;
+             } else if (confirmed == false) {
+               // User rejected auto-crop, go to manual
+               await _triggerManualCrop(originalFile);
+               return;
+             }
+             // confirmed == null (dismissed), do nothing
+             return;
+        }
+      } 
+      
+      // Fallback: No QR found OR auto-crop failed -> Manual Crop
+      await _triggerManualCrop(originalFile);
+
+    } catch (e) {
+       _handleError(e);
+    }
+  }
+
+  Future<void> _triggerManualCrop(File imageFile) async {
+    try {
+      final croppedFile = await ImageCropper().cropImage(
+        sourcePath: imageFile.path,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Ticket',
+            toolbarColor: TransColors.of(context).navBarBg,
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Ticket',
+          ),
+        ],
+      );
+
+      if (croppedFile != null) {
+        await _processAndUpload(File(croppedFile.path));
+      } else {
+        setState(() => _isLoading = false); // Cancelled
+      }
+    } catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<File?> _autoCropImage(File file, Rect box) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final image = img.decodeImage(bytes);
+      if (image == null) return null;
+
+      // Add some padding
+      const padding = 20;
+      int x = (box.left - padding).toInt().clamp(0, image.width);
+      int y = (box.top - padding).toInt().clamp(0, image.height);
+      int w = (box.width + (padding * 2)).toInt();
+      int h = (box.height + (padding * 2)).toInt();
+
+      // Ensure within bounds
+      if (x + w > image.width) w = image.width - x;
+      if (y + h > image.height) h = image.height - y;
+
+      final cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      final jpg = img.encodeJpg(cropped);
+
+      final dir = await getTemporaryDirectory();
+      final targetPath = '${dir.path}/auto_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final targetFile = File(targetPath);
+      await targetFile.writeAsBytes(jpg);
+      
+      return targetFile;
+    } catch (e) {
+      debugPrint("Auto-crop error: $e");
+      return null;
+    }
+  }
+
+  Future<bool?> _showCropConfirmation(File croppedFile) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Is this correct?"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+             const Text("We detected a code. Use this?"),
+             const SizedBox(height: 10),
+             Container(
+               constraints: const BoxConstraints(maxHeight: 200),
+               child: Image.file(croppedFile),
+             )
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false), // No -> Manual Crop
+            child: const Text("Edit (No)"), // Clarify "X" functionality
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
+            child: const Text("Yes"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _processAndUpload(File file, {XFile? isWebFile}) async {
+    setState(() => _isLoading = true);
+    try {
+      Uint8List bytes;
+      if (kIsWeb && isWebFile != null) {
+        bytes = await isWebFile.readAsBytes();
+      } else {
+        // Compress handled here or we can skip strictly if we want high quality QR
+        // But let's keep compression for storage optimization
+        final compressed = await FlutterImageCompress.compressWithFile(
+          file.path,
+          minWidth: 800, // Slightly higher valid scan
+          minHeight: 800,
+          quality: 85,
+          format: CompressFormat.jpeg,
+        );
+        bytes = compressed ?? await file.readAsBytes();
+      }
 
       if (kIsWeb) {
         final prefs = await SharedPreferences.getInstance();
@@ -146,14 +296,17 @@ class _TicketPanelState extends State<TicketPanel> {
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
-      
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        String msg = e.toString();
-        if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      }
+      _handleError(e);
+    }
+  }
+
+  void _handleError(dynamic e) {
+    if (mounted) {
+      setState(() => _isLoading = false);
+      String msg = e.toString();
+      if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
