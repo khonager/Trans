@@ -45,7 +45,7 @@ dependencies:
   image_cropper: ^8.0.0
   image: ^4.2.0
   # Linux/Desktop Support
-  zxing_lib: ^0.4.0
+  zxing_lib: ^1.1.4
   crop_your_image: ^1.1.0
 
 dev_dependencies:
