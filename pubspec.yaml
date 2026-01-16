@@ -44,6 +44,9 @@ dependencies:
   google_mlkit_barcode_scanning: ^0.13.0
   image_cropper: ^8.0.0
   image: ^4.2.0
+  # Linux/Desktop Support
+  zxing_lib: ^0.4.0
+  crop_your_image: ^1.1.0
 
 dev_dependencies:
   flutter_test:
