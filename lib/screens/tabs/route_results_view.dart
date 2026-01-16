@@ -347,13 +347,42 @@ class _JourneyCard extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "$depStr - $arrStr",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: colors.textPrimary,
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          "$depStr - $arrStr",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: journey.isCancelled ? colors.textSecondary : colors.textPrimary,
+                            decoration: journey.isCancelled ? TextDecoration.lineThrough : null,
+                          ),
+                        ),
+                        if (journey.isCancelled)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8.0),
+                            child: Text(
+                              "CANCELLED",
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          )
+                        else if (journey.departureDelay != 0)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8.0),
+                            child: Text(
+                              "${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                              style: TextStyle(
+                                color: journey.departureDelay > 0 ? Colors.red : Colors.green,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(

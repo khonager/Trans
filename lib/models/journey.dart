@@ -21,6 +21,13 @@ class JourneyStep {
   // NEW: Store exact time for alternatives search
   final DateTime? dateTime;
 
+  // Real-time data
+  final int? departureDelay; // minutes
+  final int? arrivalDelay;   // minutes
+  final bool isCancelled;
+  final DateTime? plannedDeparture;
+  final DateTime? plannedArrival;
+
   JourneyStep({
     required this.type,
     required this.line,
@@ -39,6 +46,11 @@ class JourneyStep {
     this.stopovers,
     this.chatCount,
     this.dateTime,
+    this.departureDelay,
+    this.arrivalDelay,
+    this.isCancelled = false,
+    this.plannedDeparture,
+    this.plannedArrival,
   });
 }
 
@@ -63,6 +75,16 @@ class Journey {
     required this.rawSource,
     required this.source,
   });
+
+  bool get isCancelled => steps.any((s) => s.isCancelled);
+  
+  int get departureDelay => steps
+      .firstWhere((s) => s.type == 'ride', orElse: () => steps.first)
+      .departureDelay ?? 0;
+      
+  int get arrivalDelay => steps
+      .lastWhere((s) => s.type == 'ride', orElse: () => steps.last)
+      .arrivalDelay ?? 0;
 }
 
 class RouteTab {
