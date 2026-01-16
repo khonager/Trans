@@ -10,7 +10,8 @@ class NotificationManager {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-    const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    final linuxSettings = const LinuxInitializationSettings(defaultActionName: 'Open notification');
+    final initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings, linux: linuxSettings);
 
     await _notifications.initialize(initSettings);
 
