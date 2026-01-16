@@ -45,6 +45,18 @@
                 <data android:scheme="https" android:host="khonager.github.io" android:pathPrefix="/Trans" />
             </intent-filter>
         </activity>
+        
+        <!-- Image Cropper Activity -->
+        <activity
+            android:name="com.yalantis.ucrop.UCropActivity"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+
+        <!-- ML Kit Barcode Model -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui"/>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

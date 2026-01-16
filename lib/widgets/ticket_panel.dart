@@ -11,6 +11,12 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:intl/intl.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image/image.dart' as img;
+import 'package:zxing_lib/zxing.dart' as zxing;
+import 'package:zxing_lib/common.dart' as zxing;
+import 'package:trans/widgets/desktop_crop_wrapper.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -99,22 +105,7 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<Uint8List?> _compressImage(XFile file) async {
-    try {
-      if (kIsWeb) return await file.readAsBytes(); 
-      
-      final result = await FlutterImageCompress.compressWithFile(
-        file.path,
-        minWidth: 540,
-        minHeight: 540,
-        quality: 85,
-        format: CompressFormat.jpeg,
-      );
-      return result;
-    } catch (e) {
-      return await file.readAsBytes();
-    }
-  }
+
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
@@ -122,11 +113,237 @@ class _TicketPanelState extends State<TicketPanel> {
     
     if (image == null) return;
 
+    if (kIsWeb) {
+       await _processAndUpload(File(image.path), isWebFile: image);
+       return;
+    }
+
     setState(() => _isLoading = true);
     
     try {
-      final Uint8List? bytes = await _compressImage(image);
-      if (bytes == null) throw "Image processing failed.";
+      final File originalFile = File(image.path);
+      File? processedFile;
+      
+      // 1. Scan for QR Code
+      if (Platform.isAndroid || Platform.isIOS) {
+        // Mobile: ML Kit
+        final inputImage = InputImage.fromFile(originalFile);
+        final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+        final barcodes = await barcodeScanner.processImage(inputImage);
+        
+        if (barcodes.isNotEmpty) {
+          final box = barcodes.first.boundingBox;
+          if (box != null) processedFile = await _autoCropImage(originalFile, box);
+        }
+        barcodeScanner.close(); 
+      } else {
+        // Desktop: zxing_lib
+        try {
+          final bytes = await originalFile.readAsBytes();
+          final image = img.decodeImage(bytes);
+          if (image != null) {
+              // Convert to LuminanceSource
+              // Image package v4 uses a flat buffer for data. 
+              // We need functionality equivalent to RGBLuminanceSource from the int buffer
+              // or simple greyscale if possible.
+              // For simplicity in v4, toInt() on pixels might reduce performance, 
+              // so let's try a direct approach if zxing supports it.
+              
+              // Note: zxing_lib expects int[] of ARGB/RGB
+              final intList = image.data?.buffer.asUint32List().toList(); 
+              
+              if (intList != null) {
+                  final luminance = zxing.RGBLuminanceSource(image.width, image.height, intList);
+                  final binarizer = zxing.HybridBinarizer(luminance);
+                  final bitmap = zxing.BinaryBitmap(binarizer);
+                  final result = zxing.MultiFormatReader().decode(bitmap);
+                  
+                  // If we are here, we found it!
+                  // result.resultPoints gives corners.
+                  final points = result.resultPoints;
+                  if (points != null && points.isNotEmpty) {
+                    double minX = double.infinity, minY = double.infinity;
+                    double maxX = 0, maxY = 0;
+                    
+                    for (var p in points) {
+                       if ((p?.x ?? 0) < minX) minX = p!.x;
+                       if ((p?.y ?? 0) < minY) minY = p!.y;
+                       if ((p?.x ?? 0) > maxX) maxX = p!.x;
+                       if ((p?.y ?? 0) > maxY) maxY = p!.y;
+                    }
+                    
+                    final box = Rect.fromLTRB(minX, minY, maxX, maxY);
+                    processedFile = await _autoCropImage(originalFile, box);
+                  }
+              }
+          }
+        } catch (e) {
+          debugPrint("ZXing scan failed: $e");
+          // Continue to fallback
+        }
+      }
+
+      if (mounted) setState(() => _isLoading = false);
+
+      if (processedFile != null) {
+        // 2. Auto-Crop Successful -> Confirm
+        final confirmed = await _showCropConfirmation(processedFile, isAutoCrop: true);
+        
+        if (confirmed == true) {
+           await _processAndUpload(processedFile);
+        } else if (confirmed == false) {
+           await _triggerManualCrop(originalFile);
+        }
+      } else {
+        // 3. No QR Found -> Confirm Original
+        final confirmed = await _showCropConfirmation(originalFile, isAutoCrop: false);
+        
+        if (confirmed == true) {
+          await _processAndUpload(originalFile);
+        } else if (confirmed == false) {
+          await _triggerManualCrop(originalFile);
+        }
+      }
+
+    } catch (e) {
+       _handleError(e);
+    }
+  }
+
+  Future<void> _triggerManualCrop(File imageFile) async {
+    // Desktop Manual Crop
+    if (!(Platform.isAndroid || Platform.isIOS)) {
+       final result = await Navigator.push<Uint8List>(
+         context,
+         MaterialPageRoute(builder: (_) => DesktopCropWrapper(imageFile: imageFile)),
+       );
+
+       if (result != null) {
+         // Desktop crop returns bytes directly
+         await _processAndUpload(imageFile, directBytes: result);
+       } else {
+         setState(() => _isLoading = false);
+       }
+       return;
+    }
+
+    // Mobile Manual Crop
+    try {
+      final croppedFile = await ImageCropper().cropImage(
+        sourcePath: imageFile.path,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Ticket',
+            toolbarColor: TransColors.of(context).navBarBg,
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Ticket',
+          ),
+        ],
+      );
+
+      if (croppedFile != null) {
+        await _processAndUpload(File(croppedFile.path));
+      } else {
+        setState(() => _isLoading = false); // Cancelled
+      }
+    } catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<File?> _autoCropImage(File file, Rect box) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final image = img.decodeImage(bytes);
+      if (image == null) return null;
+
+      // Add some padding
+      const padding = 15;
+      int x = (box.left - padding).toInt().clamp(0, image.width);
+      int y = (box.top - padding).toInt().clamp(0, image.height);
+      int w = (box.width + (padding * 2)).toInt();
+      int h = (box.height + (padding * 2)).toInt();
+
+      // Ensure within bounds
+      if (x + w > image.width) w = image.width - x;
+      if (y + h > image.height) h = image.height - y;
+
+      final cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      final jpg = img.encodeJpg(cropped);
+
+      final dir = await getTemporaryDirectory();
+      final targetPath = '${dir.path}/auto_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final targetFile = File(targetPath);
+      await targetFile.writeAsBytes(jpg);
+      
+      return targetFile;
+    } catch (e) {
+      debugPrint("Auto-crop error: $e");
+      return null;
+    }
+  }
+
+  Future<bool?> _showCropConfirmation(File file, {required bool isAutoCrop}) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(isAutoCrop ? "QR Code Detected" : "Confirm Ticket"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+             Text(isAutoCrop 
+               ? "We detected a QR code. Use this crop?" 
+               : "No QR code detected. Use this image?"),
+             const SizedBox(height: 10),
+             Container(
+               constraints: const BoxConstraints(maxHeight: 200),
+               child: Image.file(file),
+             )
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false), // No -> Manual Crop
+            child: Text(isAutoCrop ? "No, Edit Crop" : "Crop / Edit"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
+            child: const Text("Use Image"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _processAndUpload(File file, {XFile? isWebFile, Uint8List? directBytes}) async {
+    setState(() => _isLoading = true);
+    try {
+      Uint8List bytes;
+      if (directBytes != null) {
+        bytes = directBytes;
+      } else if (kIsWeb && isWebFile != null) {
+        bytes = await isWebFile.readAsBytes();
+      } else {
+        // Compress if on Mobile/Mac
+        Uint8List? compressed;
+        if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+            try {
+              compressed = await FlutterImageCompress.compressWithFile(
+                file.path,
+                minWidth: 800,
+                minHeight: 800,
+                quality: 85,
+                format: CompressFormat.jpeg,
+              );
+            } catch (_) {} 
+        }
+        bytes = compressed ?? await file.readAsBytes();
+      }
 
       if (kIsWeb) {
         final prefs = await SharedPreferences.getInstance();
@@ -146,14 +363,17 @@ class _TicketPanelState extends State<TicketPanel> {
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');
 
       if (mounted) setState(() => _isLoading = false);
-      
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        String msg = e.toString();
-        if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      }
+      _handleError(e);
+    }
+  }
+
+  void _handleError(dynamic e) {
+    if (mounted) {
+      setState(() => _isLoading = false);
+      String msg = e.toString();
+      if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
@@ -166,7 +386,12 @@ class _TicketPanelState extends State<TicketPanel> {
         child: Container(
           color: Colors.black.withValues(alpha: 0.9),
           child: Center(
-            child: Image(image: imageProvider, fit: BoxFit.contain),
+            child: Image(
+              image: imageProvider, 
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+            ),
           ),
         ),
       ),
