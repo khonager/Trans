@@ -354,7 +354,7 @@ class _SettingsTabState extends State<SettingsTab> {
             Divider(color: colors.divider), // Separator
             SwitchListTile(
               title: Text("Show Train Numbers", style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text("Display trip IDs (e.g. RB21 (12345))", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              subtitle: Text("Display trip IDs (e.g. RE1 (12345))", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               value: widget.showTrainNumbers,
               activeColor: primaryColor,
               onChanged: widget.onShowTrainNumbersChanged,
