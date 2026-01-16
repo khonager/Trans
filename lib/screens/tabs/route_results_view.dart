@@ -347,43 +347,68 @@ class _JourneyCard extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          "$depStr - $arrStr",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: journey.isCancelled ? colors.textSecondary : colors.textPrimary,
-                            decoration: journey.isCancelled ? TextDecoration.lineThrough : null,
-                          ),
-                        ),
-                        if (journey.isCancelled)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Text(
-                              "CANCELLED",
-                              style: const TextStyle(
-                                color: Colors.red,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          )
-                        else if (journey.departureDelay != 0)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Text(
-                              "${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                      Row(
+                        children: [
+                          if (journey.isCancelled) ...[
+                            Text(
+                              "$depStr - $arrStr",
                               style: TextStyle(
-                                color: journey.departureDelay > 0 ? Colors.red : Colors.green,
-                                fontSize: 16,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                color: colors.textSecondary,
+                                decoration: TextDecoration.lineThrough,
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: Text(
+                                "CANCELLED",
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            )
+                          ] else
+                            Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: depStr,
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary),
+                                  ),
+                                  if (journey.departureDelay != 0)
+                                    TextSpan(
+                                      text: " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.departureDelay > 0 ? Colors.red : Colors.green,
+                                      ),
+                                    ),
+                                  TextSpan(
+                                    text: " - ",
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary),
+                                  ),
+                                  TextSpan(
+                                    text: arrStr,
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary),
+                                  ),
+                                  if (journey.arrivalDelay != 0)
+                                    TextSpan(
+                                      text: " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.arrivalDelay > 0 ? Colors.red : Colors.green,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                     const SizedBox(height: 4),
                     Text(
                       durStr,
