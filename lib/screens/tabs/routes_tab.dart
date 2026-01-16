@@ -506,14 +506,60 @@ class _RoutesTabState extends State<RoutesTab> {
     for (var leg in legs) {
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
-        try { dep = DateTime.parse(leg['departure']).toLocal(); arr = DateTime.parse(leg['arrival']).toLocal(); } catch(e) {}
+        DateTime? scheduledDep, scheduledArr;
+        bool isCancelled = leg['cancelled'] == true;
+        
+        // Parse scheduled times first
+        try {
+          if (leg['scheduledDeparture'] != null) {
+            scheduledDep = DateTime.parse(leg['scheduledDeparture']).toLocal();
+          }
+          if (leg['scheduledArrival'] != null) {
+             scheduledArr = DateTime.parse(leg['scheduledArrival']).toLocal();
+          }
+        } catch(e) {}
+
+        // Parse real-time times, fallback to scheduled
+        try { 
+          if (leg['departure'] != null) {
+             dep = DateTime.parse(leg['departure']).toLocal();
+          }
+          if (leg['arrival'] != null) {
+             arr = DateTime.parse(leg['arrival']).toLocal();
+          }
+        } catch(e) {}
+        
+        // Fallbacks
+        dep ??= scheduledDep;
+        arr ??= scheduledArr;
+        
+        // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
         flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
-        
+
+        int? depDelay;
+        int? arrDelay;
+
+        // Calculate delays if scheduled times are available AND we have real times
+        // If cancelled, delay calculation might be irrelevant or we assume 0 relative to scheduled
+        if (scheduledDep != null && !isCancelled) {
+           depDelay = dep.difference(scheduledDep).inMinutes;
+        }
+        if (scheduledArr != null && !isCancelled) {
+           arrDelay = arr.difference(scheduledArr).inMinutes;
+        }
+
+        // Special handling for Motis: sometimes 'departureDelay' integer is provided directly
+        if (depDelay == null && leg['departureDelay'] is int) {
+           depDelay = (leg['departureDelay'] as int) ~/ 60; // Motis often uses seconds? Or check API. Usually it's ms or s. Motis V1 is min.
+           // actually Motis v1 usually min.
+        }
+
         steps.add(JourneyStep(
           type: 'ride',
           line: leg['line']?['name']?.toString() ?? '?',
+          // If cancelled, show as cancelled in instruction or just handle in UI
           instruction: "${leg['line']?['name'] ?? '?'} → ${leg['direction'] ?? 'Destination'}",
           duration: FormatUtils.formatDuration(arr.difference(dep).inMinutes),
           departureTime: DateFormat('HH:mm').format(dep),
@@ -524,7 +570,12 @@ class _RoutesTabState extends State<RoutesTab> {
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']),
           path: leg['decodedPath'],
-          dateTime: dep // FIX: Store time
+          dateTime: dep, // FIX: Store time
+          departureDelay: depDelay,
+          arrivalDelay: arrDelay,
+          isCancelled: isCancelled,
+          plannedDeparture: scheduledDep,
+          plannedArrival: scheduledArr,
         ));
         lastArrival = arr;
       } else { transferBuffer.add(leg); }
