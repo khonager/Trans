@@ -24,6 +24,7 @@ class JourneyStep {
   // NEW: UI refinements
   final String? destinationName;
   final String? headsign;
+  final String? tripId; // NEW
 
   // Real-time data
   final int? departureDelay; // minutes
@@ -57,6 +58,7 @@ class JourneyStep {
     this.plannedArrival,
     this.destinationName,
     this.headsign,
+    this.tripId,
   });
 }
 

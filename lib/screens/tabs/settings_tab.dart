@@ -20,6 +20,8 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onGhostModeChanged;
   final Function(Color) onColorChanged;
   final Color currentColor;
+  final bool showTrainNumbers;
+  final Function(bool) onShowTrainNumbersChanged;
 
   const SettingsTab({
     super.key,
@@ -33,6 +35,8 @@ class SettingsTab extends StatefulWidget {
     required this.onGhostModeChanged,
     required this.onColorChanged,
     required this.currentColor,
+    required this.showTrainNumbers,
+    required this.onShowTrainNumbersChanged,
   });
 
   @override
@@ -346,6 +350,14 @@ class _SettingsTabState extends State<SettingsTab> {
                   children: appThemeColors.map((c) => _colorCircle(c)).toList(),
                 ),
               ),
+            ),
+            Divider(color: colors.divider), // Separator
+            SwitchListTile(
+              title: Text("Show Train Numbers", style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text("Display trip IDs (e.g. RB21 (12345))", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              value: widget.showTrainNumbers,
+              activeColor: primaryColor,
+              onChanged: widget.onShowTrainNumbersChanged,
             ),
           ]),
 
