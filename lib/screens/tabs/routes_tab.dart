@@ -43,10 +43,10 @@ class RoutesTab extends StatefulWidget {
   });
 
   @override
-  State<RoutesTab> createState() => _RoutesTabState();
+  State<RoutesTab> createState() => RoutesTabState();
 }
 
-class _RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
+class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
 
@@ -139,6 +139,41 @@ class _RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _gpsStream?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Handles the back button press.
+  /// Returns true if the back navigation was handled internally (e.g., closing a route tab),
+  /// and false otherwise (which should presumably trigger the app exit dialog).
+  bool handleBack() {
+    if (_activeTabId != null) {
+      final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
+      if (idx != -1) {
+        final currentTab = _tabs[idx];
+        // If we are looking at a specific journey (details view), go back to list
+        if (currentTab.activeJourney != null) {
+          setState(() {
+            _tabs[idx] = currentTab.copyWith(clearActiveJourney: true);
+          });
+          return true; 
+        }
+      }
+      
+      // If we are at the list view (or no active journey), close the tab
+      _closeTab(_activeTabId!);
+      return true;
+    }
+    // Check if search suggestions are open, maybe close them?
+    // For now, let's say if suggestions are open, we just close them.
+    if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
+       setState(() {
+         _activeSearchField = '';
+         _suggestions = [];
+         FocusScope.of(context).unfocus();
+       });
+       return true;
+    }
+    
+    return false;
   }
 
   @override
