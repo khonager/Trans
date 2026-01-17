@@ -1286,19 +1286,52 @@ class _StepCard extends StatelessWidget {
                mainAxisSize: MainAxisSize.min,
                crossAxisAlignment: CrossAxisAlignment.start,
                children: [
-                 // Top Line: Time Information (Aligned Right)
-                 Align(
-                   alignment: Alignment.centerRight,
-                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
-                      if (step.isCancelled)
-                         const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
-                      else if (step.departureDelay != null && step.departureDelay != 0)
-                         Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
-                    ],
-                  ),
+                 // Top Line: Actions (Left) ... Time (Right)
+                 Row(
+                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                   children: [
+                      // Action Chips (Moved from subtitle)
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                             children: [
+                                _buildActionChip(
+                                  context, 
+                                  Icons.chat_bubble_outline, 
+                                  "Chat", 
+                                  onTap: () => onChat(step.line)
+                                ), 
+                                const SizedBox(width: 8), 
+                                if (step.startStationId != null && step.dateTime != null) ...[
+                                  _buildActionChip(
+                                    context, 
+                                    Icons.alt_route, 
+                                    "Alt", 
+                                    // FIX: Pass exact step time and coordinates
+                                    onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
+                                  ), 
+                                  const SizedBox(width: 8)
+                                ], 
+                                _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
+                             ]
+                          )
+                        )
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Time Info (Right)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
+                          if (step.isCancelled)
+                             const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                          else if (step.departureDelay != null && step.departureDelay != 0)
+                             Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
+                        ],
+                      ),
+                   ],
                  ),
                  const SizedBox(height: 4),
                  // Bottom Line: Bus Number -> Destination
@@ -1349,30 +1382,8 @@ class _StepCard extends StatelessWidget {
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 4), 
           // Bottom Line: Headsign • Duration
-          // Removed bus number as requested ("remove the gray bus number on the bottom part")
           Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
           if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
-          const SizedBox(height: 8), 
-          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-            _buildActionChip(
-              context, 
-              Icons.chat_bubble_outline, 
-              "Chat", 
-              onTap: () => onChat(step.line)
-            ), 
-            const SizedBox(width: 8), 
-            if (step.startStationId != null && step.dateTime != null) ...[
-              _buildActionChip(
-                context, 
-                Icons.alt_route, 
-                "Alt", 
-                // FIX: Pass exact step time and coordinates
-                onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
-              ), 
-              const SizedBox(width: 8)
-            ], 
-            _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
-          ]))
         ]), 
         children: [
           if (step.stopovers != null && step.stopovers!.isNotEmpty) 
