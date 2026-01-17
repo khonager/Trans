@@ -264,7 +264,7 @@ class _SettingsTabState extends State<SettingsTab> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
-                  widget.isDarkMode ? 'lib/assets/logo_light.png' : 'lib/assets/logo_dark.png',
+                  Theme.of(context).brightness == Brightness.dark ? 'lib/assets/logo_light.png' : 'lib/assets/logo_dark.png',
                   height: 48,
                   width: 48,
                   errorBuilder: (c,e,s) => Icon(Icons.directions_transit, size: 48, color: primaryColor),
