@@ -663,7 +663,8 @@ class _SettingsTabState extends State<SettingsTab> {
       final currentLine = _myLocation!['current_line'];
 
       if (isActive) {
-        statusText = "Active recently";
+        final timeStr = "${updated.hour.toString().padLeft(2, '0')}:${updated.minute.toString().padLeft(2, '0')}";
+        statusText = "Last on $timeStr";
         statusColor = colors.statusActive;
 
         if (currentLine != null && currentLine.toString().isNotEmpty) {
