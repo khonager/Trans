@@ -440,6 +440,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
+    // Capture the active field BEFORE async operations or state clearing
+    final currentField = _activeSearchField;
+    
     setState(() { _suggestions = []; _activeSearchField = ''; });
     FocusScope.of(context).unfocus();
     Station? target;
@@ -463,7 +466,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (target != null && mounted) {
       setState(() {
-        if (_activeSearchField == 'from') {
+        if (currentField == 'from') {
            _fromStation = target;
            _fromController.text = target!.name;
            if (_toStation == null) {
@@ -471,9 +474,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
              _toFocusNode.requestFocus();
              _scrollToTop();
            }
-        } else if (_activeSearchField == 'to') {
+        } else if (currentField == 'to') {
            _toStation = target;
            _toController.text = target!.name;
+           // If from is empty, maybe jump there? But usually 'to' is second.
+           if (_fromStation == null && widget.currentPosition == null) {
+              _activeSearchField = 'from';
+              _fromFocusNode.requestFocus();
+           }
         } else {
            if (_fromStation != null || widget.currentPosition != null) {
              _toStation = target;
