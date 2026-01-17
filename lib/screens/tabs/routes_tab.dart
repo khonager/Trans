@@ -1282,63 +1282,68 @@ class _StepCard extends StatelessWidget {
              final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
              final displayDest = isEnd ? "End of Line" : dest;
 
-             return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Expanded(child: Row(
-                children: [
-                  Builder(
-                    builder: (context) {
-                      String displayLine = step.line.trim();
-                      
-                      // 1. Clean the display line if we are NOT showing train numbers.
-                      //    We want to remove patterns like " (12345)" or " 12345" if safe.
-                      //    Common pattern: "Name (Number)"
-                      if (!showTrainNumbers) {
-                         // Regex to match " (digits)" at the end
-                         final regexParens = RegExp(r'\s*\(\d+\)$');
-                         displayLine = displayLine.replaceAll(regexParens, '').trim();
-
-                         // If tripId is explicitly known, remove it specifically too (just in case of no parens)
-                         if (step.tripId != null) {
-                             displayLine = displayLine.replaceAll(step.tripId!, "").trim();
-                         }
-                      }
-
-                      // 2. Re-add tripId if we ARE showing numbers and it's not already in there
-                      //    (Note: if we stripped it above, we stripped it. If showTrainNumbers is true, we didn't strip it.)
-                      //    Wait, if showTrainNumbers is TRUE, we want to ensure it IS there.
-                      //    If showTrainNumbers is FALSE, we want to ensure it is NOT there.
-                      
-                      String suffix = "";
-                      if (showTrainNumbers && step.tripId != null) {
-                         // Only add if not already present in the displayLine to avoid duplication
-                         if (!displayLine.contains(step.tripId!)) {
-                            suffix = " (${step.tripId})";
-                         }
-                      }
-                      
-                      return Text(
-                        "$displayLine$suffix",
-                        style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
-                      );
-                    }
+             return Column(
+               mainAxisSize: MainAxisSize.min,
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+                 // Top Line: Time Information (Aligned Right)
+                 Align(
+                   alignment: Alignment.centerRight,
+                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
+                      if (step.isCancelled)
+                         const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                      else if (step.departureDelay != null && step.departureDelay != 0)
+                         Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(displayDest, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary), overflow: TextOverflow.ellipsis)),
-                ],
-              )), 
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
-                  if (step.isCancelled)
-                     const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
-                  else if (step.departureDelay != null && step.departureDelay != 0)
-                     Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
-                ],
-              )
-            ]);
+                 ),
+                 const SizedBox(height: 4),
+                 // Bottom Line: Bus Number -> Destination
+                 Row(
+                   children: [
+                     Builder(
+                        builder: (context) {
+                          String displayLine = step.line.trim();
+                          
+                          if (!showTrainNumbers) {
+                             final regexParens = RegExp(r'\s*\(\d+\)$');
+                             displayLine = displayLine.replaceAll(regexParens, '').trim();
+
+                             if (step.tripId != null) {
+                                 displayLine = displayLine.replaceAll(step.tripId!, "").trim();
+                             }
+                          }
+
+                          String suffix = "";
+                          if (showTrainNumbers && step.tripId != null) {
+                             if (!displayLine.contains(step.tripId!)) {
+                                suffix = " (${step.tripId})";
+                             }
+                          }
+                          
+                          return Text(
+                            "$displayLine$suffix",
+                            style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
+                          );
+                        }
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          displayDest, 
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: colors.textPrimary), 
+                          overflow: TextOverflow.visible, 
+                        )
+                      ),
+                   ],
+                 )
+               ],
+             );
           }
         ), 
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1408,8 +1413,26 @@ class _StepCard extends StatelessWidget {
                     )
                 ])
               ); 
-            })) 
-          else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
+            })),
+          // Always show the link to the final destination as the last item
+          Container(
+            decoration: BoxDecoration(color: colors.stepStopoversBg),
+            child: ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.flag, size: 14, color: Colors.red),
+              title: Text("Get off at ${step.destinationName ?? 'Destination'}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
+              trailing: Builder(builder: (context) {
+                 String timeStr = step.arrivalTime;
+                 Color timeColor = colors.delayOnTime;
+                 if (step.arrivalDelay != null && step.arrivalDelay! > 0) {
+                   timeColor = colors.delayLate;
+                   timeStr += " (+${step.arrivalDelay})";
+                 }
+                 return Text(timeStr, style: TextStyle(color: timeColor, fontWeight: FontWeight.bold, fontSize: 13));
+              }),
+            )
+          )
         ]
       ))
     );
