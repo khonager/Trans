@@ -43,10 +43,10 @@ class RoutesTab extends StatefulWidget {
   });
 
   @override
-  State<RoutesTab> createState() => _RoutesTabState();
+  State<RoutesTab> createState() => RoutesTabState();
 }
 
-class _RoutesTabState extends State<RoutesTab> {
+class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
 
@@ -75,6 +75,7 @@ class _RoutesTabState extends State<RoutesTab> {
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  bool _wasKeyboardVisible = false;
 
   @override
   void initState() {
@@ -82,6 +83,42 @@ class _RoutesTabState extends State<RoutesTab> {
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
     _initNotifications();
+    WidgetsBinding.instance.addObserver(this);
+    _fromFocusNode.addListener(_onFocusChange);
+    _toFocusNode.addListener(_onFocusChange);
+  }
+  void _onFocusChange() {
+    if (_fromFocusNode.hasFocus) {
+      if (_activeSearchField != 'from') {
+         setState(() {
+           _activeSearchField = 'from';
+           _fetchSuggestions(forceHistory: _fromController.text.isEmpty);
+         });
+         _scrollToTop();
+      }
+    } else if (_toFocusNode.hasFocus) {
+      if (_activeSearchField != 'to') {
+         setState(() {
+           _activeSearchField = 'to';
+           _fetchSuggestions(forceHistory: _toController.text.isEmpty);
+         });
+      }
+    } else {
+      // Logic to hide suggestions when neither has focus
+      // But we must be careful: if we just tapped a suggestion, we don't want to flash-hide it before the tap registers.
+      // Usually the Tap on suggestion happens BEFORE focus is lost? Or focus is lost then tap?
+      // Actually, ListView inside the scroll view might cause focus loss if keyboard dismisses?
+      // Standard behavior: tapping a list item usually keeps focus unless we explicitly unfocus.
+      // But if we scroll the list, we might want to keep focus or dismiss keyboard?
+      // For now, let's clear suggestions if truly lost focus (e.g. keyboard closed or tapped outside).
+      
+      // Delay slightly to allow tap events to propagate if needed?
+      // No, let's try direct.
+      setState(() {
+        _activeSearchField = '';
+        _suggestions = []; 
+      });
+    }
   }
 
   void _initNotifications() async {
@@ -100,7 +137,57 @@ class _RoutesTabState extends State<RoutesTab> {
     _scrollController.dispose();
     _debounce?.cancel();
     _gpsStream?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Handles the back button press.
+  /// Returns true if the back navigation was handled internally (e.g., closing a route tab),
+  /// and false otherwise (which should presumably trigger the app exit dialog).
+  bool handleBack() {
+    if (_activeTabId != null) {
+      final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
+      if (idx != -1) {
+        final currentTab = _tabs[idx];
+        // If we are looking at a specific journey (details view), go back to list
+        if (currentTab.activeJourney != null) {
+          setState(() {
+            _tabs[idx] = currentTab.copyWith(clearActiveJourney: true);
+          });
+          return true; 
+        }
+      }
+      
+      // If we are at the list view (or no active journey), close the tab
+      _closeTab(_activeTabId!);
+      return true;
+    }
+    // Check if search suggestions are open, maybe close them?
+    // For now, let's say if suggestions are open, we just close them.
+    if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
+       setState(() {
+         _activeSearchField = '';
+         _suggestions = [];
+         FocusScope.of(context).unfocus();
+       });
+       return true;
+    }
+    
+    return false;
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final bottomInset = View.of(context).viewInsets.bottom;
+    final isVisible = bottomInset > 0;
+    if (_wasKeyboardVisible && !isVisible) {
+      // Keyboard JUST closed
+      if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+         FocusScope.of(context).unfocus();
+      }
+    }
+    _wasKeyboardVisible = isVisible;
   }
 
   void _scrollToTop() {
@@ -262,6 +349,7 @@ class _RoutesTabState extends State<RoutesTab> {
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
     if (query.isEmpty) {
+
       if (field == 'from') {
          setState(() {
            _fromStation = null;
@@ -269,6 +357,13 @@ class _RoutesTabState extends State<RoutesTab> {
            _isSuggestionsLoading = false;
          });
          return;
+      } else if (field == 'to') {
+        setState(() {
+          _toStation = null;
+          _suggestions = [];
+          _isSuggestionsLoading = false;
+        });
+        return;
       }
       return; 
     }
@@ -345,6 +440,9 @@ class _RoutesTabState extends State<RoutesTab> {
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
+    // Capture the active field BEFORE async operations or state clearing
+    final currentField = _activeSearchField;
+    
     setState(() { _suggestions = []; _activeSearchField = ''; });
     FocusScope.of(context).unfocus();
     Station? target;
@@ -368,7 +466,7 @@ class _RoutesTabState extends State<RoutesTab> {
 
     if (target != null && mounted) {
       setState(() {
-        if (_activeSearchField == 'from') {
+        if (currentField == 'from') {
            _fromStation = target;
            _fromController.text = target!.name;
            if (_toStation == null) {
@@ -376,9 +474,14 @@ class _RoutesTabState extends State<RoutesTab> {
              _toFocusNode.requestFocus();
              _scrollToTop();
            }
-        } else if (_activeSearchField == 'to') {
+        } else if (currentField == 'to') {
            _toStation = target;
            _toController.text = target!.name;
+           // If from is empty, maybe jump there? But usually 'to' is second.
+           if (_fromStation == null && widget.currentPosition == null) {
+              _activeSearchField = 'from';
+              _fromFocusNode.requestFocus();
+           }
         } else {
            if (_fromStation != null || widget.currentPosition != null) {
              _toStation = target;
@@ -717,7 +820,7 @@ class _RoutesTabState extends State<RoutesTab> {
               try {
                 final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
                 if (nearby.isNotEmpty) {
-                   from = Station(id: 'gps', name: nearby.first.name, type: 'location', latitude: pos.latitude, longitude: pos.longitude);
+                   from = nearby.first;
                    if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
                 }
               } catch (_) {}
@@ -803,11 +906,16 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    return SingleChildScrollView(
-      controller: _scrollController,
-      padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
+    return GestureDetector(
+      onTap: () {
+        FocusScope.of(context).unfocus();
+      },
+      behavior: HitTestBehavior.translucent,
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
             Container(
@@ -849,6 +957,7 @@ class _RoutesTabState extends State<RoutesTab> {
             ),
           ],
         ),
+        ),
       ),
     );
   }
@@ -864,7 +973,30 @@ class _RoutesTabState extends State<RoutesTab> {
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
     else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || hint.contains("Location"))) iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); }, style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(
+        controller: controller,
+        focusNode: focusNode,
+        onChanged: (val) => _onSearchChanged(val, fieldKey),
+        onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); },
+        style: TextStyle(color: colors.searchInputText),
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: colors.searchInputFill,
+          prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20),
+          suffixIcon: (controller.text.isNotEmpty || isSelected)
+              ? IconButton(
+                  icon: Icon(Icons.close, size: 16, color: colors.searchHintText),
+                  onPressed: () {
+                    controller.clear();
+                    _onSearchChanged('', fieldKey);
+                  },
+                )
+              : null,
+          hintText: hint,
+          hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
+        )
+    )]);
   }
 
 
@@ -993,7 +1125,11 @@ class _RoutesTabState extends State<RoutesTab> {
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
-              _tabs[idx] = route.copyWith(activeJourney: journey, steps: journey.steps);
+              _tabs[idx] = route.copyWith(
+                activeJourney: journey, 
+                steps: journey.steps,
+                totalDuration: FormatUtils.formatDuration(journey.duration.inMinutes),
+              );
             }
           });
         },

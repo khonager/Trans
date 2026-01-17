@@ -474,19 +474,34 @@ class SupabaseService {
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     
+    
     if (isGhost) {
-      updateData['latitude'] = null;
-      updateData['longitude'] = null;
-      updateData['current_line'] = null; 
+      // In Ghost Mode, we do not update location at all.
+      // The toggleGhostMode function already cleared the location once.
+      // Continuing to push 'null' violates NOT NULL constraints if the columns are set that way.
+      // If we simply want to stop tracking, we just return here.
+      return;
     } else {
       updateData['latitude'] = pos.latitude;
       updateData['longitude'] = pos.longitude;
-      if (currentLine != null) {
-        updateData['current_line'] = currentLine;
-      }
+      updateData['current_line'] = currentLine; // Simplify assignment 
     }
 
     await client.from('user_locations').upsert(updateData);
+  }
+  
+  static Future<Map<String, dynamic>?> getMyLocation() async {
+    final user = currentUser;
+    if (user == null) return null;
+    return await client.from('user_locations').select().eq('user_id', user.id).maybeSingle();
+  }
+
+  static Stream<Map<String, dynamic>?> streamMyLocation() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return client.from('user_locations').stream(primaryKey: ['user_id'])
+        .eq('user_id', user.id)
+        .map((data) => data.isNotEmpty ? data.first : null);
   }
   
   static Future<void> clearJourneyStatus() async {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +23,7 @@ class SettingsTab extends StatefulWidget {
   final Color currentColor;
   final bool showTrainNumbers;
   final Function(bool) onShowTrainNumbersChanged;
+
 
   const SettingsTab({
     super.key,
@@ -50,7 +52,10 @@ class _SettingsTabState extends State<SettingsTab> {
   final _newPasswordCtrl = TextEditingController();
   
   bool _isEditing = false;
+
   Map<String, dynamic>? _profile;
+  Map<String, dynamic>? _myLocation;
+  StreamSubscription? _locationSub;
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
@@ -58,16 +63,40 @@ class _SettingsTabState extends State<SettingsTab> {
   String _apiMode = 'auto';
 
   @override
+  void dispose() {
+    _locationSub?.cancel();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    _usernameCtrl.dispose();
+    _newPasswordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _loadProfile(); 
     _loadSettings();
+    _subscribeToLocation();
+  }
+
+  void _subscribeToLocation() {
+    _locationSub?.cancel();
+    // Listen to changes, but fetch freshness from REST to be safe/consistent with FriendsTab
+    _locationSub = SupabaseService.streamMyLocation().listen((_) async {
+
+      final loc = await SupabaseService.getMyLocation();
+      if (mounted) setState(() => _myLocation = loc);
+    });
   }
 
   Future<void> _loadProfile() async {
     final profile = await SupabaseService.getCurrentProfile();
+    // Location handled by stream now, but initial fetch is good to prevent flicker if stream is slow
+    final location = await SupabaseService.getMyLocation();
     if (mounted) setState(() {
       _profile = profile;
+      _myLocation = location;
     });
   }
 
@@ -298,7 +327,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 value: widget.isGhostMode, 
                 activeTrackColor: Colors.red,
                 activeColor: Colors.white,
-                onChanged: widget.onGhostModeChanged
+
+                onChanged: (val) {
+                  widget.onGhostModeChanged(val);
+                  // Give it a moment to update DB then reload profile to see status change
+                  Future.delayed(const Duration(milliseconds: 500), _loadProfile);
+                }
               ),
             ]),
             const SizedBox(height: 20),
@@ -506,7 +540,9 @@ class _SettingsTabState extends State<SettingsTab> {
                   : const Icon(Icons.emoji_emotions, size: 24, color: Colors.white)
               )
             )
-          )
+          ),
+          const SizedBox(width: 12),
+          _buildMyStatus(colors),
         ]),
         const SizedBox(height: 10),
         Container(
@@ -636,6 +672,57 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
         ],
       ),
+    );
+  }
+
+
+  Widget _buildMyStatus(TransColors colors) {
+    String statusText = "Inactive";
+    Color statusColor = colors.statusOffline;
+    Widget? statusIcon;
+
+    if (_myLocation != null && _myLocation!['updated_at'] != null) {
+      final now = DateTime.now().toUtc();
+      final updated = DateTime.tryParse(_myLocation!['updated_at'])?.toUtc() ?? DateTime(2000).toUtc();
+      final isActive = now.difference(updated).inHours < 12;
+      final currentLine = _myLocation!['current_line'];
+
+      if (isActive) {
+        statusText = "Active recently";
+        statusColor = colors.statusActive;
+
+        if (currentLine != null && currentLine.toString().isNotEmpty) {
+           final diff = now.difference(updated);
+           if (diff.inMinutes < 10) {
+             statusText = "On $currentLine";
+             statusColor = colors.statusOnline;
+             statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
+           } else {
+             statusText = "Last on $currentLine";
+             statusColor = colors.textSecondary;
+             statusIcon = Icon(Icons.history, size: 12, color: colors.textSecondary);
+           }
+        }
+      }
+
+      if (widget.isGhostMode) {
+        if (isActive && currentLine == null) {
+          statusText = "Active recently (Ghost)";
+          statusColor = colors.textSecondary;
+        }
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+             if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
+             Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+          ],
+        ),
+      ],
     );
   }
 }
