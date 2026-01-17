@@ -1222,20 +1222,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                })),
             if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
 
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
         for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
     ]);
   }
 }
 
-class _StepCard extends StatelessWidget {
+class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
   final String finalDestinationId;
-  
-  // FIX: Updated Callback Signature
   final Function(String, DateTime, {double? lat, double? lng, String? name}) onOpenAlternatives;
-  
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
@@ -1255,24 +1252,33 @@ class _StepCard extends StatelessWidget {
   });
 
   @override
+  State<_StepCard> createState() => _StepCardState();
+}
+
+class _StepCardState extends State<_StepCard> {
+  bool _isExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final step = widget.step;
     final bool isWait = step.type == 'wait';
     final isTransfer = step.type == 'transfer' || isWait || step.type == 'walk';
 
     if (isTransfer) { 
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); 
       if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText); 
-      return GestureDetector(onTap: isWait ? null : onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); 
+      return GestureDetector(onTap: isWait ? null : widget.onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); 
     }
     
     return Card(
-      margin: EdgeInsets.only(bottom: 16, top: isFirst ? 0 : 4), 
+      margin: EdgeInsets.only(bottom: 16, top: widget.isFirst ? 0 : 4), 
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
       elevation: 0, 
       color: colors.stepCardBg, 
       child: Theme(data: Theme.of(context).copyWith(dividerColor: Colors.transparent), child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), 
+        tilePadding: const EdgeInsets.fromLTRB(16, 8, 0, 8), 
+        onExpansionChanged: (val) => setState(() => _isExpanded = val),
         title: Builder(
           builder: (context) {
              final dest = (step.destinationName ?? step.instruction.split('→').last.trim());
@@ -1282,52 +1288,105 @@ class _StepCard extends StatelessWidget {
              final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
              final displayDest = isEnd ? "End of Line" : dest;
 
-             return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Expanded(child: Row(
-                children: [
-                  Builder(
-                    builder: (context) {
-                      String displayLine = step.line.trim();
-                      
-                      // 1. Clean the display line if we are NOT showing train numbers.
-                      //    We want to remove patterns like " (12345)" or " 12345" if safe.
-                      //    Common pattern: "Name (Number)"
-                      if (!showTrainNumbers) {
-                         // Regex to match " (digits)" at the end
-                         final regexParens = RegExp(r'\s*\(\d+\)$');
-                         displayLine = displayLine.replaceAll(regexParens, '').trim();
+             // Title: Bus Number -> Destination (Expanded) + Arrow (Right)
+             return Row(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+                 Expanded(
+                   child: Row(
+                     children: [
+                       Builder(
+                          builder: (context) {
+                            String displayLine = step.line.trim();
+                            
+                            if (!widget.showTrainNumbers) {
+                               final regexParens = RegExp(r'\s*\(\d+\)$');
+                               displayLine = displayLine.replaceAll(regexParens, '').trim();
 
-                         // If tripId is explicitly known, remove it specifically too (just in case of no parens)
-                         if (step.tripId != null) {
-                             displayLine = displayLine.replaceAll(step.tripId!, "").trim();
-                         }
-                      }
+                               if (step.tripId != null) {
+                                   displayLine = displayLine.replaceAll(step.tripId!, "").trim();
+                               }
+                            }
 
-                      // 2. Re-add tripId if we ARE showing numbers and it's not already in there
-                      //    (Note: if we stripped it above, we stripped it. If showTrainNumbers is true, we didn't strip it.)
-                      //    Wait, if showTrainNumbers is TRUE, we want to ensure it IS there.
-                      //    If showTrainNumbers is FALSE, we want to ensure it is NOT there.
-                      
-                      String suffix = "";
-                      if (showTrainNumbers && step.tripId != null) {
-                         // Only add if not already present in the displayLine to avoid duplication
-                         if (!displayLine.contains(step.tripId!)) {
-                            suffix = " (${step.tripId})";
-                         }
-                      }
-                      
-                      return Text(
-                        "$displayLine$suffix",
-                        style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
-                      );
-                    }
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(displayDest, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary), overflow: TextOverflow.ellipsis)),
-                ],
-              )), 
+                            String suffix = "";
+                            if (widget.showTrainNumbers && step.tripId != null) {
+                               if (!displayLine.contains(step.tripId!)) {
+                                  suffix = " (${step.tripId})";
+                               }
+                            }
+                            
+                            return Text(
+                              "$displayLine$suffix",
+                              style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
+                            );
+                          }
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            displayDest, 
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary), 
+                            overflow: TextOverflow.visible, 
+                          )
+                        ),
+                     ],
+                   )
+                 ),
+                 const SizedBox(width: 8),
+                 // Manual Arrow on Top Line with Rotation
+                 AnimatedRotation(
+                    turns: _isExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(Icons.keyboard_arrow_down, color: _isExpanded ? colors.effectiveSeed : colors.textSecondary)
+                 ),
+               ],
+             );
+          }
+        ),
+        trailing: const SizedBox.shrink(), // Hide default centered arrow
+        subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(height: 4), 
+          // Info Line: Headsign • Duration
+          Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
+          if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+          
+          const SizedBox(height: 12), // Spacer before actions
+          
+          // Action Buttons + Time (Bottom Row)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Actions (Left)
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal, 
+                  child: Row(children: [
+                    _buildActionChip(
+                      context, 
+                      Icons.chat_bubble_outline, 
+                      "Chat", 
+                      onTap: () => widget.onChat(step.line)
+                    ), 
+                    const SizedBox(width: 8), 
+                    if (step.startStationId != null && step.dateTime != null) ...[
+                      _buildActionChip(
+                        context, 
+                        Icons.alt_route, 
+                        "Alt", 
+                        onTap: () => widget.onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
+                      ), 
+                      const SizedBox(width: 8)
+                    ], 
+                    _buildActionChip(context, Icons.vibration, widget.isAlarmSet ? "Alarm ON" : "Wake Me", isActive: widget.isAlarmSet, onTap: widget.onAlarmToggle)
+                  ])
+                )
+              ),
+              const SizedBox(width: 8),
+              
+              // Time (Right)
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1338,36 +1397,8 @@ class _StepCard extends StatelessWidget {
                      Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
                 ],
               )
-            ]);
-          }
-        ), 
-        subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const SizedBox(height: 4), 
-          // Bottom Line: Headsign • Duration
-          // Removed bus number as requested ("remove the gray bus number on the bottom part")
-          Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
-          if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
-          const SizedBox(height: 8), 
-          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-            _buildActionChip(
-              context, 
-              Icons.chat_bubble_outline, 
-              "Chat", 
-              onTap: () => onChat(step.line)
-            ), 
-            const SizedBox(width: 8), 
-            if (step.startStationId != null && step.dateTime != null) ...[
-              _buildActionChip(
-                context, 
-                Icons.alt_route, 
-                "Alt", 
-                // FIX: Pass exact step time and coordinates
-                onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
-              ), 
-              const SizedBox(width: 8)
-            ], 
-            _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
-          ]))
+            ],
+          )
         ]), 
         children: [
           if (step.stopovers != null && step.stopovers!.isNotEmpty) 
@@ -1404,12 +1435,31 @@ class _StepCard extends StatelessWidget {
                     IconButton(
                       icon: const Icon(Icons.alt_route, size: 16, color: Colors.blue), 
                       // FIX: Pass exact stop time and location if available
-                      onPressed: () => onOpenAlternatives(stopId, exactStopDate!, lat: stop['stop']['location']?['latitude'], lng: stop['stop']['location']?['longitude'], name: name)
+                      onPressed: () => widget.onOpenAlternatives(stopId, exactStopDate!, lat: stop['stop']['location']?['latitude'], lng: stop['stop']['location']?['longitude'], name: name)
                     )
                 ])
               ); 
             })) 
-          else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info."))
+          else const Padding(padding: EdgeInsets.all(16), child: Text("No intermediate stops info.")),
+          // Always show the link to the final destination as the last item
+          Container(
+            decoration: BoxDecoration(color: colors.stepStopoversBg),
+            child: ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.flag, size: 14, color: Colors.red),
+              title: Text("Get off at ${step.destinationName ?? 'Destination'}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
+              trailing: Builder(builder: (context) {
+                 String timeStr = step.arrivalTime;
+                 Color timeColor = colors.delayOnTime;
+                 if (step.arrivalDelay != null && step.arrivalDelay! > 0) {
+                   timeColor = colors.delayLate;
+                   timeStr += " (+${step.arrivalDelay})";
+                 }
+                 return Text(timeStr, style: TextStyle(color: timeColor, fontWeight: FontWeight.bold, fontSize: 13));
+              }),
+            )
+          )
         ]
       ))
     );
@@ -1420,6 +1470,7 @@ class _StepCard extends StatelessWidget {
     return GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isActive ? colors.chipActiveBg : colors.chipBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(icon, size: 14, color: isActive ? colors.chipActiveFg : colors.chipFg), const SizedBox(width: 6), Text(label, style: TextStyle(color: isActive ? colors.chipActiveFg : colors.chipFg, fontSize: 12))])));
   }
 }
+
 
 class _EditFavoriteDialog extends StatefulWidget {
   final Favorite favorite;
