@@ -125225,7 +125225,8 @@ p=A.al(a,e,q).w
 q=A.al(a,e,q).w
 p=A.ch(e,p.r.b+10,e)
 o=A.cl(12)
-o=A.UC(o,new A.vr(A.bb4(e,e,new A.EU("lib/assets/logo.png",e,e)),new A.aWA(r),48,48,e,e,e),B.br)
+n=A.M(a).ax.a===B.u?"lib/assets/logo_light.png":"lib/assets/logo_dark.png"
+o=A.UC(o,new A.vr(A.bb4(e,e,new A.EU(n,e,e)),new A.aWA(r),48,48,e,e,e),B.br)
 n=d.b===B.u
 m=t.p
 o=A.b([o,B.ps,A.ab("Trans",e,e,e,e,A.aH(e,e,n?B.h:B.v,e,e,e,e,e,e,e,e,32,e,e,B.O,e,e,!0,e,e,e,e,e,e,e,e),e,e,e)],m)
