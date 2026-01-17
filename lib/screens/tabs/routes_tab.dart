@@ -262,6 +262,7 @@ class _RoutesTabState extends State<RoutesTab> {
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
     if (query.isEmpty) {
+
       if (field == 'from') {
          setState(() {
            _fromStation = null;
@@ -269,6 +270,13 @@ class _RoutesTabState extends State<RoutesTab> {
            _isSuggestionsLoading = false;
          });
          return;
+      } else if (field == 'to') {
+        setState(() {
+          _toStation = null;
+          _suggestions = [];
+          _isSuggestionsLoading = false;
+        });
+        return;
       }
       return; 
     }
@@ -864,7 +872,30 @@ class _RoutesTabState extends State<RoutesTab> {
     Color iconColor = colors.searchInputIcon;
     if (isSelected) iconColor = Colors.greenAccent; 
     else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || hint.contains("Location"))) iconColor = Colors.blue;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(controller: controller, focusNode: focusNode, onChanged: (val) => _onSearchChanged(val, fieldKey), onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); }, style: TextStyle(color: colors.searchInputText), decoration: InputDecoration(filled: true, fillColor: colors.searchInputFill, prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20), hintText: hint, hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)))]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(
+        controller: controller,
+        focusNode: focusNode,
+        onChanged: (val) => _onSearchChanged(val, fieldKey),
+        onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); },
+        style: TextStyle(color: colors.searchInputText),
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: colors.searchInputFill,
+          prefixIcon: Icon(fieldKey == 'from' ? Icons.my_location : Icons.location_on, color: iconColor, size: 20),
+          suffixIcon: (controller.text.isNotEmpty || isSelected)
+              ? IconButton(
+                  icon: Icon(Icons.close, size: 16, color: colors.searchHintText),
+                  onPressed: () {
+                    controller.clear();
+                    _onSearchChanged('', fieldKey);
+                  },
+                )
+              : null,
+          hintText: hint,
+          hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
+        )
+    )]);
   }
 
 
