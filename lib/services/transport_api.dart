@@ -209,10 +209,14 @@ class TransportApi {
     };
 
     // Add location bias if coordinates provided
+    // User requested to REMOVE bias for typed queries, so we comment this out.
+    // The query 'text' should be the primary filter.
+    /*
     if (lat != null && lng != null) {
       params['place'] = '$lat,$lng';
       params['placeBias'] = '2'; // Higher bias towards user location
     }
+    */
 
     final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
     final List<dynamic> data = json.decode(response.body);

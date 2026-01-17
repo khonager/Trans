@@ -965,7 +965,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final colors = TransColors.of(context);
-    return Container(
+    return GestureDetector(
+      onTap: () {
+        // Capture taps on the list container (including scrolling area) 
+        // to prevent them from bubbling up to the main view's tap handler
+        // which closes the keyboard.
+      },
+      child: Container(
       constraints: const BoxConstraints(maxHeight: 250), 
       margin: const EdgeInsets.only(top: 8), 
       decoration: BoxDecoration(
@@ -1036,6 +1042,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           ]
         ),
       )
+    ),
     );
   }
 
