@@ -439,7 +439,7 @@ class TransportApi {
           }
 
           // Strict filtering: only future departures
-          return depTime.isAfter(now);
+          return depTime.isAfter(now.subtract(const Duration(minutes: 15)));
         } catch (e) {
           // If we can't parse the time, we probably shouldn't show it if we are strict about "future", 
           // but logically it's better to show potential errors than hide them. 
@@ -484,7 +484,7 @@ class TransportApi {
                depTime = DateTime.parse(departure.toString());
             }
 
-            return depTime.isAfter(now);
+            return depTime.isAfter(now.subtract(const Duration(minutes: 15)));
           } catch (e) {
             return true;
           }
