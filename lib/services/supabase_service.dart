@@ -495,6 +495,14 @@ class SupabaseService {
     if (user == null) return null;
     return await client.from('user_locations').select().eq('user_id', user.id).maybeSingle();
   }
+
+  static Stream<Map<String, dynamic>?> streamMyLocation() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return client.from('user_locations').stream(primaryKey: ['user_id'])
+        .eq('user_id', user.id)
+        .map((data) => data.isNotEmpty ? data.first : null);
+  }
   
   static Future<void> clearJourneyStatus() async {
     final user = currentUser;

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +23,7 @@ class SettingsTab extends StatefulWidget {
   final Color currentColor;
   final bool showTrainNumbers;
   final Function(bool) onShowTrainNumbersChanged;
+
 
   const SettingsTab({
     super.key,
@@ -53,6 +55,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _myLocation;
+  StreamSubscription? _locationSub;
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
@@ -60,14 +63,36 @@ class _SettingsTabState extends State<SettingsTab> {
   String _apiMode = 'auto';
 
   @override
+  void dispose() {
+    _locationSub?.cancel();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    _usernameCtrl.dispose();
+    _newPasswordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _loadProfile(); 
     _loadSettings();
+    _subscribeToLocation();
+  }
+
+  void _subscribeToLocation() {
+    _locationSub?.cancel();
+    // Listen to changes, but fetch freshness from REST to be safe/consistent with FriendsTab
+    _locationSub = SupabaseService.streamMyLocation().listen((_) async {
+
+      final loc = await SupabaseService.getMyLocation();
+      if (mounted) setState(() => _myLocation = loc);
+    });
   }
 
   Future<void> _loadProfile() async {
     final profile = await SupabaseService.getCurrentProfile();
+    // Location handled by stream now, but initial fetch is good to prevent flicker if stream is slow
     final location = await SupabaseService.getMyLocation();
     if (mounted) setState(() {
       _profile = profile;
@@ -663,8 +688,7 @@ class _SettingsTabState extends State<SettingsTab> {
       final currentLine = _myLocation!['current_line'];
 
       if (isActive) {
-        final timeStr = "${updated.hour.toString().padLeft(2, '0')}:${updated.minute.toString().padLeft(2, '0')}";
-        statusText = "Last on $timeStr";
+        statusText = "Active recently";
         statusColor = colors.statusActive;
 
         if (currentLine != null && currentLine.toString().isNotEmpty) {
@@ -695,11 +719,9 @@ class _SettingsTabState extends State<SettingsTab> {
         Row(
           children: [
              if (statusIcon != null) ...[statusIcon, const SizedBox(width: 4)],
-             Text(statusText, style: TextStyle(fontSize: 14, color: statusColor, fontWeight: FontWeight.w500)),
+             Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
           ],
         ),
-        if (widget.isGhostMode)
-          Text("Visible to others as generic/offline", style: TextStyle(fontSize: 10, color: colors.textSecondary.withOpacity(0.7))),
       ],
     );
   }
