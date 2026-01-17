@@ -281,7 +281,7 @@ class TransportApi {
     // Must include WALK to allow walking to/from stations!
     if (nahverkehrOnly) {
       params['transitModes'] =
-          'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS';
+          'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS,WALK';
     }
 
     final response = await _fetch(_getMotisUri('/api/v5/plan', params));

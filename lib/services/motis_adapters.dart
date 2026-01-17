@@ -1,3 +1,6 @@
+import 'dart:math';
+import 'package:flutter/foundation.dart';
+
 // lib/services/motis_adapters.dart
 // Adapters to convert MOTIS API responses to existing app formats
 
@@ -120,6 +123,71 @@ int? _calculateDelay(String? scheduled, String? actual) {
   }
 }
 
+/// Decodes Google Polyline Algorithm string to List<[lat, lng]>
+List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
+  List<List<double>> points = [];
+  int index = 0, len = encoded.length;
+  int lat = 0, lng = 0;
+  final factor = pow(10, precision);
+
+  while (index < len) {
+    int b, shift = 0, result = 0;
+    try {
+      do {
+        if (index >= len) {
+           // Truncated string
+           debugPrint("Polyline truncation detected at index $index");
+           return points;
+        }
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+      // Emulate 32-bit signed overflow (Dart ints are 64-bit)
+      lat = (lat & 0xFFFFFFFF);
+      if (lat > 0x7FFFFFFF) lat -= 0x100000000;
+
+      shift = 0;
+      result = 0;
+      do {
+        if (index >= len) {
+           debugPrint("Polyline truncation detected at index $index (lng)");
+           return points;
+        }
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+      // Emulate 32-bit signed overflow
+      lng = (lng & 0xFFFFFFFF);
+      if (lng > 0x7FFFFFFF) lng -= 0x100000000;
+      
+      final latDouble = lat / factor;
+      final lngDouble = lng / factor;
+      
+      // Sanity check
+      if (latDouble < -90 || latDouble > 90) {
+        debugPrint("Invalid Latitude: $latDouble (raw: $lat). Skipping point.");
+        continue;
+      }
+      if (lngDouble < -180 || lngDouble > 180) {
+         debugPrint("Invalid Longitude: $lngDouble. Skipping point.");
+         continue; 
+      }
+
+      points.add([latDouble, lngDouble]);
+    } catch (e) {
+      debugPrint("Polyline decode error: $e");
+      break;
+    }
+  }
+  return points;
+}
+
 /// Converts MOTIS Leg → v6.db leg format expected by UI
 Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
   final mode = leg['mode'] as String? ?? 'WALK';
@@ -154,6 +222,11 @@ Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
       'points': leg['legGeometry']['points'],
       'precision': leg['legGeometry']['precision'] ?? 6,
     },
+    if (leg['legGeometry'] != null && leg['legGeometry']['points'] != null)
+      'decodedPath': _decodePolyline(
+        leg['legGeometry']['points'], 
+        precision: leg['legGeometry']['precision'] ?? 6
+      ),
   };
 }
 

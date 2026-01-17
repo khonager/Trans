@@ -36,109 +36,126 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _loadRoute() async {
-    final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
-    List<LatLng> allPoints = [];
-    List<Marker> markers = [];
+    try {
+      final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
+      List<LatLng> allPoints = [];
+      List<Marker> markers = [];
 
-    for (var step in stepsToShow) {
-      // 1. Walking Path (Fetch via OSRM)
-      if (widget.focusStep != null && (step.type == 'walk' || step.isWalking) && step.startLat != null && step.endLat != null) {
-        try {
-          // Fetch real walking path
-          final path = await TransportApi.getWalkingRoute(step.startLat!, step.startLng!, step.endLat!, step.endLng!);
-          allPoints.addAll(path.map((p) => LatLng(p[0], p[1])));
-        } catch (_) {
-          // Fallback
+      for (var step in stepsToShow) {
+        // 1. Walking Path (Fetch via OSRM)
+        // 1. Walking Path - Prefer Motis path if available
+        if (widget.focusStep != null && (step.type == 'walk' || step.isWalking) && step.startLat != null && step.endLat != null) {
+           if (step.path != null && step.path!.isNotEmpty) {
+             try {
+               allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+             } catch(e) { debugPrint("Path mapping error: $e"); }
+           } else {
+             try {
+               // Fallback to OSRM only if no path from Motis
+               final path = await TransportApi.getWalkingRoute(step.startLat!, step.startLng!, step.endLat!, step.endLng!);
+               allPoints.addAll(path.map((p) => LatLng(p[0], p[1])));
+             } catch (_) {
+               allPoints.add(LatLng(step.startLat!, step.startLng!));
+               allPoints.add(LatLng(step.endLat!, step.endLng!));
+             }
+           }
+        } 
+        // 2. Existing path (bus/train)
+        else if (step.path != null && step.path!.isNotEmpty) {
+          try {
+             allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+          } catch(e) { debugPrint("Step path error: $e"); }
+        } 
+        // 3. Fallback for stopovers
+        else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+          if (step.startLat != null) allPoints.add(LatLng(step.startLat!, step.startLng!));
+          for (var stop in step.stopovers!) {
+            if (stop['stop'] != null && stop['stop']['location'] != null) {
+              allPoints.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
+            }
+          }
+          if (step.endLat != null) allPoints.add(LatLng(step.endLat!, step.endLng!));
+        } 
+        // 4. Simple straight line fallback
+        else if (step.startLat != null && step.endLat != null) {
           allPoints.add(LatLng(step.startLat!, step.startLng!));
           allPoints.add(LatLng(step.endLat!, step.endLng!));
         }
-      } 
-      // 2. Existing path (bus/train)
-      else if (step.path != null && step.path!.isNotEmpty) {
-        allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
-      } 
-      // 3. Fallback for stopovers
-      else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-        if (step.startLat != null) allPoints.add(LatLng(step.startLat!, step.startLng!));
-        for (var stop in step.stopovers!) {
-          if (stop['stop'] != null && stop['stop']['location'] != null) {
-            allPoints.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
+
+        // Add Markers
+        // Start Marker
+        if (step.startLat != null) {
+          markers.add(Marker(
+              point: LatLng(step.startLat!, step.startLng!),
+              width: 16, height: 16,
+              child: Container(decoration: BoxDecoration(color: step.type == 'walk' ? Colors.orange : Colors.blue, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))
+          ));
+        }
+        // Stopover markers
+        if (step.stopovers != null) {
+          for (var stop in step.stopovers!) {
+            if (stop['stop'] != null && stop['stop']['location'] != null) {
+              markers.add(Marker(
+                point: LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']),
+                width: 10, height: 10,
+                child: Container(decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.blue, width: 2))),
+              ));
+            }
           }
         }
-        if (step.endLat != null) allPoints.add(LatLng(step.endLat!, step.endLng!));
-      } 
-      // 4. Simple straight line fallback
-      else if (step.startLat != null && step.endLat != null) {
-        allPoints.add(LatLng(step.startLat!, step.startLng!));
-        allPoints.add(LatLng(step.endLat!, step.endLng!));
       }
 
-      // Add Markers
-      // Start Marker
-      if (step.startLat != null) {
+      // Destination Marker
+      if (allPoints.isNotEmpty) {
+         markers.add(Marker(
+           point: allPoints.last,
+           width: 32, height: 32,
+           alignment: Alignment.topCenter,
+           child: const Icon(Icons.location_on, color: Colors.red, size: 32),
+         ));
+      }
+      
+      // User Position
+      if (widget.currentPosition != null) {
         markers.add(Marker(
-            point: LatLng(step.startLat!, step.startLng!),
-            width: 16, height: 16,
-            child: Container(decoration: BoxDecoration(color: step.type == 'walk' ? Colors.orange : Colors.blue, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))
+          point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
+          width: 32, height: 32,
+          child: Container(decoration: BoxDecoration(color: Colors.blue.withOpacity(0.3), shape: BoxShape.circle), child: const Icon(Icons.my_location, color: Colors.blue, size: 16)),
         ));
       }
-      // Stopover markers
-      if (step.stopovers != null) {
-        for (var stop in step.stopovers!) {
-          if (stop['stop'] != null && stop['stop']['location'] != null) {
-            markers.add(Marker(
-              point: LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']),
-              width: 10, height: 10,
-              child: Container(decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.blue, width: 2))),
-            ));
+
+      // Calculate Bounds
+      LatLngBounds? bounds;
+      try {
+        if (allPoints.isNotEmpty) {
+          bounds = LatLngBounds.fromPoints(allPoints);
+          // Fix: If bounds are a single point (zero area), expand them to avoid "Camera zoom must be finite" crash
+          if (bounds.south == bounds.north && bounds.west == bounds.east) {
+            final center = bounds.center;
+            bounds = LatLngBounds(
+              LatLng(center.latitude - 0.002, center.longitude - 0.002),
+              LatLng(center.latitude + 0.002, center.longitude + 0.002),
+            );
           }
+        } else if (widget.currentPosition != null) {
+           final p = LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+           bounds = LatLngBounds(LatLng(p.latitude-0.01, p.longitude-0.01), LatLng(p.latitude+0.01, p.longitude+0.01));
         }
+      } catch (e) {
+        debugPrint("Bounds calc error: $e");
       }
-    }
 
-    // Destination Marker
-    if (allPoints.isNotEmpty) {
-       markers.add(Marker(
-         point: allPoints.last,
-         width: 32, height: 32,
-         alignment: Alignment.topCenter,
-         child: const Icon(Icons.location_on, color: Colors.red, size: 32),
-       ));
-    }
-    
-    // User Position
-    if (widget.currentPosition != null) {
-      markers.add(Marker(
-        point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
-        width: 32, height: 32,
-        child: Container(decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.3), shape: BoxShape.circle), child: const Icon(Icons.my_location, color: Colors.blue, size: 16)),
-      ));
-    }
-
-    // Calculate Bounds
-    LatLngBounds? bounds;
-    if (allPoints.isNotEmpty) {
-      bounds = LatLngBounds.fromPoints(allPoints);
-      // Fix: If bounds are a single point (zero area), expand them to avoid "Camera zoom must be finite" crash
-      if (bounds.south == bounds.north && bounds.west == bounds.east) {
-        final center = bounds.center;
-        bounds = LatLngBounds(
-          LatLng(center.latitude - 0.002, center.longitude - 0.002),
-          LatLng(center.latitude + 0.002, center.longitude + 0.002),
-        );
+      if (mounted) {
+        setState(() {
+          _routePoints = allPoints;
+          _markers = markers;
+          _bounds = bounds;
+        });
       }
-    } else if (widget.currentPosition != null) {
-       final p = LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
-       bounds = LatLngBounds(LatLng(p.latitude-0.01, p.longitude-0.01), LatLng(p.latitude+0.01, p.longitude+0.01));
-    }
-
-    if (mounted) {
-      setState(() {
-        _routePoints = allPoints;
-        _markers = markers;
-        _bounds = bounds;
-        _isLoadingPath = false;
-      });
+    } catch (e) {
+      debugPrint("Error loading route: $e");
+    } finally {
+      if (mounted) setState(() => _isLoadingPath = false);
     }
   }
 
@@ -172,21 +189,20 @@ class _MapScreenState extends State<MapScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             // Google Maps Button (Left)
-            if (widget.focusStep != null && (widget.focusStep!.type == 'walk' || widget.focusStep!.isWalking))
-              FloatingActionButton(
-                heroTag: "gmaps",
-                backgroundColor: Colors.white,
-                onPressed: _openGoogleMaps,
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Image.network(
-                    'https://www.gstatic.com/images/branding/product/1x/maps_48dp.png',
-                    fit: BoxFit.contain,
-                  ),
+            FloatingActionButton(
+              heroTag: "gmaps",
+              backgroundColor: Colors.white,
+              onPressed: _openGoogleMaps,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Image.network(
+                  'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Google_Maps_icon.svg/1024px-Google_Maps_icon.svg.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.blue),
                 ),
-              )
-            else
-              const SizedBox(), // Spacer to keep recenter button on right
+              ),
+            ),
+            const SizedBox(), // Spacer
 
             // Recenter Button (Right)
             FloatingActionButton(
