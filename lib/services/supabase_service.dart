@@ -490,6 +490,12 @@ class SupabaseService {
     await client.from('user_locations').upsert(updateData);
   }
   
+  static Future<Map<String, dynamic>?> getMyLocation() async {
+    final user = currentUser;
+    if (user == null) return null;
+    return await client.from('user_locations').select().eq('user_id', user.id).maybeSingle();
+  }
+  
   static Future<void> clearJourneyStatus() async {
     final user = currentUser;
     if (user == null) return;
