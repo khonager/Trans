@@ -46,7 +46,7 @@ class RoutesTab extends StatefulWidget {
   State<RoutesTab> createState() => _RoutesTabState();
 }
 
-class _RoutesTabState extends State<RoutesTab> {
+class _RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
 
@@ -75,6 +75,7 @@ class _RoutesTabState extends State<RoutesTab> {
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  bool _wasKeyboardVisible = false;
 
   @override
   void initState() {
@@ -82,6 +83,42 @@ class _RoutesTabState extends State<RoutesTab> {
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
     _initNotifications();
+    WidgetsBinding.instance.addObserver(this);
+    _fromFocusNode.addListener(_onFocusChange);
+    _toFocusNode.addListener(_onFocusChange);
+  }
+  void _onFocusChange() {
+    if (_fromFocusNode.hasFocus) {
+      if (_activeSearchField != 'from') {
+         setState(() {
+           _activeSearchField = 'from';
+           _fetchSuggestions(forceHistory: _fromController.text.isEmpty);
+         });
+         _scrollToTop();
+      }
+    } else if (_toFocusNode.hasFocus) {
+      if (_activeSearchField != 'to') {
+         setState(() {
+           _activeSearchField = 'to';
+           _fetchSuggestions(forceHistory: _toController.text.isEmpty);
+         });
+      }
+    } else {
+      // Logic to hide suggestions when neither has focus
+      // But we must be careful: if we just tapped a suggestion, we don't want to flash-hide it before the tap registers.
+      // Usually the Tap on suggestion happens BEFORE focus is lost? Or focus is lost then tap?
+      // Actually, ListView inside the scroll view might cause focus loss if keyboard dismisses?
+      // Standard behavior: tapping a list item usually keeps focus unless we explicitly unfocus.
+      // But if we scroll the list, we might want to keep focus or dismiss keyboard?
+      // For now, let's clear suggestions if truly lost focus (e.g. keyboard closed or tapped outside).
+      
+      // Delay slightly to allow tap events to propagate if needed?
+      // No, let's try direct.
+      setState(() {
+        _activeSearchField = '';
+        _suggestions = []; 
+      });
+    }
   }
 
   void _initNotifications() async {
@@ -100,7 +137,22 @@ class _RoutesTabState extends State<RoutesTab> {
     _scrollController.dispose();
     _debounce?.cancel();
     _gpsStream?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final bottomInset = View.of(context).viewInsets.bottom;
+    final isVisible = bottomInset > 0;
+    if (_wasKeyboardVisible && !isVisible) {
+      // Keyboard JUST closed
+      if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+         FocusScope.of(context).unfocus();
+      }
+    }
+    _wasKeyboardVisible = isVisible;
   }
 
   void _scrollToTop() {
@@ -811,11 +863,16 @@ class _RoutesTabState extends State<RoutesTab> {
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    return SingleChildScrollView(
-      controller: _scrollController,
-      padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
+    return GestureDetector(
+      onTap: () {
+        FocusScope.of(context).unfocus();
+      },
+      behavior: HitTestBehavior.translucent,
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: EdgeInsets.only(bottom: 100 + keyboardHeight),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
             Container(
@@ -856,6 +913,7 @@ class _RoutesTabState extends State<RoutesTab> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );
