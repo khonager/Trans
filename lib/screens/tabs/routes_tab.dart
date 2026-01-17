@@ -63,6 +63,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<dynamic> _suggestions = []; 
   String _activeSearchField = '';
   Timer? _debounce;
+  Timer? _focusDebounce; // Delayed focus handling for Web clicks
   bool _isLoadingRoute = false;
   bool _isSuggestionsLoading = false;
   
@@ -89,6 +90,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
   void _onFocusChange() {
     if (_fromFocusNode.hasFocus) {
+      _focusDebounce?.cancel();
       if (_activeSearchField != 'from') {
          setState(() {
            _activeSearchField = 'from';
@@ -97,6 +99,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
          _scrollToTop();
       }
     } else if (_toFocusNode.hasFocus) {
+      _focusDebounce?.cancel();
       if (_activeSearchField != 'to') {
          setState(() {
            _activeSearchField = 'to';
@@ -104,19 +107,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
          });
       }
     } else {
-      // Logic to hide suggestions when neither has focus
-      // But we must be careful: if we just tapped a suggestion, we don't want to flash-hide it before the tap registers.
-      // Usually the Tap on suggestion happens BEFORE focus is lost? Or focus is lost then tap?
-      // Actually, ListView inside the scroll view might cause focus loss if keyboard dismisses?
-      // Standard behavior: tapping a list item usually keeps focus unless we explicitly unfocus.
-      // But if we scroll the list, we might want to keep focus or dismiss keyboard?
-      // For now, let's clear suggestions if truly lost focus (e.g. keyboard closed or tapped outside).
-      
-      // Delay slightly to allow tap events to propagate if needed?
-      // No, let's try direct.
-      setState(() {
-        _activeSearchField = '';
-        _suggestions = []; 
+      // Delay clearing suggestions to allow click events (especially on Web) to register
+      _focusDebounce?.cancel();
+      _focusDebounce = Timer(const Duration(milliseconds: 200), () {
+        if (mounted) {
+          setState(() {
+            _activeSearchField = '';
+            _suggestions = []; 
+          });
+        }
       });
     }
   }
@@ -136,6 +135,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _toFocusNode.dispose();
     _scrollController.dispose();
     _debounce?.cancel();
+    _focusDebounce?.cancel();
     _gpsStream?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -965,7 +965,78 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) return const SizedBox.shrink();
     final colors = TransColors.of(context);
-    return Container(constraints: const BoxConstraints(maxHeight: 250), margin: const EdgeInsets.only(top: 8), decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: Column(mainAxisSize: MainAxisSize.min, children: [if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), Flexible(child: ListView.separated(shrinkWrap: true, padding: EdgeInsets.zero, itemCount: _suggestions.length, separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), itemBuilder: (ctx, idx) { final item = _suggestions[idx]; if (item is Favorite) return ListTile(leading: const Icon(Icons.star, size: 16, color: Colors.orange), title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), onTap: () => _selectItem(item)); final station = item as Station; IconData leadingIcon = Icons.place; if (station.type == 'address') leadingIcon = Icons.home_work; return ListTile(leading: Icon(leadingIcon, size: 16, color: Colors.grey), title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), onTap: () => _selectItem(station), onLongPress: () { final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); _showEditFavoriteDialog(newFav); }); }))]));
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 250), 
+      margin: const EdgeInsets.only(top: 8), 
+      decoration: BoxDecoration(
+        color: colors.cardBg, 
+        borderRadius: BorderRadius.circular(16), 
+        border: Border.all(color: Colors.white10)
+      ), 
+      child: Material( // Wrap in Material for InkWell/Hover effects
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.hardEdge,
+        child: Column(
+          mainAxisSize: MainAxisSize.min, 
+          children: [
+            if (_isSuggestionsLoading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator(minHeight: 2)), 
+            // Removed Flexible, rely on constraints + shrinkWrap
+            Flexible( // Actually Flexible/Expanded is needed if content exceeds 250px inside Column?? 
+              // Usually inside a Column with min size, if we want it to scroll, we need constraints.
+              // We have max-height 250 on Container.
+              // If we put ListView directly in Column(min), and list is huge:
+              // ListView(shrinkWrap: true) tries to be infinite? No, it tries to be as big as content.
+              // If content > 250, Container clips? Or errors?
+              // The original code had Flexible.
+              // Let's use Flexible but inside Material?
+              // Wait, Material is around the Column now.
+              // Let's put Material inside the Container, and Column inside Material.
+              // And keep Flexible for safety with scrolling?
+              // User reported "no hover". That implies hit test failure. 
+              // Often caused by "invisible" widgets blocking or weird z-index if no Material.
+              // Let's stick to the plan: Remove Flexible IF it was the cause (zero height?), OR ensure it works.
+              // Actually, ListView(shrinkWrap: true) inside Flexible inside Column(min) is tricky.
+              // Better: Container(height: constraint) -> ClipR -> Material -> ListView.
+              // But we want header (Progress) + List.
+              // Let's go with: Container -> Column -> (Progress, Flexible(ListView)).
+              // AND ensure Material is wrapping the ListView items individually or the whole list.
+              // Best practice: Material > ListView.
+              child: ListView.separated(
+                shrinkWrap: true, 
+                padding: EdgeInsets.zero, 
+                itemCount: _suggestions.length, 
+                separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Colors.white10), 
+                itemBuilder: (ctx, idx) { 
+                  final item = _suggestions[idx]; 
+                  if (item is Favorite) {
+                    return ListTile(
+                      leading: const Icon(Icons.star, size: 16, color: Colors.orange), 
+                      title: Text(item.label, style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                      onTap: () => _selectItem(item),
+                      hoverColor: Colors.white10, // Explicit hover color if theme missing
+                    ); 
+                  }
+                  final station = item as Station; 
+                  IconData leadingIcon = Icons.place; 
+                  if (station.type == 'address') leadingIcon = Icons.home_work; 
+                  return ListTile(
+                    leading: Icon(leadingIcon, size: 16, color: Colors.grey), 
+                    title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
+                    onTap: () => _selectItem(station), 
+                    hoverColor: Colors.white10,
+                    onLongPress: () { 
+                      final newFav = Favorite(id: DateTime.now().millisecondsSinceEpoch.toString(), label: station.name, type: 'station', station: station); 
+                      _showEditFavoriteDialog(newFav); 
+                    }
+                  ); 
+                }
+              )
+            )
+          ]
+        ),
+      )
+    );
   }
 
   Widget _buildTextField(String label, TextEditingController controller, FocusNode focusNode, bool isSelected, String fieldKey, {String hint = "Station..."}) {
