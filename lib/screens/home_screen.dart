@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart'; // Added import for persistence
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -45,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showTrainNumbers = false; 
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
+  final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
 
 
   @override
@@ -169,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final colors = TransColors.of(context);
     final screens = [
       RoutesTab(
+        key: _routesTabKey,
         currentPosition: _currentPosition, 
         onlyNahverkehr: widget.onlyNahverkehr,
         showTrainNumbers: _showTrainNumbers,
@@ -190,7 +193,42 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+
+        // 1. Try to handle back in RoutesTab if it is active
+        if (_currentIndex == 0 && (_routesTabKey.currentState?.handleBack() ?? false)) {
+          return;
+        }
+
+        // 2. Otherwise ask to quit
+        final shouldQuit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Quit App?'),
+            content: const Text('Do you want to exit the application?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Yes'),
+              ),
+            ],
+          ),
+        ) ?? false;
+
+        if (shouldQuit) {
+          if (context.mounted) {
+            SystemNavigator.pop();
+          }
+        }
+      },
+      child: Scaffold(
       backgroundColor: colors.scaffoldBg,
       // REVERT: Set to false to keep Ticket Panel stable
       resizeToAvoidBottomInset: false, 
@@ -214,6 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
-    );
+    ));
   }
 }
