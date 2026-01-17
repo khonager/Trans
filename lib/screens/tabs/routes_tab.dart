@@ -1082,7 +1082,11 @@ class _RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
-              _tabs[idx] = route.copyWith(activeJourney: journey, steps: journey.steps);
+              _tabs[idx] = route.copyWith(
+                activeJourney: journey, 
+                steps: journey.steps,
+                totalDuration: FormatUtils.formatDuration(journey.duration.inMinutes),
+              );
             }
           });
         },
