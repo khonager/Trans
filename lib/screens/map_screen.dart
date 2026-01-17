@@ -195,8 +195,8 @@ class _MapScreenState extends State<MapScreen> {
               onPressed: _openGoogleMaps,
               child: Padding(
                 padding: const EdgeInsets.all(8.0),
-                child: Image.network(
-                  'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Google_Maps_icon.svg/1024px-Google_Maps_icon.svg.png',
+                child: Image.asset(
+                  'assets/google_maps_icon.png',
                   fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) => const Icon(Icons.map, color: Colors.blue),
                 ),
