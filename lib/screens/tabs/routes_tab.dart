@@ -1282,108 +1282,102 @@ class _StepCard extends StatelessWidget {
              final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
              final displayDest = isEnd ? "End of Line" : dest;
 
-             return Column(
-               mainAxisSize: MainAxisSize.min,
-               crossAxisAlignment: CrossAxisAlignment.start,
+             // Title: Bus Number -> Destination (Full Width)
+             return Row(
                children: [
-                 // Top Line: Actions (Left) ... Time (Right)
-                 Row(
-                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                   children: [
-                      // Action Chips (Moved from subtitle)
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                             children: [
-                                _buildActionChip(
-                                  context, 
-                                  Icons.chat_bubble_outline, 
-                                  "Chat", 
-                                  onTap: () => onChat(step.line)
-                                ), 
-                                const SizedBox(width: 8), 
-                                if (step.startStationId != null && step.dateTime != null) ...[
-                                  _buildActionChip(
-                                    context, 
-                                    Icons.alt_route, 
-                                    "Alt", 
-                                    // FIX: Pass exact step time and coordinates
-                                    onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
-                                  ), 
-                                  const SizedBox(width: 8)
-                                ], 
-                                _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
-                             ]
-                          )
-                        )
-                      ),
-                      const SizedBox(width: 8),
+                 Builder(
+                    builder: (context) {
+                      String displayLine = step.line.trim();
+                      
+                      if (!showTrainNumbers) {
+                         final regexParens = RegExp(r'\s*\(\d+\)$');
+                         displayLine = displayLine.replaceAll(regexParens, '').trim();
 
-                      // Time Info (Right)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
-                          if (step.isCancelled)
-                             const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
-                          else if (step.departureDelay != null && step.departureDelay != 0)
-                             Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
-                        ],
-                      ),
-                   ],
-                 ),
-                 const SizedBox(height: 4),
-                 // Bottom Line: Bus Number -> Destination
-                 Row(
-                   children: [
-                     Builder(
-                        builder: (context) {
-                          String displayLine = step.line.trim();
-                          
-                          if (!showTrainNumbers) {
-                             final regexParens = RegExp(r'\s*\(\d+\)$');
-                             displayLine = displayLine.replaceAll(regexParens, '').trim();
+                         if (step.tripId != null) {
+                             displayLine = displayLine.replaceAll(step.tripId!, "").trim();
+                         }
+                      }
 
-                             if (step.tripId != null) {
-                                 displayLine = displayLine.replaceAll(step.tripId!, "").trim();
-                             }
-                          }
-
-                          String suffix = "";
-                          if (showTrainNumbers && step.tripId != null) {
-                             if (!displayLine.contains(step.tripId!)) {
-                                suffix = " (${step.tripId})";
-                             }
-                          }
-                          
-                          return Text(
-                            "$displayLine$suffix",
-                            style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
-                          );
-                        }
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          displayDest, 
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: colors.textPrimary), 
-                          overflow: TextOverflow.visible, 
-                        )
-                      ),
-                   ],
-                 )
+                      String suffix = "";
+                      if (showTrainNumbers && step.tripId != null) {
+                         if (!displayLine.contains(step.tripId!)) {
+                            suffix = " (${step.tripId})";
+                         }
+                      }
+                      
+                      return Text(
+                        "$displayLine$suffix",
+                        style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)
+                      );
+                    }
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.arrow_right_alt, size: 24, color: colors.textPrimary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      displayDest, 
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary), 
+                      overflow: TextOverflow.visible, 
+                    )
+                  ),
                ],
              );
           }
         ), 
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 4), 
-          // Bottom Line: Headsign • Duration
+          // Info Line: Headsign • Duration
           Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
           if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+          
+          const SizedBox(height: 12), // Spacer before actions
+          
+          // Action Buttons + Time (Bottom Row)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Actions (Left)
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal, 
+                  child: Row(children: [
+                    _buildActionChip(
+                      context, 
+                      Icons.chat_bubble_outline, 
+                      "Chat", 
+                      onTap: () => onChat(step.line)
+                    ), 
+                    const SizedBox(width: 8), 
+                    if (step.startStationId != null && step.dateTime != null) ...[
+                      _buildActionChip(
+                        context, 
+                        Icons.alt_route, 
+                        "Alt", 
+                        onTap: () => onOpenAlternatives(step.startStationId!, step.dateTime!, lat: step.startLat, lng: step.startLng)
+                      ), 
+                      const SizedBox(width: 8)
+                    ], 
+                    _buildActionChip(context, Icons.vibration, isAlarmSet ? "Alarm ON" : "Wake Me", isActive: isAlarmSet, onTap: onAlarmToggle)
+                  ])
+                )
+              ),
+              const SizedBox(width: 8),
+              
+              // Time (Right)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("${step.departureTime} - ${step.arrivalTime}", style: TextStyle(fontWeight: FontWeight.bold, color: step.isCancelled ? colors.textSecondary : colors.stepTimeText, decoration: step.isCancelled ? TextDecoration.lineThrough : null)),
+                  if (step.isCancelled)
+                     const Text(" CANCELLED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 12))
+                  else if (step.departureDelay != null && step.departureDelay != 0)
+                     Text(" (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})", style: TextStyle(fontWeight: FontWeight.bold, color: step.departureDelay! > 0 ? colors.delayLate : colors.delayOnTime))
+                ],
+              )
+            ],
+          )
         ]), 
         children: [
           if (step.stopovers != null && step.stopovers!.isNotEmpty) 
