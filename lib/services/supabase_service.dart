@@ -140,6 +140,24 @@ class SupabaseService {
     await client.auth.updateUser(UserAttributes(email: newEmail));
   }
 
+  static Future<void> reauthenticate(String password) async {
+    final user = currentUser;
+    if (user == null || user.email == null) throw "No user logged in";
+    await client.auth.signInWithPassword(email: user.email!, password: password);
+  }
+
+  static Future<void> deleteAccount() async {
+    final user = currentUser;
+    if (user == null) return;
+    
+    // Call the RPC function to delete the user
+    // This requires a postgres function 'delete_account' to be defined in Supabase
+    await client.rpc('delete_account');
+    
+    // Sign out to clear local session
+    await signOut();
+  }
+
   static Future<void> resetPassword(String email) async {
     // configured Site URL (which should be https://khonager.github.io/Trans).
     // This allows the link to work on devices without the app (opens web app),

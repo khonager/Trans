@@ -106,10 +106,14 @@ class RouteTab {
   final List<JourneyStep> steps; // Kept for legacy/active view
   final String? source;
   
-  // NEW: Multiple candidates
+  // NEW: Multiple candidates (Search Results)
   final List<Journey>? candidates;
+  // NEW: Manually opened journeys (The Stack)
+  final List<Journey> stack; 
   // NEW: Currently selected journey (if any)
   final Journey? activeJourney;
+  // NEW: State for expanding/collapsing the secondary row
+  final bool isStackExpanded;
 
   RouteTab({
     required this.id,
@@ -122,7 +126,9 @@ class RouteTab {
     required this.steps,
     this.source,
     this.candidates,
+    this.stack = const [], 
     this.activeJourney,
+    this.isStackExpanded = true, // Default open
   });
   
   RouteTab copyWith({
@@ -136,8 +142,10 @@ class RouteTab {
     List<JourneyStep>? steps,
     String? source,
     List<Journey>? candidates,
+    List<Journey>? stack,
     Journey? activeJourney,
     bool clearActiveJourney = false,
+    bool? isStackExpanded,
   }) {
     return RouteTab(
       id: id ?? this.id,
@@ -150,7 +158,9 @@ class RouteTab {
       steps: steps ?? this.steps,
       source: source ?? this.source,
       candidates: candidates ?? this.candidates,
+      stack: stack ?? this.stack,
       activeJourney: clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
+      isStackExpanded: isStackExpanded ?? this.isStackExpanded,
     );
   }
 }
