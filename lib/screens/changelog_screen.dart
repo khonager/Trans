@@ -7,7 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_theme.dart';
 
 class ChangelogScreen extends StatefulWidget {
-  const ChangelogScreen({super.key});
+  final String? currentVersion;
+  const ChangelogScreen({super.key, this.currentVersion});
 
   @override
   State<ChangelogScreen> createState() => _ChangelogScreenState();
@@ -27,12 +28,19 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
   Future<void> _fetchReleases() async {
     try {
       final response = await http.get(
-        Uri.parse('https://api.github.com/repos/khonager/Trans/releases'),
+        Uri.parse('https://api.github.com/repos/khonager/Trans/releases?per_page=100'),
         headers: {'Accept': 'application/vnd.github.v3+json'},
       );
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        // Sort by published_at descending (newest first)
+        data.sort((a, b) {
+          final dateA = DateTime.tryParse(a['published_at'] ?? '') ?? DateTime(0);
+          final dateB = DateTime.tryParse(b['published_at'] ?? '') ?? DateTime(0);
+          return dateB.compareTo(dateA);
+        });
+
         setState(() {
           _releases = data;
           _isLoading = false;
@@ -102,13 +110,27 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                       date = DateTime.tryParse(dateStr);
                     }
 
+                    final isCurrent = widget.currentVersion != null && 
+                                      (tagName == "v${widget.currentVersion}" || tagName == widget.currentVersion);
+
                     return Container(
                       margin: const EdgeInsets.only(bottom: 24),
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
                         color: colors.cardBg,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: colors.divider.withOpacity(0.5)),
+                        border: isCurrent 
+                            ? Border.all(color: colors.effectiveSeed, width: 2)
+                            : Border.all(color: colors.divider.withOpacity(0.5)),
+                        boxShadow: isCurrent 
+                            ? [
+                                BoxShadow(
+                                  color: colors.effectiveSeed.withOpacity(0.4),
+                                  blurRadius: 15,
+                                  spreadRadius: 2,
+                                )
+                              ] 
+                            : null,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,7 +145,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  tagName,
+                                  isCurrent ? "$tagName (Current)" : tagName,
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: colors.effectiveSeed,

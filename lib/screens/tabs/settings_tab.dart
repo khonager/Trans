@@ -8,6 +8,7 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
 import '../changelog_screen.dart';
 
@@ -57,6 +58,8 @@ class _SettingsTabState extends State<SettingsTab> {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _myLocation;
   StreamSubscription? _locationSub;
+  
+  String _version = "";
 
   String _vibrationPattern = 'standard'; 
   int _vibrationIntensity = 128; 
@@ -78,7 +81,13 @@ class _SettingsTabState extends State<SettingsTab> {
     super.initState();
     _loadProfile(); 
     _loadSettings();
+    _loadVersion();
     _subscribeToLocation();
+  }
+
+  Future<void> _loadVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) setState(() => _version = info.version);
   }
 
   void _subscribeToLocation() {
@@ -383,14 +392,26 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ],
               const Spacer(),
-              IconButton( // Hidden changelog button
-                icon: Icon(Icons.history_edu, color: colors.textSecondary.withOpacity(0.5)),
-                onPressed: () {
+              // Version Display & Link
+              InkWell(
+                onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const ChangelogScreen()),
+                    MaterialPageRoute(builder: (_) => ChangelogScreen(currentVersion: _version)),
                   );
                 },
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(
+                    "v$_version", 
+                    style: TextStyle(
+                      color: colors.textSecondary.withOpacity(0.7), 
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14
+                    )
+                  ),
+                ),
               ),
             ],
           ),
