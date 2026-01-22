@@ -1,6 +1,8 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -22,17 +24,182 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
+class CompassIconPainter extends CustomPainter {
+  final Color color;
+  CompassIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..strokeWidth = 2; // For the dot if drawn as circle
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final w = size.width;
+    final h = size.height;
+
+    // Draw Dot
+    canvas.drawCircle(center, 2.5, paint);
+
+    // Arrow 1: Bottom Left to Center
+    // Tip at center - offset slightly to not cover dot? Or touch dot.
+    // Let's make arrows "point to" the dot.
+    // Start: Bottom Left (0, h) -> End: Center (w/2, h/2)
+    // Actually user said: "one arrow from the bottom left to the middle... and another arrow from the other side, the top right to the middle"
+    
+    final p1 = Path();
+    // Arrow head at center-ish
+    // Let's draw a simple stylized arrow
+    // Bottom Left Arrow
+    p1.moveTo(2, h - 2); // Start bottom left
+    p1.lineTo(w / 2 - 4, h / 2 + 4); // To near center
+    // Make it an arrow? Or just a line? "two arrows pointing to a dot"
+    // Let's add arrow heads.
+    // This is small (icon size). Simple chevron or triangle might be best.
+    
+    // Draw Arrow 1 (Bottom Left -> Center)
+    _drawArrow(canvas, paint, Offset(2, h-2), Offset(w/2 - 3, h/2 + 3));
+
+    // Draw Arrow 2 (Top Right -> Center)
+    _drawArrow(canvas, paint, Offset(w-2, 2), Offset(w/2 + 3, h/2 - 3));
+  }
+  
+  void _drawArrow(Canvas canvas, Paint paint, Offset start, Offset end) {
+      // Draw line
+      paint.style = PaintingStyle.stroke;
+      paint.strokeWidth = 2.5;
+      canvas.drawLine(start, end, paint);
+      
+      // Draw head
+      // Vector
+      final dx = end.dx - start.dx;
+      final dy = end.dy - start.dy;
+      final angle = atan2(dy, dx);
+      
+      final arrowSize = 6.0;
+      final p = Path();
+      p.moveTo(end.dx - arrowSize * cos(angle - pi / 6), end.dy - arrowSize * sin(angle - pi / 6));
+      p.lineTo(end.dx, end.dy);
+      p.lineTo(end.dx - arrowSize * cos(angle + pi / 6), end.dy - arrowSize * sin(angle + pi / 6));
+      
+      paint.style = PaintingStyle.stroke;
+      canvas.drawPath(p, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   List<LatLng> _routePoints = [];
   List<Marker> _markers = [];
   LatLngBounds? _bounds;
   bool _isLoadingPath = true;
+  
+  // Compass Mode State
+  bool _isCompassMode = false;
+  StreamSubscription<Position>? _positionStream;
+  double? _currentHeading;
 
   @override
   void initState() {
     super.initState();
     _loadRoute();
+  }
+  
+  @override
+  void dispose() {
+    _positionStream?.cancel();
+    super.dispose();
+  }
+  
+  void _toggleCompassMode() {
+    if (_isCompassMode) {
+      _disableCompassMode();
+    } else {
+      _enableCompassMode();
+    }
+  }
+  
+  void _enableCompassMode() async {
+    setState(() => _isCompassMode = true);
+    
+    // Check permissions just in case (though RoutesTab usually handles it)
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+       // Try request?
+       try { permission = await Geolocator.requestPermission(); } catch(_) {}
+       if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+          setState(() => _isCompassMode = false);
+          return;
+       }
+    }
+    
+    // Start listening
+    final settings = const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0); 
+    // distanceFilter 0 for smooth heading updates? Or maybe 5m.
+    
+    _positionStream?.cancel();
+    _positionStream = Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
+       _currentHeading = pos.heading;
+       
+       if (_isCompassMode) {
+         // Update Map Center & Rotation
+         // Note: pos.heading is 0=North, 90=East.
+         // Map rotation: 0=North Up.
+         // To make "Head Up", we rotate map by -heading.
+         
+         double rotation = 0;
+         if (pos.heading != 0 || pos.speed > 1.0) { // Only rotate if moving or valid heading?
+             rotation = -pos.heading;
+         }
+         
+         // If speed is very low, heading might be unstable (GPS). 
+         // But user asked for compass mode. Let's trust the data or maybe use magnetometer if possible (not adding dependency).
+         // Geolocator heading is GPS bearing.
+         
+         _mapController.moveAndRotate(
+            LatLng(pos.latitude, pos.longitude), 
+            _mapController.camera.zoom, // Keep current zoom
+            rotation
+         );
+       }
+    });
+    
+    // Initial Move if we have current position
+    if (widget.currentPosition != null) {
+       _mapController.move(LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude), 16); // Zoom in for navigation
+    }
+  }
+  
+  void _disableCompassMode() {
+    setState(() => _isCompassMode = false);
+    // We can keep listening to update current position marker? 
+    // But expensive. Let's stop if we don't need it.
+    // Actually, we usually want to show the blue dot moving?
+    // The original code only showed a static marker for widget.currentPosition.
+    // If we want to show moving blue dot, we should keep listening but NOT move/rotate camera.
+    // For now, let's just stop the specific "Compass Mode" behavior (locking camera).
+    // We can keep the stream running to update the marker if we implemented a dynamic marker.
+    // But strictly following requirements: "manually zooming or touching... causes disable".
+    
+    // Reset rotation to North Up? User didn't specify. Usually good UX to reset or leave as is.
+    // "disables the automatic compass movement". 
+    // Let's leave rotation as is, just unlock.
+    
+    // Optional: Cancel stream to save battery if we aren't updating a marker.
+    // But since we *should* probably show the user where they are, let's keep it?
+    // Current implementation: _markers includes a static Marker for widget.currentPosition.
+    // I haven't implemented a dynamic Marker update in this code block. 
+    // To do it properly, I'd need to update _markers in the stream listener.
+    // Let's stick to the core requirement first: Camera movement.
+    _positionStream?.cancel();
+    _positionStream = null;
+    
+    // Reset rotation to 0 (North Up) for better UX when leaving Compass Mode?
+    // Or keep it. Let's keep it to avoid jarring jumps.
   }
 
   Future<void> _loadRoute() async {
@@ -187,6 +354,7 @@ class _MapScreenState extends State<MapScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             // Google Maps Button (Left)
             FloatingActionButton(
@@ -202,17 +370,39 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
             ),
-            const SizedBox(), // Spacer
-
-            // Recenter Button (Right)
-            FloatingActionButton(
-              heroTag: "center",
-              onPressed: () {
-                if (_bounds != null) {
-                  _mapController.fitCamera(CameraFit.bounds(bounds: _bounds!, padding: const EdgeInsets.all(50)));
-                }
-              },
-              child: const Icon(Icons.center_focus_strong),
+            
+            // Right Side Buttons (Compass + Recenter)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                 // Compass Button
+                 FloatingActionButton(
+                   heroTag: "compass",
+                   mini: true,
+                   backgroundColor: _isCompassMode ? Theme.of(context).primaryColor : Colors.white,
+                   foregroundColor: _isCompassMode ? Colors.white : Colors.black,
+                   onPressed: _toggleCompassMode,
+                   child: CustomPaint(
+                     size: const Size(24, 24),
+                     painter: CompassIconPainter(color: _isCompassMode ? Colors.white : Colors.black),
+                   ),
+                 ),
+                 const SizedBox(height: 12),
+                 
+                 // Recenter Button
+                 FloatingActionButton(
+                  heroTag: "center",
+                  onPressed: () {
+                    if (_isCompassMode) _disableCompassMode();
+                    if (_bounds != null) {
+                      _mapController.fitCamera(CameraFit.bounds(bounds: _bounds!, padding: const EdgeInsets.all(50)));
+                      // Reset rotation?
+                      _mapController.rotate(0);
+                    }
+                  },
+                  child: const Icon(Icons.center_focus_strong),
+                ),
+              ],
             ),
           ],
         ),
@@ -223,6 +413,12 @@ class _MapScreenState extends State<MapScreen> {
           initialCenter: initialCenter,
           initialZoom: 13,
           initialCameraFit: _bounds != null ? CameraFit.bounds(bounds: _bounds!, padding: const EdgeInsets.all(50)) : null,
+          onPositionChanged: (pos, hasGesture) {
+             if (hasGesture && _isCompassMode) {
+                // User manually moved/zoomed the map, disable Compass Mode
+                _disableCompassMode();
+             }
+          },
         ),
         children: [
           TileLayer(
