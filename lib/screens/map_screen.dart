@@ -7,6 +7,7 @@ import 'package:trans/models/journey.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:trans/services/transport_api.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -101,6 +102,7 @@ class _MapScreenState extends State<MapScreen> {
   // Compass Mode State
   bool _isCompassMode = false;
   StreamSubscription<Position>? _positionStream;
+  StreamSubscription<CompassEvent>? _compassStream;
   double? _currentHeading;
 
   @override
@@ -112,6 +114,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _positionStream?.cancel();
+    _compassStream?.cancel();
     super.dispose();
   }
   
@@ -137,36 +140,31 @@ class _MapScreenState extends State<MapScreen> {
        }
     }
     
-    // Start listening
+    // Start listening to Position (for centering)
     final settings = const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0); 
-    // distanceFilter 0 for smooth heading updates? Or maybe 5m.
-    
     _positionStream?.cancel();
     _positionStream = Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
-       _currentHeading = pos.heading;
-       
-       if (_isCompassMode) {
-         // Update Map Center & Rotation
-         // Note: pos.heading is 0=North, 90=East.
-         // Map rotation: 0=North Up.
-         // To make "Head Up", we rotate map by -heading.
-         
-         double rotation = 0;
-         if (pos.heading != 0 || pos.speed > 1.0) { // Only rotate if moving or valid heading?
-             rotation = -pos.heading;
-         }
-         
-         // If speed is very low, heading might be unstable (GPS). 
-         // But user asked for compass mode. Let's trust the data or maybe use magnetometer if possible (not adding dependency).
-         // Geolocator heading is GPS bearing.
-         
-         _mapController.moveAndRotate(
-            LatLng(pos.latitude, pos.longitude), 
-            _mapController.camera.zoom, // Keep current zoom
-            rotation
-         );
+       if (_isCompassMode) { 
+         // Only Move Center here.
+         _mapController.move(LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
        }
     });
+
+    // Start listening to Compass (for rotation)
+    _compassStream?.cancel();
+    try {
+      _compassStream = FlutterCompass.events?.listen((event) {
+         if (!_isCompassMode) return;
+         final heading = event.heading;
+         if (heading != null) {
+            _currentHeading = heading;
+            // Rotate map
+            _mapController.rotate(-heading);
+         }
+      });
+    } catch (e) {
+      debugPrint("Compass error: $e");
+    }
     
     // Initial Move if we have current position
     if (widget.currentPosition != null) {
@@ -176,30 +174,10 @@ class _MapScreenState extends State<MapScreen> {
   
   void _disableCompassMode() {
     setState(() => _isCompassMode = false);
-    // We can keep listening to update current position marker? 
-    // But expensive. Let's stop if we don't need it.
-    // Actually, we usually want to show the blue dot moving?
-    // The original code only showed a static marker for widget.currentPosition.
-    // If we want to show moving blue dot, we should keep listening but NOT move/rotate camera.
-    // For now, let's just stop the specific "Compass Mode" behavior (locking camera).
-    // We can keep the stream running to update the marker if we implemented a dynamic marker.
-    // But strictly following requirements: "manually zooming or touching... causes disable".
-    
-    // Reset rotation to North Up? User didn't specify. Usually good UX to reset or leave as is.
-    // "disables the automatic compass movement". 
-    // Let's leave rotation as is, just unlock.
-    
-    // Optional: Cancel stream to save battery if we aren't updating a marker.
-    // But since we *should* probably show the user where they are, let's keep it?
-    // Current implementation: _markers includes a static Marker for widget.currentPosition.
-    // I haven't implemented a dynamic Marker update in this code block. 
-    // To do it properly, I'd need to update _markers in the stream listener.
-    // Let's stick to the core requirement first: Camera movement.
     _positionStream?.cancel();
     _positionStream = null;
-    
-    // Reset rotation to 0 (North Up) for better UX when leaving Compass Mode?
-    // Or keep it. Let's keep it to avoid jarring jumps.
+    _compassStream?.cancel();
+    _compassStream = null;
   }
 
   Future<void> _loadRoute() async {
@@ -376,17 +354,19 @@ class _MapScreenState extends State<MapScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                  // Compass Button
-                 FloatingActionButton(
-                   heroTag: "compass",
-                   mini: true,
-                   backgroundColor: _isCompassMode ? Theme.of(context).primaryColor : Colors.white,
-                   foregroundColor: _isCompassMode ? Colors.white : Colors.black,
-                   onPressed: _toggleCompassMode,
-                   child: CustomPaint(
-                     size: const Size(24, 24),
-                     painter: CompassIconPainter(color: _isCompassMode ? Colors.white : Colors.black),
+                 if (widget.currentPosition != null) 
+                   FloatingActionButton(
+                     heroTag: "compass",
+                     mini: true,
+                     backgroundColor: _isCompassMode ? Theme.of(context).primaryColor : Colors.white,
+                     foregroundColor: _isCompassMode ? Colors.white : Colors.black,
+                     onPressed: _toggleCompassMode,
+                     child: CustomPaint(
+                       size: const Size(24, 24),
+                       painter: CompassIconPainter(color: _isCompassMode ? Colors.white : Colors.black),
+                     ),
                    ),
-                 ),
+                 if (widget.currentPosition != null) const SizedBox(height: 12),
                  const SizedBox(height: 12),
                  
                  // Recenter Button
