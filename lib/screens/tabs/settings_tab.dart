@@ -271,6 +271,74 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  void _showDeleteAccountDialog() {
+    final passwordCtrl = TextEditingController();
+    bool isLoading = false;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: TransColors.of(context).cardBg,
+          title: Text("Delete Account", style: TextStyle(color: TransColors.of(context).textPrimary)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("This action is irreversible. All your data will be permanently deleted.", style: TextStyle(color: Colors.red)),
+              const SizedBox(height: 16),
+              Text("Please enter your password to confirm:", style: TextStyle(color: TransColors.of(context).textSecondary)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: passwordCtrl,
+                obscureText: true,
+                style: TextStyle(color: TransColors.of(context).textPrimary),
+                decoration: InputDecoration(
+                  labelText: "Password",
+                  errorText: errorMsg,
+                  border: const OutlineInputBorder(),
+                  labelStyle: TextStyle(color: TransColors.of(context).textSecondary),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.pop(ctx),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: isLoading ? null : () async {
+                setState(() {
+                  isLoading = true;
+                  errorMsg = null;
+                });
+                try {
+                  await SupabaseService.reauthenticate(passwordCtrl.text);
+                  await SupabaseService.deleteAccount();
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    if (mounted) setState(() {}); 
+                  }
+                } catch (e) {
+                  setState(() {
+                    errorMsg = "Incorrect password or error (RPC missing?)";
+                    isLoading = false;
+                  });
+                }
+              },
+              child: isLoading 
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
+                : const Text("Delete Forever", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final user = SupabaseService.currentUser;
@@ -560,7 +628,9 @@ class _SettingsTabState extends State<SettingsTab> {
                 Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated! Check email for confirmation if changed."))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
               ],
               Divider(color: colors.divider),
-              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); })
+              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); }),
+              Divider(color: colors.divider),
+              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Delete Account", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), leading: const Icon(Icons.delete_forever, color: Colors.red), onTap: _showDeleteAccountDialog),
             ],
           ),
         )
