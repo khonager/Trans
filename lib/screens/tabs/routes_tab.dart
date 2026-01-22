@@ -942,7 +942,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         })),
 
         // Secondary Tab Row (Alternatives)
-        if (activeTab != null && activeTab.stack.isNotEmpty)
+        if (activeTab != null && activeTab.stack.length > 1)
            _buildSecondaryTabs(activeTab, colors),
 
         Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(activeTab!)),
@@ -952,7 +952,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildTabItem(RouteTab tab, TransColors colors) {
     final isActive = tab.id == _activeTabId;
     final stackCount = tab.stack.length;
-    final showStack = stackCount > 0; // Show stack even if 1? User said "lines based on how many subtabs". Maybe 1 is fine. Or >1?
+    final showStack = stackCount > 1;
     // User mockup shows 3 lines. "Subtabs" likely means alternatives.
     // If only 1 journey is open, do we show 1 line?
     // "just change how many lines there are based on how many subtabs there are".
