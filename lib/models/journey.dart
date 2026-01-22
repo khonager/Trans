@@ -112,6 +112,8 @@ class RouteTab {
   final List<Journey> stack; 
   // NEW: Currently selected journey (if any)
   final Journey? activeJourney;
+  // NEW: State for expanding/collapsing the secondary row
+  final bool isStackExpanded;
 
   RouteTab({
     required this.id,
@@ -126,6 +128,7 @@ class RouteTab {
     this.candidates,
     this.stack = const [], 
     this.activeJourney,
+    this.isStackExpanded = true, // Default open
   });
   
   RouteTab copyWith({
@@ -142,6 +145,7 @@ class RouteTab {
     List<Journey>? stack,
     Journey? activeJourney,
     bool clearActiveJourney = false,
+    bool? isStackExpanded,
   }) {
     return RouteTab(
       id: id ?? this.id,
@@ -156,6 +160,7 @@ class RouteTab {
       candidates: candidates ?? this.candidates,
       stack: stack ?? this.stack,
       activeJourney: clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
+      isStackExpanded: isStackExpanded ?? this.isStackExpanded,
     );
   }
 }
