@@ -942,7 +942,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         })),
 
         // Secondary Tab Row (Alternatives)
-        if (activeTab != null && activeTab.stack.length > 1)
+        if (activeTab != null && activeTab.stack.length > 1 && activeTab.isStackExpanded)
            _buildSecondaryTabs(activeTab, colors),
 
         Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(activeTab!)),
@@ -962,7 +962,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     // Let's assume stackCount > 0.
     
     return GestureDetector(
-      onTap: () => setState(() => _activeTabId = tab.id),
+      onTap: () {
+        setState(() {
+          if (_activeTabId == tab.id) {
+             // Toggle expansion if already active
+             final idx = _tabs.indexWhere((t) => t.id == tab.id);
+             if (idx != -1) {
+               _tabs[idx] = tab.copyWith(isStackExpanded: !tab.isStackExpanded);
+             }
+          } else {
+             _activeTabId = tab.id;
+             // Ensure it opens expanded? yes, default is true.
+          }
+        });
+      },
       child: Container(
         margin: const EdgeInsets.only(right: 8),
         child: IntrinsicWidth(
