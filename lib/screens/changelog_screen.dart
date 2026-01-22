@@ -7,7 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_theme.dart';
 
 class ChangelogScreen extends StatefulWidget {
-  const ChangelogScreen({super.key});
+  final String? currentVersion;
+  const ChangelogScreen({super.key, this.currentVersion});
 
   @override
   State<ChangelogScreen> createState() => _ChangelogScreenState();
@@ -109,13 +110,27 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                       date = DateTime.tryParse(dateStr);
                     }
 
+                    final isCurrent = widget.currentVersion != null && 
+                                      (tagName == "v${widget.currentVersion}" || tagName == widget.currentVersion);
+
                     return Container(
                       margin: const EdgeInsets.only(bottom: 24),
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
                         color: colors.cardBg,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: colors.divider.withOpacity(0.5)),
+                        border: isCurrent 
+                            ? Border.all(color: colors.effectiveSeed, width: 2)
+                            : Border.all(color: colors.divider.withOpacity(0.5)),
+                        boxShadow: isCurrent 
+                            ? [
+                                BoxShadow(
+                                  color: colors.effectiveSeed.withOpacity(0.4),
+                                  blurRadius: 15,
+                                  spreadRadius: 2,
+                                )
+                              ] 
+                            : null,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -130,7 +145,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  tagName,
+                                  isCurrent ? "$tagName (Current)" : tagName,
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: colors.effectiveSeed,
