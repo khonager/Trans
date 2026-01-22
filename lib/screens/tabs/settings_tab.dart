@@ -9,6 +9,7 @@ import '../../services/supabase_service.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
 import '../../services/transport_api.dart';
+import '../changelog_screen.dart';
 
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
@@ -381,6 +382,16 @@ class _SettingsTabState extends State<SettingsTab> {
                   child: const Text("DEV", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                 ),
               ],
+              const Spacer(),
+              IconButton( // Hidden changelog button
+                icon: Icon(Icons.history_edu, color: colors.textSecondary.withOpacity(0.5)),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ChangelogScreen()),
+                  );
+                },
+              ),
             ],
           ),
           const SizedBox(height: 30),
