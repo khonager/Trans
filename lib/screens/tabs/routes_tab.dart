@@ -1015,17 +1015,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               ),
               if (showStack) ...[
                 const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: List.generate(
-                    min(stackCount, 5), 
-                    (index) => Expanded(
-                      child: Container(
-                        height: 3,
-                        margin: const EdgeInsets.symmetric(horizontal: 2),
-                        decoration: BoxDecoration(
-                          color: colors.navBarSelected, // Theme color (Purple)
-                          borderRadius: BorderRadius.circular(1.5),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10), // Indent to clear rounded corners
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(
+                      min(stackCount, 5), 
+                      (index) => Expanded(
+                        child: Container(
+                          height: 3,
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          decoration: BoxDecoration(
+                            color: colors.navBarSelected, // Theme color (Purple)
+                            borderRadius: BorderRadius.circular(1.5),
+                          ),
                         ),
                       ),
                     ),
