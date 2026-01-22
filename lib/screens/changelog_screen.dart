@@ -27,12 +27,19 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
   Future<void> _fetchReleases() async {
     try {
       final response = await http.get(
-        Uri.parse('https://api.github.com/repos/khonager/Trans/releases'),
+        Uri.parse('https://api.github.com/repos/khonager/Trans/releases?per_page=100'),
         headers: {'Accept': 'application/vnd.github.v3+json'},
       );
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        // Sort by published_at descending (newest first)
+        data.sort((a, b) {
+          final dateA = DateTime.tryParse(a['published_at'] ?? '') ?? DateTime(0);
+          final dateB = DateTime.tryParse(b['published_at'] ?? '') ?? DateTime(0);
+          return dateB.compareTo(dateA);
+        });
+
         setState(() {
           _releases = data;
           _isLoading = false;
