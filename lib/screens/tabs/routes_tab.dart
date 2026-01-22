@@ -550,8 +550,32 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   leading: const Icon(Icons.alt_route), 
                   title: Text("$line to $dir"), 
                   subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"),
-                  onTap: () { Navigator.pop(context); _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); }
-
+                  onTap: () { 
+                    Navigator.pop(context); 
+                    // Add to current tab's stack
+                    final j = _createJourney(journey);
+                    setState(() {
+                      if (_activeTabId != null) {
+                        final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
+                        if (idx != -1) {
+                           final currentTab = _tabs[idx];
+                           final newStack = List<Journey>.from(currentTab.stack);
+                           if (!newStack.any((e) => e.departure == j.departure && e.arrival == j.arrival)) { // Avoid duplicates
+                             newStack.add(j);
+                           }
+                           _tabs[idx] = currentTab.copyWith(
+                             activeJourney: j,
+                             stack: newStack,
+                             steps: j.steps,
+                             totalDuration: FormatUtils.formatDuration(j.duration.inMinutes)
+                           );
+                        }
+                      } else {
+                        // Fallback if no tab active? Should not happen if called from StepCard
+                         _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); 
+                      }
+                    });
+                  }
                 );
               });
           }
@@ -798,7 +822,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           steps: activeJourney?.steps ?? [], 
           source: activeJourney?.source,
           candidates: candidates,
-          activeJourney: activeJourney
+          activeJourney: activeJourney,
+          stack: activeJourney != null ? [activeJourney] : [], // Init stack
       ));
       _activeTabId = id;
     });
@@ -892,16 +917,205 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     final bool canSearch = (_fromStation != null || widget.currentPosition != null) && _toStation != null && !_isLoadingRoute;
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
+    
+    // Find active tab for secondary row
+    RouteTab? activeTab;
+    if (_activeTabId != null) {
+      try {
+        activeTab = _tabs.firstWhere((t) => t.id == _activeTabId);
+      } catch (_) {}
+    }
+
     return Column(children: [
         SizedBox(height: topPadding),
         if (_isWakeAlarmSet && _gpsAccuracy != null && _gpsAccuracy! > 100) Container(width: double.infinity, padding: const EdgeInsets.all(8), color: Colors.amber, child: const Text("⚠️ Weak GPS", textAlign: TextAlign.center)),
-        if (_tabs.isNotEmpty) SizedBox(height: 50, child: ListView.builder(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _tabs.length + 1, itemBuilder: (ctx, idx) { if (idx == _tabs.length) return IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null)); final tab = _tabs[idx]; final isActive = tab.id == _activeTabId; return GestureDetector(onTap: () => setState(() => _activeTabId = tab.id), child: Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: isActive ? colors.navBarSelected : colors.cardBg, borderRadius: BorderRadius.circular(20)), child: Row(children: [Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey), const SizedBox(width: 6), Text(tab.title, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(width: 4), GestureDetector(onTap: () => _closeTab(tab.id), child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey))])));})),
-        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(_tabs.firstWhere((t) => t.id == _activeTabId))),
+        
+        // Main Tab Bar
+        if (_tabs.isNotEmpty) SizedBox(height: 60, child: ListView.builder(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _tabs.length + 1, itemBuilder: (ctx, idx) { 
+          if (idx == _tabs.length) return Padding(padding: const EdgeInsets.only(bottom: 20), child: IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => setState(() => _activeTabId = null)));
+          return _buildTabItem(_tabs[idx], colors);
+        })),
+
+        // Secondary Tab Row (Alternatives)
+        if (activeTab != null && activeTab.stack.isNotEmpty)
+           _buildSecondaryTabs(activeTab, colors),
+
+        Expanded(child: _activeTabId == null ? _buildSearchView(canSearch, colors) : _buildActiveRouteView(activeTab!)),
     ]);
+  }
+
+  Widget _buildTabItem(RouteTab tab, TransColors colors) {
+    final isActive = tab.id == _activeTabId;
+    final stackCount = tab.stack.length;
+    final showStack = stackCount > 0; // Show stack even if 1? User said "lines based on how many subtabs". Maybe 1 is fine. Or >1?
+    // User mockup shows 3 lines. "Subtabs" likely means alternatives.
+    // If only 1 journey is open, do we show 1 line?
+    // "just change how many lines there are based on how many subtabs there are".
+    // If 1 tab, 1 subtab?
+    // Usually "Stack" implies > 1.
+    // But if secondary row shows selected item, maybe we always show count.
+    // Let's assume stackCount > 0.
+    
+    return GestureDetector(
+      onTap: () => setState(() => _activeTabId = tab.id),
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isActive ? colors.navBarSelected : colors.cardBg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Close Button (Left)
+                    GestureDetector(
+                      onTap: () => _closeTab(tab.id),
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Icon(Icons.close, size: 14, color: isActive ? Colors.white70 : Colors.grey),
+                      ),
+                    ),
+                    Icon(Icons.directions, size: 16, color: isActive ? Colors.white : Colors.grey),
+                    const SizedBox(width: 6),
+                    Text(
+                      tab.title,
+                      style: TextStyle(
+                        color: isActive ? Colors.white : Colors.grey,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (showStack) ...[
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(
+                    min(stackCount, 5), 
+                    (index) => Expanded(
+                      child: Container(
+                        height: 3,
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        decoration: BoxDecoration(
+                          color: colors.navBarSelected, // Theme color (Purple)
+                          borderRadius: BorderRadius.circular(1.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ]
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSecondaryTabs(RouteTab tab, TransColors colors) {
+    final stack = tab.stack;
+    return Container(
+      height: 50,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: stack.length,
+        separatorBuilder: (ctx, idx) => const SizedBox(width: 8),
+        itemBuilder: (ctx, idx) {
+           final journey = stack[idx];
+           final isSelected = tab.activeJourney == journey;
+           
+           final timeStr = "${DateFormat('HH:mm').format(journey.departure)} - ${DateFormat('HH:mm').format(journey.arrival)}";
+
+           return GestureDetector(
+             onTap: () {
+                setState(() {
+                  final tIdx = _tabs.indexWhere((t) => t.id == tab.id);
+                  if (tIdx != -1) {
+                    _tabs[tIdx] = tab.copyWith(
+                      activeJourney: journey,
+                      steps: journey.steps,
+                      totalDuration: FormatUtils.formatDuration(journey.duration.inMinutes),
+                    );
+                  }
+                });
+             },
+             child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? colors.navBarSelected : colors.cardBg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Subtabs also have Close button? 
+                    GestureDetector(
+                      onTap: () {
+                         // Remove this journey from stack
+                         setState(() {
+                           final tIdx = _tabs.indexWhere((t) => t.id == tab.id);
+                           if (tIdx != -1) {
+                             final newStack = List<Journey>.from(stack);
+                             newStack.removeAt(idx);
+                             
+                             Journey? newActive = tab.activeJourney;
+                             if (newActive == journey) {
+                               // If we closed the active one, pick another (e.g. last or first)
+                               newActive = newStack.isNotEmpty ? newStack.last : null;
+                             }
+                             
+                             // If stack empty, close tab? Or just clear active?
+                             // User: "show routes manually opens". If all closed, tab might close.
+                             if (newStack.isEmpty) {
+                               _closeTab(tab.id); 
+                             } else {
+                               _tabs[tIdx] = tab.copyWith(
+                                 stack: newStack,
+                                 activeJourney: newActive,
+                                 steps: newActive?.steps ?? [], 
+                                 totalDuration: newActive != null ? FormatUtils.formatDuration(newActive.duration.inMinutes) : "",
+                                 clearActiveJourney: newActive == null,
+                               );
+                             }
+                           }
+                         });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Icon(Icons.close, size: 14, color: isSelected ? Colors.white70 : Colors.grey),
+                      ),
+                    ),
+                    Text(
+                      timeStr,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.grey,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+             )
+           );
+        },
+      ),
+    );
   }
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
@@ -1203,8 +1417,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
+              final currentStack = List<Journey>.from(route.stack);
+              if (!currentStack.contains(journey)) currentStack.add(journey);
+              
               _tabs[idx] = route.copyWith(
                 activeJourney: journey, 
+                stack: currentStack,
                 steps: journey.steps,
                 totalDuration: FormatUtils.formatDuration(journey.duration.inMinutes),
               );
