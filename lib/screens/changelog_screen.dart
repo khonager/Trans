@@ -119,14 +119,14 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: Theme.of(context).primaryColor.withOpacity(0.2),
+                                  color: colors.effectiveSeed.withOpacity(0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
                                   tagName,
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).primaryColor,
+                                    color: colors.effectiveSeed,
                                   ),
                                 ),
                               ),
