@@ -34,12 +34,14 @@ class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
   final bool showTrainNumbers;
+  final bool alwaysWakeMe;
 
   const RoutesTab({
     super.key,
     required this.currentPosition,
     required this.onlyNahverkehr,
     this.showTrainNumbers = false,
+    required this.alwaysWakeMe,
   });
 
   @override
@@ -204,11 +206,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   // --- WAKE ALARM LOGIC ---
-  void _toggleWakeAlarm(RouteTab route) {
-    if (_isWakeAlarmSet) {
-      _stopWakeAlarm();
-    } else {
+  void _toggleStepAlarm(RouteTab route, JourneyStep step) {
+    if (route.activeJourney == null) return;
+
+    final updatedSteps = route.activeJourney!.steps.map((s) {
+      if (s == step) return s.copyWith(isWakeAlarmOn: !s.isWakeAlarmOn);
+      return s;
+    }).toList();
+
+    final updatedJourney = route.activeJourney!.copyWith(steps: updatedSteps);
+    
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx != -1) {
+        _tabs[idx] = route.copyWith(activeJourney: updatedJourney, steps: updatedSteps);
+      }
+    });
+
+    // Check if we need to start/stop the global alarm tracking
+    bool anyAlarmOn = updatedSteps.any((s) => s.isWakeAlarmOn);
+    if (anyAlarmOn && !_isWakeAlarmSet) {
       _startWakeAlarm(route);
+    } else if (!anyAlarmOn && _isWakeAlarmSet) {
+      _stopWakeAlarm();
     }
   }
 
@@ -246,22 +266,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     double? targetLat = firstRide.endLat;
     double? targetLng = firstRide.endLng;
 
-    if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
-      final stops = firstRide.stopovers!;
-      int targetIndex = stops.length - 1 - stopsBefore;
-      if (targetIndex >= 0) {
-        final stopData = stops[targetIndex];
-        if (stopData['stop'] != null && stopData['stop']['location'] != null) {
-           targetLat = stopData['stop']['location']['latitude'];
-           targetLng = stopData['stop']['location']['longitude'];
-        }
-      }
-    }
-
     if (targetLat == null || targetLng == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot start alarm: Missing destination coordinates.")));
       return;
     }
+
+    final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
@@ -298,20 +308,106 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (defaultTargetPlatform == TargetPlatform.iOS) activeSettings = appleSettings;
 
     if (widget.currentPosition != null) {
-       SupabaseService.updateLocation(widget.currentPosition!, currentLine: currentLine);
+       // We don't have a single "currentLine" anymore since multiple legs might be active
+       SupabaseService.updateLocation(widget.currentPosition!);
     }
 
-    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings).listen((Position pos) {
+    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings).listen((Position pos) async {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
-      SupabaseService.updateLocation(pos, currentLine: currentLine);
-      double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat!, targetLng!);
-      if (dist < 500) { 
-         _triggerVibration();
-         _showNotification();
-         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wake Up! Approaching your stop!"), backgroundColor: Colors.red));
-           _stopWakeAlarm();
-         }
+      SupabaseService.updateLocation(pos);
+      
+      // Get the currently active route and its enabled alarm steps
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx == -1) { _stopWakeAlarm(); return; }
+      final currentTab = _tabs[idx];
+      if (currentTab.activeJourney == null) { _stopWakeAlarm(); return; }
+
+      final alarmSteps = currentTab.activeJourney!.steps.where((s) => s.isWakeAlarmOn).toList();
+      if (alarmSteps.isEmpty) { _stopWakeAlarm(); return; }
+
+      final prefs = await SharedPreferences.getInstance();
+      final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+
+      final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
+
+      bool triggered = false;
+      List<JourneyStep> remainingSteps = List.from(currentTab.activeJourney!.steps);
+
+      for (var step in alarmSteps) {
+        double? targetLat = step.endLat;
+        double? targetLng = step.endLng;
+        double? originLat = step.startLat;
+        double? originLng = step.startLng;
+
+        if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+          final stops = step.stopovers!;
+          if (stopsBefore > 0) {
+            int targetIndex = stops.length - 1 - stopsBefore;
+            if (targetIndex >= 0) {
+              final stopData = stops[targetIndex];
+              if (stopData['stop'] != null && stopData['stop']['location'] != null) {
+                 targetLat = stopData['stop']['location']['latitude'];
+                 targetLng = stopData['stop']['location']['longitude'];
+                 
+                 // Origin of this segment
+                 if (targetIndex > 0) {
+                    final originData = stops[targetIndex - 1];
+                    originLat = originData['stop']?['location']?['latitude'];
+                    originLng = originData['stop']?['location']?['longitude'];
+                 }
+              }
+            }
+          } else {
+            // stopsBefore == 0, target is destination, origin is the last stopover
+            final originData = stops.last;
+            originLat = originData['stop']?['location']?['latitude'];
+            originLng = originData['stop']?['location']?['longitude'];
+          }
+        }
+
+        if (targetLat == null || targetLng == null) continue;
+
+        double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat, targetLng);
+        
+        // Calculate trigger distance
+        double triggerDist = 500; // Default fallback
+        if (thresholdSetting == '500m') {
+          triggerDist = 500;
+        } else if (originLat != null && originLng != null) {
+          double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
+          double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
+          triggerDist = segmentDist * percent;
+          // Apply safety bounds: 150m min, 2000m max for sensible defaults
+          triggerDist = triggerDist.clamp(150.0, 2000.0);
+        }
+
+        if (dist <= triggerDist) { 
+           _triggerVibration();
+           _showNotification();
+           triggered = true;
+           
+           // Turn off alarm for THIS step
+           int stepIdx = remainingSteps.indexOf(step);
+           if (stepIdx != -1) {
+             remainingSteps[stepIdx] = step.copyWith(isWakeAlarmOn: false);
+           }
+           
+           if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Wake Up! Approaching ${step.destinationName ?? 'your stop'}!"), backgroundColor: Colors.red));
+           }
+        }
+      }
+
+      if (triggered) {
+        setState(() {
+          final newJourney = currentTab.activeJourney!.copyWith(steps: remainingSteps);
+          _tabs[idx] = currentTab.copyWith(activeJourney: newJourney, steps: remainingSteps);
+        });
+        
+        // If no more alarms, stop tracking
+        if (!remainingSteps.any((s) => s.isWakeAlarmOn)) {
+          _stopWakeAlarm();
+        }
       }
     });
   }
@@ -588,11 +684,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival;
+    String? lastStationName;
+    String? lastStationId;
+    String? lastPlatform;
     bool isFirstStep = true; // Track if this is the first step in the journey
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
     
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, String? nextStationId, String? nextPlatform, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
@@ -623,7 +722,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       // Determine instruction text based on context
       String instruction;
-      if (walkMinutes > 0) {
+      bool isAtSameStation = (lastStationId != null && nextStationId != null && lastStationId == nextStationId) || 
+                             (lastStationName != null && destName != null && lastStationName == destName);
+      String? nextPlat = nextPlatform;
+
+      if (isAtSameStation) {
+        if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
+          instruction = "Switch from $lastPlatform to $nextPlat";
+        } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
+          instruction = "Wait at $lastPlatform";
+        } else if (nextPlat != null) {
+          instruction = "Wait at $nextPlat";
+        } else {
+          instruction = "Wait at $destName";
+        }
+      } else if (walkMinutes > 0) {
         if (isFirstStep && destName != null) {
           instruction = "Walk to $destName"; // Initial walk to station
         } else if (isFinalWalk && destName != null) {
@@ -638,7 +751,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       steps.add(JourneyStep(
-        type: (walkMinutes > 0) ? 'walk' : 'wait',
+        type: instruction.startsWith("Wait") ? 'wait' : 'walk',
         line: 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
@@ -689,7 +802,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
-        flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
+        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
 
         int? depDelay;
         int? arrDelay;
@@ -729,14 +842,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           isCancelled: isCancelled,
           plannedDeparture: scheduledDep,
           plannedArrival: scheduledArr,
+          startStationName: leg['origin']?['name'],
           destinationName: leg['destination']?['name'],
           headsign: leg['direction'],
           tripId: leg['line']?['fahrtNr']?.toString() ?? leg['tripId']?.toString(), // Populating tripId
+          isWakeAlarmOn: widget.alwaysWakeMe,
         ));
         lastArrival = arr;
+        lastStationName = leg['destination']?['name'];
+        lastStationId = leg['destination']?['id']?.toString();
+        lastPlatform = leg['destination']?['platform']?.toString();
       } else { transferBuffer.add(leg); }
     }
-    flushTransferBuffer(null, null, null, null, isFinalWalk: true);
+    flushTransferBuffer(null, null, null, null, null, null, isFinalWalk: true);
     return steps;
   }
  
@@ -1464,7 +1582,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
 
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
-        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleWakeAlarm(route), isAlarmSet: _isWakeAlarmSet, onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
+        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]), onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
     ]);
   }
 }
@@ -1477,7 +1595,6 @@ class _StepCard extends StatefulWidget {
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
-  final bool isAlarmSet;
   final bool showTrainNumbers;
 
   const _StepCard({
@@ -1487,7 +1604,6 @@ class _StepCard extends StatefulWidget {
     required this.onOpenAlternatives, 
     required this.onChat, 
     required this.onAlarmToggle, 
-    required this.isAlarmSet, 
     required this.onMapTap,
     required this.showTrainNumbers,
   });
@@ -1621,7 +1737,7 @@ class _StepCardState extends State<_StepCard> {
                       ), 
                       const SizedBox(width: 8)
                     ], 
-                    _buildActionChip(context, Icons.vibration, widget.isAlarmSet ? "Alarm ON" : "Wake Me", isActive: widget.isAlarmSet, onTap: widget.onAlarmToggle)
+                    _buildActionChip(context, Icons.vibration, step.isWakeAlarmOn ? "Alarm ON" : "Wake Me", isActive: step.isWakeAlarmOn, onTap: widget.onAlarmToggle)
                   ])
                 )
               ),
@@ -1642,6 +1758,17 @@ class _StepCardState extends State<_StepCard> {
           )
         ]), 
         children: [
+          if (step.startStationName != null)
+            Container(
+              decoration: BoxDecoration(color: colors.stepStopoversBg.withValues(alpha: 0.5)), 
+              child: ListTile(
+                dense: true, 
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
+                leading: const Icon(Icons.login, size: 14, color: Colors.green), 
+                title: Text("Board at ${step.startStationName}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                trailing: Text(step.departureTime, style: TextStyle(color: colors.stepTimeText, fontWeight: FontWeight.bold, fontSize: 13))
+              )
+            ),
           if (step.stopovers != null && step.stopovers!.isNotEmpty) 
             Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { 
               final stop = step.stopovers![idx]; 
