@@ -958,15 +958,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               try { pos = await Geolocator.getCurrentPosition(timeLimit: const Duration(seconds: 3)); } catch(_) {}
            }
            if (pos != null) {
+              // Use GPS directly
               from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: pos.latitude, longitude: pos.longitude);
-              // Resolve address for better UX
-              try {
-                final nearby = await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
-                if (nearby.isNotEmpty) {
-                   from = nearby.first;
-                   if (mounted) setState(() { _fromStation = from; _fromController.text = from!.name; });
-                }
-              } catch (_) {}
            } else { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location not available."))); return; }
         } else {
            setState(() => _isLoadingRoute = true);
