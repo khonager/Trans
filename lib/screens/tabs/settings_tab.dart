@@ -69,6 +69,7 @@ class _SettingsTabState extends State<SettingsTab> {
   int _vibrationIntensity = 128; 
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
+  String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
 // Removed _alwaysWakeMe internal state
 
   @override
@@ -123,6 +124,7 @@ class _SettingsTabState extends State<SettingsTab> {
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
+        _alarmTriggerThreshold = prefs.getString('alarm_trigger_threshold') ?? '5%';
         TransportApi.apiMode = _apiMode;
       });
     }
@@ -145,6 +147,15 @@ class _SettingsTabState extends State<SettingsTab> {
       _stopsBeforeAlarm = stops;
     });
     await SupabaseService.updateSettings({'alarm_stops_before': stops});
+  }
+
+  Future<void> _saveAlarmThreshold(String threshold) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('alarm_trigger_threshold', threshold);
+    setState(() {
+      _alarmTriggerThreshold = threshold;
+    });
+    await SupabaseService.updateSettings({'alarm_trigger_threshold': threshold});
   }
 
   Future<void> _saveApiMode(String mode) async {
@@ -517,7 +528,23 @@ class _SettingsTabState extends State<SettingsTab> {
                    DropdownMenuItem(value: 2, child: Text("2 Stops")),
                    DropdownMenuItem(value: 3, child: Text("3 Stops")),
                  ],
-                 onChanged: (val) => _saveAlarmSettings(val!)
+                onChanged: (val) => _saveAlarmSettings(val!)
+               )
+             ),
+             Divider(color: colors.divider),
+             ListTile(
+               title: Text("Trigger Threshold", style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Text("Notify at $_alarmTriggerThreshold ${(_alarmTriggerThreshold.contains('%')) ? 'of leg covered' : 'from target'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               trailing: DropdownButton<String>(
+                 value: _alarmTriggerThreshold,
+                 dropdownColor: colors.cardBg,
+                 underline: const SizedBox(),
+                 items: const [
+                   DropdownMenuItem(value: '5%', child: Text("5% Remaining")),
+                   DropdownMenuItem(value: '10%', child: Text("10% Remaining")),
+                   DropdownMenuItem(value: '500m', child: Text("Fixed 500m")),
+                 ],
+                 onChanged: (val) => _saveAlarmThreshold(val!)
                )
              ),
              Divider(color: colors.divider),
