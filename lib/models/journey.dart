@@ -22,6 +22,7 @@ class JourneyStep {
   final DateTime? dateTime;
   
   // NEW: UI refinements
+  final String? startStationName;
   final String? destinationName;
   final String? headsign;
   final String? tripId; // NEW
@@ -59,6 +60,7 @@ class JourneyStep {
     this.isCancelled = false,
     this.plannedDeparture,
     this.plannedArrival,
+    this.startStationName,
     this.destinationName,
     this.headsign,
     this.tripId,
@@ -116,6 +118,7 @@ class JourneyStep {
       isCancelled: isCancelled ?? this.isCancelled,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
+      startStationName: startStationName ?? this.startStationName,
       destinationName: destinationName ?? this.destinationName,
       headsign: headsign ?? this.headsign,
       tripId: tripId ?? this.tripId,
