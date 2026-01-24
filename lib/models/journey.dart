@@ -33,6 +33,9 @@ class JourneyStep {
   final DateTime? plannedDeparture;
   final DateTime? plannedArrival;
 
+  // New: Alarm state
+  final bool isWakeAlarmOn;
+
   JourneyStep({
     required this.type,
     required this.line,
@@ -59,7 +62,66 @@ class JourneyStep {
     this.destinationName,
     this.headsign,
     this.tripId,
+    this.isWakeAlarmOn = false,
   });
+
+  JourneyStep copyWith({
+    String? type,
+    String? line,
+    String? instruction,
+    String? duration,
+    String? departureTime,
+    String? arrivalTime,
+    bool? isWalking,
+    double? startLat,
+    double? startLng,
+    double? endLat,
+    double? endLng,
+    List<dynamic>? path,
+    String? startStationId,
+    String? platform,
+    List<dynamic>? stopovers,
+    int? chatCount,
+    DateTime? dateTime,
+    int? departureDelay,
+    int? arrivalDelay,
+    bool? isCancelled,
+    DateTime? plannedDeparture,
+    DateTime? plannedArrival,
+    String? destinationName,
+    String? headsign,
+    String? tripId,
+    bool? isWakeAlarmOn,
+  }) {
+    return JourneyStep(
+      type: type ?? this.type,
+      line: line ?? this.line,
+      instruction: instruction ?? this.instruction,
+      duration: duration ?? this.duration,
+      departureTime: departureTime ?? this.departureTime,
+      arrivalTime: arrivalTime ?? this.arrivalTime,
+      isWalking: isWalking ?? this.isWalking,
+      startLat: startLat ?? this.startLat,
+      startLng: startLng ?? this.startLng,
+      endLat: endLat ?? this.endLat,
+      endLng: endLng ?? this.endLng,
+      path: path ?? this.path,
+      startStationId: startStationId ?? this.startStationId,
+      platform: platform ?? this.platform,
+      stopovers: stopovers ?? this.stopovers,
+      chatCount: chatCount ?? this.chatCount,
+      dateTime: dateTime ?? this.dateTime,
+      departureDelay: departureDelay ?? this.departureDelay,
+      arrivalDelay: arrivalDelay ?? this.arrivalDelay,
+      isCancelled: isCancelled ?? this.isCancelled,
+      plannedDeparture: plannedDeparture ?? this.plannedDeparture,
+      plannedArrival: plannedArrival ?? this.plannedArrival,
+      destinationName: destinationName ?? this.destinationName,
+      headsign: headsign ?? this.headsign,
+      tripId: tripId ?? this.tripId,
+      isWakeAlarmOn: isWakeAlarmOn ?? this.isWakeAlarmOn,
+    );
+  }
 }
 
 
@@ -83,6 +145,28 @@ class Journey {
     required this.rawSource,
     required this.source,
   });
+
+  Journey copyWith({
+    List<JourneyStep>? steps,
+    DateTime? departure,
+    DateTime? arrival,
+    Duration? duration,
+    int? transferCount,
+    Duration? totalWaitTime,
+    Map<String, dynamic>? rawSource,
+    String? source,
+  }) {
+    return Journey(
+      steps: steps ?? this.steps,
+      departure: departure ?? this.departure,
+      arrival: arrival ?? this.arrival,
+      duration: duration ?? this.duration,
+      transferCount: transferCount ?? this.transferCount,
+      totalWaitTime: totalWaitTime ?? this.totalWaitTime,
+      rawSource: rawSource ?? this.rawSource,
+      source: source ?? this.source,
+    );
+  }
 
   bool get isCancelled => steps.any((s) => s.isCancelled);
   

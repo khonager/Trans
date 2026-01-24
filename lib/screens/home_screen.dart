@@ -44,6 +44,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   bool _showTrainNumbers = false; 
+  bool _alwaysWakeMe = false;
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
@@ -63,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _showTrainNumbers = prefs.getBool('show_train_numbers') ?? false;
+        _alwaysWakeMe = prefs.getBool('always_wake_me') ?? false;
       });
     }
   }
@@ -71,6 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _showTrainNumbers = value);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('show_train_numbers', value);
+  }
+
+  Future<void> _updateAlwaysWakeMe(bool value) async {
+    setState(() => _alwaysWakeMe = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('always_wake_me', value);
   }
 
   @override
@@ -175,6 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
         currentPosition: _currentPosition, 
         onlyNahverkehr: widget.onlyNahverkehr,
         showTrainNumbers: _showTrainNumbers,
+        alwaysWakeMe: _alwaysWakeMe,
       ),
       FriendsTab(currentPosition: _currentPosition),
       SettingsTab(
@@ -190,6 +199,8 @@ class _HomeScreenState extends State<HomeScreen> {
         currentColor: widget.currentColor,
         showTrainNumbers: _showTrainNumbers,
         onShowTrainNumbersChanged: _updateShowTrainNumbers,
+        alwaysWakeMe: _alwaysWakeMe,
+        onAlwaysWakeMeChanged: _updateAlwaysWakeMe,
       ),
     ];
 

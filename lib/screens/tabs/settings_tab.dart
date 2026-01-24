@@ -25,6 +25,8 @@ class SettingsTab extends StatefulWidget {
   final Color currentColor;
   final bool showTrainNumbers;
   final Function(bool) onShowTrainNumbersChanged;
+  final bool alwaysWakeMe;
+  final Function(bool) onAlwaysWakeMeChanged;
 
 
   const SettingsTab({
@@ -41,6 +43,8 @@ class SettingsTab extends StatefulWidget {
     required this.currentColor,
     required this.showTrainNumbers,
     required this.onShowTrainNumbersChanged,
+    required this.alwaysWakeMe,
+    required this.onAlwaysWakeMeChanged,
   });
 
   @override
@@ -65,6 +69,7 @@ class _SettingsTabState extends State<SettingsTab> {
   int _vibrationIntensity = 128; 
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
+// Removed _alwaysWakeMe internal state
 
   @override
   void dispose() {
@@ -562,6 +567,14 @@ class _SettingsTabState extends State<SettingsTab> {
                    _testVibration();
                  }
                )
+             ),
+             Divider(color: colors.divider),
+             SwitchListTile(
+               title: Text("Always Wake Me", style: TextStyle(color: colors.textPrimary)),
+               subtitle: Text("Turn on alarm for every journey by default", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               value: widget.alwaysWakeMe,
+               activeColor: primaryColor,
+               onChanged: widget.onAlwaysWakeMeChanged,
              ),
           ]),
           
