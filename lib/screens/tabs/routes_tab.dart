@@ -751,7 +751,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       steps.add(JourneyStep(
-        type: (walkMinutes > 0) ? 'walk' : 'wait',
+        type: instruction.startsWith("Wait") ? 'wait' : 'walk',
         line: 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
