@@ -684,11 +684,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final random = Random();
     List<dynamic> transferBuffer = [];
     DateTime? lastArrival;
+    String? lastStationName;
+    String? lastStationId;
+    String? lastPlatform;
     bool isFirstStep = true; // Track if this is the first step in the journey
     double? getLat(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['latitude'] : (loc != null ? loc['latitude'] : null);
     double? getLng(dynamic loc) => loc != null && loc['location'] != null ? loc['location']['longitude'] : (loc != null ? loc['longitude'] : null);
     
-    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
+    void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, String? nextStationId, String? nextPlatform, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
@@ -719,7 +722,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       // Determine instruction text based on context
       String instruction;
-      if (walkMinutes > 0) {
+      bool isAtSameStation = (lastStationId != null && nextStationId != null && lastStationId == nextStationId) || 
+                             (lastStationName != null && destName != null && lastStationName == destName);
+      String? nextPlat = nextPlatform;
+
+      if (isAtSameStation) {
+        if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
+          instruction = "Switch from $lastPlatform to $nextPlat";
+        } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
+          instruction = "Wait at $lastPlatform";
+        } else if (nextPlat != null) {
+          instruction = "Wait at $nextPlat";
+        } else {
+          instruction = "Wait at $destName";
+        }
+      } else if (walkMinutes > 0) {
         if (isFirstStep && destName != null) {
           instruction = "Walk to $destName"; // Initial walk to station
         } else if (isFinalWalk && destName != null) {
@@ -785,7 +802,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
-        flushTransferBuffer(dep, leg['origin']?['name'], getLat(leg['origin']), getLng(leg['origin']));
+        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
 
         int? depDelay;
         int? arrDelay;
@@ -825,15 +842,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           isCancelled: isCancelled,
           plannedDeparture: scheduledDep,
           plannedArrival: scheduledArr,
+          startStationName: leg['origin']?['name'],
           destinationName: leg['destination']?['name'],
           headsign: leg['direction'],
           tripId: leg['line']?['fahrtNr']?.toString() ?? leg['tripId']?.toString(), // Populating tripId
           isWakeAlarmOn: widget.alwaysWakeMe,
         ));
         lastArrival = arr;
+        lastStationName = leg['destination']?['name'];
+        lastStationId = leg['destination']?['id']?.toString();
+        lastPlatform = leg['destination']?['platform']?.toString();
       } else { transferBuffer.add(leg); }
     }
-    flushTransferBuffer(null, null, null, null, isFinalWalk: true);
+    flushTransferBuffer(null, null, null, null, null, null, isFinalWalk: true);
     return steps;
   }
  
@@ -1737,6 +1758,17 @@ class _StepCardState extends State<_StepCard> {
           )
         ]), 
         children: [
+          if (step.startStationName != null)
+            Container(
+              decoration: BoxDecoration(color: colors.stepStopoversBg.withValues(alpha: 0.5)), 
+              child: ListTile(
+                dense: true, 
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
+                leading: const Icon(Icons.login, size: 14, color: Colors.green), 
+                title: Text("Board at ${step.startStationName}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                trailing: Text(step.departureTime, style: TextStyle(color: colors.stepTimeText, fontWeight: FontWeight.bold, fontSize: 13))
+              )
+            ),
           if (step.stopovers != null && step.stopovers!.isNotEmpty) 
             Container(decoration: BoxDecoration(color: colors.stepStopoversBg), child: ListView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: step.stopovers!.length, itemBuilder: (ctx, idx) { 
               final stop = step.stopovers![idx]; 
