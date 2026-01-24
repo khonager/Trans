@@ -266,22 +266,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     double? targetLat = firstRide.endLat;
     double? targetLng = firstRide.endLng;
 
-    if (firstRide.stopovers != null && firstRide.stopovers!.isNotEmpty && stopsBefore > 0) {
-      final stops = firstRide.stopovers!;
-      int targetIndex = stops.length - 1 - stopsBefore;
-      if (targetIndex >= 0) {
-        final stopData = stops[targetIndex];
-        if (stopData['stop'] != null && stopData['stop']['location'] != null) {
-           targetLat = stopData['stop']['location']['latitude'];
-           targetLng = stopData['stop']['location']['longitude'];
-        }
-      }
-    }
-
     if (targetLat == null || targetLng == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot start alarm: Missing destination coordinates.")));
       return;
     }
+
+    final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
@@ -338,29 +328,60 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final prefs = await SharedPreferences.getInstance();
       final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
 
+      final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
+
       bool triggered = false;
       List<JourneyStep> remainingSteps = List.from(currentTab.activeJourney!.steps);
 
       for (var step in alarmSteps) {
         double? targetLat = step.endLat;
         double? targetLng = step.endLng;
+        double? originLat = step.startLat;
+        double? originLng = step.startLng;
 
-        if (step.stopovers != null && step.stopovers!.isNotEmpty && stopsBefore > 0) {
+        if (step.stopovers != null && step.stopovers!.isNotEmpty) {
           final stops = step.stopovers!;
-          int targetIndex = stops.length - 1 - stopsBefore;
-          if (targetIndex >= 0) {
-            final stopData = stops[targetIndex];
-            if (stopData['stop'] != null && stopData['stop']['location'] != null) {
-               targetLat = stopData['stop']['location']['latitude'];
-               targetLng = stopData['stop']['location']['longitude'];
+          if (stopsBefore > 0) {
+            int targetIndex = stops.length - 1 - stopsBefore;
+            if (targetIndex >= 0) {
+              final stopData = stops[targetIndex];
+              if (stopData['stop'] != null && stopData['stop']['location'] != null) {
+                 targetLat = stopData['stop']['location']['latitude'];
+                 targetLng = stopData['stop']['location']['longitude'];
+                 
+                 // Origin of this segment
+                 if (targetIndex > 0) {
+                    final originData = stops[targetIndex - 1];
+                    originLat = originData['stop']?['location']?['latitude'];
+                    originLng = originData['stop']?['location']?['longitude'];
+                 }
+              }
             }
+          } else {
+            // stopsBefore == 0, target is destination, origin is the last stopover
+            final originData = stops.last;
+            originLat = originData['stop']?['location']?['latitude'];
+            originLng = originData['stop']?['location']?['longitude'];
           }
         }
 
         if (targetLat == null || targetLng == null) continue;
 
         double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat, targetLng);
-        if (dist < 500) { 
+        
+        // Calculate trigger distance
+        double triggerDist = 500; // Default fallback
+        if (thresholdSetting == '500m') {
+          triggerDist = 500;
+        } else if (originLat != null && originLng != null) {
+          double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
+          double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
+          triggerDist = segmentDist * percent;
+          // Apply safety bounds: 150m min, 2000m max for sensible defaults
+          triggerDist = triggerDist.clamp(150.0, 2000.0);
+        }
+
+        if (dist <= triggerDist) { 
            _triggerVibration();
            _showNotification();
            triggered = true;
