@@ -17,15 +17,12 @@ class RouteShareTicket extends StatelessWidget {
   Widget build(BuildContext context) {
     const backgroundColor = Color(0xFF1E1E1E);
     const textColor = Colors.white;
-    const secondaryColor = Color(0xFFB0B0B0); // Slightly lighter grey for readability
+    const secondaryColor = Color(0xFFB0B0B0);
 
     return Container(
       width: 600,
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(24),
-      ),
+      color: backgroundColor,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,11 +184,10 @@ class RouteShareTicket extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-               // Fixed asset path and visibility
                ClipRRect(
                  borderRadius: BorderRadius.circular(4),
                  child: Image.asset(
-                   'assets/logo.png', // Standard asset path
+                   'lib/assets/logo.png', // Corrected path
                    width: 20, 
                    height: 20,
                    errorBuilder: (ctx, _, __) => const Icon(Icons.directions_transit, size: 20, color: secondaryColor),
