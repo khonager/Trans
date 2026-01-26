@@ -20,6 +20,7 @@ dependencies:
   cupertino_icons: ^1.0.2
 
   vibration: ^3.1.0 
+  super_clipboard: ^0.8.0 
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.2
 
