@@ -42,5 +42,6 @@ void main() {
     expect(find.text('IC 1234'), findsOneWidget);
     expect(find.text('Berlin'), findsOneWidget); // Destination
     expect(find.text('30 min'), findsOneWidget);
+    expect(find.byType(QrImageView), findsOneWidget);
   });
 }
