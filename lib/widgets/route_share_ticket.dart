@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/utils/format_utils.dart';
 
@@ -169,14 +170,20 @@ class RouteShareTicket extends StatelessWidget {
                         letterSpacing: 2.0,
                       ),
                     ),
-                    // Barcode
-                    Row(
-                      children: List.generate(18, (index) => Container(
-                        width: index % 4 == 0 ? 3 : 1,
-                        height: 25,
-                        margin: const EdgeInsets.only(left: 2),
-                        color: secondaryColor.withOpacity(0.4),
-                      )),
+                    // Functional QR Code
+                    QrImageView(
+                      data: "https://khonager.github.io/Trans/",
+                      version: QrVersions.auto,
+                      size: 60.0,
+                      backgroundColor: Colors.transparent,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: Colors.white,
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: Colors.white,
+                      ),
                     ),
                   ],
                 ),
