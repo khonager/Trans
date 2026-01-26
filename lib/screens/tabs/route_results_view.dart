@@ -1,8 +1,13 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/services/supabase_service.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/widgets/route_share_ticket.dart';
 
 enum RouteSortOption {
   earliestDeparture,
@@ -41,11 +46,38 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   late List<Journey> _sortedCandidates;
   bool _isLoadingMoreEarlier = false;
   bool _isLoadingMoreLater = false;
+  
+  // Ticket Generation
+  final GlobalKey _ticketKey = GlobalKey();
+  Journey? _ticketJourney;
+  String _userName = "Anon";
 
   @override
   void initState() {
     super.initState();
     _sortCandidates();
+    _loadUserName();
+  }
+
+  Future<void> _loadUserName() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (profile != null && profile['username'] != null) {
+      if (mounted) {
+        setState(() {
+          _userName = profile['username'];
+        });
+      }
+    } else {
+      // Fallback to metadata if profile fetch fails but user exists
+      final user = SupabaseService.currentUser;
+      if (user != null && user.userMetadata?['username'] != null) {
+        if (mounted) {
+          setState(() {
+            _userName = user.userMetadata!['username'];
+          });
+        }
+      }
+    }
   }
   
   @override
@@ -96,11 +128,62 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     if (mounted) setState(() => _isLoadingMoreLater = false);
   }
 
+  Future<void> _handleCopyJourney(Journey journey) async {
+    setState(() => _ticketJourney = journey);
+    
+    // Ensure logo is loaded
+    if (mounted) {
+       await precacheImage(const AssetImage('lib/assets/logo.png'), context);
+    }
+
+    // Allow frame to build so RepaintBoundary can paint the new journey
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    try {
+      final boundary = _ticketKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        debugPrint("Boundary not found");
+        return;
+      }
+      
+      // Capture image
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      
+      if (byteData != null) {
+        final item = DataWriterItem();
+        item.add(Formats.png(byteData.buffer.asUint8List()));
+        await SystemClipboard.instance?.write([item]);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Route ticket copied to clipboard!"),
+              behavior: SnackBarBehavior.floating,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error copying ticket: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text("Failed to copy: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _ticketJourney = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    return Column(
+    return Stack(
       children: [
+        Column(
+          children: [
         // Header with Back button and Title
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
@@ -214,6 +297,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 return _JourneyCard(
                   journey: journey,
                   onTap: () => widget.onSelect(journey),
+                  onCopy: () => _handleCopyJourney(journey),
                   showTrainNumbers: widget.showTrainNumbers,
                 );
               },
@@ -221,8 +305,33 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           ),
         ),
       ],
-    );
-  }
+    ),
+    // Hidden Ticket Widget for Generation
+    Positioned(
+      left: -2000,
+      top: -2000,
+      child: IgnorePointer(
+        ignoring: true,
+        child: ExcludeSemantics(
+          child: UnconstrainedBox(
+            alignment: Alignment.topLeft,
+            child: RepaintBoundary(
+              key: _ticketKey,
+              child: _ticketJourney != null
+                  ? RouteShareTicket(
+                      journey: _ticketJourney!,
+                      username: _userName,
+                      showTrainNumbers: widget.showTrainNumbers,
+                    )
+                  : const SizedBox(),
+            ),
+          ),
+        ),
+      ),
+    ),
+   ],
+  );
+ }
 }
 
 class _LoadTrigger extends StatelessWidget {
@@ -322,11 +431,13 @@ class _SortChip extends StatelessWidget {
 class _JourneyCard extends StatelessWidget {
   final Journey journey;
   final VoidCallback onTap;
+  final VoidCallback onCopy;
   final bool showTrainNumbers;
 
   const _JourneyCard({
     required this.journey, 
     required this.onTap,
+    required this.onCopy,
     this.showTrainNumbers = false,
   });
 
@@ -454,7 +565,22 @@ class _JourneyCard extends StatelessWidget {
                           fontWeight: FontWeight.bold
                         )
                       )
-                    )
+                    ),
+                    const SizedBox(height: 8),
+                    // Copy Button
+                    InkWell(
+                      onTap: onCopy,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                           color: colors.cardBg.withOpacity(0.5),
+                           borderRadius: BorderRadius.circular(8),
+                           border: Border.all(color: Colors.white10),
+                        ),
+                        child: Icon(Icons.copy, size: 14, color: colors.textSecondary),
+                      ),
+                    ),
                   ],
                 ),
               ],
