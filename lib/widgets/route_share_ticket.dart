@@ -98,7 +98,6 @@ class RouteShareTicket extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 24),
-                ),
               ],
             ),
           ),
@@ -143,7 +142,6 @@ class RouteShareTicket extends StatelessWidget {
                   );
                 }),
                 const SizedBox(height: 12),
-                // Trip Detail Bar removed, now putting duration in footer or before barcode
                 Center(
                   child: Text(
                     FormatUtils.formatDuration(journey.duration.inMinutes).toUpperCase(),
