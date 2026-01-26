@@ -15,348 +15,236 @@ class RouteShareTicket extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const backgroundColor = Color(0xFF121212); // Deeper black
-    const secondaryBg = Color(0xFF1E1E1E);
-    const textColor = Colors.white;
-    const secondaryColor = Color(0xFF9E9E9E);
+    const outerBg = Color(0xFF0F0F0F); // True black for outer edges
+    const ticketBg = Color(0xFF1A1A1A); // Slightly lighter for ticket body
     const accentColor = Colors.blueAccent;
+    const textColor = Colors.white;
+    const secondaryColor = Color(0xFFA0A0A0);
+    const monospaceFont = 'monospace'; // Use default monospace
 
     return Container(
       width: 600,
-      color: backgroundColor, // Solid background color for the entire image
-      padding: const EdgeInsets.all(24),
-      child: Container(
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: secondaryBg,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.5),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            )
-          ],
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [secondaryBg, backgroundColor.withOpacity(0.8)],
-          ),
-        ),
-        child: Column(
+      color: outerBg, // Solid background
+      child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with Flare
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          // Upper Ticket Part
+          Container(
+            padding: const EdgeInsets.all(40),
+            decoration: const BoxDecoration(
+              color: ticketBg,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF252525), ticketBg],
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header Branding
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 4,
-                          height: 16,
-                          color: accentColor,
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: Image.asset('lib/assets/logo.png', width: 20, height: 20, errorBuilder: (_, __, ___) => const Icon(Icons.train, size: 20, color: accentColor)),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          DateFormat('EEEE, d MMMM').format(journey.departure).toUpperCase(),
-                          style: const TextStyle(
-                            color: accentColor,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.2,
-                          ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          "TRANSIT BOARDING PASS",
+                          style: TextStyle(color: accentColor, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 2.0),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Row(
-                        children: [
-                          Text(
-                            DateFormat('HH:mm').format(journey.departure),
-                            style: const TextStyle(
-                              color: textColor,
-                              fontSize: 48,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(width: 20),
-                          const Icon(Icons.arrow_forward, color: secondaryColor, size: 36),
-                          const SizedBox(width: 20),
-                          Text(
-                            DateFormat('HH:mm').format(journey.arrival),
-                            style: const TextStyle(
-                              color: textColor,
-                              fontSize: 48,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
+                    Text(
+                      DateFormat('MM/dd/yyyy').format(journey.departure),
+                      style: const TextStyle(color: secondaryColor, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: monospaceFont),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.green.withOpacity(0.5), width: 1.5),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      FormatUtils.formatDuration(journey.duration.inMinutes),
-                      style: const TextStyle(
-                        color: Color(0xFF81C784),
-                        fontWeight: FontWeight.w900,
-                        fontSize: 20,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "${journey.transferCount} TRANSFERS",
-                    style: const TextStyle(
-                      color: secondaryColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          _buildDashedLine(secondaryColor.withOpacity(0.3)),
-          const SizedBox(height: 32),
-          
-          // Steps
-          ...journey.steps.map((step) {
-            if (step.type == 'wait') return const SizedBox.shrink();
-            if (step.type == 'walk' && step.duration.startsWith('0')) return const SizedBox.shrink();
-            
-            final bool isRide = step.type == 'ride';
-            
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 32),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Timeline with Flare
-                  Column(
-                    children: [
-                      Container(
-                        width: 16,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: step.type == 'walk' ? Colors.orange : accentColor,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: (step.type == 'walk' ? Colors.orange : accentColor).withOpacity(0.4),
-                              blurRadius: 8,
-                            )
-                          ],
-                        ),
-                      ),
-                      if (step != journey.steps.where((s) => s.type != 'wait').last)
-                        Container(
-                          width: 2,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [secondaryColor.withOpacity(0.3), Colors.transparent],
-                            ),
-                          ),
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(width: 24),
-                  // Content
-                  Expanded(
-                    child: Column(
+                const SizedBox(height: 32),
+                // Times
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Text(
-                              step.departureTime,
-                              style: const TextStyle(
-                                color: textColor,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 18,
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(child: _buildStepHeader(step, textColor)),
-                          ],
+                        const Text("DEP", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(
+                          DateFormat('HH:mm').format(journey.departure),
+                          style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
                         ),
-                        const SizedBox(height: 8),
-                        if (isRide)
-                           Text(
-                             "${step.startStationName ?? '?'}  •  ${step.duration}".toUpperCase(),
-                             style: const TextStyle(
-                               color: secondaryColor,
-                               fontSize: 12,
-                               fontWeight: FontWeight.bold,
-                               letterSpacing: 0.8,
-                             ),
-                           )
-                        else
-                           Text(
-                             step.instruction,
-                             style: const TextStyle(
-                               color: secondaryColor,
-                               fontSize: 14,
-                             ),
-                           ),
                       ],
                     ),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Icon(Icons.arrow_forward, color: secondaryColor, size: 24),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text("ARR", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(
+                          DateFormat('HH:mm').format(journey.arrival),
+                          style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                ),
+              ],
+            ),
+          ),
+
+          // Perforated Divider
+          _buildPerforatedDivider(outerBg),
+
+          // Lower Ticket Part (Dense Steps)
+          Container(
+            padding: const EdgeInsets.fromLTRB(40, 32, 40, 40),
+            color: ticketBg,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...journey.steps.where((s) => s.type != 'wait').map((step) {
+                  final bool isRide = step.type == 'ride';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          step.departureTime,
+                          style: const TextStyle(color: textColor, fontWeight: FontWeight.w900, fontSize: 16, fontFamily: monospaceFont),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildStepHeaderDense(step, textColor),
+                              const SizedBox(height: 4),
+                              Text(
+                                isRide ? "${step.startStationName ?? '?'} • ${step.duration}".toUpperCase() : step.instruction,
+                                style: const TextStyle(color: secondaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+                // Trip Detail Bar removed, now putting duration in footer or before barcode
+                Center(
+                  child: Text(
+                    FormatUtils.formatDuration(journey.duration.inMinutes).toUpperCase(),
+                    style: const TextStyle(
+                      color: Color(0xFF81C784), // Premium green
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                      fontFamily: monospaceFont,
+                      letterSpacing: 2.0,
+                    ),
                   ),
-                ],
-              ),
-            );
-          }),
-          
-          const SizedBox(height: 48),
-          _buildDashedLine(secondaryColor.withOpacity(0.3)),
-          const SizedBox(height: 24),
-          
-          // Footer Branding
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-               Row(
-                 children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.asset(
-                        'lib/assets/logo.png',
-                        width: 24, 
-                        height: 24,
-                        errorBuilder: (ctx, _, __) => const Icon(Icons.directions_transit, size: 24, color: secondaryColor),
-                      ),
+                ),
+                const SizedBox(height: 24),
+                // Footer
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("SYSTEM_ID", style: TextStyle(color: secondaryColor.withOpacity(0.5), fontSize: 8, fontWeight: FontWeight.bold)),
+                        Text(journey.source.toUpperCase(), style: const TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    const Text(
-                      "TRANS",
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2.0,
-                      ),
+                    Row(
+                      children: List.generate(24, (index) => Container(
+                        width: index % 4 == 0 ? 3 : 1,
+                        height: 30,
+                        margin: const EdgeInsets.only(left: 2),
+                        color: secondaryColor.withOpacity(0.4),
+                      )),
                     ),
-                 ],
-               ),
-               // Pseudo Barcode Flare
-               Row(
-                 children: List.generate(12, (index) => Container(
-                   width: index % 3 == 0 ? 2 : 1,
-                   height: 20,
-                   margin: const EdgeInsets.only(left: 2),
-                   color: secondaryColor.withOpacity(0.3),
-                 )),
-               ),
-            ],
-          )
+                  ],
+                ),
+              ],
+            ),
+          ),
         ],
       ),
-    ),
-   );
-  }
-
-  Widget _buildDashedLine(Color color) {
-    return Row(
-      children: List.generate(40, (index) => Expanded(
-        child: Container(
-          height: 1,
-          color: index % 2 == 0 ? color : Colors.transparent,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-        ),
-      )),
     );
   }
 
-  Widget _buildStepHeader(JourneyStep step, Color textColor) {
+  Widget _buildTicketInfo(String label, String value, {bool monospace = false}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 2),
+        Text(value, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, fontFamily: monospace ? 'monospace' : null)),
+      ],
+    );
+  }
+
+  Widget _buildPerforatedDivider(Color cutoutColor) {
+    return Container(
+      color: const Color(0xFF1A1A1A),
+      height: 30,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Row(
+            children: List.generate(40, (i) => Expanded(
+              child: Container(height: 1.5, color: i % 2 == 0 ? Colors.white24 : Colors.transparent, margin: const EdgeInsets.symmetric(horizontal: 2)),
+            )),
+          ),
+          Positioned(left: -15, child: Container(width: 30, height: 30, decoration: BoxDecoration(color: cutoutColor, shape: BoxShape.circle))),
+          Positioned(right: -15, child: Container(width: 30, height: 30, decoration: BoxDecoration(color: cutoutColor, shape: BoxShape.circle))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepHeaderDense(JourneyStep step, Color textColor) {
     if (step.type == 'walk') {
       return Row(
         children: [
-          const Icon(Icons.directions_walk, size: 18, color: Colors.orange),
+          const Icon(Icons.directions_walk, size: 14, color: Colors.orange),
           const SizedBox(width: 8),
-          const Text(
-            "WALK",
-            style: TextStyle(
-              color: Colors.orange,
-              fontWeight: FontWeight.w900,
-              fontSize: 16,
-              letterSpacing: 1.0,
-            ),
-          ),
+          const Text("WALK", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w900, fontSize: 14)),
           const SizedBox(width: 8),
-          Text(
-            step.duration,
-            style: const TextStyle(color: Colors.grey, fontSize: 14),
-          ),
+          Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],
       );
     }
 
-    if (step.type == 'transfer' || step.type == 'wait') {
-      return Row(
+    if (step.type == 'transfer') {
+       return Row(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.grey.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              (step.type == 'wait' ? "Wait" : "Transfer").toUpperCase(),
-              style: const TextStyle(
-                color: Colors.grey,
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            step.duration,
-            style: const TextStyle(
-              color: Colors.grey,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
+          const Icon(Icons.sync, size: 14, color: Colors.blueAccent),
+          const SizedBox(width: 8),
+          const Text("TRANSFER", style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+          const SizedBox(width: 8),
+          Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],
       );
     }
 
-    // Ride Step Logic (Synced with _StepCard)
     String lineName = step.line.trim();
     if (!showTrainNumbers) {
-       final regexParens = RegExp(r'\s*\(\d+\)$');
-       lineName = lineName.replaceAll(regexParens, '').trim();
-       if (step.tripId != null) {
-           lineName = lineName.replaceAll(step.tripId!, "").trim();
-       }
+       lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
+       if (step.tripId != null) lineName = lineName.replaceAll(step.tripId!, "").trim();
     }
 
     final dest = (step.destinationName ?? step.instruction.split('→').last.trim());
@@ -366,29 +254,11 @@ class RouteShareTicket extends StatelessWidget {
 
     return Row(
       children: [
-        Text(
-          lineName,
-          style: const TextStyle(
-            color: Colors.blueAccent,
-            fontWeight: FontWeight.w900,
-            fontSize: 20,
-          ),
-        ),
-        const SizedBox(width: 12),
-        const Icon(Icons.arrow_right_alt, color: Colors.white, size: 28),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            displayDest.toUpperCase(),
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: textColor,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
+        Text(lineName, style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 16)),
+        const SizedBox(width: 8),
+        const Icon(Icons.arrow_right_alt, color: Colors.white70, size: 16),
+        const SizedBox(width: 8),
+        Expanded(child: Text(displayDest.toUpperCase(), overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15))),
       ],
     );
   }
