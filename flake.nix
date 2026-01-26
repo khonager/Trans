@@ -36,6 +36,7 @@
             platforms-android-35
             platforms-android-34
             platforms-android-33
+            platforms-android-31
 
             # Native tools
             ndk-27-0-12077973
