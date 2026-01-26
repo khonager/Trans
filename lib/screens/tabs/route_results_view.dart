@@ -106,8 +106,14 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   Future<void> _handleCopyJourney(Journey journey) async {
     setState(() => _ticketJourney = journey);
+    
+    // Ensure logo is loaded
+    if (mounted) {
+       await precacheImage(const AssetImage('lib/assets/logo.png'), context);
+    }
+
     // Allow frame to build so RepaintBoundary can paint the new journey
-    await Future.delayed(const Duration(milliseconds: 100));
+    await Future.delayed(const Duration(milliseconds: 200));
 
     try {
       final boundary = _ticketKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
