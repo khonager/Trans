@@ -31,7 +31,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
-          child: RouteShareTicket(journey: journey),
+          child: RouteShareTicket(
+            journey: journey,
+            username: 'TestUser',
+          ),
         ),
       ),
     ));
