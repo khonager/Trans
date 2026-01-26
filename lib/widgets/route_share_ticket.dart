@@ -6,10 +6,12 @@ import 'package:trans/utils/format_utils.dart';
 class RouteShareTicket extends StatelessWidget {
   final Journey journey;
   final bool showTrainNumbers;
+  final String username;
 
   const RouteShareTicket({
     super.key,
     required this.journey,
+    required this.username,
     this.showTrainNumbers = false,
   });
 
@@ -141,35 +143,37 @@ class RouteShareTicket extends StatelessWidget {
                     ),
                   );
                 }),
-                const SizedBox(height: 12),
-                Center(
-                  child: Text(
-                    FormatUtils.formatDuration(journey.duration.inMinutes).toUpperCase(),
-                    style: const TextStyle(
-                      color: Color(0xFF81C784), // Premium green
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
-                      fontFamily: monospaceFont,
-                      letterSpacing: 2.0,
-                    ),
-                  ),
-                ),
                 const SizedBox(height: 24),
                 // Footer
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    // Passenger Name
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("SYSTEM_ID", style: TextStyle(color: secondaryColor.withOpacity(0.5), fontSize: 8, fontWeight: FontWeight.bold)),
-                        Text(journey.source.toUpperCase(), style: const TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                        const Text("PASSENGER", style: TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 2),
+                        Text(username.toUpperCase(), style: const TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w900, fontFamily: monospaceFont)),
                       ],
                     ),
+                    // Duration (Green, centered in this row essentially)
+                    Text(
+                      FormatUtils.formatDuration(journey.duration.inMinutes).toUpperCase(),
+                      style: const TextStyle(
+                        color: Color(0xFF81C784), // Premium green
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        fontFamily: monospaceFont,
+                        letterSpacing: 2.0,
+                      ),
+                    ),
+                    // Barcode
                     Row(
-                      children: List.generate(24, (index) => Container(
+                      children: List.generate(18, (index) => Container(
                         width: index % 4 == 0 ? 3 : 1,
-                        height: 30,
+                        height: 25,
                         margin: const EdgeInsets.only(left: 2),
                         color: secondaryColor.withOpacity(0.4),
                       )),

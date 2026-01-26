@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/services/supabase_service.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
 
@@ -49,11 +50,34 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   // Ticket Generation
   final GlobalKey _ticketKey = GlobalKey();
   Journey? _ticketJourney;
+  String _userName = "Anon";
 
   @override
   void initState() {
     super.initState();
     _sortCandidates();
+    _loadUserName();
+  }
+
+  Future<void> _loadUserName() async {
+    final profile = await SupabaseService.getCurrentProfile();
+    if (profile != null && profile['username'] != null) {
+      if (mounted) {
+        setState(() {
+          _userName = profile['username'];
+        });
+      }
+    } else {
+      // Fallback to metadata if profile fetch fails but user exists
+      final user = SupabaseService.currentUser;
+      if (user != null && user.userMetadata?['username'] != null) {
+        if (mounted) {
+          setState(() {
+            _userName = user.userMetadata!['username'];
+          });
+        }
+      }
+    }
   }
   
   @override
@@ -296,6 +320,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
               child: _ticketJourney != null
                   ? RouteShareTicket(
                       journey: _ticketJourney!,
+                      username: _userName,
                       showTrainNumbers: widget.showTrainNumbers,
                     )
                   : const SizedBox(),
