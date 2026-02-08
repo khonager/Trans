@@ -173,24 +173,43 @@ class _SettingsTabState extends State<SettingsTab> {
       List<int> pattern = [0, 500];
 
       switch (_vibrationPattern) {
-        case 'heartbeat': pattern = [0, 150, 150, 150]; break;
-        case 'tick': pattern = [0, 50]; break;
-        case 'mario': pattern = [0, 150, 100, 150, 100, 150, 200, 300]; break;
-        case 'fox': pattern = [0, 100, 50, 100, 50, 100, 50, 400, 200, 200, 100, 600]; break;
-        case 'imperial': pattern = [0, 400, 200, 400, 200, 400, 200, 250, 100, 400, 200, 250, 100, 400]; break;
-        case 'potter': pattern = [0, 300, 150, 150, 150, 300, 100, 300]; break;
-        case 'indy': pattern = [0, 100, 50, 100, 50, 400, 200, 100, 50, 100, 50, 800]; break;
-        case 'mission': pattern = [0, 500, 200, 500, 200, 150, 50, 150, 50]; break;
-        case 'terminator': pattern = [0, 100, 100, 100, 200, 100, 50, 100]; break;
-        case 'future': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 600]; break;
-        case 'eva': pattern = [0, 100, 50, 100, 50, 100, 50, 100, 200, 300, 100, 300, 100, 300, 100, 300]; break;
-        case 'pokemon': pattern = [0, 100, 50, 100, 50, 100, 200, 400, 100, 400, 100, 400]; break;
-        case 'titan': pattern = [0, 200, 100, 200, 300, 200, 100, 200, 300, 600]; break;
-        case 'bebop': pattern = [0, 300, 300, 300, 300, 300, 300, 600, 50, 50, 50, 50, 50, 50]; break;
+        // Heartbeat: LUB-dub (pause) LUB-dub
+        case 'heartbeat': pattern = [0, 100, 100, 250, 600, 100, 100, 250]; break;
+        // Tick: Single sharp, concise tap
+        case 'tick': pattern = [0, 30]; break;
+        // Mario 1-UP: do-mi-so-do-so-do (Very fast ascending)
+        case 'mario': pattern = [0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 200]; break;
+        // 20th Century Fox: rhythmic fanfare (Dun-dun, dun-dun, dun-dun-dun-DUN!)
+        case 'fox': pattern = [0, 100, 100, 100, 100, 100, 100, 100, 150, 100, 150, 100, 150, 100, 400]; break;
+        // Imperial March: Bold Triplets (DUN DUN DUN, dun-pa-DUN, dun-pa-DUN)
+        case 'imperial': pattern = [0, 450, 150, 450, 150, 450, 150, 350, 100, 150, 450, 150, 350, 100, 150, 450]; break;
+        // Harry Potter: Hedwig's Theme (B... E-G-F#-E... B-A)
+        case 'potter': pattern = [0, 150, 350, 150, 100, 150, 100, 150, 100, 400, 300, 300, 150, 400]; break;
+        // Indiana Jones: Raiders March - Ta-da-dad-DAAA... Ta-da-DAAAA!
+        case 'indy': pattern = [0, 150, 50, 80, 50, 150, 100, 500, 400, 150, 50, 80, 100, 600]; break;
+        // Mission Impossible: 5/4 syncopated (DUN DUN, da-da, DUN DUN, da-da)
+        case 'mission': pattern = [0, 250, 250, 250, 250, 120, 120, 120, 120, 250, 250, 250, 250, 120, 120, 120, 120]; break;
+        // Terminator: Menacing Industrial (DUN-DUN, dun-DUN-DUN)
+        case 'terminator': pattern = [0, 250, 250, 250, 400, 200, 200, 250, 200, 250]; break;
+        // Back to the Future: Aggressively syncopated riff
+        case 'future': pattern = [0, 150, 150, 150, 150, 300, 200, 100, 50, 100, 50, 400]; break;
+        // Evangelion: Driving beats (da-da-DA-da, da-da-DA-da)
+        case 'eva': pattern = [0, 100, 100, 100, 100, 250, 100, 100, 100, 100, 100, 100, 250, 100, 100]; break;
+        // Pokémon: Jingle (ba-da ba-DA-DA!)
+        case 'pokemon': pattern = [0, 100, 100, 100, 100, 300, 150, 100, 100, 300]; break;
+        // Attack on Titan: Epic building choir (sa-sa-GAYO!)
+        case 'titan': pattern = [0, 200, 150, 200, 150, 250, 250, 400, 400, 600]; break;
+        // Cowboy Bebop: Fast Jazz (3..2..1.. JAM!)
+        case 'bebop': pattern = [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000]; break;
       }
 
       if (await Vibration.hasAmplitudeControl() ?? false) {
-        Vibration.vibrate(pattern: pattern, intensities: pattern.map((_) => _vibrationIntensity).toList());
+        // Correctly set intensity to 0 for pauses (even indices) and _vibrationIntensity for vibrations (odd indices)
+        final intensities = List<int>.generate(
+          pattern.length, 
+          (i) => i.isEven ? 0 : _vibrationIntensity
+        );
+        Vibration.vibrate(pattern: pattern, intensities: intensities);
       } else {
         Vibration.vibrate(pattern: pattern);
       }
