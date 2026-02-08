@@ -137,6 +137,7 @@ class Journey {
   final Duration totalWaitTime;
   final Map<String, dynamic> rawSource;
   final String source; // 'motis', 'v6'
+  final Duration totalWalkingDuration;
 
   Journey({
     required this.steps,
@@ -147,6 +148,7 @@ class Journey {
     required this.totalWaitTime,
     required this.rawSource,
     required this.source,
+    this.totalWalkingDuration = Duration.zero,
   });
 
   Journey copyWith({
@@ -158,6 +160,7 @@ class Journey {
     Duration? totalWaitTime,
     Map<String, dynamic>? rawSource,
     String? source,
+    Duration? totalWalkingDuration,
   }) {
     return Journey(
       steps: steps ?? this.steps,
@@ -168,6 +171,7 @@ class Journey {
       totalWaitTime: totalWaitTime ?? this.totalWaitTime,
       rawSource: rawSource ?? this.rawSource,
       source: source ?? this.source,
+      totalWalkingDuration: totalWalkingDuration ?? this.totalWalkingDuration,
     );
   }
 

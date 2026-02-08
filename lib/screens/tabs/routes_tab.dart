@@ -889,6 +889,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        }
     }
 
+    int walkMinutes = 0;
+    for (var step in steps) {
+       if (step.type == 'walk') {
+         try {
+           final parts = step.duration.split(' ');
+           if (parts.isNotEmpty) walkMinutes += int.tryParse(parts[0]) ?? 0;
+         } catch(_) {}
+       }
+    }
+
     return Journey(
       steps: steps,
       departure: dep ?? DateTime.now(),
@@ -898,6 +908,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       totalWaitTime: Duration(minutes: waitMinutes),
       rawSource: journeyData,
       source: journeyData['source'] ?? 'unknown',
+      totalWalkingDuration: Duration(minutes: walkMinutes),
     );
   }
 
