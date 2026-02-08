@@ -397,16 +397,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
         double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat, targetLng);
         
-        // Calculate trigger distance
+        // Calculate trigger distance logic
         double triggerDist = 500; // Default fallback
-        if (thresholdSetting == '500m') {
-          triggerDist = 500;
-        } else if (originLat != null && originLng != null) {
-          double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
-          double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
-          triggerDist = segmentDist * percent;
-          // Apply safety bounds: 150m min, 2000m max for sensible defaults
-          triggerDist = triggerDist.clamp(150.0, 2000.0);
+        if (thresholdSetting.endsWith('m')) {
+           // Fixed distance mode (e.g. "500m")
+           try {
+              triggerDist = double.parse(thresholdSetting.replaceAll('m', ''));
+           } catch (e) {
+              triggerDist = 500; // Fallback if parse fails
+           } 
+        } else {
+           // Percentage mode
+           if (originLat != null && originLng != null) {
+              double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
+              double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
+              triggerDist = segmentDist * percent;
+           }
         }
 
         if (dist <= triggerDist) { 
