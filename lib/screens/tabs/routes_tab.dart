@@ -79,6 +79,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<Favorite> _favorites = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
+  String? _currentAddress; // Store the reverse-geocoded address
 
   @override
   void initState() {
@@ -89,6 +90,33 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
+    _resolveCurrentAddress();
+  }
+
+  @override
+  void didUpdateWidget(RoutesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentPosition != oldWidget.currentPosition) {
+      _resolveCurrentAddress();
+    }
+  }
+
+  Future<void> _resolveCurrentAddress() async {
+    if (widget.currentPosition == null) return;
+    try {
+      // Use getNearbyStops to find the nearest stop or address
+      // Prioritize "address" or "station" type from results
+      final stops = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+      if (stops.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+             _currentAddress = stops.first.name;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Error resolving address: $e");
+    }
   }
   void _onFocusChange() {
     if (_fromFocusNode.hasFocus) {
@@ -1443,13 +1471,36 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildTextField(String label, TextEditingController controller, FocusNode focusNode, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
+    
+    String effectiveHint = hint;
+    bool isLocationHint = false;
+
+    if (fieldKey == 'from' && _fromStation == null && widget.currentPosition != null) {
+       effectiveHint = _currentAddress ?? "Current Location";
+       isLocationHint = true;
+    }
+
     if (isSelected) iconColor = Colors.greenAccent; 
-    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || hint.contains("Location"))) iconColor = Colors.blue;
+    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || (isLocationHint && effectiveHint != "Station..."))) iconColor = Colors.blue;
+    
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(
         controller: controller,
         focusNode: focusNode,
         onChanged: (val) => _onSearchChanged(val, fieldKey),
-        onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); },
+        onTap: () { 
+          if (fieldKey == 'from' && controller.text.isEmpty && isLocationHint && _currentAddress != null) {
+             controller.text = _currentAddress!;
+             // Select all text so user can easily overwrite it
+             controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
+             _onSearchChanged(_currentAddress!, fieldKey);
+          } else if (fieldKey == 'from' && controller.text == _currentAddress) {
+             // If already populated with current address, select all on tap
+             controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
+          }
+          setState(() => _activeSearchField = fieldKey);
+          _fetchSuggestions(); 
+          _scrollToTop(); 
+        },
         style: TextStyle(color: colors.searchInputText),
         decoration: InputDecoration(
           filled: true,
@@ -1464,8 +1515,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   },
                 )
               : null,
-          hintText: hint,
-          hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText),
+          hintText: effectiveHint,
+          hintStyle: TextStyle(color: isLocationHint ? Colors.blue.withValues(alpha: 0.8) : colors.searchHintText),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
         )
     )]);
