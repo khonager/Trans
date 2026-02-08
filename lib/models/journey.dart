@@ -36,6 +36,10 @@ class JourneyStep {
 
   // New: Alarm state
   final bool isWakeAlarmOn;
+  
+  // New: Display breakdown
+  final Duration? walkDuration;
+  final Duration? waitDuration;
 
   JourneyStep({
     required this.type,
@@ -65,6 +69,8 @@ class JourneyStep {
     this.headsign,
     this.tripId,
     this.isWakeAlarmOn = false,
+    this.walkDuration,
+    this.waitDuration,
   });
 
   JourneyStep copyWith({
@@ -94,6 +100,8 @@ class JourneyStep {
     String? headsign,
     String? tripId,
     bool? isWakeAlarmOn,
+    Duration? walkDuration,
+    Duration? waitDuration,
   }) {
     return JourneyStep(
       type: type ?? this.type,
@@ -123,6 +131,8 @@ class JourneyStep {
       headsign: headsign ?? this.headsign,
       tripId: tripId ?? this.tripId,
       isWakeAlarmOn: isWakeAlarmOn ?? this.isWakeAlarmOn,
+      walkDuration: walkDuration ?? this.walkDuration,
+      waitDuration: waitDuration ?? this.waitDuration,
     );
   }
 }

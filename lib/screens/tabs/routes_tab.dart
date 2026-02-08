@@ -695,11 +695,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
+      
       int walkMinutes = 0;
       for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).toLocal().difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture']).toLocal()).inMinutes; } catch(e) {} }
+      
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
       
+      int waitMinutes = totalGapMinutes - walkMinutes;
+      if (waitMinutes < 0) waitMinutes = 0;
+
       double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLat == null && steps.isNotEmpty) startLat = steps.last.endLat;
       double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -726,15 +731,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                              (lastStationName != null && destName != null && lastStationName == destName);
       String? nextPlat = nextPlatform;
 
-      if (isAtSameStation) {
+      // 1. Check for "Phantom Walks" - very short walks between platforms
+      // If walk is short (< 3 min) AND we are transferring trains/lines (not just walking to destination), 
+      // treat it as a transfer/wait unless it's explicitly a different station name.
+      bool isPhantomWalk = walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
+      
+      if (isAtSameStation || isPhantomWalk) { // Treat phantom walks as same-station transfers
         if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
           instruction = "Switch from $lastPlatform to $nextPlat";
         } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
           instruction = "Wait at $lastPlatform";
         } else if (nextPlat != null) {
           instruction = "Wait at $nextPlat";
+        } else if (destName != null && !isAtSameStation) {
+           // If it was a phantom walk to a different "station" (e.g. part of same complex), show name
+           instruction = "Transfer to $destName"; 
         } else {
-          instruction = "Wait at $destName";
+          instruction = "Wait for connection";
         }
       } else if (walkMinutes > 0) {
         if (isFirstStep && destName != null) {
@@ -751,7 +764,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       steps.add(JourneyStep(
-        type: instruction.startsWith("Wait") ? 'wait' : 'walk',
+        type: instruction.startsWith("Wait") || instruction.startsWith("Switch") || instruction.startsWith("Transfer") ? 'wait' : 'walk',
         line: 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
@@ -760,7 +773,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isWalking: walkMinutes > 0,
         startLat: startLat, startLng: startLng, endLat: endLat, endLng: endLng,
         path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
-        dateTime: blockStart
+        dateTime: blockStart,
+        walkDuration: Duration(minutes: walkMinutes),
+        waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
       isFirstStep = false; // After first flush, no longer first step
@@ -1629,7 +1644,31 @@ class _StepCardState extends State<_StepCard> {
     if (isTransfer) { 
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); 
       if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText); 
-      return GestureDetector(onTap: isWait ? null : widget.onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); 
+      
+      final bool hasWalking = step.walkDuration != null && step.walkDuration!.inMinutes > 0;
+      final bool canTap = !isWait || hasWalking;
+
+      return GestureDetector(onTap: canTap ? widget.onMapTap : null, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), 
+        
+        // Show Breakdown if available
+        if (step.walkDuration != null && step.waitDuration != null && !isWait)
+           RichText(
+             text: TextSpan(
+               style: TextStyle(color: colors.stepTransferText, fontSize: 12),
+               children: [
+                 if (step.walkDuration!.inMinutes > 0)
+                   TextSpan(text: "Walk ${FormatUtils.formatDuration(step.walkDuration!.inMinutes)}"),
+                 if (step.walkDuration!.inMinutes > 0 && step.waitDuration!.inMinutes > 0)
+                   const TextSpan(text: "  •  "),
+                 if (step.waitDuration!.inMinutes > 0)
+                   TextSpan(text: "Wait ${FormatUtils.formatDuration(step.waitDuration!.inMinutes)}"),
+               ]
+             )
+           )
+        else
+           Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))
+      ]))]))); 
     }
     
     return Card(
