@@ -731,25 +731,38 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                              (lastStationName != null && destName != null && lastStationName == destName);
       String? nextPlat = nextPlatform;
 
-      // 1. Check for "Phantom Walks" - very short walks between platforms
-      // If walk is short (< 3 min) AND we are transferring trains/lines (not just walking to destination), 
-      // treat it as a transfer/wait unless it's explicitly a different station name.
-      bool isPhantomWalk = walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
+      // Calculate distance if coordinates are available
+      double distanceInMeters = 0;
+      if (startLat != null && startLng != null && endLat != null && endLng != null) {
+          distanceInMeters = Geolocator.distanceBetween(startLat, startLng, endLat, endLng);
+      }
+
+      // Logic:
+      // - If distance is significant (> 50m), it's a walk, even if short time.
+      // - If distance is small (< 50m) but time is short (< 3 min), it's a phantom walk/wait.
+      // - If same station name but significant distance (e.g. big station), show Walk.
+
+      bool isSignificantWalk = distanceInMeters > 50;
+      bool isPhantomWalk = !isSignificantWalk && walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
       
-      if (isAtSameStation || isPhantomWalk) { // Treat phantom walks as same-station transfers
+      if (isAtSameStation && !isSignificantWalk) {
         if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
           instruction = "Switch from $lastPlatform to $nextPlat";
         } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
           instruction = "Wait at $lastPlatform";
         } else if (nextPlat != null) {
           instruction = "Wait at $nextPlat";
-        } else if (destName != null && !isAtSameStation) {
-           // If it was a phantom walk to a different "station" (e.g. part of same complex), show name
+        } else {
+          instruction = "Wait at $destName"; // Same station generic wait
+        }
+      } else if (isPhantomWalk) {
+        if (destName != null && !isAtSameStation) {
            instruction = "Transfer to $destName"; 
         } else {
           instruction = "Wait for connection";
         }
-      } else if (walkMinutes > 0) {
+      } else {
+         // It is a walk (either significant distance or significant time or different station)
         if (isFirstStep && destName != null) {
           instruction = "Walk to $destName"; // Initial walk to station
         } else if (isFinalWalk && destName != null) {
@@ -759,8 +772,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else {
           instruction = "Walk";
         }
-      } else {
-        instruction = "Wait for connection";
       }
 
       steps.add(JourneyStep(
@@ -770,7 +781,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: walkMinutes > 0,
+        isWalking: walkMinutes > 0 || isSignificantWalk,
         startLat: startLat, startLng: startLng, endLat: endLat, endLng: endLng,
         path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
         dateTime: blockStart,
