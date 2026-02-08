@@ -745,32 +745,42 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       bool isSignificantWalk = distanceInMeters > 50;
       bool isPhantomWalk = !isSignificantWalk && walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
       
+      String _fmtPlat(String? p) => p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
+      
       if (isAtSameStation && !isSignificantWalk) {
         if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
-          instruction = "Switch from $lastPlatform to $nextPlat";
+          instruction = "Switch from ${_fmtPlat(lastPlatform)} to ${_fmtPlat(nextPlat)}";
         } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
-          instruction = "Wait at $lastPlatform";
+          instruction = "Wait at ${_fmtPlat(lastPlatform)}";
         } else if (nextPlat != null) {
-          instruction = "Wait at $nextPlat";
+          instruction = "Wait at ${_fmtPlat(nextPlat)}";
         } else {
           instruction = "Wait at $destName"; // Same station generic wait
         }
       } else if (isPhantomWalk) {
         if (destName != null && !isAtSameStation) {
            instruction = "Transfer to $destName"; 
+           if (nextPlat != null) instruction += " (${_fmtPlat(nextPlat)})";
         } else {
           instruction = "Wait for connection";
+          if (nextPlat != null) instruction += " at ${_fmtPlat(nextPlat)}";
         }
       } else {
-         // It is a walk (either significant distance or significant time or different station)
+         // It is a walk
         if (isFirstStep && destName != null) {
-          instruction = "Walk to $destName"; // Initial walk to station
+          instruction = "Walk to $destName"; 
+          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
         } else if (isFinalWalk && destName != null) {
-          instruction = "Walk to destination"; // Final walk to destination
+          instruction = "Walk to destination"; 
         } else if (destName != null) {
-          instruction = "Walk to $destName"; // Transfer walk
+          instruction = "Walk to $destName"; 
+          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
+          // If we have arrival platform from previous leg, maybe "Walk from Pl. A to Station..."?
+          // But 'lastPlatform' is usually associated with 'lastStationName'. 
+          // If we walked, we likely left the previous station area.
         } else {
           instruction = "Walk";
+          if (nextPlat != null) instruction += " to ${_fmtPlat(nextPlat)}";
         }
       }
 
@@ -828,7 +838,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
-        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
+        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['origin']?['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
 
         int? depDelay;
         int? arrDelay;
@@ -858,7 +868,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
           startStationId: leg['origin']?['id']?.toString(),
-          platform: leg['platform']?.toString(),
+          platform: leg['origin']?['platform']?.toString(), // Ensure origin platform is used here too if I missed it before? 
+          // Wait, leg['platform'] was used before. I should check if I changed it in previous steps.
+          // In step 283 I changed the flushTransferBuffer call, but not the JourneyStep creation for 'ride'.
+          // Let's verify line 865 in previous view. 
+          // It was: platform: leg['platform']?.toString(),
+          // I should change it to leg['origin']?['platform']?.toString() AND add arrivalPlatform.
+          arrivalPlatform: leg['destination']?['platform']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']),
           path: leg['decodedPath'],
@@ -1761,7 +1777,7 @@ class _StepCardState extends State<_StepCard> {
           const SizedBox(height: 4), 
           // Info Line: Headsign • Duration
           Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
-          if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+ 
           
           const SizedBox(height: 12), // Spacer before actions
           
@@ -1819,7 +1835,7 @@ class _StepCardState extends State<_StepCard> {
                 dense: true, 
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
                 leading: const Icon(Icons.login, size: 14, color: Colors.green), 
-                title: Text("Board at ${step.startStationName}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                title: Text("Board at ${step.startStationName}${step.platform != null ? ' (Pl. ${step.platform})' : ''}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
                 trailing: Text(step.departureTime, style: TextStyle(color: colors.stepTimeText, fontWeight: FontWeight.bold, fontSize: 13))
               )
             ),
@@ -1828,6 +1844,8 @@ class _StepCardState extends State<_StepCard> {
               final stop = step.stopovers![idx]; 
               final name = stop['stop']['name']; 
               final stopId = stop['stop']['id']; 
+              final platform = stop['platform'] ?? stop['stop']?['platform'];
+              final String displayName = platform != null ? "$name (Pl. $platform)" : name;
               final plannedDep = stop['plannedDeparture'] ?? stop['scheduledDeparture'] ?? stop['plannedArrival'] ?? stop['scheduledArrival']; 
               final actualDep = stop['departure'] ?? stop['arrival']; 
               String timeStr = "--:--"; 
@@ -1849,7 +1867,7 @@ class _StepCardState extends State<_StepCard> {
                 dense: true, 
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
                 leading: const Icon(Icons.circle, size: 8, color: Colors.grey), 
-                title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
+                title: Text(displayName, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), 
                   const SizedBox(width: 8), 
@@ -1870,7 +1888,7 @@ class _StepCardState extends State<_StepCard> {
               dense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 20),
               leading: const Icon(Icons.flag, size: 14, color: Colors.red),
-              title: Text("Get off at ${step.destinationName ?? 'Destination'}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
+              title: Text("Get off at ${step.destinationName ?? 'Destination'}${step.arrivalPlatform != null ? ' (Pl. ${step.arrivalPlatform})' : ''}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
               trailing: Builder(builder: (context) {
                  String timeStr = step.arrivalTime;
                  Color timeColor = colors.delayOnTime;

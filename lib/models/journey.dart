@@ -15,6 +15,7 @@ class JourneyStep {
   final List<dynamic>? path; // [[lat, lng], ...]
   final String? startStationId;
   final String? platform;
+  final String? arrivalPlatform;
   final List<dynamic>? stopovers;
   final int? chatCount;
   
@@ -56,6 +57,7 @@ class JourneyStep {
     this.path,
     this.startStationId,
     this.platform,
+    this.arrivalPlatform,
     this.stopovers,
     this.chatCount,
     this.dateTime,
@@ -88,6 +90,7 @@ class JourneyStep {
     List<dynamic>? path,
     String? startStationId,
     String? platform,
+    String? arrivalPlatform,
     List<dynamic>? stopovers,
     int? chatCount,
     DateTime? dateTime,
@@ -101,7 +104,8 @@ class JourneyStep {
     String? tripId,
     bool? isWakeAlarmOn,
     Duration? walkDuration,
-    Duration? waitDuration,
+    Duration? waitDuration, 
+
   }) {
     return JourneyStep(
       type: type ?? this.type,
@@ -118,6 +122,7 @@ class JourneyStep {
       path: path ?? this.path,
       startStationId: startStationId ?? this.startStationId,
       platform: platform ?? this.platform,
+      arrivalPlatform: arrivalPlatform ?? this.arrivalPlatform,
       stopovers: stopovers ?? this.stopovers,
       chatCount: chatCount ?? this.chatCount,
       dateTime: dateTime ?? this.dateTime,
