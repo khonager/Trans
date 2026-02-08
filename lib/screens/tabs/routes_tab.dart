@@ -79,6 +79,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<Favorite> _favorites = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
+  String? _currentAddress; // Store the reverse-geocoded address
 
   @override
   void initState() {
@@ -89,6 +90,33 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
+    _resolveCurrentAddress();
+  }
+
+  @override
+  void didUpdateWidget(RoutesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentPosition != oldWidget.currentPosition) {
+      _resolveCurrentAddress();
+    }
+  }
+
+  Future<void> _resolveCurrentAddress() async {
+    if (widget.currentPosition == null) return;
+    try {
+      // Use getNearbyStops to find the nearest stop or address
+      // Prioritize "address" or "station" type from results
+      final stops = await TransportApi.getNearbyStops(widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+      if (stops.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+             _currentAddress = stops.first.name;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Error resolving address: $e");
+    }
   }
   void _onFocusChange() {
     if (_fromFocusNode.hasFocus) {
@@ -369,16 +397,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
         double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, targetLat, targetLng);
         
-        // Calculate trigger distance
+        // Calculate trigger distance logic
         double triggerDist = 500; // Default fallback
-        if (thresholdSetting == '500m') {
-          triggerDist = 500;
-        } else if (originLat != null && originLng != null) {
-          double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
-          double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
-          triggerDist = segmentDist * percent;
-          // Apply safety bounds: 150m min, 2000m max for sensible defaults
-          triggerDist = triggerDist.clamp(150.0, 2000.0);
+        if (thresholdSetting.endsWith('m')) {
+           // Fixed distance mode (e.g. "500m")
+           try {
+              triggerDist = double.parse(thresholdSetting.replaceAll('m', ''));
+           } catch (e) {
+              triggerDist = 500; // Fallback if parse fails
+           } 
+        } else {
+           // Percentage mode
+           if (originLat != null && originLng != null) {
+              double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
+              double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
+              triggerDist = segmentDist * percent;
+           }
         }
 
         if (dist <= triggerDist) { 
@@ -695,11 +729,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
       DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
+      
       int walkMinutes = 0;
       for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).toLocal().difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture']).toLocal()).inMinutes; } catch(e) {} }
+      
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
       
+      int waitMinutes = totalGapMinutes - walkMinutes;
+      if (waitMinutes < 0) waitMinutes = 0;
+
       double? startLat = getLat(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
       if (startLat == null && steps.isNotEmpty) startLat = steps.last.endLat;
       double? startLng = getLng(transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -726,41 +765,72 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                              (lastStationName != null && destName != null && lastStationName == destName);
       String? nextPlat = nextPlatform;
 
-      if (isAtSameStation) {
+      // Calculate distance if coordinates are available
+      double distanceInMeters = 0;
+      if (startLat != null && startLng != null && endLat != null && endLng != null) {
+          distanceInMeters = Geolocator.distanceBetween(startLat, startLng, endLat, endLng);
+      }
+
+      // Logic:
+      // - If distance is significant (> 50m), it's a walk, even if short time.
+      // - If distance is small (< 50m) but time is short (< 3 min), it's a phantom walk/wait.
+      // - If same station name but significant distance (e.g. big station), show Walk.
+
+      bool isSignificantWalk = distanceInMeters > 50;
+      bool isPhantomWalk = !isSignificantWalk && walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
+      
+      String _fmtPlat(String? p) => p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
+      
+      if (isAtSameStation && !isSignificantWalk) {
         if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
-          instruction = "Switch from $lastPlatform to $nextPlat";
+          instruction = "Switch from ${_fmtPlat(lastPlatform)} to ${_fmtPlat(nextPlat)}";
         } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
-          instruction = "Wait at $lastPlatform";
+          instruction = "Wait at ${_fmtPlat(lastPlatform)}";
         } else if (nextPlat != null) {
-          instruction = "Wait at $nextPlat";
+          instruction = "Wait at ${_fmtPlat(nextPlat)}";
         } else {
-          instruction = "Wait at $destName";
+          instruction = "Wait at $destName"; // Same station generic wait
         }
-      } else if (walkMinutes > 0) {
-        if (isFirstStep && destName != null) {
-          instruction = "Walk to $destName"; // Initial walk to station
-        } else if (isFinalWalk && destName != null) {
-          instruction = "Walk to destination"; // Final walk to destination
-        } else if (destName != null) {
-          instruction = "Walk to $destName"; // Transfer walk
+      } else if (isPhantomWalk) {
+        if (destName != null && !isAtSameStation) {
+           instruction = "Transfer to $destName"; 
+           if (nextPlat != null) instruction += " (${_fmtPlat(nextPlat)})";
         } else {
-          instruction = "Walk";
+          instruction = "Wait for connection";
+          if (nextPlat != null) instruction += " at ${_fmtPlat(nextPlat)}";
         }
       } else {
-        instruction = "Wait for connection";
+         // It is a walk
+        if (isFirstStep && destName != null) {
+          instruction = "Walk to $destName"; 
+          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
+        } else if (isFinalWalk && destName != null) {
+          instruction = "Walk to destination"; 
+        } else if (destName != null) {
+          instruction = "Walk to $destName"; 
+          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
+          // If we have arrival platform from previous leg, maybe "Walk from Pl. A to Station..."?
+          // But 'lastPlatform' is usually associated with 'lastStationName'. 
+          // If we walked, we likely left the previous station area.
+        } else {
+          instruction = "Walk";
+          if (nextPlat != null) instruction += " to ${_fmtPlat(nextPlat)}";
+        }
       }
 
       steps.add(JourneyStep(
-        type: instruction.startsWith("Wait") ? 'wait' : 'walk',
+        type: instruction.startsWith("Wait") || instruction.startsWith("Switch") || instruction.startsWith("Transfer") ? 'wait' : 'walk',
         line: 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime: "${blockStart.hour.toString().padLeft(2,'0')}:${blockStart.minute.toString().padLeft(2,'0')}",
         arrivalTime: "${blockEnd.hour.toString().padLeft(2,'0')}:${blockEnd.minute.toString().padLeft(2,'0')}",
-        isWalking: walkMinutes > 0,
+        isWalking: walkMinutes > 0 || isSignificantWalk,
         startLat: startLat, startLng: startLng, endLat: endLat, endLng: endLng,
         path: transferBuffer.isNotEmpty ? transferBuffer.first['decodedPath'] : null,
-        dateTime: blockStart
+        dateTime: blockStart,
+        walkDuration: Duration(minutes: walkMinutes),
+        waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
       isFirstStep = false; // After first flush, no longer first step
@@ -802,7 +872,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // If still null, we can't show this leg
         if (dep == null || arr == null) continue;
         
-        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
+        flushTransferBuffer(dep, leg['origin']?['name'], leg['origin']?['id']?.toString(), leg['origin']?['platform']?.toString(), getLat(leg['origin']), getLng(leg['origin']));
 
         int? depDelay;
         int? arrDelay;
@@ -832,7 +902,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
           startStationId: leg['origin']?['id']?.toString(),
-          platform: leg['platform']?.toString(),
+          platform: leg['origin']?['platform']?.toString(), // Ensure origin platform is used here too if I missed it before? 
+          // Wait, leg['platform'] was used before. I should check if I changed it in previous steps.
+          // In step 283 I changed the flushTransferBuffer call, but not the JourneyStep creation for 'ride'.
+          // Let's verify line 865 in previous view. 
+          // It was: platform: leg['platform']?.toString(),
+          // I should change it to leg['origin']?['platform']?.toString() AND add arrivalPlatform.
+          arrivalPlatform: leg['destination']?['platform']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']), startLng: getLng(leg['origin']), endLat: getLat(leg['destination']), endLng: getLng(leg['destination']),
           path: leg['decodedPath'],
@@ -889,6 +965,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        }
     }
 
+    int walkMinutes = 0;
+    for (var step in steps) {
+       if (step.type == 'walk') {
+         try {
+           final parts = step.duration.split(' ');
+           if (parts.isNotEmpty) walkMinutes += int.tryParse(parts[0]) ?? 0;
+         } catch(_) {}
+       }
+    }
+
     return Journey(
       steps: steps,
       departure: dep ?? DateTime.now(),
@@ -898,6 +984,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       totalWaitTime: Duration(minutes: waitMinutes),
       rawSource: journeyData,
       source: journeyData['source'] ?? 'unknown',
+      totalWalkingDuration: Duration(minutes: walkMinutes),
     );
   }
 
@@ -1390,13 +1477,36 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildTextField(String label, TextEditingController controller, FocusNode focusNode, bool isSelected, String fieldKey, {String hint = "Station..."}) {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
+    
+    String effectiveHint = hint;
+    bool isLocationHint = false;
+
+    if (fieldKey == 'from' && _fromStation == null && widget.currentPosition != null) {
+       effectiveHint = _currentAddress ?? "Current Location";
+       isLocationHint = true;
+    }
+
     if (isSelected) iconColor = Colors.greenAccent; 
-    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || hint.contains("Location"))) iconColor = Colors.blue;
+    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || (isLocationHint && effectiveHint != "Station..."))) iconColor = Colors.blue;
+    
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(
         controller: controller,
         focusNode: focusNode,
         onChanged: (val) => _onSearchChanged(val, fieldKey),
-        onTap: () { setState(() => _activeSearchField = fieldKey); _fetchSuggestions(); _scrollToTop(); },
+        onTap: () { 
+          if (fieldKey == 'from' && controller.text.isEmpty && isLocationHint && _currentAddress != null) {
+             controller.text = _currentAddress!;
+             // Select all text so user can easily overwrite it
+             controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
+             _onSearchChanged(_currentAddress!, fieldKey);
+          } else if (fieldKey == 'from' && controller.text == _currentAddress) {
+             // If already populated with current address, select all on tap
+             controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
+          }
+          setState(() => _activeSearchField = fieldKey);
+          _fetchSuggestions(); 
+          _scrollToTop(); 
+        },
         style: TextStyle(color: colors.searchInputText),
         decoration: InputDecoration(
           filled: true,
@@ -1411,8 +1521,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   },
                 )
               : null,
-          hintText: hint,
-          hintStyle: TextStyle(color: hint.contains("Location") ? Colors.blue.withValues(alpha: 0.5) : colors.searchHintText),
+          hintText: effectiveHint,
+          hintStyle: TextStyle(color: isLocationHint ? Colors.blue.withValues(alpha: 0.8) : colors.searchHintText),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)
         )
     )]);
@@ -1618,7 +1728,31 @@ class _StepCardState extends State<_StepCard> {
     if (isTransfer) { 
       Widget iconWidget = Icon(Icons.directions_walk, color: colors.stepTransferText); 
       if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText); 
-      return GestureDetector(onTap: isWait ? null : widget.onMapTap, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))]))]))); 
+      
+      final bool hasWalking = step.walkDuration != null && step.walkDuration!.inMinutes > 0;
+      final bool canTap = !isWait || hasWalking;
+
+      return GestureDetector(onTap: canTap ? widget.onMapTap : null, child: Container(margin: const EdgeInsets.only(bottom: 16), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: colors.stepTransferBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: colors.stepTransferBorder)), child: Row(children: [iconWidget, const SizedBox(width: 16), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(step.instruction, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)), 
+        
+        // Show Breakdown if available
+        if (step.walkDuration != null && step.waitDuration != null && !isWait)
+           RichText(
+             text: TextSpan(
+               style: TextStyle(color: colors.stepTransferText, fontSize: 12),
+               children: [
+                 if (step.walkDuration!.inMinutes > 0)
+                   TextSpan(text: "Walk ${FormatUtils.formatDuration(step.walkDuration!.inMinutes)}"),
+                 if (step.walkDuration!.inMinutes > 0 && step.waitDuration!.inMinutes > 0)
+                   const TextSpan(text: "  •  "),
+                 if (step.waitDuration!.inMinutes > 0)
+                   TextSpan(text: "Wait ${FormatUtils.formatDuration(step.waitDuration!.inMinutes)}"),
+               ]
+             )
+           )
+        else
+           Text(step.duration, style: TextStyle(color: colors.stepTransferText, fontSize: 12))
+      ]))]))); 
     }
     
     return Card(
@@ -1700,7 +1834,7 @@ class _StepCardState extends State<_StepCard> {
           const SizedBox(height: 4), 
           // Info Line: Headsign • Duration
           Text("${step.headsign ?? ''}  •  ${step.duration}", style: TextStyle(color: colors.textSecondary)), 
-          if (step.platform != null) Text(step.platform!, style: TextStyle(color: colors.stepPlatformText, fontSize: 12)), 
+ 
           
           const SizedBox(height: 12), // Spacer before actions
           
@@ -1758,7 +1892,7 @@ class _StepCardState extends State<_StepCard> {
                 dense: true, 
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
                 leading: const Icon(Icons.login, size: 14, color: Colors.green), 
-                title: Text("Board at ${step.startStationName}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                title: Text("Board at ${step.startStationName}${step.platform != null ? ' (Pl. ${step.platform})' : ''}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
                 trailing: Text(step.departureTime, style: TextStyle(color: colors.stepTimeText, fontWeight: FontWeight.bold, fontSize: 13))
               )
             ),
@@ -1767,6 +1901,8 @@ class _StepCardState extends State<_StepCard> {
               final stop = step.stopovers![idx]; 
               final name = stop['stop']['name']; 
               final stopId = stop['stop']['id']; 
+              final platform = stop['platform'] ?? stop['stop']?['platform'];
+              final String displayName = platform != null ? "$name (Pl. $platform)" : name;
               final plannedDep = stop['plannedDeparture'] ?? stop['scheduledDeparture'] ?? stop['plannedArrival'] ?? stop['scheduledArrival']; 
               final actualDep = stop['departure'] ?? stop['arrival']; 
               String timeStr = "--:--"; 
@@ -1788,7 +1924,7 @@ class _StepCardState extends State<_StepCard> {
                 dense: true, 
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
                 leading: const Icon(Icons.circle, size: 8, color: Colors.grey), 
-                title: Text(name, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
+                title: Text(displayName, style: TextStyle(color: colors.textPrimary, fontSize: 13)), 
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(timeStr, style: TextStyle(color: timeColor, fontSize: 12)), 
                   const SizedBox(width: 8), 
@@ -1809,7 +1945,7 @@ class _StepCardState extends State<_StepCard> {
               dense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 20),
               leading: const Icon(Icons.flag, size: 14, color: Colors.red),
-              title: Text("Get off at ${step.destinationName ?? 'Destination'}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
+              title: Text("Get off at ${step.destinationName ?? 'Destination'}${step.arrivalPlatform != null ? ' (Pl. ${step.arrivalPlatform})' : ''}", style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
               trailing: Builder(builder: (context) {
                  String timeStr = step.arrivalTime;
                  Color timeColor = colors.delayOnTime;

@@ -15,6 +15,7 @@ class JourneyStep {
   final List<dynamic>? path; // [[lat, lng], ...]
   final String? startStationId;
   final String? platform;
+  final String? arrivalPlatform;
   final List<dynamic>? stopovers;
   final int? chatCount;
   
@@ -36,6 +37,10 @@ class JourneyStep {
 
   // New: Alarm state
   final bool isWakeAlarmOn;
+  
+  // New: Display breakdown
+  final Duration? walkDuration;
+  final Duration? waitDuration;
 
   JourneyStep({
     required this.type,
@@ -52,6 +57,7 @@ class JourneyStep {
     this.path,
     this.startStationId,
     this.platform,
+    this.arrivalPlatform,
     this.stopovers,
     this.chatCount,
     this.dateTime,
@@ -65,6 +71,8 @@ class JourneyStep {
     this.headsign,
     this.tripId,
     this.isWakeAlarmOn = false,
+    this.walkDuration,
+    this.waitDuration,
   });
 
   JourneyStep copyWith({
@@ -82,6 +90,7 @@ class JourneyStep {
     List<dynamic>? path,
     String? startStationId,
     String? platform,
+    String? arrivalPlatform,
     List<dynamic>? stopovers,
     int? chatCount,
     DateTime? dateTime,
@@ -94,6 +103,9 @@ class JourneyStep {
     String? headsign,
     String? tripId,
     bool? isWakeAlarmOn,
+    Duration? walkDuration,
+    Duration? waitDuration, 
+
   }) {
     return JourneyStep(
       type: type ?? this.type,
@@ -110,6 +122,7 @@ class JourneyStep {
       path: path ?? this.path,
       startStationId: startStationId ?? this.startStationId,
       platform: platform ?? this.platform,
+      arrivalPlatform: arrivalPlatform ?? this.arrivalPlatform,
       stopovers: stopovers ?? this.stopovers,
       chatCount: chatCount ?? this.chatCount,
       dateTime: dateTime ?? this.dateTime,
@@ -123,6 +136,8 @@ class JourneyStep {
       headsign: headsign ?? this.headsign,
       tripId: tripId ?? this.tripId,
       isWakeAlarmOn: isWakeAlarmOn ?? this.isWakeAlarmOn,
+      walkDuration: walkDuration ?? this.walkDuration,
+      waitDuration: waitDuration ?? this.waitDuration,
     );
   }
 }
@@ -137,6 +152,7 @@ class Journey {
   final Duration totalWaitTime;
   final Map<String, dynamic> rawSource;
   final String source; // 'motis', 'v6'
+  final Duration totalWalkingDuration;
 
   Journey({
     required this.steps,
@@ -147,6 +163,7 @@ class Journey {
     required this.totalWaitTime,
     required this.rawSource,
     required this.source,
+    this.totalWalkingDuration = Duration.zero,
   });
 
   Journey copyWith({
@@ -158,6 +175,7 @@ class Journey {
     Duration? totalWaitTime,
     Map<String, dynamic>? rawSource,
     String? source,
+    Duration? totalWalkingDuration,
   }) {
     return Journey(
       steps: steps ?? this.steps,
@@ -168,6 +186,7 @@ class Journey {
       totalWaitTime: totalWaitTime ?? this.totalWaitTime,
       rawSource: rawSource ?? this.rawSource,
       source: source ?? this.source,
+      totalWalkingDuration: totalWalkingDuration ?? this.totalWalkingDuration,
     );
   }
 

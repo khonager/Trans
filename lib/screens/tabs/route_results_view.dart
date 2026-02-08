@@ -15,6 +15,7 @@ enum RouteSortOption {
   shortestDuration,
   leastTransfers,
   shortestWait,
+  leastWalking,
 }
 
 class RouteResultsView extends StatefulWidget {
@@ -103,6 +104,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
         break;
       case RouteSortOption.shortestWait:
         _sortedCandidates.sort((a, b) => a.totalWaitTime.compareTo(b.totalWaitTime));
+        break;
+      case RouteSortOption.leastWalking:
+        _sortedCandidates.sort((a, b) => a.totalWalkingDuration.compareTo(b.totalWalkingDuration));
         break;
     }
   }
@@ -247,6 +251,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 icon: Icons.hourglass_empty,
                 isSelected: _currentSort == RouteSortOption.shortestWait,
                 onTap: () => _onSortChanged(RouteSortOption.shortestWait),
+              ),
+              const SizedBox(width: 8),
+              _SortChip(
+                label: "Least Walking",
+                icon: Icons.directions_walk,
+                isSelected: _currentSort == RouteSortOption.leastWalking,
+                onTap: () => _onSortChanged(RouteSortOption.leastWalking),
               ),
             ],
           ),
