@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -180,52 +181,99 @@ class _MapScreenState extends State<MapScreen> {
     _compassStream = null;
   }
 
+  LatLng? _getTriggerPoint(List<LatLng> points, LatLng target, double triggerDist) {
+    if (points.isEmpty) return null;
+    
+    // 1. Find the point in the path closest to the target stop
+    int targetIdx = -1;
+    double minTargetDist = double.infinity;
+    for (int i = 0; i < points.length; i++) {
+        double d = Geolocator.distanceBetween(points[i].latitude, points[i].longitude, target.latitude, target.longitude);
+        if (d < minTargetDist) {
+            minTargetDist = d;
+            targetIdx = i;
+        }
+    }
+    
+    // If target stop not found or it's the very first point, return it
+    if (targetIdx <= 0) return points[0];
+
+    // 2. Search backwards from target stop to find where we enter the trigger zone
+    for (int i = targetIdx - 1; i >= 0; i--) {
+        double d = Geolocator.distanceBetween(points[i].latitude, points[i].longitude, target.latitude, target.longitude);
+        if (d > triggerDist) {
+            // Segment (points[i] -> points[i+1]) crosses the trigger boundary
+            double dNext = Geolocator.distanceBetween(points[i+1].latitude, points[i+1].longitude, target.latitude, target.longitude);
+            double totalD = d - dNext;
+            if (totalD <= 0) return points[i+1];
+            
+            double ratio = (d - triggerDist) / totalD;
+            // Clamp ratio
+            ratio = ratio.clamp(0.0, 1.0);
+            
+            return LatLng(
+                points[i].latitude + (points[i+1].latitude - points[i].latitude) * ratio,
+                points[i].longitude + (points[i+1].longitude - points[i].longitude) * ratio
+            );
+        }
+    }
+    
+    // 3. Fallback: if all points are inside the zone, return the start
+    return points[0];
+  }
+
   Future<void> _loadRoute() async {
     try {
       final stepsToShow = widget.focusStep != null ? [widget.focusStep!] : widget.steps;
       List<LatLng> allPoints = [];
       List<Marker> markers = [];
 
+      final prefs = await SharedPreferences.getInstance();
+      final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+      final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
+
       for (var step in stepsToShow) {
-        // 1. Walking Path (Fetch via OSRM)
+        List<LatLng> stepPoints = [];
         // 1. Walking Path - Prefer Motis path if available
         if (widget.focusStep != null && (step.type == 'walk' || step.isWalking) && step.startLat != null && step.endLat != null) {
            if (step.path != null && step.path!.isNotEmpty) {
              try {
-               allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+               stepPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
              } catch(e) { debugPrint("Path mapping error: $e"); }
            } else {
              try {
                // Fallback to OSRM only if no path from Motis
                final path = await TransportApi.getWalkingRoute(step.startLat!, step.startLng!, step.endLat!, step.endLng!);
-               allPoints.addAll(path.map((p) => LatLng(p[0], p[1])));
+               stepPoints.addAll(path.map((p) => LatLng(p[0], p[1])));
              } catch (_) {
-               allPoints.add(LatLng(step.startLat!, step.startLng!));
-               allPoints.add(LatLng(step.endLat!, step.endLng!));
+               stepPoints.add(LatLng(step.startLat!, step.startLng!));
+               stepPoints.add(LatLng(step.endLat!, step.endLng!));
              }
            }
         } 
         // 2. Existing path (bus/train)
         else if (step.path != null && step.path!.isNotEmpty) {
           try {
-             allPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
+             stepPoints.addAll(step.path!.map((p) => LatLng(p[0], p[1])));
           } catch(e) { debugPrint("Step path error: $e"); }
         } 
         // 3. Fallback for stopovers
         else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-          if (step.startLat != null) allPoints.add(LatLng(step.startLat!, step.startLng!));
+          if (step.startLat != null) stepPoints.add(LatLng(step.startLat!, step.startLng!));
           for (var stop in step.stopovers!) {
             if (stop['stop'] != null && stop['stop']['location'] != null) {
-              allPoints.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
+              stepPoints.add(LatLng(stop['stop']['location']['latitude'], stop['stop']['location']['longitude']));
             }
           }
-          if (step.endLat != null) allPoints.add(LatLng(step.endLat!, step.endLng!));
+          if (step.endLat != null) stepPoints.add(LatLng(step.endLat!, step.endLng!));
         } 
         // 4. Simple straight line fallback
         else if (step.startLat != null && step.endLat != null) {
-          allPoints.add(LatLng(step.startLat!, step.startLng!));
-          allPoints.add(LatLng(step.endLat!, step.endLng!));
+          stepPoints.add(LatLng(step.startLat!, step.startLng!));
+          stepPoints.add(LatLng(step.endLat!, step.endLng!));
         }
+
+        allPoints.addAll(stepPoints);
 
         // Add Markers
         // Start Marker
@@ -248,9 +296,70 @@ class _MapScreenState extends State<MapScreen> {
             }
           }
         }
+
+        // Trigger Marker logic
+        if (step.isWakeAlarmOn) {
+          double? targetLat = step.endLat;
+          double? targetLng = step.endLng;
+          double? originLat = step.startLat;
+          double? originLng = step.startLng;
+
+          if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+            final stops = step.stopovers!;
+            if (stopsBefore > 0) {
+              int targetIndex = stops.length - stopsBefore;
+              if (targetIndex >= 0) {
+                final stopData = stops[targetIndex];
+                if (stopData['stop'] != null && stopData['stop']['location'] != null) {
+                   targetLat = stopData['stop']['location']['latitude'];
+                   targetLng = stopData['stop']['location']['longitude'];
+                   if (targetIndex > 0) {
+                      final originData = stops[targetIndex - 1];
+                      originLat = originData['stop']?['location']?['latitude'];
+                      originLng = originData['stop']?['location']?['longitude'];
+                   }
+                }
+              }
+            } else {
+              // Trigger at destination, origin is the last stopover
+              final originData = stops.last;
+              originLat = originData['stop']?['location']?['latitude'];
+              originLng = originData['stop']?['location']?['longitude'];
+            }
+          }
+
+          if (targetLat != null && targetLng != null) {
+            double triggerDist = 500;
+            if (thresholdSetting.endsWith('m')) {
+               try { triggerDist = double.parse(thresholdSetting.replaceAll('m', '')); } catch (_) {}
+            } else if (originLat != null && originLng != null) {
+               // Base calculations on the segment immediately preceding the target
+               double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
+               
+               // Robust percentage parsing
+               double percentValue = 5;
+               try {
+                 percentValue = double.parse(thresholdSetting.replaceAll('%', ''));
+               } catch (_) {}
+               triggerDist = segmentDist * (percentValue / 100.0);
+            }
+
+            final triggerPoint = _getTriggerPoint(stepPoints, LatLng(targetLat, targetLng), triggerDist);
+            if (triggerPoint != null) {
+              markers.add(Marker(
+                point: triggerPoint,
+                width: 32, height: 32,
+                child: Container(
+                  decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.8), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
+                  child: const Icon(Icons.notifications_active, color: Colors.white, size: 18),
+                ),
+              ));
+            }
+          }
+        }
       }
 
-      // Destination Marker
+      // Final Destination Marker
       if (allPoints.isNotEmpty) {
          markers.add(Marker(
            point: allPoints.last,

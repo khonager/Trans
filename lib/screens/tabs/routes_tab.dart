@@ -370,7 +370,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (step.stopovers != null && step.stopovers!.isNotEmpty) {
           final stops = step.stopovers!;
           if (stopsBefore > 0) {
-            int targetIndex = stops.length - 1 - stopsBefore;
+            int targetIndex = stops.length - stopsBefore;
             if (targetIndex >= 0) {
               final stopData = stops[targetIndex];
               if (stopData['stop'] != null && stopData['stop']['location'] != null) {
@@ -410,8 +410,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
            // Percentage mode
            if (originLat != null && originLng != null) {
               double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
-              double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
-              triggerDist = segmentDist * percent;
+              double percentValue = 5;
+              try {
+                percentValue = double.parse(thresholdSetting.replaceAll('%', ''));
+              } catch (_) {}
+              triggerDist = segmentDist * (percentValue / 100.0);
            }
         }
 
