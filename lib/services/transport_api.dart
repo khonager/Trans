@@ -395,25 +395,8 @@ class TransportApi {
       );
       // Filter out past journeys and tag with source
       final now = DateTime.now();
-      final filtered = isArrival ? res : res.where((journey) {
-        try {
-          final legs = journey['legs'] as List?;
-          if (legs == null || legs.isEmpty) return true;
-          final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
-          if (departure == null) return true;
-          
-          DateTime depTime;
-          if (departure is int) {
-             depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
-          } else {
-             depTime = DateTime.parse(departure.toString());
-          }
-          
-          return depTime.isAfter(now);
-        } catch (e) {
-          return true;
-        }
-      }).toList();
+      final filtered = res;
+
       return filtered.map((j) { j['source'] = 'v6'; return j; }).toList();
     }
 
@@ -430,28 +413,8 @@ class TransportApi {
       
       // Filter out journeys with past departure times (unless searching by arrival time)
       final now = DateTime.now();
-      final filteredResults = isArrival ? motisResults : motisResults.where((journey) {
-        try {
-          final departure = journey['departure'];
-          if (departure == null) return true;
-          
-          DateTime depTime;
-          if (departure is int) {
-             depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
-          } else {
-             depTime = DateTime.parse(departure.toString());
-          }
+      final filteredResults = motisResults;
 
-          // Strict filtering: only future departures
-          return depTime.isAfter(now.subtract(const Duration(minutes: 15)));
-        } catch (e) {
-          // If we can't parse the time, we probably shouldn't show it if we are strict about "future", 
-          // but logically it's better to show potential errors than hide them. 
-          // However, user specifically asked to hide past results.
-          // If parsing fails, we assume it's valid to avoid filtering valid but weird formats.
-          return true; 
-        }
-      }).toList();
       
       if (filteredResults.isNotEmpty || apiMode == 'motis') return filteredResults;
       
@@ -474,25 +437,8 @@ class TransportApi {
         
         // Filter out past journeys and tag with source
         final now = DateTime.now();
-        final filtered = isArrival ? res : res.where((journey) {
-          try {
-            final legs = journey['legs'] as List?;
-            if (legs == null || legs.isEmpty) return true;
-            final departure = legs.first['departure'] ?? legs.first['plannedDeparture'];
-            if (departure == null) return true;
-            
-            DateTime depTime;
-            if (departure is int) {
-               depTime = DateTime.fromMillisecondsSinceEpoch(departure > 100000000000 ? departure : departure * 1000);
-            } else {
-               depTime = DateTime.parse(departure.toString());
-            }
+        final filtered = res;
 
-            return depTime.isAfter(now.subtract(const Duration(minutes: 15)));
-          } catch (e) {
-            return true;
-          }
-        }).toList();
         
         return filtered.map((j) {
            j['source'] = 'v6';
