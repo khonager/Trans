@@ -163,8 +163,17 @@ flutter run
 
 ### Using Nix (Recommended)
 
-If you have [Nix](https://nixos.org/) installed, you can use the included `flake.nix` to get a complete development environment with all dependencies:
+If you have [Nix](https://nixos.org/) installed, you can use the included `flake.nix` to get a complete development environment with all dependencies.
 
+**First-time Setup (Enable Flakes):**
+If this is your first time using Nix Flakes, you need to enable them permanently:
+```bash
+mkdir -p ~/.config/nix
+echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+```
+*Note: On some multi-user installs (like macOS), you might need to edit `/etc/nix/nix.conf` with `sudo` instead.*
+
+**Usage:**
 ```bash
 # Enter the development shell
 nix develop
