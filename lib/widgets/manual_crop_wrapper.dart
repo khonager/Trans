@@ -77,9 +77,14 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
               child: Crop(
                 image: _imageData!,
                 controller: _cropController,
-                onCropped: (image) {
-                  // image is Uint8List (PNG/JPEG)
-                  Navigator.pop(context, image);
+                onCropped: (result) {
+                  switch (result) {
+                    case CropSuccess(:final croppedImage):
+                      Navigator.pop(context, croppedImage);
+                    case CropFailure(:final cause):
+                      debugPrint("Crop failed: $cause");
+                      Navigator.pop(context);
+                  }
                 },
                 aspectRatio: null, // Free crop
                 baseColor: colors.scaffoldBg,
