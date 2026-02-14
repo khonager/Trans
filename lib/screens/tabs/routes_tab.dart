@@ -687,7 +687,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                      );
                   }
                 } else {
-                   _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); 
+                   _addJourneyTab(singleJourneyData: journey, origin: fromDummy, destination: toDummy, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); 
                 }
               });
             },
@@ -979,7 +979,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  void _addJourneyTab({Map<String, dynamic>? singleJourneyData, List<Map<String, dynamic>>? candidatesData, String title = "Route", String? subtitle}) {
+  void _addJourneyTab({Map<String, dynamic>? singleJourneyData, List<Map<String, dynamic>>? candidatesData, String title = "Route", String? subtitle, Station? origin, Station? destination}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
     Journey? activeJourney;
@@ -1013,8 +1013,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           subtitle: subtitle ?? "Details", 
           eta: activeJourney != null ? DateFormat('HH:mm').format(activeJourney.arrival) : "--:--", 
           totalDuration: activeJourney != null ? FormatUtils.formatDuration(activeJourney.duration.inMinutes) : "", 
-          destination: dest!, 
-          origin: _fromStation, // Store origin
+          destination: destination ?? dest!, 
+          origin: origin ?? _fromStation, // Store origin
           steps: activeJourney?.steps ?? [], 
           source: activeJourney?.source,
           candidates: candidates,
@@ -1063,7 +1063,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
        if (mounted) { 
          if (res.isNotEmpty) { 
-           _addJourneyTab(candidatesData: res); 
+           _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
          } else { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
