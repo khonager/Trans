@@ -140,21 +140,37 @@ class _TicketPanelState extends State<TicketPanel> {
       Rect? qrBox;
 
       // 1. Scan for QR Code
+      // Try ML Kit first on mobile (fast, native), fall back to ZXing (pure Dart)
       if (!isWeb && (Platform.isAndroid || Platform.isIOS)) {
-        // Mobile: ML Kit
-        final inputImage = InputImage.fromFilePath(path!);
-        final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
-        final barcodes = await barcodeScanner.processImage(inputImage);
-        
-        if (barcodes.isNotEmpty) {
-          qrBox = barcodes.first.boundingBox;
-        }
-        barcodeScanner.close(); 
-      } else {
-        // Desktop or Web: zxing_lib
         try {
-          final image = img.decodeImage(bytes);
+          final inputImage = InputImage.fromFilePath(path!);
+          final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+          final barcodes = await barcodeScanner.processImage(inputImage);
+          debugPrint("ML Kit found ${barcodes.length} barcodes");
+          
+          if (barcodes.isNotEmpty) {
+            qrBox = barcodes.first.boundingBox;
+          }
+          barcodeScanner.close();
+        } catch (e) {
+          debugPrint("ML Kit scan failed, falling back to ZXing: $e");
+        }
+      }
+      
+      // ZXing fallback (Desktop, Web, or when ML Kit found nothing / failed)
+      if (qrBox == null) {
+        try {
+          var image = img.decodeImage(bytes);
           if (image != null) {
+              // Bake EXIF orientation into actual pixels (Samsung cameras store rotated images via EXIF)
+              image = img.bakeOrientation(image);
+              
+              // Ensure image is 4-channel RGBA (some JPEGs decode as 3-channel RGB)
+              if (image.numChannels != 4) {
+                image = image.convert(numChannels: 4);
+              }
+
+              debugPrint("ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
               final intList = image.data?.buffer.asUint32List().toList(); 
               
               if (intList != null) {
@@ -162,6 +178,7 @@ class _TicketPanelState extends State<TicketPanel> {
                   final binarizer = zxing.HybridBinarizer(luminance);
                   final bitmap = zxing.BinaryBitmap(binarizer);
                   final result = zxing.MultiFormatReader().decode(bitmap);
+                  debugPrint("ZXing: found barcode: ${result.text}");
                   
                   final points = result.resultPoints;
                   if (points != null && points.isNotEmpty) {
@@ -177,6 +194,8 @@ class _TicketPanelState extends State<TicketPanel> {
                     qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
                   }
               }
+          } else {
+              debugPrint("ZXing: failed to decode image bytes (${bytes.length} bytes)");
           }
         } catch (e) {
           debugPrint("ZXing scan failed: $e");
