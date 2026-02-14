@@ -11,18 +11,18 @@ dependencies:
   flutter:
     sdk: flutter
   
-  intl: ^0.19.0
+  intl: ^0.20.2
   http: ^1.1.0
-  flutter_markdown: ^0.6.14
-  geolocator: ^13.0.0
+  flutter_markdown: ^0.7.7+1
+  geolocator: ^14.0.2
   geolocator_linux: ^0.2.1
   flutter_compass: ^0.8.0
   cupertino_icons: ^1.0.2
 
   vibration: ^3.1.0 
   super_clipboard: ^0.9.1 
-  flutter_local_notifications: ^18.0.1
-  timezone: ^0.9.2
+  flutter_local_notifications: ^20.1.0
+  timezone: ^0.10.1
 
   shared_preferences: ^2.2.0
   path_provider: ^2.1.5
@@ -41,7 +41,7 @@ dependencies:
   crypto: ^3.0.7
   flutter_image_compress: ^2.4.0
   url_launcher: ^6.2.0
-  package_info_plus: ^8.0.0
+  package_info_plus: ^9.0.0
   uuid: ^4.2.2
   qr_flutter: ^4.1.0
 
@@ -51,14 +51,31 @@ dependencies:
   image: ^4.2.0
   # Linux/Desktop Support
   zxing_lib: ^1.1.4
-  crop_your_image: ^1.1.0
+  crop_your_image: ^2.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
-  flutter_launcher_icons: ^0.13.1
-  peanut: ^5.0.0
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  peanut: ^6.0.0
+
+# FIX: Override with fork that includes 16KB-aligned prebuilt native binaries
+# (irondash_engine_context v0.5.5 ships 4KB-aligned .so files; this fork provides
+#  16KB-aligned versions required for Android 15+)
+dependency_overrides:
+  super_clipboard:
+    git:
+      url: https://github.com/dilumdesilva/super_native_extensions.git
+      path: super_clipboard
+  super_native_extensions:
+    git:
+      url: https://github.com/dilumdesilva/super_native_extensions.git
+      path: super_native_extensions
+  irondash_engine_context:
+    git:
+      url: https://github.com/dilumdesilva/super_native_extensions.git
+      path: irondash_vendored/engine_context/dart
 
 flutter_launcher_icons:
   android: "ic_launcher"
