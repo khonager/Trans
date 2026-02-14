@@ -31720,7 +31720,7 @@ azg:function azg(a){this.a=a},
 azh:function azh(a){this.a=a},
 azm:function azm(a){this.a=a},
 bjK:function bjK(a,b){this.a=a
-this.c=b},
+this.d=b},
 bXZ(a){var s=null,r=new v.G.BroadcastChannel(a),q=B.kx(s,s,s,s,!1,t.P)
 r.onmessage=B.fE(new B.bgH(q))
 return new B.ahm(new B.bgF(r,q),new B.dM(q,B.n(q).i("dM<1>")),new B.bgG(r))},
@@ -122513,7 +122513,7 @@ break
 case 1:return B.w(q,r)}})
 return B.x($async$Ox,r)}}
 B.bjK.prototype={
-d3(){return B.a4(["bytes",null,"type",this.c.b,"path",this.a,"metadata",null],t.N,t.z)}}
+d3(){return B.a4(["bytes",null,"type",this.d.b,"path",this.a,"metadata",null,"bitmapData",null,"rotation",null],t.N,t.z)}}
 B.bgH.prototype={
 $1(a){this.a.E(0,A.a4.be(A.a4.kh(B.bgn(a.data))))},
 $S:2}
