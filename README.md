@@ -204,6 +204,57 @@ flutter build windows --release
 flutter build web --release --web-renderer canvaskit
 ```
 
+### macOS / iOS (No Paid Account Required)
+
+You can build and install the app on your iPhone using a free Apple ID.
+
+1.  **Prerequisites**
+    *   **Xcode** (from Mac App Store)
+    *   **CocoaPods** (`sudo gem install cocoapods`)
+    *   **Flutter SDK** installed and in your PATH
+
+2.  **Clone & Prepare**
+    ```bash
+    git clone https://github.com/khonager/Trans.git
+    cd Trans
+    ```
+
+3.  **Setup Environment**
+    Create a `.env` file in the project root with the required API keys (ask the developer or use your own Supabase instance).
+    ```bash
+    echo "SUPABASE_URL=..." >> .env
+    echo "SUPABASE_ANON_KEY=..." >> .env
+    ```
+
+4.  **Install Dependencies**
+    **Important:** Do this exactly in this order to avoid path issues.
+    ```bash
+    flutter clean
+    flutter pub get
+    cd ios
+    pod install --repo-update
+    cd ..
+    ```
+
+5.  **Open Workspace**
+    Open `ios/Runner.xcworkspace` in Xcode (DO NOT open `Runner.xcodeproj`).
+    ```bash
+    open ios/Runner.xcworkspace
+    ```
+
+6.  **Configure Signing**
+    *   In Xcode, click **Runner** (top left file navigator).
+    *   Select the **Signing & Capabilities** tab.
+    *   Under **Team**, select **Add an Account...** and sign in with your Apple ID.
+    *   Select your **Personal Team**.
+    *   Change the **Bundle Identifier** to something unique (e.g., `com.yourname.trans`).
+
+7.  **Build & Run**
+    *   Connect your iPhone via USB.
+    *   Select your device in the top toolbar.
+    *   Click the **Play** button (Run).
+    *   *Note: On your iPhone, you may need to trust your developer profile in Settings -> General -> VPN & Device Management.*
+
 ---
 
 ## 🛠 Maintenance
