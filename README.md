@@ -255,6 +255,30 @@ You can build and install the app on your iPhone using a free Apple ID.
     *   Click the **Play** button (Run).
     *   *Note: On your iPhone, you may need to trust your developer profile in Settings -> General -> VPN & Device Management.*
 
+    *   *Note: On your iPhone, you may need to trust your developer profile in Settings -> General -> VPN & Device Management.*
+
+### Distributing to Friends (TestFlight)
+**Requires:** Paid Apple Developer Program membership ($99/year).
+
+If you want to send the app to friends wirelessly or publish to the App Store:
+
+1.  **Enroll**: Sign up at [developer.apple.com](https://developer.apple.com).
+2.  **Configure in Xcode**:
+    *   **Signing & Capabilities**: Select your paid **Team**.
+    *   **Bundle Identifier**: Ensure it is unique.
+3.  **Archive Build**:
+    *   Select **Any iOS Device (arm64)** in the top toolbar.
+    *   Go to **Product** -> **Archive**.
+4.  **Upload to App Store Connect**:
+    *   In the Organizer window, click **Distribute App**.
+    *   Choose **App Store Connect** -> **Upload**.
+    *   Follow the prompts to validte and upload.
+5.  **Enable TestFlight**:
+    *   Go to [App Store Connect](https://appstoreconnect.apple.com).
+    *   Select your app -> **TestFlight** tab.
+    *   Under **Internal Testing**, add a group and invite your friends via email.
+    *   They need to install the **TestFlight** app from the App Store to download your beta.
+
 ---
 
 ## 🛠 Maintenance
