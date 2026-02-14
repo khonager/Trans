@@ -13,7 +13,7 @@ class NotificationManager {
     final linuxSettings = const LinuxInitializationSettings(defaultActionName: 'Open notification');
     final initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings, linux: linuxSettings);
 
-    await _notifications.initialize(initSettings);
+    await _notifications.initialize(settings: initSettings);
 
     // Create Channels (Android)
     final androidImplementation = _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
@@ -67,6 +67,6 @@ class NotificationManager {
     );
     final details = NotificationDetails(android: androidDetails, iOS: const DarwinNotificationDetails());
 
-    await _notifications.show(id, title, body, details, payload: payload);
+    await _notifications.show(id: id, title: title, body: body, notificationDetails: details, payload: payload);
   }
 }

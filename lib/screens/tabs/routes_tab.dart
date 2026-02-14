@@ -154,7 +154,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings();
     const initSettings = InitializationSettings(android: android, iOS: ios);
-    await _notificationsPlugin.initialize(initSettings);
+    await _notificationsPlugin.initialize(settings: initSettings);
   }
 
   @override
@@ -1092,7 +1092,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       enableVibration: true,
     );
     const details = NotificationDetails(android: androidDetails);
-    await _notificationsPlugin.show(0, 'Wake Up!', 'Approaching your stop!', details);
+    await _notificationsPlugin.show(id: 0, title: 'Wake Up!', body: 'Approaching your stop!', notificationDetails: details);
   }
 
   void _showEditFavoriteDialog(Favorite fav) async {
