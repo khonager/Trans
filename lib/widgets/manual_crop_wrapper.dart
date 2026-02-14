@@ -4,19 +4,21 @@ import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import 'package:trans/config/app_theme.dart';
 
-class DesktopCropWrapper extends StatefulWidget {
-  final File imageFile;
+class ManualCropWrapper extends StatefulWidget {
+  final File? imageFile;
+  final Uint8List? imageBytes;
 
-  const DesktopCropWrapper({
+  const ManualCropWrapper({
     super.key,
-    required this.imageFile,
+    this.imageFile,
+    this.imageBytes,
   });
 
   @override
-  State<DesktopCropWrapper> createState() => _DesktopCropWrapperState();
+  State<ManualCropWrapper> createState() => _ManualCropWrapperState();
 }
 
-class _DesktopCropWrapperState extends State<DesktopCropWrapper> {
+class _ManualCropWrapperState extends State<ManualCropWrapper> {
   final _cropController = CropController();
   bool _isCropping = false;
   Uint8List? _imageData;
@@ -28,10 +30,19 @@ class _DesktopCropWrapperState extends State<DesktopCropWrapper> {
   }
 
   Future<void> _loadImage() async {
-    final bytes = await widget.imageFile.readAsBytes();
-    setState(() {
-      _imageData = bytes;
-    });
+    if (widget.imageBytes != null) {
+      setState(() {
+        _imageData = widget.imageBytes;
+      });
+      return;
+    }
+
+    if (widget.imageFile != null) {
+      final bytes = await widget.imageFile!.readAsBytes();
+      setState(() {
+        _imageData = bytes;
+      });
+    }
   }
 
   void _onCrop() {

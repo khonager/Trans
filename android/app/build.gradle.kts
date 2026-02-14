@@ -52,15 +52,23 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 flutter {
     source = "../.."
 }
 
-// FIX 2: Add the desugaring library dependency
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    
+    // FIX 3: Workaround for ML Kit 16KB alignment issue in libimage_processing_util_jni.so
+    implementation("androidx.camera:camera-core:1.4.1")
 }
 
 tasks.withType<KotlinCompile>().configureEach {

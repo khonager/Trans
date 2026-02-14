@@ -370,7 +370,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (step.stopovers != null && step.stopovers!.isNotEmpty) {
           final stops = step.stopovers!;
           if (stopsBefore > 0) {
-            int targetIndex = stops.length - 1 - stopsBefore;
+            int targetIndex = stops.length - stopsBefore;
             if (targetIndex >= 0) {
               final stopData = stops[targetIndex];
               if (stopData['stop'] != null && stopData['stop']['location'] != null) {
@@ -410,8 +410,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
            // Percentage mode
            if (originLat != null && originLng != null) {
               double segmentDist = Geolocator.distanceBetween(originLat, originLng, targetLat, targetLng);
-              double percent = thresholdSetting == '10%' ? 0.10 : 0.05;
-              triggerDist = segmentDist * percent;
+              double percentValue = 5;
+              try {
+                percentValue = double.parse(thresholdSetting.replaceAll('%', ''));
+              } catch (_) {}
+              triggerDist = segmentDist * (percentValue / 100.0);
            }
         }
 
@@ -642,76 +645,57 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   // FIX: Accept full Station object
   void _showAlternatives(BuildContext context, String stationId, Station destination, DateTime referenceTime, {double? lat, double? lng, String? stationName}) {
       Station fromDummy;
-      // If we have coordinates, use them (Location based)
       if (lat != null && lng != null) {
          fromDummy = Station(id: stationId, name: stationName ?? "Origin", type: "location", latitude: lat, longitude: lng);
       } else {
-         // Otherwise hope the ID is valid. If it's just a name, V6 API might fail if it's ambiguous, but usually ID is passed.
-         // However, the previous error 'Missing origin' suggests the ID was empty or the API couldn't resolve "From".
-         // The previous code was: Station(id: stationId, name: "From");
-         // If stationId was "gps", we need coords.
          fromDummy = Station(id: stationId, name: stationName ?? "Origin", type: "station");
       }
-
-      // Use destination station directly to preserve coordinates
       Station toDummy = destination;
 
-      showModalBottomSheet(context: context, backgroundColor: Theme.of(context).cardColor, builder: (ctx) {
-        return FutureBuilder<List<Map<String, dynamic>>>(
-          future: TransportApi.searchJourneys(
-            fromDummy, 
-            toDummy, 
+      showModalBottomSheet(
+        context: context, 
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (ctx) => Container(
+          height: MediaQuery.of(context).size.height * 0.8,
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: _AlternativesSheet(
+            from: fromDummy,
+            to: toDummy,
+            initialTime: referenceTime,
             nahverkehrOnly: widget.onlyNahverkehr,
-            when: referenceTime,
-            results: 5
-          ), 
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No routes found."));
-              return ListView.builder(padding: const EdgeInsets.all(16), itemCount: snapshot.data!.length, itemBuilder: (ctx, idx) {
-                final journey = snapshot.data![idx];
-                final legs = (journey['legs'] as List).cast<Map<String, dynamic>>();
-                if (legs.isEmpty) return const SizedBox.shrink();
-                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
-                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
-                final dir = firstRide['direction'] ?? 'Destination';
-                final depTime = DateTime.parse(firstRide['departure'] ?? firstRide['plannedDeparture']).toLocal();
-                return ListTile(
-                  leading: const Icon(Icons.alt_route), 
-                  title: Text("$line to $dir"), 
-                  subtitle: Text("Departs ${DateFormat('HH:mm').format(depTime)}"),
-                  onTap: () { 
-                    Navigator.pop(context); 
-                    // Add to current tab's stack
-                    final j = _createJourney(journey);
-                    setState(() {
-                      if (_activeTabId != null) {
-                        final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
-                        if (idx != -1) {
-                           final currentTab = _tabs[idx];
-                           final newStack = List<Journey>.from(currentTab.stack);
-                           if (!newStack.any((e) => e.departure == j.departure && e.arrival == j.arrival)) { // Avoid duplicates
-                             newStack.add(j);
-                           }
-                           _tabs[idx] = currentTab.copyWith(
-                             activeJourney: j,
-                             stack: newStack,
-                             steps: j.steps,
-                             totalDuration: FormatUtils.formatDuration(j.duration.inMinutes)
-                           );
-                        }
-                      } else {
-                        // Fallback if no tab active? Should not happen if called from StepCard
-                         _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); 
-                      }
-                    });
+            onSelected: (journey, depTime) {
+              Navigator.pop(ctx);
+              final j = _createJourney(journey);
+              setState(() {
+                if (_activeTabId != null) {
+                  final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
+                  if (idx != -1) {
+                     final currentTab = _tabs[idx];
+                     final newStack = List<Journey>.from(currentTab.stack);
+                     if (!newStack.any((e) => e.departure == j.departure && e.arrival == j.arrival)) { 
+                       newStack.add(j);
+                     }
+                     _tabs[idx] = currentTab.copyWith(
+                       activeJourney: j,
+                       stack: newStack,
+                       steps: j.steps,
+                       totalDuration: FormatUtils.formatDuration(j.duration.inMinutes)
+                     );
                   }
-                );
+                } else {
+                   _addJourneyTab(singleJourneyData: journey, title: "Alternative", subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}"); 
+                }
               });
-          }
-        );
-      });
+            },
+          ),
+        ),
+      );
   }
+
 
   List<JourneyStep> _processLegs(List legs) {
     final List<JourneyStep> steps = [];
@@ -941,13 +925,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final List<JourneyStep> steps = _processLegs(legs);
     
     DateTime? dep, arr;
+    DateTime? pDep, pArr;
     try {
       if (legs.isNotEmpty) {
         dep = DateTime.parse(legs.first['departure'] ?? legs.first['plannedDeparture']).toLocal();
         arr = DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival']).toLocal();
+        pDep = DateTime.parse(legs.first['plannedDeparture'] ?? legs.first['departure']).toLocal();
+        pArr = DateTime.parse(legs.last['plannedArrival'] ?? legs.last['arrival']).toLocal();
       } else if (journeyData['departure'] != null && journeyData['arrival'] != null) {
         dep = DateTime.parse(journeyData['departure']).toLocal();
         arr = DateTime.parse(journeyData['arrival']).toLocal();
+        pDep = DateTime.parse(journeyData['plannedDeparture'] ?? journeyData['departure']).toLocal();
+        pArr = DateTime.parse(journeyData['plannedArrival'] ?? journeyData['arrival']).toLocal();
       }
     } catch(e) {}
     
@@ -979,6 +968,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       steps: steps,
       departure: dep ?? DateTime.now(),
       arrival: arr ?? DateTime.now(),
+      plannedDeparture: pDep,
+      plannedArrival: pArr,
       duration: (dep != null && arr != null) ? arr.difference(dep) : Duration.zero,
       transferCount: transfers,
       totalWaitTime: Duration(minutes: waitMinutes),
@@ -1597,23 +1588,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute) return;
     
     // We want to reset pagination and reload the initial search window.
-    // Since we don't store the exact initial time, we'll use a best guess:
-    // If the user hasn't changed the search inputs, we could use them.
-    // Or we could use the route's origin/destination and "now" or the *arrival* time of the active journey?
-    // Safer bet for "Refresh" is to assume the user wants updated info for the *current* list.
-    // But usually Pull-to-Refresh means "Reload from scratch", typically based on "Now".
-    
-    // Let's use the route's first departure time as the "when" to keep context, 
-    // or just effectively restart the search.
-    // Decision: Restart search from "Now" logic or original time parameter.
-    
     setState(() => _isLoadingRoute = true);
     
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
       
-      // Use "Now" for refresh context for now
       final DateTime refDate = DateTime.now(); 
 
       final newResults = await TransportApi.searchJourneys(
@@ -1621,7 +1601,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         route.destination,
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate,
-        isArrival: false, // Default to departure now
+        isArrival: false, 
         results: 5
       );
       
@@ -1634,13 +1614,88 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         setState(() {
              final idx = _tabs.indexWhere((t) => t.id == route.id);
              if (idx != -1) {
-               // Replace candidates entirely
                _tabs[idx] = route.copyWith(candidates: newJourneys);
              }
         });
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not refresh routes: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoadingRoute = false);
+    }
+  }
+
+  Future<void> _refreshActiveJourney(RouteTab route) async {
+    if (_isLoadingRoute || route.activeJourney == null) return;
+    
+    setState(() => _isLoadingRoute = true);
+    
+    try {
+      final Station? originStation = route.origin ?? _fromStation;
+      if (originStation == null) throw Exception("Origin station lost");
+      
+      // Use planned departure time as the anchor for refresh
+      final DateTime refDate = route.activeJourney!.plannedDeparture ?? route.activeJourney!.departure;
+      
+      final newResults = await TransportApi.searchJourneys(
+        originStation,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: refDate.subtract(const Duration(minutes: 5)), // Small buffer
+        isArrival: false,
+        results: 10
+      );
+      
+      if (newResults.isNotEmpty && mounted) {
+        final List<Journey> newJourneys = [];
+        for (var d in newResults) {
+             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+        }
+        
+        // Find the best match
+        Journey? matched;
+        
+        // 1. Try Trip ID match of first ride
+        final oldFirstRide = route.activeJourney!.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.activeJourney!.steps.first);
+        if (oldFirstRide.tripId != null) {
+          matched = newJourneys.cast<Journey?>().firstWhere(
+            (j) => j!.steps.any((s) => s.type == 'ride' && s.tripId == oldFirstRide.tripId),
+            orElse: () => null
+          );
+        }
+        
+        // 2. Try exact planned departure/arrival match
+        matched ??= newJourneys.cast<Journey?>().firstWhere(
+            (j) => j!.plannedDeparture == route.activeJourney!.plannedDeparture && 
+                   j.plannedArrival == route.activeJourney!.plannedArrival,
+            orElse: () => null
+          );
+
+        if (matched != null) {
+          final upd = matched;
+          setState(() {
+            final idx = _tabs.indexWhere((t) => t.id == route.id);
+            if (idx != -1) {
+              final newStack = List<Journey>.from(route.stack);
+              final stackIdx = newStack.indexWhere((j) => j.plannedDeparture == upd.plannedDeparture && j.plannedArrival == upd.plannedArrival);
+              if (stackIdx != -1) {
+                newStack[stackIdx] = upd;
+              }
+              
+              _tabs[idx] = route.copyWith(
+                activeJourney: upd,
+                stack: newStack,
+                steps: upd.steps,
+                totalDuration: FormatUtils.formatDuration(upd.duration.inMinutes),
+              );
+            }
+          });
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find updated data for this specific connection.")));
+        }
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Refresh failed: $e")));
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -1675,18 +1730,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     
     final colors = TransColors.of(context);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), children: [
-        Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            if (route.candidates != null && route.candidates!.length > 1) 
-               IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.arrow_back), onPressed: () => setState(() {
-                 final idx = _tabs.indexWhere((t) => t.id == route.id);
-                 if (idx != -1) _tabs[idx] = route.copyWith(clearActiveJourney: true);
-               })),
-            if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
+    return RefreshIndicator(
+      onRefresh: () => _refreshActiveJourney(route),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), 
+        children: [
+          Padding(padding: const EdgeInsets.symmetric(vertical: 8.0), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              if (route.candidates != null && route.candidates!.length > 1) 
+                 IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.arrow_back), onPressed: () => setState(() {
+                   final idx = _tabs.indexWhere((t) => t.id == route.id);
+                   if (idx != -1) _tabs[idx] = route.copyWith(clearActiveJourney: true);
+                 })),
+              if (route.candidates != null && route.candidates!.length > 1) const SizedBox(width: 8),
 
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
-        for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]), onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
-    ]);
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(route.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)), Row(children: [Text(route.activeJourney != null ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}" : route.subtitle, style: TextStyle(color: colors.textSecondary)), if (route.source != null) ...[const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: route.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)), child: Row(children: [Icon(route.source == 'motis' ? Icons.public : Icons.dns, size: 10, color: route.source == 'motis' ? Colors.blue : Colors.red), const SizedBox(width: 4), Text(route.source == 'motis' ? 'Transitous' : 'DB', style: TextStyle(color: route.source == 'motis' ? Colors.blue : Colors.red, fontSize: 10, fontWeight: FontWeight.bold))]))]])])), IconButton(icon: const Icon(Icons.map, color: Colors.blue), onPressed: () => _openMap(route)), const SizedBox(width: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.green), const SizedBox(width: 4), Text(route.totalDuration, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))]))])), 
+          for (int i = 0; i < route.steps.length; i++) _StepCard(step: route.steps[i], isFirst: i == 0, finalDestinationId: route.destination.id, onOpenAlternatives: (stationId, time, {double? lat, double? lng, String? name}) => _showAlternatives(context, stationId, route.destination, time, lat: lat, lng: lng, stationName: name), onChat: (line) => _showChat(context, line), onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]), onMapTap: () => _openMap(route, focusStep: route.steps[i]), showTrainNumbers: widget.showTrainNumbers)
+        ]
+      ),
+    );
   }
 }
 
@@ -1910,11 +1971,11 @@ class _StepCardState extends State<_StepCard> {
               DateTime? exactStopDate;
 
               if (plannedDep != null) { 
-                final p = DateTime.parse(plannedDep); 
+                final p = DateTime.parse(plannedDep).toLocal(); 
                 exactStopDate = p;
                 timeStr = "${p.hour.toString().padLeft(2,'0')}:${p.minute.toString().padLeft(2,'0')}"; 
                 if (actualDep != null) { 
-                  final a = DateTime.parse(actualDep); 
+                  final a = DateTime.parse(actualDep).toLocal(); 
                   final delay = a.difference(p).inMinutes; 
                   if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } 
                   else { timeColor = colors.delayOnTime; } 
@@ -2065,6 +2126,260 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AlternativesSheet extends StatefulWidget {
+  final Station from;
+  final Station to;
+  final DateTime initialTime;
+  final bool nahverkehrOnly;
+  final Function(Map<String, dynamic> journeyData, DateTime depTime) onSelected;
+
+  const _AlternativesSheet({
+    required this.from,
+    required this.to,
+    required this.initialTime,
+    required this.nahverkehrOnly,
+    required this.onSelected,
+  });
+
+  @override
+  State<_AlternativesSheet> createState() => _AlternativesSheetState();
+}
+
+class _AlternativesSheetState extends State<_AlternativesSheet> {
+  final List<Map<String, dynamic>> _results = [];
+  bool _isLoading = true;
+  bool _isMoreLoading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchInitial();
+  }
+
+  Future<void> _fetchInitial() async {
+    if (mounted) setState(() => _isLoading = true);
+    try {
+      // We want to see the "Next" connections AND exactly one before it.
+      // We'll search starting from 1 hour ago first.
+      List<Map<String, dynamic>> results = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: widget.initialTime.subtract(const Duration(hours: 1)),
+        isArrival: false,
+        results: 12,
+      );
+
+      // If no preceding found (infrequent line), try 4 hours back.
+      if (results.isEmpty || !_hasPreceding(results)) {
+        results = await TransportApi.searchJourneys(
+          widget.from,
+          widget.to,
+          nahverkehrOnly: widget.nahverkehrOnly,
+          when: widget.initialTime.subtract(const Duration(hours: 4)),
+          isArrival: false,
+          results: 15,
+        );
+      }
+      
+      if (mounted) {
+        setState(() {
+          _results.clear();
+          final existingIds = <String>{};
+          for (final j in results) {
+            final id = _getJId(j);
+            if (!existingIds.contains(id)) {
+              _results.add(j);
+              existingIds.add(id);
+            }
+          }
+          _results.sort((a,b) => _getDepTime(a).compareTo(_getDepTime(b)));
+
+          // Find the "split point": the first connection at or after initialTime
+          final splitIdx = _results.indexWhere((j) => _getDepTime(j).isAfter(widget.initialTime.subtract(const Duration(minutes: 1))));
+          if (splitIdx != -1) {
+            // Include one connection BEFORE the split point for context
+            final int startIdx = splitIdx > 0 ? splitIdx - 1 : 0;
+            final itemsToShow = _results.sublist(startIdx);
+            _results.clear();
+            _results.addAll(itemsToShow);
+          }
+
+          
+          _isLoading = false;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+    }
+  }
+
+  bool _hasPreceding(List<Map<String, dynamic>> results) {
+    return results.any((j) => _getDepTime(j).isBefore(widget.initialTime.subtract(const Duration(seconds: 15))));
+  }
+
+
+  Future<void> _fetch(DateTime time, bool isArrival, {bool prepend = false}) async {
+    if (mounted) setState(() => _isMoreLoading = true);
+    try {
+      final results = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: time,
+        isArrival: isArrival,
+        results: 10,
+      );
+      
+      if (mounted) {
+        setState(() {
+          final existingIds = _results.map(_getJId).toSet();
+          final unique = results.where((r) => !existingIds.contains(_getJId(r))).toList();
+          if (prepend) {
+            _results.insertAll(0, unique);
+          } else {
+            _results.addAll(unique);
+          }
+          _results.sort((a,b) => _getDepTime(a).compareTo(_getDepTime(b)));
+          _isLoading = false;
+          _isMoreLoading = false;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _isLoading = false; _isMoreLoading = false; });
+    }
+  }
+
+  String _getJId(Map<String, dynamic> j) {
+    final dep = _getDepTime(j);
+    final arr = _getArrTime(j);
+    return "${dep.millisecondsSinceEpoch}_${arr.millisecondsSinceEpoch}";
+  }
+
+  DateTime _getDepTime(Map<String, dynamic> j) {
+    try {
+      final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
+      final first = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+      return DateTime.parse(first['departure'] ?? first['plannedDeparture']).toLocal();
+    } catch (e) {
+      return DateTime.now();
+    }
+  }
+  
+  DateTime _getArrTime(Map<String, dynamic> j) {
+     try {
+       final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
+       final last = legs.last;
+       return DateTime.parse(last['arrival'] ?? last['plannedArrival']).toLocal();
+     } catch (e) {
+       return DateTime.now();
+     }
+  }
+
+  void _loadEarlier() {
+    if (_results.isEmpty) return;
+    _fetch(_getDepTime(_results.first).subtract(const Duration(seconds: 1)), true, prepend: true);
+  }
+
+  void _loadLater() {
+    if (_results.isEmpty) return;
+    _fetch(_getDepTime(_results.last).add(const Duration(seconds: 1)), false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+        ),
+        Text("Alternatives", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+        const SizedBox(height: 8),
+        if (_isLoading) 
+          const Expanded(child: Center(child: CircularProgressIndicator()))
+        else if (_error != null && _results.isEmpty)
+          Expanded(child: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text("Error: $_error", textAlign: TextAlign.center))))
+        else if (_results.isEmpty)
+          const Expanded(child: Center(child: Text("No routes found.")))
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _results.length + 2,
+              itemBuilder: (ctx, idx) {
+                if (idx == 0) {
+                  return TextButton.icon(
+                    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                    onPressed: _isMoreLoading ? null : _loadEarlier, 
+                    icon: const Icon(Icons.history, size: 18), 
+                    label: const Text("Load Earlier")
+                  );
+                }
+                if (idx == _results.length + 1) {
+                  return TextButton.icon(
+                    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                    onPressed: _isMoreLoading ? null : _loadLater, 
+                    icon: const Icon(Icons.update, size: 18), 
+                    label: const Text("Load Later")
+                  );
+                }
+                
+                final journey = _results[idx - 1];
+                final legs = (journey['legs'] as List).cast<Map<String, dynamic>>();
+                if (legs.isEmpty) return const SizedBox.shrink();
+                final firstRide = legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+                final line = firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+                final dir = firstRide['direction'] ?? 'Destination';
+                final depTime = _getDepTime(journey);
+                
+                int delayMin = 0;
+                if (firstRide['departureDelay'] != null) {
+                  delayMin = ((firstRide['departureDelay'] as num) / 60).round();
+                } else if (firstRide['plannedDeparture'] != null && firstRide['departure'] != null) {
+                  final planned = DateTime.parse(firstRide['plannedDeparture']).toLocal();
+                  final actual = DateTime.parse(firstRide['departure']).toLocal();
+                  delayMin = actual.difference(planned).inMinutes;
+                }
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  leading: CircleAvatar(
+                    backgroundColor: colors.chipBg,
+                    child: Icon(Icons.alt_route, color: colors.chipFg, size: 20),
+                  ),
+                  title: Row(
+                    children: [
+                      Expanded(child: Text("$line to $dir", style: const TextStyle(fontWeight: FontWeight.bold))),
+                      if (depTime.isBefore(widget.initialTime.subtract(const Duration(minutes: 1))))
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                          child: const Text("PREVIOUS", style: TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold))
+                        )
+                    ],
+                  ),
+
+                  subtitle: Text.rich(TextSpan(children: [
+                    TextSpan(text: "Departs ${DateFormat('HH:mm').format(depTime)}", style: TextStyle(color: colors.textSecondary)),
+                    if (delayMin > 0) TextSpan(text: " (+$delayMin late)", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  ])),
+                  onTap: () => widget.onSelected(journey, depTime),
+                );
+              },
+            ),
+          ),
+          if (_isMoreLoading && _results.isNotEmpty)
+            const LinearProgressIndicator(),
+      ],
     );
   }
 }

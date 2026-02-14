@@ -46,8 +46,8 @@ dependencies:
   qr_flutter: ^4.1.0
 
   # Ticket Logic
-  google_mlkit_barcode_scanning: ^0.13.0
-  image_cropper: ^8.0.0
+  google_mlkit_barcode_scanning: ^0.14.2
+  image_cropper: ^11.0.0
   image: ^4.2.0
   # Linux/Desktop Support
   zxing_lib: ^1.1.4

@@ -16,7 +16,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:image/image.dart' as img;
 import 'package:zxing_lib/zxing.dart' as zxing;
 import 'package:zxing_lib/common.dart' as zxing;
-import 'package:trans/widgets/desktop_crop_wrapper.dart';
+import 'package:trans/widgets/manual_crop_wrapper.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -114,42 +114,47 @@ class _TicketPanelState extends State<TicketPanel> {
     if (image == null) return;
 
     if (kIsWeb) {
-       await _processAndUpload(File(image.path), isWebFile: image);
-       return;
+      final bytes = await image.readAsBytes();
+      await _processPick(bytes, isWeb: true, xFile: image);
+      return;
     }
 
     setState(() => _isLoading = true);
     
     try {
-      final File originalFile = File(image.path);
+      final bytes = await File(image.path).readAsBytes();
+      await _processPick(bytes, isWeb: false, path: image.path);
+    } catch (e) {
+       _handleError(e);
+    }
+  }
+
+  Future<void> _processPick(Uint8List bytes, {required bool isWeb, String? path, XFile? xFile}) async {
+    setState(() => _isLoading = true);
+    
+    try {
+      File? originalFile = !isWeb && path != null ? File(path) : null;
       File? processedFile;
+      Uint8List? processedBytes;
       
+      Rect? qrBox;
+
       // 1. Scan for QR Code
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (!isWeb && (Platform.isAndroid || Platform.isIOS)) {
         // Mobile: ML Kit
-        final inputImage = InputImage.fromFile(originalFile);
+        final inputImage = InputImage.fromFilePath(path!);
         final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
         final barcodes = await barcodeScanner.processImage(inputImage);
         
         if (barcodes.isNotEmpty) {
-          final box = barcodes.first.boundingBox;
-          if (box != null) processedFile = await _autoCropImage(originalFile, box);
+          qrBox = barcodes.first.boundingBox;
         }
         barcodeScanner.close(); 
       } else {
-        // Desktop: zxing_lib
+        // Desktop or Web: zxing_lib
         try {
-          final bytes = await originalFile.readAsBytes();
           final image = img.decodeImage(bytes);
           if (image != null) {
-              // Convert to LuminanceSource
-              // Image package v4 uses a flat buffer for data. 
-              // We need functionality equivalent to RGBLuminanceSource from the int buffer
-              // or simple greyscale if possible.
-              // For simplicity in v4, toInt() on pixels might reduce performance, 
-              // so let's try a direct approach if zxing supports it.
-              
-              // Note: zxing_lib expects int[] of ARGB/RGB
               final intList = image.data?.buffer.asUint32List().toList(); 
               
               if (intList != null) {
@@ -158,8 +163,6 @@ class _TicketPanelState extends State<TicketPanel> {
                   final bitmap = zxing.BinaryBitmap(binarizer);
                   final result = zxing.MultiFormatReader().decode(bitmap);
                   
-                  // If we are here, we found it!
-                  // result.resultPoints gives corners.
                   final points = result.resultPoints;
                   if (points != null && points.isNotEmpty) {
                     double minX = double.infinity, minY = double.infinity;
@@ -171,37 +174,51 @@ class _TicketPanelState extends State<TicketPanel> {
                        if ((p?.x ?? 0) > maxX) maxX = p!.x;
                        if ((p?.y ?? 0) > maxY) maxY = p!.y;
                     }
-                    
-                    final box = Rect.fromLTRB(minX, minY, maxX, maxY);
-                    processedFile = await _autoCropImage(originalFile, box);
+                    qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
                   }
               }
           }
         } catch (e) {
           debugPrint("ZXing scan failed: $e");
-          // Continue to fallback
+        }
+      }
+
+      // Auto-crop if found
+      if (qrBox != null) {
+        if (isWeb) {
+          processedBytes = await _autoCropImageBytes(bytes, qrBox);
+        } else if (originalFile != null) {
+          processedFile = await _autoCropImage(originalFile, qrBox);
         }
       }
 
       if (mounted) setState(() => _isLoading = false);
 
-      if (processedFile != null) {
+      if (processedFile != null || processedBytes != null) {
         // 2. Auto-Crop Successful -> Confirm
-        final confirmed = await _showCropConfirmation(processedFile, isAutoCrop: true);
+        final confirmed = await _showCropConfirmation(
+          file: processedFile, 
+          bytes: processedBytes, 
+          isAutoCrop: true
+        );
         
         if (confirmed == true) {
-           await _processAndUpload(processedFile);
+           await _processAndUpload(processedFile ?? File(''), isWebFile: xFile, directBytes: processedBytes);
         } else if (confirmed == false) {
-           await _triggerManualCrop(originalFile);
+           await _triggerManualCrop(originalFile, bytes: bytes);
         }
       } else {
         // 3. No QR Found -> Confirm Original
-        final confirmed = await _showCropConfirmation(originalFile, isAutoCrop: false);
+        final confirmed = await _showCropConfirmation(
+          file: originalFile, 
+          bytes: bytes, 
+          isAutoCrop: false
+        );
         
         if (confirmed == true) {
-          await _processAndUpload(originalFile);
+          await _processAndUpload(originalFile ?? File(''), isWebFile: xFile, directBytes: isWeb ? bytes : null);
         } else if (confirmed == false) {
-          await _triggerManualCrop(originalFile);
+          await _triggerManualCrop(originalFile, bytes: bytes);
         }
       }
 
@@ -210,17 +227,16 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<void> _triggerManualCrop(File imageFile) async {
-    // Desktop Manual Crop
-    if (!(Platform.isAndroid || Platform.isIOS)) {
+  Future<void> _triggerManualCrop(File? imageFile, {Uint8List? bytes}) async {
+    // Desktop, Web, or Android Manual Crop
+    if (kIsWeb || Platform.isAndroid || !(Platform.isAndroid || Platform.isIOS)) {
        final result = await Navigator.push<Uint8List>(
          context,
-         MaterialPageRoute(builder: (_) => DesktopCropWrapper(imageFile: imageFile)),
+         MaterialPageRoute(builder: (_) => ManualCropWrapper(imageFile: imageFile, imageBytes: bytes)),
        );
 
        if (result != null) {
-         // Desktop crop returns bytes directly
-         await _processAndUpload(imageFile, directBytes: result);
+         await _processAndUpload(imageFile ?? File(''), directBytes: result);
        } else {
          setState(() => _isLoading = false);
        }
@@ -228,6 +244,11 @@ class _TicketPanelState extends State<TicketPanel> {
     }
 
     // Mobile Manual Crop
+    if (imageFile == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
     try {
       final croppedFile = await ImageCropper().cropImage(
         sourcePath: imageFile.path,
@@ -235,7 +256,7 @@ class _TicketPanelState extends State<TicketPanel> {
           AndroidUiSettings(
             toolbarTitle: 'Crop Ticket',
             toolbarColor: TransColors.of(context).navBarBg,
-            toolbarWidgetColor: Colors.white,
+            toolbarWidgetColor: TransColors.of(context).textPrimary,
             initAspectRatio: CropAspectRatioPreset.original,
             lockAspectRatio: false,
           ),
@@ -255,25 +276,34 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<File?> _autoCropImage(File file, Rect box) async {
+  Future<Uint8List?> _autoCropImageBytes(Uint8List bytes, Rect box) async {
     try {
-      final bytes = await file.readAsBytes();
       final image = img.decodeImage(bytes);
       if (image == null) return null;
 
       // Add some padding
-      const padding = 15;
+      const padding = 20;
       int x = (box.left - padding).toInt().clamp(0, image.width);
       int y = (box.top - padding).toInt().clamp(0, image.height);
       int w = (box.width + (padding * 2)).toInt();
       int h = (box.height + (padding * 2)).toInt();
 
-      // Ensure within bounds
       if (x + w > image.width) w = image.width - x;
       if (y + h > image.height) h = image.height - y;
 
       final cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
-      final jpg = img.encodeJpg(cropped);
+      return Uint8List.fromList(img.encodeJpg(cropped));
+    } catch (e) {
+      debugPrint("Auto-crop bytes error: $e");
+      return null;
+    }
+  }
+
+  Future<File?> _autoCropImage(File file, Rect box) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final jpg = await _autoCropImageBytes(bytes, box);
+      if (jpg == null) return null;
 
       final dir = await getTemporaryDirectory();
       final targetPath = '${dir.path}/auto_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -287,7 +317,7 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<bool?> _showCropConfirmation(File file, {required bool isAutoCrop}) async {
+  Future<bool?> _showCropConfirmation({File? file, Uint8List? bytes, required bool isAutoCrop}) async {
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -302,7 +332,9 @@ class _TicketPanelState extends State<TicketPanel> {
              const SizedBox(height: 10),
              Container(
                constraints: const BoxConstraints(maxHeight: 200),
-               child: Image.file(file),
+               child: bytes != null 
+                 ? Image.memory(bytes)
+                 : (file != null ? Image.file(file) : const SizedBox.shrink()),
              )
           ],
         ),
