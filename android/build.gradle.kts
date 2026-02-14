@@ -23,6 +23,8 @@ subprojects {
         resolutionStrategy {
             force("androidx.core:core:1.13.1")
             force("androidx.core:core-ktx:1.13.1")
+            force("androidx.datastore:datastore-preferences:1.1.1")
+            force("androidx.datastore:datastore-core:1.1.1")
         }
     }
 }
