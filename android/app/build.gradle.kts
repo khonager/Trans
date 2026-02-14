@@ -20,7 +20,7 @@ val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "
 android {
     namespace = "com.example.trans"
     compileSdk = 36
-    ndkVersion = "27.0.12077973"
+    ndkVersion = "28.0.13004108"
     buildToolsVersion = "35.0.0"
 
     compileOptions {
@@ -50,12 +50,16 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            // Explicitly set to false to ensure 16KB alignment with AGP 8.3+ and NDK r28
+            useLegacyPackaging = false
+            // Exclude debug-only Vulkan validation layer (not 16KB aligned, not needed at runtime)
+            excludes += "**/libVkLayer_khronos_validation.so"
         }
     }
 }
@@ -65,10 +69,10 @@ flutter {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     
     // FIX 3: Workaround for ML Kit 16KB alignment issue in libimage_processing_util_jni.so
-    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-core:1.4.2")
 }
 
 tasks.withType<KotlinCompile>().configureEach {

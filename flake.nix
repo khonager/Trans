@@ -39,7 +39,7 @@
             platforms-android-31
 
             # Native tools
-            ndk-27-0-12077973
+            ndk-28-0-13004108
             cmake-3-22-1
           ] ++ pkgs.lib.optionals isLinux [
             emulator
@@ -71,7 +71,7 @@
             openssl
             expat
             chromium # Added chromium for web support
-            
+
             # Utilities
             glib # Fixes libglib-2.0.so.0 error for host binaries
             gtk3 # Required for file chooser and GUI elements
@@ -99,7 +99,7 @@
             androidSdk
             flutter
             jdk17
-            cocoapods  # Required for iOS development on macOS
+            cocoapods # Required for iOS development on macOS
           ];
 
           shellHook = ''
