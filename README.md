@@ -242,12 +242,20 @@ You can build and install the app on your iPhone using a free Apple ID.
     open ios/Runner.xcworkspace
     ```
 
-6.  **Configure Signing**
-    *   In Xcode, click **Runner** (top left file navigator).
-    *   Select the **Signing & Capabilities** tab.
-    *   Under **Team**, select **Add an Account...** and sign in with your Apple ID.
-    *   Select your **Personal Team**.
-    *   Change the **Bundle Identifier** to something unique (e.g., `com.yourname.trans`).
+6.  **Configure Signing (Crucial Step)**
+    *   **Show the Navigator**: Press **Command + 1** on your keyboard to ensure the left sidebar is visible.
+    *   **Select Project**: Click the **very top item** in that left sidebar. It is named **Runner**.
+    *   **Select Target**:
+        *   Look at the main panel in the center. On its left edge, there is a list usually labeled **PROJECT** and **TARGETS**.
+        *   Click **Runner** under **TARGETS** (it has a small black icon, not the blue one).
+    *   **Open Signing**:
+        *   Look at the top of the main panel. You should see tabs: `General`, `Signing & Capabilities`, `Resource Tags`, `Info`, `Build Settings`.
+        *   *If you don't see tabs, click huge buttons named "General", "Signing & Capabilities", etc.*
+        *   Click **Signing & Capabilities**.
+    *   **Setup**:
+        *   Check **"Automatically manage signing"**.
+        *   **Team**: Select your **Personal Team** (Add Account if needed in Xcode -> Settings -> Accounts).
+        *   **Bundle Identifier**: Change `com.example.trans` to something unique (e.g., `com.myname.transapp`).
 
 7.  **Build & Run**
     *   Connect your iPhone via USB.
