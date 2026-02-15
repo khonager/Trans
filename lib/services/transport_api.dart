@@ -384,6 +384,7 @@ class TransportApi {
     bool isArrival = false,
     int results = 7,
   }) async {
+    // 1. STRICT V6 MODE
     if (apiMode == 'v6') {
       final res = await _searchJourneysV6(
         from,
@@ -393,40 +394,16 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
-      // Filter out past journeys and tag with source
-      final now = DateTime.now();
-      final filtered = res;
-
-      return filtered.map((j) { j['source'] = 'v6'; return j; }).toList();
+      return res.map((j) {
+        j['source'] = 'v6';
+        return j;
+      }).toList();
     }
 
-    try {
-      // Try MOTIS/Transitous (unless disabled)
-      final motisResults = await _searchJourneysMotis(
-        from,
-        to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      );
-      
-      // Filter out journeys with past departure times (unless searching by arrival time)
-      final now = DateTime.now();
-      final filteredResults = motisResults;
-
-      
-      if (filteredResults.isNotEmpty || apiMode == 'motis') return filteredResults;
-      
-      debugPrint("Transitous returned 0 routes and mode is auto. Trying fallback...");
-      throw Exception("No routes found on primary API");
-    } catch (e) {
-      if (apiMode == 'motis') rethrow; // Don't fallback in strict mode
-      
-      debugPrint('Transitous searchJourneys failed: $e, trying v6.db...');
+    // 2. STRICT MOTIS MODE
+    if (apiMode == 'motis') {
       try {
-        // Fallback to v6.db
-        final res = await _searchJourneysV6(
+        return await _searchJourneysMotis(
           from,
           to,
           nahverkehrOnly: nahverkehrOnly,
@@ -434,21 +411,114 @@ class TransportApi {
           isArrival: isArrival,
           results: results,
         );
-        
-        // Filter out past journeys and tag with source
-        final now = DateTime.now();
-        final filtered = res;
-
-        
-        return filtered.map((j) {
-           j['source'] = 'v6';
-           return j;
-        }).toList();
-      } catch (e2) {
-        debugPrint('v6.db searchJourneys also failed: $e2');
-        return [];
+      } catch (e) {
+        debugPrint('Transitous searchJourneys failed (strict mode): $e');
+        rethrow;
       }
     }
+
+    // 3. AUTO MODE: HYBRID FETCHING
+    try {
+      // Launch both requests in parallel
+      final motisFuture = _searchJourneysMotis(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      ).then((res) => res).catchError((e) {
+        debugPrint('Hybrid: Transitous failed: $e');
+        return <Map<String, dynamic>>[];
+      });
+
+      final v6Future = _searchJourneysV6(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      ).then((res) => res).catchError((e) {
+        debugPrint('Hybrid: v6 failed: $e');
+        return <Map<String, dynamic>>[];
+      });
+
+      // Wait for both to complete
+      final resultsList = await Future.wait([motisFuture, v6Future]);
+      final motisResults = resultsList[0];
+      final v6Results = resultsList[1];
+
+      // Tag v6 results (MOTIS results are already tagged)
+      for (var j in v6Results) {
+        j['source'] = 'v6';
+      }
+
+      // Merge results
+      final merged = mergeResults(motisResults, v6Results);
+
+      if (merged.isEmpty) {
+        throw Exception("No routes found on either API");
+      }
+
+      return merged;
+    } catch (e) {
+      debugPrint('Hybrid searchJourneys critical failure: $e');
+      return [];
+    }
+  }
+
+  /// Merges results from both APIs, preferring MOTIS for duplicates but including unique v6 trips
+  @visibleForTesting
+  static List<Map<String, dynamic>> mergeResults(
+      List<Map<String, dynamic>> motis, List<Map<String, dynamic>> v6) {
+    if (motis.isEmpty) return v6;
+    if (v6.isEmpty) return motis;
+
+    final List<Map<String, dynamic>> merged = List.from(motis);
+    final existingKeys = <String>{};
+
+    // Helper to generate unique key for a journey
+    String generateKey(Map<String, dynamic> journey) {
+      final dep = journey['departure'] ?? '';
+      final arr = journey['arrival'] ?? '';
+      
+      // Extract first line name to distinguish different routes at same time
+      String firstLine = '';
+      final legs = journey['legs'] as List?;
+      if (legs != null && legs.isNotEmpty) {
+        for (var leg in legs) {
+          if (leg['line'] != null) {
+            firstLine = leg['line']['name'] ?? '';
+            break;
+          }
+        }
+      }
+      return '${dep}_${arr}_$firstLine';
+    }
+
+    // Index MOTIS results
+    for (var j in motis) {
+      existingKeys.add(generateKey(j));
+    }
+
+    // Add unique v6 results
+    for (var j in v6) {
+      final key = generateKey(j);
+      if (!existingKeys.contains(key)) {
+        merged.add(j);
+      }
+    }
+
+    // Sort by departure time
+    merged.sort((a, b) {
+      final depA = a['departure'];
+      final depB = b['departure'];
+      if (depA == null || depB == null) return 0;
+      return depA.compareTo(depB);
+    });
+
+    return merged;
   }
 
   /// Get walking route between two points
