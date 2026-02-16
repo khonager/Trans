@@ -1077,7 +1077,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
            SearchHistoryManager.saveJourney(from!, _toStation!);
            _loadHistoryData(); // Refresh UI
          } else { 
-         } else { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
        }
