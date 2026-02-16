@@ -81,6 +81,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
+  List<Station> _recentSearches = [];
+  List<Map<String, dynamic>> _frequentJourneys = [];
 
   @override
   void initState() {
@@ -92,6 +94,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
+    _loadHistoryData();
+  }
+
+  Future<void> _loadHistoryData() async {
+    final history = await SearchHistoryManager.getHistory();
+    final frequent = await SearchHistoryManager.getFrequentJourneys();
+    if (mounted) setState(() { _recentSearches = history; _frequentJourneys = frequent; });
   }
 
   @override
@@ -1065,6 +1074,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        if (mounted) { 
          if (res.isNotEmpty) { 
            _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
+           SearchHistoryManager.saveJourney(from!, _toStation!);
+           _loadHistoryData(); // Refresh UI
+         } else { 
          } else { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
@@ -1403,7 +1415,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         const SizedBox(width: 12),
                         Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("Now", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
-                      ],
+                        _buildPreviousSearches(colors),
+            _buildFrequentJourneys(colors),
+          ],
                     ),
                   ),
                   const SizedBox(height: 20),
