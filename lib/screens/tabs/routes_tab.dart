@@ -100,6 +100,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadHistoryData() async {
     final history = await SearchHistoryManager.getHistory();
     final frequent = await SearchHistoryManager.getFrequentJourneys();
+    debugPrint("Loaded history: ${history.length} items, frequent: ${frequent.length} items");
     if (mounted) setState(() { _recentSearches = history; _frequentJourneys = frequent; });
   }
 
@@ -1427,6 +1428,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   _buildFrequentJourneys(colors),
                   const SizedBox(height: 20),
 
+                  const SizedBox(height: 20),
+                  ElevatedButton(onPressed: _loadHistoryData, child: Text("DEBUG: RELOAD HISTORY (${_recentSearches.length}/${_frequentJourneys.length})")),
                   SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchBtnBg, foregroundColor: colors.searchBtnText, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
                 ],
               ),
@@ -1439,6 +1442,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Widget _buildPreviousSearches(TransColors colors) {
+    debugPrint("Building Previous Searches: ${_recentSearches.length}");
     if (_recentSearches.isEmpty) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.only(top: 20, left: 16, right: 16),
