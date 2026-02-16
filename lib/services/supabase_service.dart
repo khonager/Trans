@@ -198,6 +198,14 @@ class SupabaseService {
     await client.from('profiles').update({'favorites': favorites}).eq('id', user.id);
   }
 
+  static Future<void> updatePreviousSearches(List<dynamic> searches) async {
+    await updateSettings({'previous_searches': searches});
+  }
+
+  static Future<void> updateFrequentJourneys(List<dynamic> journeys) async {
+    await updateSettings({'frequent_journeys': journeys});
+  }
+
   static Future<void> loadAndSyncSettings() async {
     final user = currentUser;
     if (user == null) return;
@@ -234,6 +242,14 @@ class SupabaseService {
       }
       if (settings.containsKey('alarm_stops_before')) {
         await prefs.setInt('alarm_stops_before', settings['alarm_stops_before']);
+      }
+      if (settings.containsKey('previous_searches')) {
+        final List<String> list = (settings['previous_searches'] as List).map((e) => json.encode(e)).toList().cast<String>();
+        await prefs.setStringList('recent_stations', list);
+      }
+      if (settings.containsKey('frequent_journeys')) {
+        final List<String> list = (settings['frequent_journeys'] as List).map((e) => json.encode(e)).toList().cast<String>();
+        await prefs.setStringList('frequent_journeys', list);
       }
 
       if (favorites.isNotEmpty) {
