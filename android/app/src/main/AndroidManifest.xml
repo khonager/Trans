@@ -64,7 +64,7 @@
             
         <provider
             android:name="com.superlist.super_native_extensions.DataProvider"
-            android:authorities="${applicationId}.SuperClipboardDataProvider"
+            android:authorities="${clipboardAuthority}"
             android:exported="true"
             android:grantUriPermissions="true" >
         </provider>
