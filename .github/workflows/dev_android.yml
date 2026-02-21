@@ -39,6 +39,14 @@ jobs:
           flutter pub get
           flutter build apk --release --flavor dev --dart-define=IS_DEV=true
 
+      - name: Debug Build Output on Failure
+        if: failure()
+        run: |
+          echo "Listing root build directory:"
+          ls -R build || true
+          echo "Listing android build directory:"
+          ls -R android/app/build || true
+
       - name: Decode Keystore
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > release-keystore.jks
