@@ -3,7 +3,7 @@ name: Production Android Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -21,13 +21,13 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: "zulu"
+          java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: "stable"
 
       - name: Create .env file
         run: |
@@ -38,7 +38,7 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --flavor stable
 
       - name: Decode Keystore
         run: |
@@ -48,13 +48,13 @@ jobs:
         id: sign_apk
         run: |
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
-          
+
           APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
           fi
-          
+
           # Sanitize Signing Keys
           KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
           KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
