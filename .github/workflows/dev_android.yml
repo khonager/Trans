@@ -34,7 +34,10 @@ jobs:
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
       - name: Build APK
-        run: flutter build apk --release --flavor dev --dart-define=IS_DEV=true
+        run: |
+          flutter clean
+          flutter pub get
+          flutter build apk --release --flavor dev --dart-define=IS_DEV=true
 
       - name: Decode Keystore
         run: |
@@ -44,7 +47,13 @@ jobs:
         run: |
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
 
-          APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
+          # Find flavored APK
+          APK_PATH=$(find build/app/outputs -name "*dev-release.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            # Fallback to any release APK
+            APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
+          fi
+
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
