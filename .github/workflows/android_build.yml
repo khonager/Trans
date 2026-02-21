@@ -49,11 +49,11 @@ jobs:
         run: |
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
 
-          # Find flavored APK
-          APK_PATH=$(find build/app/outputs -name "*stable-release.apk" | head -n 1)
+          # Find flavored APK in the entire runner workspace
+          APK_PATH=$(find /home/runner/work/Trans -name "*stable-release.apk" | grep -v "intermediates" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             # Fallback to any release APK
-            APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
+            APK_PATH=$(find /home/runner/work/Trans -name "*-release.apk" | grep -v "intermediates" | head -n 1)
           fi
 
           if [ -z "$APK_PATH" ]; then
