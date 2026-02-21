@@ -18,7 +18,7 @@ val flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "
 val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
 
 android {
-    namespace = "com.example.trans"
+    namespace = "de.khonager.trans"
     compileSdk = 36
     ndkVersion = "28.0.13004108"
     buildToolsVersion = "35.0.0"
@@ -36,13 +36,28 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.trans"
+        applicationId = "de.khonager.trans"
         // You can update the following values to match your application needs.
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
         minSdk = flutter.minSdkVersion
         targetSdk = 36
         versionCode = flutterVersionCode.toInt()
         versionName = flutterVersionName
+    }
+
+    flavorDimensions += "version"
+    productFlavors {
+        create("stable") {
+            dimension = "version"
+            applicationId = "de.khonager.trans"
+            manifestPlaceholders["appLabel"] = "Trans"
+        }
+        create("dev") {
+            dimension = "version"
+            applicationId = "de.khonager.trans"
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appLabel"] = "Trans Dev"
+        }
     }
 
     buildTypes {
