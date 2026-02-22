@@ -2,7 +2,7 @@ name: Dev Android Build
 
 on:
   push:
-    branches: [ "unstable" ]
+    branches: ["unstable"]
   workflow_dispatch:
 
 jobs:
@@ -20,32 +20,32 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: "zulu"
+          java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: "stable"
 
       - name: Create .env file
         run: |
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
-      # Make dev APK a separate app (like Chrome Canary)
-      - name: Set Dev Application ID
-        run: |
-          # Change applicationId to .dev suffix
-          sed -i 's/applicationId = "com.example.trans"/applicationId = "com.example.trans.dev"/' android/app/build.gradle.kts
-          # Change app label to "Trans Dev"
-          sed -i 's/android:label="trans"/android:label="Trans Dev"/' android/app/src/main/AndroidManifest.xml
-
-      - name: Get Dependencies
-        run: flutter pub get
-
       - name: Build APK
-        run: flutter build apk --release --dart-define=IS_DEV=true
+        run: |
+          flutter clean
+          flutter pub get
+          flutter build apk --release --flavor dev --dart-define=IS_DEV=true
+
+      - name: Debug Build Output on Failure
+        if: failure()
+        run: |
+          echo "Listing all apk files on runner:"
+          find /home/runner/work -name "*.apk" || true
+          echo "Listing root build directory:"
+          ls -R build || true
 
       - name: Decode Keystore
         run: |
@@ -54,13 +54,19 @@ jobs:
       - name: Sign APK
         run: |
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
-          
-          APK_PATH=$(find build/app/outputs -name "*-release.apk" | head -n 1)
+
+          # Find flavored APK in the entire runner workspace
+          APK_PATH=$(find /home/runner/work/Trans -name "*dev-release.apk" | grep -v "intermediates" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            # Fallback to any release APK
+            APK_PATH=$(find /home/runner/work/Trans -name "*-release.apk" | grep -v "intermediates" | head -n 1)
+          fi
+
           if [ -z "$APK_PATH" ]; then
             echo "Error: APK not found"
             exit 1
           fi
-          
+
           KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
           KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
           KEY_PASS=$(echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | tr -d '\r' | tr -d '\n')

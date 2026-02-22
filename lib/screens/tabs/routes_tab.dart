@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -80,6 +81,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
+  List<Station> _recentSearches = [];
+  List<Map<String, dynamic>> _frequentJourneys = [];
 
   @override
   void initState() {
@@ -91,6 +94,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
+    _loadHistoryData();
+  }
+
+  Future<void> _loadHistoryData() async {
+    final history = await SearchHistoryManager.getHistory();
+    final frequent = await SearchHistoryManager.getFrequentJourneys();
+    debugPrint("Loaded history: ${history.length} items, frequent: ${frequent.length} items");
+    if (mounted) setState(() { _recentSearches = history; _frequentJourneys = frequent; });
   }
 
   @override
@@ -1064,6 +1075,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        if (mounted) { 
          if (res.isNotEmpty) { 
            _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
+           SearchHistoryManager.saveJourney(from!, _toStation!);
+           _loadHistoryData(); // Refresh UI
          } else { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
@@ -1077,21 +1090,61 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
      } finally { if (mounted) setState(() => _isLoadingRoute = false); }
   }
 
+  List<int> _getVibrationPattern(String patternName) {
+    switch (patternName) {
+      case 'heartbeat': return [0, 100, 100, 250, 600, 100, 100, 250];
+      case 'tick': return [0, 30];
+      case 'mario': return [0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 200];
+      case 'fox': return [0, 100, 100, 100, 100, 100, 100, 100, 150, 100, 150, 100, 150, 100, 400];
+      case 'imperial': return [0, 450, 150, 450, 150, 450, 150, 350, 100, 150, 450, 150, 350, 100, 150, 450];
+      case 'potter': return [0, 150, 350, 150, 100, 150, 100, 150, 100, 400, 300, 300, 150, 400];
+      case 'indy': return [0, 150, 50, 80, 50, 150, 100, 500, 400, 150, 50, 80, 100, 600];
+      case 'mission': return [0, 250, 250, 250, 250, 120, 120, 120, 120, 250, 250, 250, 250, 120, 120, 120, 120];
+      case 'terminator': return [0, 250, 250, 250, 400, 200, 200, 250, 200, 250];
+      case 'future': return [0, 150, 150, 150, 150, 300, 200, 100, 50, 100, 50, 400];
+      case 'eva': return [0, 100, 100, 100, 100, 250, 100, 100, 100, 100, 100, 100, 250, 100, 100];
+      case 'pokemon': return [0, 100, 100, 100, 100, 300, 150, 100, 100, 300];
+      case 'titan': return [0, 200, 150, 200, 150, 250, 250, 400, 400, 600];
+      case 'bebop': return [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000];
+      default: return [0, 500];
+    }
+  }
+
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
-    if (await Vibration.hasVibrator() ?? false) Vibration.vibrate(duration: 500);
+    if (await Vibration.hasVibrator() ?? false) {
+      final prefs = await SharedPreferences.getInstance();
+      final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+      final intensity = prefs.getInt('vibration_intensity') ?? 128;
+      final pattern = _getVibrationPattern(patternName);
+
+      if (await Vibration.hasAmplitudeControl() ?? false) {
+        final intensities = List<int>.generate(
+          pattern.length,
+          (i) => i.isEven ? 0 : intensity,
+        );
+        Vibration.vibrate(pattern: pattern, intensities: intensities);
+      } else {
+        Vibration.vibrate(pattern: pattern);
+      }
+    }
   }
 
   Future<void> _showNotification() async {
-    const androidDetails = AndroidNotificationDetails(
+    final prefs = await SharedPreferences.getInstance();
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final pattern = _getVibrationPattern(patternName);
+    // Android vibrationPattern uses Int64List in milliseconds
+    final androidDetails = AndroidNotificationDetails(
       'wake_alarm_channel', 
       'Wake Alarm', 
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
       priority: Priority.high,
       enableVibration: true,
+      vibrationPattern: Int64List.fromList(pattern),
     );
-    const details = NotificationDetails(android: androidDetails);
+    final details = NotificationDetails(android: androidDetails);
     await _notificationsPlugin.show(id: 0, title: 'Wake Up!', body: 'Approaching your stop!', notificationDetails: details);
   }
 
@@ -1366,17 +1419,77 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 20),
+                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchBtnBg, foregroundColor: colors.searchBtnText, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                  const SizedBox(height: 20),
                   Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
                   SizedBox(height: 80, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _favorites.length + 1, separatorBuilder: (_,__) => const SizedBox(width: 12), itemBuilder: (ctx, idx) { if (idx == _favorites.length) { return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), const Text("Add", style: TextStyle(fontSize: 10))])); } final fav = _favorites[idx]; IconData icon = Icons.star; if (fav.type == 'friend') icon = Icons.person; else if (fav.label.toLowerCase() == 'home') icon = Icons.home; else if (fav.label.toLowerCase() == 'work') icon = Icons.work; if (fav.iconCode != null) { icon = kAvailableIcons.firstWhere((i) => i.codePoint == fav.iconCode, orElse: () => Icons.star); } Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg; Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon; return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))])); })),
-                  const SizedBox(height: 20),
-                  SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchBtnBg, foregroundColor: colors.searchBtnText, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+                  _buildFrequentJourneys(colors),
                 ],
               ),
             ),
           ],
         ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFrequentJourneys(TransColors colors) {
+    if (_frequentJourneys.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Text("Frequent Journeys", style: TextStyle(color: colors.sectionHeader, fontWeight: FontWeight.bold, fontSize: 12)),
+          ),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _frequentJourneys.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (ctx, idx) {
+              final item = _frequentJourneys[idx];
+              final from = Station.fromJson(item['from']);
+              final to = Station.fromJson(item['to']);
+              return GestureDetector(
+                onTap: () {
+                   setState(() {
+                     _fromStation = from;
+                     _fromController.text = from.name;
+                     _toStation = to;
+                     _toController.text = to.name;
+                   });
+                   _findRoutes();
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: colors.cardBg, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+                  child: Row(
+                    children: [
+                      Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: colors.navBarSelected.withValues(alpha: 0.2), shape: BoxShape.circle), child: Icon(Icons.bookmark, color: colors.navBarSelected, size: 18)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(to.name, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold, fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text("From ${from.name}", style: TextStyle(color: colors.searchHintText, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: colors.searchHintText, size: 20)
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

@@ -109,7 +109,18 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    // Use constraints defensively ONLY on Web when running on a mobile device to prevent OOM
+    // on iOS Safari and to significantly reduce synchronous JS execution time when parsing millions
+    // of pixels into a Dart List<int>. We keep high res for native mobile and desktop where memory
+    // and processing power allow.
+    final bool isMobileWeb = kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: isMobileWeb ? 800 : null,
+      maxHeight: isMobileWeb ? 800 : null,
+      imageQuality: isMobileWeb ? 85 : 100,
+    );
     
     if (image == null) return;
 
