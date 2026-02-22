@@ -109,7 +109,14 @@ class _TicketPanelState extends State<TicketPanel> {
 
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    // Use constraints to prevent OOM on web iOS when decoding the image for ZXing,
+    // and easily fit within the 5MB localStorage quota for Base64 storage.
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
     
     if (image == null) return;
 
