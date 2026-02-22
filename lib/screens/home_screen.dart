@@ -254,9 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: _onTabChanged, // Updated to use the new method
-        backgroundColor: colors.navBarBg,
-        indicatorColor: colors.navBarSelected,
+        onDestinationSelected: _onTabChanged,
         destinations: const [
           NavigationDestination(icon: Icon(Icons.directions), label: 'Routes'),
           NavigationDestination(icon: Icon(Icons.people), label: 'Friends'),
