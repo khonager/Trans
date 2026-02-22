@@ -179,7 +179,7 @@ ThemeData createTheme(Color seed, Brightness brightness) {
       TransColors.fromSeed(seed, brightness),
     ],
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: isDark ? Colors.black : Colors.white,
+      backgroundColor: TransColors.fromSeed(seed, brightness).navBarBg,
       indicatorColor: TransColors.fromSeed(seed, brightness).navBarIndicator,
       iconTheme: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
