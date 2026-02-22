@@ -45,7 +45,8 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get appBarIconBg => effectiveSeed;
   Color get navBarBg => baseCard;
   Color get navBarSelected => effectiveSeed;
-  Color get navBarUnselected => Colors.grey;
+  Color get navBarUnselected => isDark ? Colors.white38 : Colors.grey.shade600;
+  Color get navBarIndicator => effectiveSeed.withValues(alpha: isDark ? 0.2 : 0.1);
 
   // 3. SEARCH & HOME
   Color get searchHeaderIconBg => effectiveSeed.withValues(alpha: 0.15);
@@ -177,6 +178,22 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     extensions: [
       TransColors.fromSeed(seed, brightness),
     ],
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: isDark ? Colors.black : Colors.white,
+      indicatorColor: TransColors.fromSeed(seed, brightness).navBarIndicator,
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return IconThemeData(color: seed);
+        }
+        return IconThemeData(color: TransColors.fromSeed(seed, brightness).navBarUnselected);
+      }),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return TextStyle(color: seed, fontWeight: FontWeight.bold, fontSize: 12);
+        }
+        return TextStyle(color: TransColors.fromSeed(seed, brightness).navBarUnselected, fontSize: 12);
+      }),
+    ),
     sliderTheme: SliderThemeData(
       activeTrackColor: seed,
       thumbColor: Colors.white,
