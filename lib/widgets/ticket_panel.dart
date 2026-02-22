@@ -182,27 +182,66 @@ class _TicketPanelState extends State<TicketPanel> {
               }
 
               debugPrint("ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
-              final intList = image.data?.buffer.asUint32List().toList(); 
               
-              if (intList != null) {
-                  final luminance = zxing.RGBLuminanceSource(image.width, image.height, intList);
-                  final binarizer = zxing.HybridBinarizer(luminance);
-                  final bitmap = zxing.BinaryBitmap(binarizer);
-                  final result = zxing.MultiFormatReader().decode(bitmap);
-                  debugPrint("ZXing: found barcode: ${result.text}");
+              // FIX: package:image v4 stores pixels as RGBA in memory.
+              // On little-endian systems (all browsers), asUint32List() reads
+              // [R,G,B,A] bytes as 0xAABBGGRR. But ZXing's RGBLuminanceSource
+              // expects ARGB format (0xAARRGGBB). We must convert RGBA -> ARGB
+              // by swapping R and B channels, otherwise luminance is calculated
+              // incorrectly and QR detection fails on colored backgrounds.
+              final rawPixels = image.data?.buffer.asUint32List();
+              
+              if (rawPixels != null) {
+                  final argbPixels = List<int>.generate(rawPixels.length, (i) {
+                    final rgba = rawPixels[i];
+                    final r = rgba & 0xFF;
+                    final g = (rgba >> 8) & 0xFF;
+                    final b = (rgba >> 16) & 0xFF;
+                    final a = (rgba >> 24) & 0xFF;
+                    return (a << 24) | (r << 16) | (g << 8) | b;
+                  });
+
+                  final luminance = zxing.RGBLuminanceSource(image.width, image.height, argbPixels);
                   
-                  final points = result.resultPoints;
-                  if (points != null && points.isNotEmpty) {
-                    double minX = double.infinity, minY = double.infinity;
-                    double maxX = 0, maxY = 0;
-                    
-                    for (var p in points) {
-                       if ((p?.x ?? 0) < minX) minX = p!.x;
-                       if ((p?.y ?? 0) < minY) minY = p!.y;
-                       if ((p?.x ?? 0) > maxX) maxX = p!.x;
-                       if ((p?.y ?? 0) > maxY) maxY = p!.y;
+                  // Use TRY_HARDER + alsoInverted for better detection on screenshots
+                  const hints = zxing.DecodeHint(
+                    tryHarder: true,
+                    alsoInverted: true,
+                  );
+                  
+                  zxing.Result? result;
+                  
+                  // Try HybridBinarizer first (better for photos with uneven lighting)
+                  try {
+                    final binarizer = zxing.HybridBinarizer(luminance);
+                    final bitmap = zxing.BinaryBitmap(binarizer);
+                    result = zxing.MultiFormatReader().decode(bitmap, hints);
+                  } catch (_) {
+                    // Fallback: GlobalHistogramBinarizer (better for screenshots with uniform backgrounds)
+                    try {
+                      final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
+                      final bitmap2 = zxing.BinaryBitmap(binarizer2);
+                      result = zxing.MultiFormatReader().decode(bitmap2, hints);
+                    } catch (_) {}
+                  }
+                  
+                  if (result != null) {
+                    debugPrint("ZXing: found barcode: ${result.text}");
+                    final points = result.resultPoints;
+                    if (points != null && points.isNotEmpty) {
+                      double minX = double.infinity, minY = double.infinity;
+                      double maxX = 0, maxY = 0;
+                      
+                      for (var p in points) {
+                         if ((p?.x ?? 0) < minX) minX = p!.x;
+                         if ((p?.y ?? 0) < minY) minY = p!.y;
+                         if ((p?.x ?? 0) > maxX) maxX = p!.x;
+                         if ((p?.y ?? 0) > maxY) maxY = p!.y;
+                      }
+                      qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
                     }
-                    qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
+                  } else {
+                    debugPrint("ZXing: no barcode found after trying both binarizers");
                   }
               }
           } else {
