@@ -1419,7 +1419,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  ElevatedButton(onPressed: _loadHistoryData, child: Text("DEBUG: RELOAD HISTORY (${_recentSearches.length}/${_frequentJourneys.length})")),
                   SizedBox(width: double.infinity, height: 56, child: ElevatedButton(onPressed: canSearch ? _findRoutes : null, style: ElevatedButton.styleFrom(backgroundColor: colors.searchBtnBg, foregroundColor: colors.searchBtnText, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))), child: _isLoadingRoute ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text("Find Routes", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
                   const SizedBox(height: 20),
                   Text("Favorites", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
