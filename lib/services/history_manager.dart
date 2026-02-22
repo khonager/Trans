@@ -57,7 +57,7 @@ class SearchHistoryManager {
     final int timestamp = journey['timestamp'] ?? DateTime.now().millisecondsSinceEpoch;
     final int daysOld = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(timestamp)).inDays;
     // Half-life of 21 days: value halves every 3 weeks
-    return count * math.pow(0.5, daysOld / 21.0);
+    return (count * math.pow(0.5, daysOld / 21.0)).toDouble();
   }
 
   static Future<void> saveJourney(Station from, Station to) async {
