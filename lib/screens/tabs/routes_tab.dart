@@ -1707,40 +1707,42 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
 
+      void appendResults(List<Map<String, dynamic>> partial) {
+        if (partial.isEmpty || !mounted) return;
+        final List<Journey> newJourneys = [];
+        for (var d in partial) {
+             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+        }
+        
+        setState(() {
+          _isLoadingRoute = false;
+          final idx = _tabs.indexWhere((t) => t.id == route.id);
+          if (idx != -1) {
+            final currentRoute = _tabs[idx];
+            final currentIds = currentRoute.candidates!.map((j) => "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}").toSet();
+            final uniqueNew = newJourneys.where((j) => !currentIds.contains("${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}")).toList();
+            
+            if (uniqueNew.isNotEmpty) {
+              final updatedCandidates = List<Journey>.from(currentRoute.candidates!);
+              updatedCandidates.addAll(uniqueNew);
+              updatedCandidates.sort((a,b) => a.departure.compareTo(b.departure));
+              _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            }
+          }
+        });
+      }
+
       final newResults = await TransportApi.searchJourneys(
         originStation,
         route.destination,
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate,
         isArrival: isArrival,
-        results: 5
+        results: 5,
+        onPartialResults: appendResults,
       );
       
-      if (newResults.isNotEmpty && mounted) {
-        final List<Journey> newJourneys = [];
-        for (var d in newResults) {
-             try { newJourneys.add(_createJourney(d)); } catch(_) {}
-        }
-        
-        // Filter duplicates
-        final currentIds = route.candidates!.map((j) => "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}").toSet();
-        final uniqueNew = newJourneys.where((j) => !currentIds.contains("${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}")).toList();
-        
-        if (uniqueNew.isNotEmpty) {
-           setState(() {
-             final idx = _tabs.indexWhere((t) => t.id == route.id);
-             if (idx != -1) {
-               final updatedCandidates = List<Journey>.from(route.candidates!);
-               if (earlier) {
-                 updatedCandidates.insertAll(0, uniqueNew);
-               } else {
-                 updatedCandidates.addAll(uniqueNew);
-               }
-               _tabs[idx] = route.copyWith(candidates: updatedCandidates);
-             }
-           });
-        }
-      }
+      appendResults(newResults);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not load more routes: $e")));
     } finally {
@@ -1760,28 +1762,33 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       
       final DateTime refDate = DateTime.now(); 
 
-      final newResults = await TransportApi.searchJourneys(
-        originStation,
-        route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate,
-        isArrival: false, 
-        results: 5
-      );
-      
-      if (newResults.isNotEmpty && mounted) {
+      void handleResults(List<Map<String, dynamic>> partial) {
+        if (partial.isEmpty || !mounted) return;
         final List<Journey> newJourneys = [];
-        for (var d in newResults) {
+        for (var d in partial) {
              try { newJourneys.add(_createJourney(d)); } catch(_) {}
         }
         
         setState(() {
+             _isLoadingRoute = false;
              final idx = _tabs.indexWhere((t) => t.id == route.id);
              if (idx != -1) {
                _tabs[idx] = route.copyWith(candidates: newJourneys);
              }
         });
       }
+
+      final newResults = await TransportApi.searchJourneys(
+        originStation,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: refDate,
+        isArrival: false, 
+        results: 5,
+        onPartialResults: handleResults,
+      );
+      
+      handleResults(newResults);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not refresh routes: $e")));
     } finally {
@@ -1801,18 +1808,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       // Use planned departure time as the anchor for refresh
       final DateTime refDate = route.activeJourney!.plannedDeparture ?? route.activeJourney!.departure;
       
-      final newResults = await TransportApi.searchJourneys(
-        originStation,
-        route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate.subtract(const Duration(minutes: 5)), // Small buffer
-        isArrival: false,
-        results: 10
-      );
-      
-      if (newResults.isNotEmpty && mounted) {
+      void handleResults(List<Map<String, dynamic>> partial) {
+        if (partial.isEmpty || !mounted) return;
         final List<Journey> newJourneys = [];
-        for (var d in newResults) {
+        for (var d in partial) {
              try { newJourneys.add(_createJourney(d)); } catch(_) {}
         }
         
@@ -1838,6 +1837,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (matched != null) {
           final upd = matched;
           setState(() {
+            _isLoadingRoute = false;
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
               final newStack = List<Journey>.from(route.stack);
@@ -1848,16 +1848,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               
               _tabs[idx] = route.copyWith(
                 activeJourney: upd,
-                stack: newStack,
                 steps: upd.steps,
+                stack: newStack,
                 totalDuration: FormatUtils.formatDuration(upd.duration.inMinutes),
               );
             }
           });
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Could not find updated data for this specific connection.")));
         }
       }
+
+      final newResults = await TransportApi.searchJourneys(
+        originStation,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: refDate.subtract(const Duration(minutes: 5)), // Small buffer
+        isArrival: false,
+        results: 10,
+        onPartialResults: handleResults,
+      );
+      
+      handleResults(newResults);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Refresh failed: $e")));
     } finally {
@@ -2328,34 +2338,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   Future<void> _fetchInitial() async {
     if (mounted) setState(() => _isLoading = true);
     try {
-      // We want to see the "Next" connections AND exactly one before it.
-      // We'll search starting from 1 hour ago first.
-      List<Map<String, dynamic>> results = await TransportApi.searchJourneys(
-        widget.from,
-        widget.to,
-        nahverkehrOnly: widget.nahverkehrOnly,
-        when: widget.initialTime.subtract(const Duration(hours: 1)),
-        isArrival: false,
-        results: 12,
-      );
-
-      // If no preceding found (infrequent line), try 4 hours back.
-      if (results.isEmpty || !_hasPreceding(results)) {
-        results = await TransportApi.searchJourneys(
-          widget.from,
-          widget.to,
-          nahverkehrOnly: widget.nahverkehrOnly,
-          when: widget.initialTime.subtract(const Duration(hours: 4)),
-          isArrival: false,
-          results: 15,
-        );
-      }
-      
-      if (mounted) {
+      void processResults(List<Map<String, dynamic>> res) {
+        if (!mounted || res.isEmpty) return;
         setState(() {
           _results.clear();
           final existingIds = <String>{};
-          for (final j in results) {
+          for (final j in res) {
             final id = _getJId(j);
             if (!existingIds.contains(id)) {
               _results.add(j);
@@ -2374,10 +2362,37 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
             _results.addAll(itemsToShow);
           }
 
-          
           _isLoading = false;
           _error = null;
         });
+      }
+
+      // We want to see the "Next" connections AND exactly one before it.
+      // We'll search starting from 1 hour ago first.
+      List<Map<String, dynamic>> results = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: widget.initialTime.subtract(const Duration(hours: 1)),
+        isArrival: false,
+        results: 12,
+        onPartialResults: processResults,
+      );
+      
+      processResults(results);
+
+      // If no preceding found (infrequent line), try 4 hours back.
+      if (results.isEmpty || !_hasPreceding(results)) {
+        results = await TransportApi.searchJourneys(
+          widget.from,
+          widget.to,
+          nahverkehrOnly: widget.nahverkehrOnly,
+          when: widget.initialTime.subtract(const Duration(hours: 4)),
+          isArrival: false,
+          results: 15,
+          onPartialResults: processResults,
+        );
+        processResults(results);
       }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
@@ -2392,19 +2407,11 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   Future<void> _fetch(DateTime time, bool isArrival, {bool prepend = false}) async {
     if (mounted) setState(() => _isMoreLoading = true);
     try {
-      final results = await TransportApi.searchJourneys(
-        widget.from,
-        widget.to,
-        nahverkehrOnly: widget.nahverkehrOnly,
-        when: time,
-        isArrival: isArrival,
-        results: 10,
-      );
-      
-      if (mounted) {
+      void processResults(List<Map<String, dynamic>> res) {
+        if (!mounted || res.isEmpty) return;
         setState(() {
           final existingIds = _results.map(_getJId).toSet();
-          final unique = results.where((r) => !existingIds.contains(_getJId(r))).toList();
+          final unique = res.where((r) => !existingIds.contains(_getJId(r))).toList();
           if (prepend) {
             _results.insertAll(0, unique);
           } else {
@@ -2416,6 +2423,18 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           _error = null;
         });
       }
+
+      final results = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: time,
+        isArrival: isArrival,
+        results: 10,
+        onPartialResults: processResults,
+      );
+      
+      processResults(results);
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; _isMoreLoading = false; });
     }
