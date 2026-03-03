@@ -483,8 +483,6 @@ class TransportApi {
 
         return merged;
       }
-
-      return merged;
     } catch (e) {
       debugPrint('Hybrid searchJourneys critical failure: $e');
       return [];
