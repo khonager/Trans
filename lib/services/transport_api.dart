@@ -383,6 +383,7 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 7,
+    Function(List<Map<String, dynamic>>)? onPartialResults,
   }) async {
     // 1. STRICT V6 MODE
     if (apiMode == 'v6') {
@@ -394,16 +395,18 @@ class TransportApi {
         isArrival: isArrival,
         results: results,
       );
-      return res.map((j) {
+      final mapped = res.map((j) {
         j['source'] = 'v6';
         return j;
       }).toList();
+      if (onPartialResults != null) onPartialResults(mapped);
+      return mapped;
     }
 
     // 2. STRICT MOTIS MODE
     if (apiMode == 'motis') {
       try {
-        return await _searchJourneysMotis(
+        final res = await _searchJourneysMotis(
           from,
           to,
           nahverkehrOnly: nahverkehrOnly,
@@ -411,6 +414,8 @@ class TransportApi {
           isArrival: isArrival,
           results: results,
         );
+        if (onPartialResults != null) onPartialResults(res);
+        return res;
       } catch (e) {
         debugPrint('Transitous searchJourneys failed (strict mode): $e');
         rethrow;
@@ -444,21 +449,39 @@ class TransportApi {
         return <Map<String, dynamic>>[];
       });
 
-      // Wait for both to complete
-      final resultsList = await Future.wait([motisFuture, v6Future]);
-      final motisResults = resultsList[0];
-      final v6Results = resultsList[1];
+      if (onPartialResults != null) {
+        final motisResults = await motisFuture;
+        if (motisResults.isNotEmpty) {
+          onPartialResults(motisResults);
+        }
+        
+        final v6Results = await v6Future;
+        for (var j in v6Results) { j['source'] = 'v6'; }
+        
+        final merged = mergeResults(motisResults, v6Results);
+        if (merged.isEmpty) {
+          return motisResults; // Return whatever we found if somehow merged is empty
+        }
+        return merged;
+      } else {
+        // Wait for both to complete
+        final resultsList = await Future.wait([motisFuture, v6Future]);
+        final motisResults = resultsList[0];
+        final v6Results = resultsList[1];
 
-      // Tag v6 results (MOTIS results are already tagged)
-      for (var j in v6Results) {
-        j['source'] = 'v6';
-      }
+        // Tag v6 results (MOTIS results are already tagged)
+        for (var j in v6Results) {
+          j['source'] = 'v6';
+        }
 
-      // Merge results
-      final merged = mergeResults(motisResults, v6Results);
+        // Merge results
+        final merged = mergeResults(motisResults, v6Results);
 
-      if (merged.isEmpty) {
-        throw Exception("No routes found on either API");
+        if (merged.isEmpty) {
+          throw Exception("No routes found on either API");
+        }
+
+        return merged;
       }
 
       return merged;
