@@ -990,7 +990,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  void _addJourneyTab({Map<String, dynamic>? singleJourneyData, List<Map<String, dynamic>>? candidatesData, String title = "Route", String? subtitle, Station? origin, Station? destination}) {
+  String _addJourneyTab({Map<String, dynamic>? singleJourneyData, List<Map<String, dynamic>>? candidatesData, String title = "Route", String? subtitle, Station? origin, Station? destination}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
     Journey? activeJourney;
@@ -1010,10 +1010,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
         dest = Station(id: lastLeg['destination']['id'], name: lastLeg['destination']['name'] ?? "Destination", type: "station");
-      } catch(_) { return; }
+      } catch(_) { return id; }
     }
     
-    if (dest == null) return;
+    if (dest == null) return id;
     
     if (_toStation != null) dest = _toStation;
 
@@ -1033,6 +1033,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           stack: activeJourney != null ? [activeJourney] : [], // Init stack
       ));
       _activeTabId = id;
+    });
+    return id;
+  }
+
+  void _updateTabCandidates(String tabId, List<Map<String, dynamic>> rawData) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == tabId);
+      if (idx != -1) {
+        final currentTab = _tabs[idx];
+        final List<Journey> newJourneys = [];
+        for (var d in rawData) {
+          try { newJourneys.add(_createJourney(d)); } catch (_) {}
+        }
+        
+        // Remove duplicates and sort
+        final Map<String, Journey> uniqueMap = {};
+        if (currentTab.candidates != null) {
+          for (var j in currentTab.candidates!) {
+            final key = "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
+            uniqueMap[key] = j;
+          }
+        }
+        for (var j in newJourneys) {
+          final key = "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
+          if (!uniqueMap.containsKey(key)) uniqueMap[key] = j;
+        }
+        
+        final updatedCandidates = uniqueMap.values.toList();
+        updatedCandidates.sort((a, b) => a.departure.compareTo(b.departure));
+        
+        _tabs[idx] = currentTab.copyWith(candidates: updatedCandidates);
+      }
     });
   }
 
@@ -1071,13 +1104,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        }
        // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
        // But searchJourneys handles 'when'.
-       final res = await TransportApi.searchJourneys(from!, _toStation!, nahverkehrOnly: widget.onlyNahverkehr, when: when, isArrival: _isArrival).timeout(const Duration(seconds: 20)); 
+       String? currentTabId;
+       final res = await TransportApi.searchJourneys(
+         from!, 
+         _toStation!, 
+         nahverkehrOnly: widget.onlyNahverkehr, 
+         when: when, 
+         isArrival: _isArrival,
+         onPartialResults: (partial) {
+            if (mounted && currentTabId == null) {
+               setState(() => _isLoadingRoute = false);
+               currentTabId = _addJourneyTab(candidatesData: partial, origin: from, destination: _toStation); 
+            }
+         }
+       ).timeout(const Duration(seconds: 20)); 
+       
        if (mounted) { 
          if (res.isNotEmpty) { 
-           _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
+           if (currentTabId != null) {
+             _updateTabCandidates(currentTabId!, res);
+           } else {
+             _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
+           }
            SearchHistoryManager.saveJourney(from!, _toStation!);
            _loadHistoryData(); // Refresh UI
-         } else { 
+         } else if (currentTabId == null) { 
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No routes found. The service may be temporarily busy - please try again."))); 
          } 
        }
