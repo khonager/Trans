@@ -450,18 +450,36 @@ class TransportApi {
       });
 
       if (onPartialResults != null) {
-        final motisResults = await motisFuture;
-        if (motisResults.isNotEmpty) {
-          onPartialResults(motisResults);
-        }
+        bool motisDone = false;
         
-        final v6Results = await v6Future;
-        for (var j in v6Results) { j['source'] = 'v6'; }
+        motisFuture.then((motisResults) {
+          motisDone = true;
+          if (motisResults.isNotEmpty) {
+            onPartialResults(motisResults);
+          }
+        });
+
+        v6Future.then((v6Results) {
+          if (v6Results.isNotEmpty) {
+            for (var j in v6Results) { j['source'] = 'v6'; }
+            
+            if (!motisDone) {
+              // DB finished before Motis! Show DB results first.
+              onPartialResults(v6Results);
+            } else {
+              // Motis is done, we need to merge DB with Motis results.
+              motisFuture.then((motisResults) {
+                 final merged = mergeResults(motisResults, v6Results);
+                 onPartialResults(merged);
+              });
+            }
+          }
+        });
         
-        final merged = mergeResults(motisResults, v6Results);
-        if (merged.isEmpty) {
-          return motisResults; // Return whatever we found if somehow merged is empty
-        }
+        // Wait for both to formally complete the function call
+        final resultsList = await Future.wait([motisFuture, v6Future]);
+        final merged = mergeResults(resultsList[0], resultsList[1]);
+        if (merged.isEmpty) return resultsList[0];
         return merged;
       } else {
         // Wait for both to complete
