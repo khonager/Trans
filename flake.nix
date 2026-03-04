@@ -80,6 +80,9 @@
             github-cli # wrapper for git auth
             nspr
             nss
+            libimobiledevice
+            usbmuxd
+            ifuse
           ]);
 
           runScript = "bash";

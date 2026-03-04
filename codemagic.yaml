@@ -1,0 +1,19 @@
+workflows:
+  ios-build-and-publish:
+    name: iOS Build and Publish
+    instance_type: mac_mini_m2
+    environment:
+      groups:
+        - apple_auth
+    scripts:
+      - name: Get packages
+        script: flutter pub get
+      - name: Build iOS Release
+        script: flutter build ipa --release
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        app_id: APP_ID

@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:device_preview_plus/device_preview_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
@@ -28,7 +30,12 @@ void main() async {
     ),
   );
 
-  runApp(const TransApp());
+  runApp(
+    DevicePreview(
+      enabled: !kReleaseMode,
+      builder: (context) => const TransApp(),
+    ),
+  );
 }
 
 // FIX: Enable Mouse Dragging for Web/Desktop
@@ -163,6 +170,8 @@ class _TransAppState extends State<TransApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      locale: DevicePreview.locale(context),
+      builder: DevicePreview.appBuilder,
       title: 'Trans',
       debugShowCheckedModeBanner: false,
       scrollBehavior: CustomScrollBehavior(), // APPLY FIX
