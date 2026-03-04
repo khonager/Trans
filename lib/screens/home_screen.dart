@@ -243,24 +243,52 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: colors.scaffoldBg,
       // REVERT: Set to false to keep Ticket Panel stable
       resizeToAvoidBottomInset: false, 
-      body: Stack(
-        children: [
-          IndexedStack(
-            index: _currentIndex,
-            children: screens,
-          ),
-          const TicketPanel(),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWideScreen = constraints.maxWidth > 600;
+          
+          Widget content = Stack(
+            children: [
+              IndexedStack(
+                index: _currentIndex,
+                children: screens,
+              ),
+              const TicketPanel(),
+            ],
+          );
+
+          if (isWideScreen) {
+            return Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: _onTabChanged,
+                  labelType: NavigationRailLabelType.all,
+                  destinations: const [
+                    NavigationRailDestination(icon: Icon(Icons.directions), label: Text('Routes')),
+                    NavigationRailDestination(icon: Icon(Icons.people), label: Text('Friends')),
+                    NavigationRailDestination(icon: Icon(Icons.settings), label: Text('Settings')),
+                  ],
+                ),
+                Expanded(child: content),
+              ],
+            );
+          }
+
+          return content;
+        },
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: _onTabChanged,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.directions), label: 'Routes'),
-          NavigationDestination(icon: Icon(Icons.people), label: 'Friends'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
-        ],
-      ),
+      bottomNavigationBar: MediaQuery.of(context).size.width <= 600
+          ? NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: _onTabChanged,
+              destinations: const [
+                NavigationDestination(icon: Icon(Icons.directions), label: 'Routes'),
+                NavigationDestination(icon: Icon(Icons.people), label: 'Friends'),
+                NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+              ],
+            )
+          : null,
     ));
   }
 }

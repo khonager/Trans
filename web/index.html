@@ -47,6 +47,70 @@
 </head>
 
 <body>
+  <div class="loading-container">
+    <div class="custom-loader"></div>
+    <div class="loading-text">Trans</div>
+  </div>
+
+  <style>
+    body {
+      background-color: #ffffff;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .custom-loader {
+      width: 50px;
+      height: 50px;
+      border: 5px solid rgba(1, 117, 194, 0.2);
+      border-radius: 50%;
+      border-top-color: #0175C2;
+      animation: spin 1s ease-in-out infinite;
+      margin-bottom: 20px;
+    }
+
+    .loading-text {
+      color: #0175C2;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: 1px;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* Support for dark mode devices while loading */
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #121212;
+      }
+
+      .loading-text {
+        color: #64B5F6;
+      }
+
+      .custom-loader {
+        border-color: rgba(100, 181, 246, 0.2);
+        border-top-color: #64B5F6;
+      }
+    }
+  </style>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 
