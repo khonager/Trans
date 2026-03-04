@@ -31,5 +31,21 @@
             "type": "image/png",
             "purpose": "maskable"
         }
+    ],
+    "shortcuts": [
+        {
+            "name": "Routes",
+            "short_name": "Routes",
+            "description": "View transit routes",
+            "url": "/",
+            "icons": [{"src": "icons/Icon-192.png", "sizes": "192x192"}]
+        },
+        {
+            "name": "Settings",
+            "short_name": "Settings",
+            "description": "App settings",
+            "url": "/settings",
+            "icons": [{"src": "icons/Icon-192.png", "sizes": "192x192"}]
+        }
     ]
 }
