@@ -1,6 +1,7 @@
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+// ignore_for_file: avoid_print
 
 void main() async {
   // Test V6 API for delays

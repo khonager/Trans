@@ -1,5 +1,6 @@
 // lib/services/favorites_manager.dart
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/favorite.dart';
 import 'supabase_service.dart';
@@ -56,7 +57,7 @@ class FavoritesManager {
       await SupabaseService.updateFavoritesInfo(favsData);
     } catch (e) {
       // Fail silently or log
-      print("Error syncing favorites: $e");
+      debugPrint("Error syncing favorites: $e");
     }
   }
 }

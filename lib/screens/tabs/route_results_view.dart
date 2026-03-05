@@ -566,7 +566,7 @@ class _JourneyCard extends StatelessWidget {
                      Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: journey.source == 'motis' ? Colors.blue.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                        color: journey.source == 'motis' ? Colors.blue.withValues(alpha: 0.2) : Colors.red.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(4)
                       ),
                       child: Text(
@@ -586,7 +586,7 @@ class _JourneyCard extends StatelessWidget {
                       child: Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                           color: colors.cardBg.withOpacity(0.5),
+                           color: colors.cardBg.withValues(alpha: 0.5),
                            borderRadius: BorderRadius.circular(8),
                            border: Border.all(color: Colors.white10),
                         ),

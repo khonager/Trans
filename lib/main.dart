@@ -91,7 +91,11 @@ class _TransAppState extends State<TransApp> {
     setState(() {
       _onlyNahverkehr = onlyNv;
       _isGhostMode = isGhost;
-      if (colorVal != null) _themeColor = Color(colorVal); else _themeColor = appThemeColors[0];
+      if (colorVal != null) {
+        _themeColor = Color(colorVal);
+      } else {
+        _themeColor = appThemeColors[0];
+      }
       
       _useSystemTheme = storedSystemSync;
 
@@ -160,8 +164,8 @@ class _TransAppState extends State<TransApp> {
       _themeColor = color;
     });
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('theme_color_value', color.value);
-    await SupabaseService.updateThemeColor(color.value);
+    await prefs.setInt('theme_color_value', color.toARGB32());
+    await SupabaseService.updateThemeColor(color.toARGB32());
   }
 
   @override

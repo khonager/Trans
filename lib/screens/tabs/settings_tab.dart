@@ -442,7 +442,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   child: Text(
                     "v$_version", 
                     style: TextStyle(
-                      color: colors.textSecondary.withOpacity(0.7), 
+                      color: colors.textSecondary.withValues(alpha: 0.7), 
                       fontWeight: FontWeight.bold,
                       fontSize: 14
                     )
@@ -462,7 +462,10 @@ class _SettingsTabState extends State<SettingsTab> {
                 subtitle: Text(AppLocalizations.of(context)!.hideLocation, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: widget.isGhostMode, 
                 activeTrackColor: Colors.red,
-                activeColor: Colors.white,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return Colors.white;
+                  return null;
+                }),
 
                 onChanged: (val) {
                   widget.onGhostModeChanged(val);
@@ -482,7 +485,10 @@ class _SettingsTabState extends State<SettingsTab> {
                   : null,
               trailing: Switch(
                 value: widget.isDarkMode,
-                activeColor: widget.useSystemTheme ? Colors.grey : primaryColor,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return widget.useSystemTheme ? Colors.grey : primaryColor;
+                  return null;
+                }),
                 onChanged: widget.useSystemTheme 
                   ? (val) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.systemSyncActive)));
@@ -502,7 +508,10 @@ class _SettingsTabState extends State<SettingsTab> {
               title: Text(AppLocalizations.of(context)!.deutschlandTicketMode, style: TextStyle(color: colors.textPrimary)), 
               subtitle: Text(AppLocalizations.of(context)!.onlyLocalTransport, style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
               value: widget.onlyNahverkehr, 
-              activeColor: primaryColor,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
               onChanged: widget.onNahverkehrChanged
             ),
           ]),
@@ -526,7 +535,10 @@ class _SettingsTabState extends State<SettingsTab> {
               title: Text(AppLocalizations.of(context)!.showTrainNumbers, style: TextStyle(color: colors.textPrimary)),
               subtitle: Text(AppLocalizations.of(context)!.displayTripIds, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               value: widget.showTrainNumbers,
-              activeColor: primaryColor,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
               onChanged: widget.onShowTrainNumbersChanged,
             ),
           ]),
@@ -620,7 +632,10 @@ class _SettingsTabState extends State<SettingsTab> {
                title: Text(AppLocalizations.of(context)!.alwaysWakeMe, style: TextStyle(color: colors.textPrimary)),
                subtitle: Text(AppLocalizations.of(context)!.turnOnAlarmDefault, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                value: widget.alwaysWakeMe,
-               activeColor: primaryColor,
+               thumbColor: WidgetStateProperty.resolveWith((states) {
+                 if (states.contains(WidgetState.selected)) return primaryColor;
+                 return null;
+               }),
                onChanged: widget.onAlwaysWakeMeChanged,
              ),
           ]),
@@ -663,7 +678,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Widget _colorCircle(Color color) {
-    final isSelected = widget.currentColor.value == color.value;
+    final isSelected = widget.currentColor.toARGB32() == color.toARGB32();
     return GestureDetector(
       onTap: () => widget.onColorChanged(color),
       child: Container(

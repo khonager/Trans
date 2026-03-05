@@ -26,7 +26,7 @@ class TransColors extends ThemeExtension<TransColors> {
 
   bool get isDark => brightness == Brightness.dark;
   
-  Color get effectiveSeed => (isDark && seed.value == 0xFF000000) ? Colors.white : seed;
+  Color get effectiveSeed => (isDark && seed.toARGB32() == 0xFF000000) ? Colors.white : seed;
   Color get baseCard => isDark ? const Color(0xFF18181B) : Colors.white;
   Color get baseText => isDark ? Colors.white : Colors.black87;
   Color get subText => isDark ? Colors.white54 : Colors.grey.shade700;

@@ -1,7 +1,7 @@
 import 'dart:io';
 import '../l10n/app_localizations.dart';
 import 'dart:convert';
-import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -520,7 +520,7 @@ class _TicketPanelState extends State<TicketPanel> {
       final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
       await file.rename(newPath);
       _refreshHistory();
-      Navigator.pop(context); 
+      if (mounted) Navigator.pop(context); 
     }
   }
 
@@ -531,7 +531,7 @@ class _TicketPanelState extends State<TicketPanel> {
     if (_mobileFile?.path == file.path) {
       setState(() => _mobileFile = _history.isNotEmpty ? _history.first : null);
     }
-    Navigator.pop(context); 
+    if (mounted) Navigator.pop(context); 
   }
 
   void _showHistorySheet() {
