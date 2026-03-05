@@ -35,7 +35,9 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
+        final List<dynamic> data = (json.decode(response.body) as List)
+            .where((release) => release['tag_name'] != 'dev-latest')
+            .toList();
         // Sort by published_at descending (newest first)
         data.sort((a, b) {
           final dateA =
