@@ -148,18 +148,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
          });
       }
     } else {
-      // Delay clearing suggestions to allow click events (especially on Web) to register
-      _focusDebounce?.cancel();
-      _focusDebounce = Timer(const Duration(milliseconds: 200), () {
-        if (mounted) {
-          setState(() {
-            _activeSearchField = '';
-            _suggestions = []; 
-          });
-        }
-      });
-    }
-  }
+    // We no longer clear suggestions on focus loss so users can interact with them after dismissing the keyboard.
+    _focusDebounce?.cancel();
+  }  }
 
   void _initNotifications() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -515,10 +506,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 600), () async {
       if (query.length > 2) {
-        double? refLat = widget.currentPosition?.latitude;
-        double? refLng = widget.currentPosition?.longitude;
-        try {
-          final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
+      double? refLat;
+      double? refLng;
+      
+      if (field == 'from') {
+        if (_toStation != null && _toStation!.latitude != null && _toStation!.longitude != null) {
+          refLat = _toStation!.latitude;
+          refLng = _toStation!.longitude;
+        } else if (widget.currentPosition != null) {
+          refLat = widget.currentPosition!.latitude;
+          refLng = widget.currentPosition!.longitude;
+        }
+      } else if (field == 'to') {
+        if (_fromStation != null && _fromStation!.latitude != null && _fromStation!.longitude != null) {
+          refLat = _fromStation!.latitude;
+          refLng = _fromStation!.longitude;
+        } else if (widget.currentPosition != null) {
+          refLat = widget.currentPosition!.latitude;
+          refLng = widget.currentPosition!.longitude;
+        }
+      }
+
+      try {
+        final apiResults = await TransportApi.searchStations(query, lat: refLat, lng: refLng);
           if (mounted) {
             setState(() { 
               if (apiResults.isEmpty && _suggestions.isEmpty) {
@@ -1609,9 +1619,38 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   final station = item as Station; 
                   IconData leadingIcon = Icons.place; 
                   if (station.type == 'address') leadingIcon = Icons.home_work; 
+
+                  double? refLat;
+                  double? refLng;
+                  if (_activeSearchField == 'from') {
+                    if (_toStation != null && _toStation!.latitude != null && _toStation!.longitude != null) {
+                      refLat = _toStation!.latitude;
+                      refLng = _toStation!.longitude;
+                    } else if (widget.currentPosition != null) {
+                      refLat = widget.currentPosition!.latitude;
+                      refLng = widget.currentPosition!.longitude;
+                    }
+                  } else if (_activeSearchField == 'to') {
+                    if (_fromStation != null && _fromStation!.latitude != null && _fromStation!.longitude != null) {
+                      refLat = _fromStation!.latitude;
+                      refLng = _fromStation!.longitude;
+                    } else if (widget.currentPosition != null) {
+                      refLat = widget.currentPosition!.latitude;
+                      refLng = widget.currentPosition!.longitude;
+                    }
+                  }
+
+                  String? distanceText;
+                  if (refLat != null && refLng != null && station.latitude != null && station.longitude != null) {
+                    double distInMeters = Geolocator.distanceBetween(refLat, refLng, station.latitude!, station.longitude!);
+                    double distInKm = distInMeters / 1000.0;
+                    distanceText = "${distInKm.toStringAsFixed(1)} km";
+                  }
+
                   return ListTile(
                     leading: Icon(leadingIcon, size: 16, color: Colors.grey), 
                     title: Text(station.name, style: TextStyle(color: colors.textPrimary, fontSize: 14)), 
+                    trailing: distanceText != null ? Text(distanceText, style: TextStyle(color: colors.searchHintText, fontSize: 12)) : null,
                     onTap: () => _selectItem(station), 
                     hoverColor: Colors.white10,
                     onLongPress: () { 
