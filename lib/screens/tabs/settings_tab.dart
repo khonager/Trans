@@ -397,12 +397,11 @@ class _SettingsTabState extends State<SettingsTab> {
     
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
-    // FIX: Keyboard padding - get keyboard height from viewInsets
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
-      padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 + keyboardHeight),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: ListView(
+        padding: const EdgeInsets.only(top: 16.0, bottom: 150.0),
         children: [
           SizedBox(height: topPadding),
           // Header Restored
@@ -675,7 +674,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
           const SizedBox(height: 20),
           if (user == null) _buildAuthForm(context, colors) else _buildProfileSection(context, user, colors),
-          const SizedBox(height: 100),
         ],
       ),
     );

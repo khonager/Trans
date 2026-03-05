@@ -242,8 +242,8 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
       backgroundColor: colors.scaffoldBg,
-      // REVERT: Set to false to keep Ticket Panel stable
-      resizeToAvoidBottomInset: false, 
+      // ALLOW: Set to true to allow keyboard to push UI up
+      resizeToAvoidBottomInset: true, 
       body: Stack(
         children: [
           IndexedStack(
