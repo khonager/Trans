@@ -370,5 +370,8 @@
   "signUp": "Sign Up",
   "enterEmailReset": "Enter your email to receive a password reset link.",
   "passwordResetEmailSent": "Password reset email sent (if account exists).",
-  "send": "Send"
+  "send": "Send",
+  "language": "Language",
+  "english": "English",
+  "german": "German"
 }

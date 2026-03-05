@@ -166,5 +166,8 @@
   "signUp": "Registrieren",
   "enterEmailReset": "Geben Sie Ihre E-Mail ein, um einen Zurücksetzen-Link zu erhalten.",
   "passwordResetEmailSent": "E-Mail zum Zurücksetzen gesendet (falls Konto existiert).",
-  "send": "Senden"
+  "send": "Senden",
+  "language": "Sprache",
+  "english": "Englisch",
+  "german": "Deutsch"
 }

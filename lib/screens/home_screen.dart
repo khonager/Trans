@@ -23,6 +23,8 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onGhostModeChanged;
   final Function(Color) onColorChanged;
   final Color currentColor;
+  final Locale? locale;
+  final Function(Locale) onLocaleChanged;
 
   const HomeScreen({
     super.key,
@@ -36,6 +38,8 @@ class HomeScreen extends StatefulWidget {
     required this.onGhostModeChanged,
     required this.onColorChanged,
     required this.currentColor,
+    required this.locale,
+    required this.onLocaleChanged,
   });
 
   @override
@@ -202,6 +206,8 @@ class _HomeScreenState extends State<HomeScreen> {
         onShowTrainNumbersChanged: _updateShowTrainNumbers,
         alwaysWakeMe: _alwaysWakeMe,
         onAlwaysWakeMeChanged: _updateAlwaysWakeMe,
+        locale: widget.locale,
+        onLocaleChanged: widget.onLocaleChanged,
       ),
     ];
 

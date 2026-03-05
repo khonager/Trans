@@ -58,6 +58,7 @@ class _TransAppState extends State<TransApp> {
   bool _onlyNahverkehr = false;
   bool _isGhostMode = false;
   Color _themeColor = appThemeColors[0]; 
+  Locale? _locale;
 
   @override
   void initState() {
@@ -109,6 +110,13 @@ class _TransAppState extends State<TransApp> {
           _themeMode = (brightness == Brightness.light) ? ThemeMode.light : ThemeMode.dark;
           prefs.setBool('is_dark_mode', _themeMode == ThemeMode.dark);
         }
+      }
+
+      final localeCode = prefs.getString('locale_code');
+      if (localeCode != null) {
+        _locale = Locale(localeCode);
+      } else {
+        _locale = null; // System default
       }
     });
   }
@@ -168,6 +176,15 @@ class _TransAppState extends State<TransApp> {
     await SupabaseService.updateThemeColor(color.toARGB32());
   }
 
+  void _changeLocale(Locale locale) async {
+    setState(() {
+      _locale = locale;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('locale_code', locale.languageCode);
+    await SupabaseService.updateSettings({'locale_code': locale.languageCode});
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -184,6 +201,7 @@ class _TransAppState extends State<TransApp> {
         Locale('en'), // English, no country code
         Locale('de'), // German, no country code
       ],
+      locale: _locale,
       themeMode: _themeMode,
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),
@@ -198,6 +216,8 @@ class _TransAppState extends State<TransApp> {
         onGhostModeChanged: _toggleGhostMode,
         onColorChanged: _updateThemeColor,
         currentColor: _themeColor,
+        locale: _locale,
+        onLocaleChanged: _changeLocale,
       ),
     );
   }
