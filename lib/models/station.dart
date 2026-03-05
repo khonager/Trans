@@ -16,19 +16,19 @@ class Station {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'type': type,
-    'distance': distance,
-    'latitude': latitude,
-    'longitude': longitude,
-  };
+        'id': id,
+        'name': name,
+        'type': type,
+        'distance': distance,
+        'latitude': latitude,
+        'longitude': longitude,
+      };
 
   factory Station.fromJson(Map<String, dynamic> json) {
     String name = json['name'] ?? 'Unknown';
     String id = json['id']?.toString() ?? '';
     String type = json['type'] ?? 'station';
-    
+
     // Address handling
     if (json['address'] != null) {
       name = json['address'];
@@ -58,7 +58,9 @@ class Station {
       id: id,
       name: name,
       type: type,
-      distance: json['distance'] != null ? (json['distance'] as num).toDouble() : null,
+      distance: json['distance'] != null
+          ? (json['distance'] as num).toDouble()
+          : null,
       latitude: lat,
       longitude: lng,
     );

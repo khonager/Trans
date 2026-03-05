@@ -59,12 +59,12 @@ android {
             manifestPlaceholders["appLabel"] = "Trans"
             manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.SuperClipboardDataProvider"
         }
-        create("dev") {
+        create("unstable") {
             dimension = "version"
             applicationId = "de.khonager.trans"
-            applicationIdSuffix = ".dev"
-            manifestPlaceholders["appLabel"] = "Trans Dev"
-            manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.dev.SuperClipboardDataProvider"
+            applicationIdSuffix = ".unstable"
+            manifestPlaceholders["appLabel"] = "Trans Unstable"
+            manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.unstable.SuperClipboardDataProvider"
         }
     }
 

@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'station.dart';
 
 class Favorite {
@@ -19,20 +18,21 @@ class Favorite {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'label': label,
-    'type': type,
-    'station': station?.toJson(),
-    'friendId': friendId,
-    'iconCode': iconCode,
-  };
+        'id': id,
+        'label': label,
+        'type': type,
+        'station': station?.toJson(),
+        'friendId': friendId,
+        'iconCode': iconCode,
+      };
 
   factory Favorite.fromJson(Map<String, dynamic> json) {
     return Favorite(
       id: json['id'],
       label: json['label'],
       type: json['type'],
-      station: json['station'] != null ? Station.fromJson(json['station']) : null,
+      station:
+          json['station'] != null ? Station.fromJson(json['station']) : null,
       friendId: json['friendId'],
       iconCode: json['iconCode'],
     );

@@ -35,14 +35,15 @@ Map<String, dynamic> _placeToLocation(Map<String, dynamic> place) {
     },
     // Pass through track/platform info if present
     if (place['track'] != null) 'platform': place['track'],
-    if (place['scheduledTrack'] != null) 'scheduledPlatform': place['scheduledTrack'],
+    if (place['scheduledTrack'] != null)
+      'scheduledPlatform': place['scheduledTrack'],
   };
 }
 
 /// Extracts line/product info from MOTIS leg
 Map<String, dynamic> _extractLineInfo(Map<String, dynamic> leg) {
   final mode = leg['mode'] as String? ?? 'WALK';
-  
+
   return {
     'name': leg['displayName'] ?? leg['routeShortName'] ?? mode,
     'productName': _modeToProduct(mode),
@@ -94,7 +95,7 @@ String _modeToProduct(String mode) {
 /// Converts stopovers from MOTIS intermediateStops format
 List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
   if (stops == null) return [];
-  
+
   return stops.map((stop) {
     final s = stop as Map<String, dynamic>;
     return {
@@ -104,7 +105,8 @@ List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
       'plannedArrival': s['scheduledArrival'],
       'plannedDeparture': s['scheduledDeparture'],
       'arrivalDelay': _calculateDelay(s['scheduledArrival'], s['arrival']),
-      'departureDelay': _calculateDelay(s['scheduledDeparture'], s['departure']),
+      'departureDelay':
+          _calculateDelay(s['scheduledDeparture'], s['departure']),
       if (s['cancelled'] == true) 'cancelled': true,
       if (s['track'] != null) 'platform': s['track'],
     };
@@ -135,9 +137,9 @@ List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
     try {
       do {
         if (index >= len) {
-           // Truncated string
-           debugPrint("Polyline truncation detected at index $index");
-           return points;
+          // Truncated string
+          debugPrint("Polyline truncation detected at index $index");
+          return points;
         }
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
@@ -153,8 +155,8 @@ List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
       result = 0;
       do {
         if (index >= len) {
-           debugPrint("Polyline truncation detected at index $index (lng)");
-           return points;
+          debugPrint("Polyline truncation detected at index $index (lng)");
+          return points;
         }
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
@@ -165,18 +167,18 @@ List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
       // Emulate 32-bit signed overflow
       lng = (lng & 0xFFFFFFFF);
       if (lng > 0x7FFFFFFF) lng -= 0x100000000;
-      
+
       final latDouble = lat / factor;
       final lngDouble = lng / factor;
-      
+
       // Sanity check
       if (latDouble < -90 || latDouble > 90) {
         debugPrint("Invalid Latitude: $latDouble (raw: $lat). Skipping point.");
         continue;
       }
       if (lngDouble < -180 || lngDouble > 180) {
-         debugPrint("Invalid Longitude: $lngDouble. Skipping point.");
-         continue; 
+        debugPrint("Invalid Longitude: $lngDouble. Skipping point.");
+        continue;
       }
 
       points.add([latDouble, lngDouble]);
@@ -192,7 +194,7 @@ List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
 Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
   final mode = leg['mode'] as String? ?? 'WALK';
   final isWalking = mode == 'WALK' || mode == 'BIKE' || mode == 'CAR';
-  
+
   return {
     'origin': _placeToLocation(leg['from']),
     'destination': _placeToLocation(leg['to']),
@@ -200,33 +202,33 @@ Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
     'arrival': leg['endTime'],
     'plannedDeparture': leg['scheduledStartTime'],
     'plannedArrival': leg['scheduledEndTime'],
-    'departureDelay': _calculateDelay(leg['scheduledStartTime'], leg['startTime']),
+    'departureDelay':
+        _calculateDelay(leg['scheduledStartTime'], leg['startTime']),
     'arrivalDelay': _calculateDelay(leg['scheduledEndTime'], leg['endTime']),
     'reachable': true,
     if (leg['cancelled'] == true) 'cancelled': true,
-    
+
     // Walking legs
     if (isWalking) 'walking': true,
     if (isWalking && leg['distance'] != null) 'distance': leg['distance'],
-    
+
     // Transit legs
     if (!isWalking) 'line': _extractLineInfo(leg),
     if (!isWalking) 'direction': leg['headsign'],
-    
+
     // Stopovers / intermediate stops
-    if (leg['intermediateStops'] != null) 
+    if (leg['intermediateStops'] != null)
       'stopovers': _convertIntermediateStops(leg['intermediateStops']),
-    
+
     // Polyline - MOTIS uses Google polyline format
-    if (leg['legGeometry'] != null) 'polyline': {
-      'points': leg['legGeometry']['points'],
-      'precision': leg['legGeometry']['precision'] ?? 6,
-    },
+    if (leg['legGeometry'] != null)
+      'polyline': {
+        'points': leg['legGeometry']['points'],
+        'precision': leg['legGeometry']['precision'] ?? 6,
+      },
     if (leg['legGeometry'] != null && leg['legGeometry']['points'] != null)
-      'decodedPath': _decodePolyline(
-        leg['legGeometry']['points'], 
-        precision: leg['legGeometry']['precision'] ?? 6
-      ),
+      'decodedPath': _decodePolyline(leg['legGeometry']['points'],
+          precision: leg['legGeometry']['precision'] ?? 6),
   };
 }
 
@@ -234,18 +236,20 @@ Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
 /// This is the main entry point for journey conversion
 Map<String, dynamic> journeyFromMotisItinerary(Map<String, dynamic> itinerary) {
   final legs = (itinerary['legs'] as List?) ?? [];
-  
+
   return {
     'type': 'journey',
-    'legs': legs.map((leg) => legFromMotisLeg(leg as Map<String, dynamic>)).toList(),
-    
+    'legs': legs
+        .map((leg) => legFromMotisLeg(leg as Map<String, dynamic>))
+        .toList(),
+
     // Journey-level timing
     'departure': itinerary['startTime'],
     'arrival': itinerary['endTime'],
-    
+
     // Duration in seconds
     if (itinerary['duration'] != null) 'duration': itinerary['duration'],
-    
+
     // Transfer count
     if (itinerary['transfers'] != null) 'transfers': itinerary['transfers'],
   };

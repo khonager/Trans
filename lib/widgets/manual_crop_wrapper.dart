@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../l10n/app_localizations.dart';
 import 'dart:typed_data';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
@@ -57,15 +58,18 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
       appBar: AppBar(
-        title: const Text("Crop Ticket"),
+        title: Text(AppLocalizations.of(context)!.cropTicket),
         backgroundColor: colors.navBarBg,
         foregroundColor: colors.textPrimary,
         actions: [
           IconButton(
             onPressed: _isCropping ? null : _onCrop,
-            icon: _isCropping 
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) 
-              : const Icon(Icons.check),
+            icon: _isCropping
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.check),
             tooltip: "Apply Crop",
           ),
         ],
@@ -88,10 +92,10 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
                 },
                 aspectRatio: null, // Free crop
                 baseColor: colors.scaffoldBg,
-                maskColor: Colors.black.withOpacity(0.5),
+                maskColor: Colors.black.withValues(alpha: 0.5),
                 radius: 0,
-                cornerDotBuilder: (size, edgeAlignment) => 
-                   const DotControl(color: Colors.blueAccent),
+                cornerDotBuilder: (size, edgeAlignment) =>
+                    const DotControl(color: Colors.blueAccent),
                 interactive: true,
                 fixCropRect: false,
               ),
