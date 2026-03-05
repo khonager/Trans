@@ -251,6 +251,9 @@ class SupabaseService {
         final List<String> list = (settings['frequent_journeys'] as List).map((e) => json.encode(e)).toList().cast<String>();
         await prefs.setStringList('frequent_journeys', list);
       }
+      if (settings.containsKey('locale_code')) {
+        await prefs.setString('locale_code', settings['locale_code']);
+      }
 
       if (favorites.isNotEmpty) {
         final List<String> favs = favorites.map((f) => json.encode(f)).toList().cast<String>();
