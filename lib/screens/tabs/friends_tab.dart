@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../services/supabase_service.dart';
 import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart'; 
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
@@ -86,13 +87,13 @@ class _FriendsTabState extends State<FriendsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(width: 40, height: 4, decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2)), margin: const EdgeInsets.only(bottom: 20)),
-                  Text("Add New Friend", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                  Text(AppLocalizations.of(context)!.addNewFriend, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                   const SizedBox(height: 16),
                   
                   TextField(
                     controller: searchCtrl,
                     decoration: InputDecoration(
-                      hintText: "Search by username...",
+                      hintText: AppLocalizations.of(context)!.searchByUsername,
                       filled: true,
                       fillColor: colors.scaffoldBg,
                       prefixIcon: Icon(Icons.search, color: colors.textSecondary),
@@ -129,10 +130,10 @@ class _FriendsTabState extends State<FriendsTab> {
                                 await SupabaseService.sendFriendRequest(user['id']);
                                 if (context.mounted) {
                                   Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Request sent to @${user['username']}")));
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.requestSentTo(user['username']))));
                                 }
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorString(e.toString()))));
                               }
                             },
                           ),
@@ -192,7 +193,7 @@ class _FriendsTabState extends State<FriendsTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("Friends", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+              Text(AppLocalizations.of(context)!.friendsTitle, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.textPrimary)),
               IconButton(
                 icon: const Icon(Icons.person_add, color: Colors.blue),
                 onPressed: () => _showAddFriendSheet(context),
@@ -208,24 +209,24 @@ class _FriendsTabState extends State<FriendsTab> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), // ADDED BOTTOM PADDING FOR TICKET PANEL
                 children: [
                   if (activeFriends.isNotEmpty) ...[
-                    _buildSectionHeader("Active Now", colors),
+                    _buildSectionHeader(AppLocalizations.of(context)!.activeNow, colors),
                     ...activeFriends.map((f) => _buildFriendCard(context, f, true)),
                   ],
 
                   if (_requests.isNotEmpty) ...[
-                    _buildSectionHeader("Requests", colors),
+                    _buildSectionHeader(AppLocalizations.of(context)!.requests, colors),
                     ..._requests.map((r) => _buildRequestCard(context, r)),
                   ],
 
                   if (inactiveFriends.isNotEmpty) ...[
-                    _buildSectionHeader("Offline", colors),
+                    _buildSectionHeader(AppLocalizations.of(context)!.offline, colors),
                     ...inactiveFriends.map((f) => _buildFriendCard(context, f, false)),
                   ],
 
                   if (activeFriends.isEmpty && _requests.isEmpty && inactiveFriends.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 50),
-                      child: Center(child: Text("No friends yet.", style: TextStyle(color: colors.textSecondary))),
+                      child: Center(child: Text(AppLocalizations.of(context)!.noFriendsYet, style: TextStyle(color: colors.textSecondary))),
                     )
                 ],
               ),
@@ -290,8 +291,8 @@ class _FriendsTabState extends State<FriendsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(req['sender_username'] ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)),
-                Text("Sent a friend request", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                Text(req['sender_username'] ?? AppLocalizations.of(context)!.unknown, style: TextStyle(fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                Text(AppLocalizations.of(context)!.sentFriendRequest, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               ],
             ),
           ),
@@ -301,14 +302,14 @@ class _FriendsTabState extends State<FriendsTab> {
                try {
                  await SupabaseService.acceptFriendRequest(req['sender_id']);
                  if (context.mounted) {
-                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Friend request accepted!")));
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.friendRequestAccepted)));
                    setState(() {
                      _requests.removeWhere((r) => r['id'] == req['id']);
                    });
                  }
                } catch (e) {
                  if (context.mounted) {
-                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorString(e.toString()))));
                  }
                }
             },
@@ -319,14 +320,14 @@ class _FriendsTabState extends State<FriendsTab> {
                try {
                  await SupabaseService.rejectFriendRequest(req['sender_id']);
                  if (context.mounted) {
-                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Friend request denied.")));
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.friendRequestDenied)));
                    setState(() {
                      _requests.removeWhere((r) => r['id'] == req['id']);
                    });
                  }
                } catch (e) {
                  if (context.mounted) {
-                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorString(e.toString()))));
                  }
                }
             },
@@ -343,12 +344,12 @@ class _FriendsTabState extends State<FriendsTab> {
     final bool isExpanded = _expandedFriendId == friendId;
     final bool isGhost = friend['ghost_mode'] ?? false;
     
-    String statusText = "Inactive";
+    String statusText = AppLocalizations.of(context)!.inactive;
     Color statusColor = colors.statusOffline;
     Widget? statusIcon;
 
     if (isActive) {
-      statusText = "Active recently";
+      statusText = AppLocalizations.of(context)!.activeRecently;
       statusColor = colors.statusActive;
       
       if (currentLine != null && currentLine.isNotEmpty) {
@@ -356,11 +357,11 @@ class _FriendsTabState extends State<FriendsTab> {
         final diff = DateTime.now().toUtc().difference(lastUpdate);
 
         if (diff.inMinutes < 10) {
-          statusText = "On $currentLine";
+          statusText = AppLocalizations.of(context)!.onLine(currentLine);
           statusColor = colors.statusOnline;
           statusIcon = Icon(Icons.directions_bus, size: 12, color: colors.statusOnline);
         } else {
-          statusText = "Last on $currentLine";
+          statusText = AppLocalizations.of(context)!.lastOnLine(currentLine);
           statusColor = colors.textSecondary;
           statusIcon = Icon(Icons.history, size: 12, color: colors.textSecondary);
         }
@@ -369,7 +370,7 @@ class _FriendsTabState extends State<FriendsTab> {
 
     if (isGhost) {
        if (isActive && currentLine == null) {
-          statusText = "Active recently (Ghost)";
+          statusText = AppLocalizations.of(context)!.activeRecentlyGhost;
           statusColor = colors.textSecondary;
        }
     }
@@ -401,7 +402,7 @@ class _FriendsTabState extends State<FriendsTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start, 
                     children: [
-                      Text(friend['username'] ?? "Unknown", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
+                      Text(friend['username'] ?? AppLocalizations.of(context)!.unknown, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: colors.textPrimary)), 
                       const SizedBox(height: 2), 
                       Row(
                         children: [
@@ -424,23 +425,23 @@ class _FriendsTabState extends State<FriendsTab> {
                 children: [
                    _buildActionButton(
                      icon: Icons.chat_bubble_outline, 
-                     label: "Chat", 
+                     label: AppLocalizations.of(context)!.chat, 
                      color: Colors.blue, 
-                     onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? "Friend")
+                     onTap: () => _openPrivateChat(friend['id'], friend['username'] ?? AppLocalizations.of(context)!.unknown)
                    ),
                    _buildActionButton(
                      icon: Icons.person_remove, 
-                     label: "Remove", 
+                     label: AppLocalizations.of(context)!.remove, 
                      color: Colors.orange, 
                      onTap: () async {
                        final confirm = await showDialog<bool>(
                          context: context,
                          builder: (ctx) => AlertDialog(
-                           title: Text("Remove ${friend['username']}?"),
-                           content: const Text("They will be removed from your friends list."),
+                           title: Text(AppLocalizations.of(context)!.removeFriendTitle(friend['username'])),
+                           content: Text(AppLocalizations.of(context)!.removeFriendMessage),
                            actions: [
-                             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Remove", style: TextStyle(color: Colors.red))),
+                             TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(AppLocalizations.of(context)!.cancel)),
+                             TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(AppLocalizations.of(context)!.remove, style: const TextStyle(color: Colors.red))),
                            ],
                          )
                        );
@@ -448,7 +449,7 @@ class _FriendsTabState extends State<FriendsTab> {
                        if (confirm == true) {
                          await SupabaseService.removeFriend(friendId);
                          if (mounted) {
-                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Removed ${friend['username']}")));
+                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.removedFriend(friend['username']))));
                            setState(() => _expandedFriendId = null);
                          }
                        }
@@ -456,12 +457,12 @@ class _FriendsTabState extends State<FriendsTab> {
                    ),
                    _buildActionButton(
                      icon: Icons.block, 
-                     label: "Block", 
+                     label: AppLocalizations.of(context)!.block, 
                      color: Colors.red, 
                      onTap: () async {
                        await SupabaseService.blockUser(friendId);
                        if (mounted) {
-                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Blocked ${friend['username']}")));
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.blockedFriend(friend['username']))));
                          setState(() => _expandedFriendId = null);
                        }
                      }

@@ -10,6 +10,7 @@ import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import '../changelog_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -251,11 +252,11 @@ class _SettingsTabState extends State<SettingsTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.cardBg,
-        title: Text("Clear History", style: TextStyle(color: colors.textPrimary)),
-        content: Text("Are you sure you want to delete your recent search history?", style: TextStyle(color: colors.textSecondary)),
+        title: Text(AppLocalizations.of(context)!.clearHistory, style: TextStyle(color: colors.textPrimary)),
+        content: Text(AppLocalizations.of(context)!.confirmClearHistory, style: TextStyle(color: colors.textSecondary)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(AppLocalizations.of(context)!.cancel)),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(AppLocalizations.of(context)!.delete, style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -283,9 +284,9 @@ class _SettingsTabState extends State<SettingsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Blocked Users", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                Text(AppLocalizations.of(context)!.blockedUsers, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                 const SizedBox(height: 16),
-                if (users.isEmpty) Expanded(child: Center(child: Text("No blocked users", style: TextStyle(color: colors.textSecondary)))),
+                if (users.isEmpty) Expanded(child: Center(child: Text(AppLocalizations.of(context)!.noBlockedUsers, style: TextStyle(color: colors.textSecondary)))),
                 if (users.isNotEmpty)
                   Expanded(
                     child: ListView.separated(
@@ -300,9 +301,9 @@ class _SettingsTabState extends State<SettingsTab> {
                             onPressed: () async {
                               await SupabaseService.unblockUser(u['id']);
                               Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Unblocked ${u['username']}")));
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.unblockedUser(u['username']))));
                             },
-                            child: const Text("Unblock"),
+                            child: Text(AppLocalizations.of(context)!.unblock),
                           ),
                         );
                       },
@@ -326,13 +327,13 @@ class _SettingsTabState extends State<SettingsTab> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           backgroundColor: TransColors.of(context).cardBg,
-          title: Text("Delete Account", style: TextStyle(color: TransColors.of(context).textPrimary)),
+          title: Text(AppLocalizations.of(context)!.deleteAccount, style: TextStyle(color: TransColors.of(context).textPrimary)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("This action is irreversible. All your data will be permanently deleted.", style: TextStyle(color: Colors.red)),
+              Text(AppLocalizations.of(context)!.deleteAccountWarning, style: TextStyle(color: Colors.red)),
               const SizedBox(height: 16),
-              Text("Please enter your password to confirm:", style: TextStyle(color: TransColors.of(context).textSecondary)),
+              Text(AppLocalizations.of(context)!.enterPasswordToConfirm, style: TextStyle(color: TransColors.of(context).textSecondary)),
               const SizedBox(height: 8),
               TextField(
                 controller: passwordCtrl,
@@ -350,7 +351,7 @@ class _SettingsTabState extends State<SettingsTab> {
           actions: [
             TextButton(
               onPressed: isLoading ? null : () => Navigator.pop(ctx),
-              child: const Text("Cancel"),
+              child: Text(AppLocalizations.of(context)!.cancel),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -375,7 +376,7 @@ class _SettingsTabState extends State<SettingsTab> {
               },
               child: isLoading 
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
-                : const Text("Delete Forever", style: TextStyle(color: Colors.white)),
+                : Text(AppLocalizations.of(context)!.deleteForever, style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -413,7 +414,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ),
               const SizedBox(width: 16),
-              Text("Trans", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+              Text(AppLocalizations.of(context)!.appName, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.textPrimary)),
               // DEV badge - only shows on dev builds
               if (const bool.fromEnvironment('IS_DEV', defaultValue: false)) ...[
                 const SizedBox(width: 8),
@@ -453,12 +454,12 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 30),
           
           if (user != null) ...[
-            Text("Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+            Text(AppLocalizations.of(context)!.privacy, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
             const SizedBox(height: 8),
             _buildSection(context, [
               SwitchListTile(
-                title: Text("Ghost Mode", style: TextStyle(color: colors.textPrimary)), 
-                subtitle: Text("Hide location from everyone", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                title: Text(AppLocalizations.of(context)!.ghostMode, style: TextStyle(color: colors.textPrimary)), 
+                subtitle: Text(AppLocalizations.of(context)!.hideLocation, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: widget.isGhostMode, 
                 activeTrackColor: Colors.red,
                 activeColor: Colors.white,
@@ -475,16 +476,16 @@ class _SettingsTabState extends State<SettingsTab> {
 
           _buildSection(context, [
             ListTile(
-              title: Text("Dark Mode", style: TextStyle(color: colors.textPrimary)),
+              title: Text(AppLocalizations.of(context)!.darkMode, style: TextStyle(color: colors.textPrimary)),
               subtitle: widget.useSystemTheme 
-                  ? Text("Synced with System", style: TextStyle(fontSize: 12, color: colors.textSecondary))
+                  ? Text(AppLocalizations.of(context)!.syncedWithSystem, style: TextStyle(fontSize: 12, color: colors.textSecondary))
                   : null,
               trailing: Switch(
                 value: widget.isDarkMode,
                 activeColor: widget.useSystemTheme ? Colors.grey : primaryColor,
                 onChanged: widget.useSystemTheme 
                   ? (val) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("System Sync Active. Long press to disable.")));
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.systemSyncActive)));
                     } 
                   : widget.onThemeChanged,
               ),
@@ -498,8 +499,8 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
             
             SwitchListTile(
-              title: Text("Deutschlandticket Mode", style: TextStyle(color: colors.textPrimary)), 
-              subtitle: Text("Only local/regional transport", style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
+              title: Text(AppLocalizations.of(context)!.deutschlandTicketMode, style: TextStyle(color: colors.textPrimary)), 
+              subtitle: Text(AppLocalizations.of(context)!.onlyLocalTransport, style: TextStyle(fontSize: 12, color: colors.textSecondary)), 
               value: widget.onlyNahverkehr, 
               activeColor: primaryColor,
               onChanged: widget.onNahverkehrChanged
@@ -507,11 +508,11 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
           
           const SizedBox(height: 20),
-          Text("Appearance", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+          Text(AppLocalizations.of(context)!.appearance, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
             ListTile(
-              title: Text("Theme Color", style: TextStyle(color: colors.textPrimary)),
+              title: Text(AppLocalizations.of(context)!.themeColor, style: TextStyle(color: colors.textPrimary)),
               subtitle: SizedBox(
                 height: 40,
                 child: ListView(
@@ -522,8 +523,8 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
             Divider(color: colors.divider), // Separator
             SwitchListTile(
-              title: Text("Show Train Numbers", style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text("Display trip IDs (e.g. RE1 (12345))", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              title: Text(AppLocalizations.of(context)!.showTrainNumbers, style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text(AppLocalizations.of(context)!.displayTripIds, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               value: widget.showTrainNumbers,
               activeColor: primaryColor,
               onChanged: widget.onShowTrainNumbersChanged,
@@ -531,11 +532,11 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
 
           const SizedBox(height: 20),
-          Text("Notifications & Haptics", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+          Text(AppLocalizations.of(context)!.notificationsAndHaptics, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
              ListTile(
-               title: Text("Alarm Trigger", style: TextStyle(color: colors.textPrimary)), 
+               title: Text(AppLocalizations.of(context)!.alarmTrigger, style: TextStyle(color: colors.textPrimary)), 
                subtitle: Text("Alert ${_stopsBeforeAlarm == 0 ? 'at destination' : '$_stopsBeforeAlarm stops before'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                trailing: DropdownButton<int>(
                  value: _stopsBeforeAlarm,
@@ -552,8 +553,8 @@ class _SettingsTabState extends State<SettingsTab> {
              ),
              Divider(color: colors.divider),
              ListTile(
-               title: Text("Trigger Threshold", style: TextStyle(color: colors.textPrimary)), 
-               subtitle: Text("Notify at $_alarmTriggerThreshold ${(_alarmTriggerThreshold.contains('%')) ? 'of leg covered' : 'from target'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               title: Text(AppLocalizations.of(context)!.triggerThreshold, style: TextStyle(color: colors.textPrimary)), 
+               subtitle: Text(AppLocalizations.of(context)!.notifyAtThreshold(_alarmTriggerThreshold, (_alarmTriggerThreshold.contains('%')) ? 'of leg covered' : 'from target')), style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                trailing: DropdownButton<String>(
                  value: _alarmTriggerThreshold,
                  dropdownColor: colors.cardBg,
@@ -568,7 +569,7 @@ class _SettingsTabState extends State<SettingsTab> {
              ),
              Divider(color: colors.divider),
              ListTile(
-               title: Text("Alarm Pattern", style: TextStyle(color: colors.textPrimary)), 
+               title: Text(AppLocalizations.of(context)!.alarmPattern, style: TextStyle(color: colors.textPrimary)), 
                trailing: DropdownButton<String>(
                  value: _vibrationPattern, 
                  dropdownColor: colors.cardBg, 
@@ -598,7 +599,7 @@ class _SettingsTabState extends State<SettingsTab> {
                )
              ),
              ListTile(
-               title: Text("Vibration Intensity", style: TextStyle(color: colors.textPrimary)), 
+               title: Text(AppLocalizations.of(context)!.vibrationIntensity, style: TextStyle(color: colors.textPrimary)), 
                subtitle: Slider(
                  value: _vibrationIntensity.toDouble(), 
                  min: 1, 
@@ -616,8 +617,8 @@ class _SettingsTabState extends State<SettingsTab> {
              ),
              Divider(color: colors.divider),
              SwitchListTile(
-               title: Text("Always Wake Me", style: TextStyle(color: colors.textPrimary)),
-               subtitle: Text("Turn on alarm for every journey by default", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               title: Text(AppLocalizations.of(context)!.alwaysWakeMe, style: TextStyle(color: colors.textPrimary)),
+               subtitle: Text(AppLocalizations.of(context)!.turnOnAlarmDefault, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                value: widget.alwaysWakeMe,
                activeColor: primaryColor,
                onChanged: widget.onAlwaysWakeMeChanged,
@@ -625,20 +626,20 @@ class _SettingsTabState extends State<SettingsTab> {
           ]),
           
           const SizedBox(height: 20),
-          Text("Data & Privacy", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+          Text(AppLocalizations.of(context)!.dataAndPrivacy, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
-            ListTile(leading: Icon(Icons.block, color: colors.iconBlock), title: Text("Blocked Users", style: TextStyle(color: colors.textPrimary)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
+            ListTile(leading: Icon(Icons.block, color: colors.iconBlock), title: Text(AppLocalizations.of(context)!.blockedUsers, style: TextStyle(color: colors.textPrimary)), trailing: const Icon(Icons.arrow_forward_ios, size: 16), onTap: _showBlockedUsers),
             Divider(height: 1, color: colors.divider),
-            ListTile(leading: Icon(Icons.delete_outline, color: colors.iconDelete), title: const Text("Clear Search History", style: TextStyle(color: Colors.red)), onTap: _clearHistory),
+            ListTile(leading: Icon(Icons.delete_outline, color: colors.iconDelete), title: Text(AppLocalizations.of(context)!.clearSearchHistory, style: TextStyle(color: Colors.red)), onTap: _clearHistory),
           ]),
           
           const SizedBox(height: 20),
-          Text("Data Source (Advanced)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
+          Text(AppLocalizations.of(context)!.dataSourceAdvanced, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: colors.settingsHeader)),
           const SizedBox(height: 8),
           _buildSection(context, [
              ListTile(
-               title: Text("Transport API", style: TextStyle(color: colors.textPrimary)),
+               title: Text(AppLocalizations.of(context)!.transportApi, style: TextStyle(color: colors.textPrimary)),
                subtitle: Text("Selected: ${_apiMode == 'auto' ? 'Auto (Recommended)' : _apiMode == 'motis' ? 'Transitous (Open Source)' : 'Deutsche Bahn (Legacy)'}", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                trailing: DropdownButton<String>(
                  value: _apiMode,
@@ -686,7 +687,7 @@ class _SettingsTabState extends State<SettingsTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          Text("Profile", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)), 
+          Text(AppLocalizations.of(context)!.profileSettings, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.textPrimary)), 
           const SizedBox(width: 16), 
           GestureDetector(
             onTap: _pickAvatar, 
@@ -710,18 +711,18 @@ class _SettingsTabState extends State<SettingsTab> {
           child: Column(
             children: [
               if (!_isEditing) ...[
-                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? "No Username", style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; _emailCtrl.text = user.email ?? ""; setState(() => _isEditing = true); })),
+                ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? AppLocalizations.of(context)!.noUsername, style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; _emailCtrl.text = user.email ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
-                TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: "Username")),
-                TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email")), // Added Email Field
-                TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: "New Password (Optional)"), obscureText: true),
+                TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.username)),
+                TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings)), // Added Email Field
+                TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.newPasswordOpt), obscureText: true),
                 const SizedBox(height: 10),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile updated! Check email for confirmation if changed."))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: const Text("Save"))])
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: Text(AppLocalizations.of(context)!.cancel)), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.profileUpdated))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: Text(AppLocalizations.of(context)!.save))])
               ],
               Divider(color: colors.divider),
-              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Log Out", style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); }),
+              ListTile(contentPadding: EdgeInsets.zero, title: Text(AppLocalizations.of(context)!.logOut, style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); }),
               Divider(color: colors.divider),
-              ListTile(contentPadding: EdgeInsets.zero, title: const Text("Delete Account", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), leading: const Icon(Icons.delete_forever, color: Colors.red), onTap: _showDeleteAccountDialog),
+              ListTile(contentPadding: EdgeInsets.zero, title: const Text(AppLocalizations.of(context)!.deleteAccount, style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), leading: const Icon(Icons.delete_forever, color: Colors.red), onTap: _showDeleteAccountDialog),
             ],
           ),
         )
@@ -735,18 +736,18 @@ class _SettingsTabState extends State<SettingsTab> {
       decoration: BoxDecoration(color: colors.authFormBg, borderRadius: BorderRadius.circular(16)),
       child: Column(
         children: [
-          Text("Login / Sign Up", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold)),
+          Text(AppLocalizations.of(context)!.loginSignUp, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: "Email")),
+          TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.emailSettings)),
           const SizedBox(height: 10),
-          TextField(controller: _usernameCtrl, decoration: const InputDecoration(hintText: "Username (Sign Up)")),
+          TextField(controller: _usernameCtrl, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.usernameSignUp)),
           const SizedBox(height: 10),
-          TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: "Password")),
+          TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.password)),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: () => _showForgotPasswordDialog(context),
-              child: const Text("Forgot Password?", style: TextStyle(fontSize: 12)),
+              child: Text(AppLocalizations.of(context)!.forgotPassword, style: TextStyle(fontSize: 12)),
             ),
           ),
           const SizedBox(height: 10),
@@ -761,7 +762,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
                 } 
               }, 
-              child: const Text("Login")
+              child: Text(AppLocalizations.of(context)!.login)
             ), 
             TextButton(
               onPressed: () async { 
@@ -773,7 +774,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
                 } 
               }, 
-              child: const Text("Sign Up")
+              child: Text(AppLocalizations.of(context)!.signUp)
             )
           ])
         ],
@@ -791,15 +792,15 @@ class _SettingsTabState extends State<SettingsTab> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Reset Password"),
+        title: Text(AppLocalizations.of(context)!.resetPassword),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Enter your email to receive a password reset link."),
+            Text(AppLocalizations.of(context)!.enterEmailReset),
             const SizedBox(height: 10),
             TextField(
               controller: emailCtrl,
-              decoration: const InputDecoration(labelText: "Email"),
+              decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings),
               keyboardType: TextInputType.emailAddress,
             ),
           ],
@@ -807,7 +808,7 @@ class _SettingsTabState extends State<SettingsTab> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text("Cancel"),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -818,7 +819,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Password reset email sent (if account exists).")),
+                    SnackBar(content: Text(AppLocalizations.of(context)!.passwordResetEmailSent)),
                   );
                 }
               } catch (e) {
@@ -829,7 +830,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 }
               }
             },
-            child: const Text("Send"),
+            child: Text(AppLocalizations.of(context)!.send),
           ),
         ],
       ),

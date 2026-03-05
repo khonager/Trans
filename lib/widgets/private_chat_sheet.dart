@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import '../services/supabase_service.dart';
 import '../config/app_theme.dart';
 
@@ -71,7 +72,7 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                   children: [
                     const Icon(Icons.lock, size: 16, color: Colors.green),
                     const SizedBox(width: 8),
-                    Text("Secure Chat: ${widget.friendName}", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                    Text(AppLocalizations.of(context)!.secureChat(widget.friendName), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                   ],
                 ),
                 IconButton(
@@ -93,7 +94,7 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                 // Auto-scroll to bottom when new messages arrive
                 WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
-                if (msgs.isEmpty) return Center(child: Text("No secure messages yet.", style: TextStyle(color: colors.textSecondary)));
+                if (msgs.isEmpty) return Center(child: Text(AppLocalizations.of(context)!.noSecureMessagesYet, style: TextStyle(color: colors.textSecondary)));
 
                 return ListView.builder(
                   controller: _scrollCtrl,

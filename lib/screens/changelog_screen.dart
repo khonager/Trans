@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import '../config/app_theme.dart';
 
 class ChangelogScreen extends StatefulWidget {
@@ -41,21 +42,27 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
           return dateB.compareTo(dateA);
         });
 
-        setState(() {
-          _releases = data;
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _releases = data;
+            _isLoading = false;
+          });
+        }
       } else {
+        if (mounted) {
+          setState(() {
+            _error = AppLocalizations.of(context)!.failedToLoadReleases(response.statusCode.toString());
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
         setState(() {
-          _error = 'Failed to load releases: ${response.statusCode}';
+          _error = AppLocalizations.of(context)!.errorLoadingReleases(e.toString());
           _isLoading = false;
         });
       }
-    } catch (e) {
-      setState(() {
-        _error = 'Error loading releases: $e';
-        _isLoading = false;
-      });
     }
   }
 
@@ -66,7 +73,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
       appBar: AppBar(
-        title: Text("Changelog", style: TextStyle(color: colors.textPrimary)),
+        title: Text(AppLocalizations.of(context)!.changelogTitle, style: TextStyle(color: colors.textPrimary)),
         backgroundColor: colors.scaffoldBg,
         iconTheme: IconThemeData(color: colors.textPrimary),
         elevation: 0,
@@ -90,7 +97,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                           });
                           _fetchReleases();
                         },
-                        child: const Text("Retry"),
+                        child: Text(AppLocalizations.of(context)!.retry),
                       )
                     ],
                   ),
@@ -100,9 +107,9 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                   itemCount: _releases.length,
                   itemBuilder: (context, index) {
                     final release = _releases[index];
-                    final String tagName = release['tag_name'] ?? 'Unknown Version';
+                    final String tagName = release['tag_name'] ?? AppLocalizations.of(context)!.unknownVersion;
                     final String name = release['name'] ?? '';
-                    final String body = release['body'] ?? 'No description.';
+                    final String body = release['body'] ?? AppLocalizations.of(context)!.noDescription;
                     final String dateStr = release['published_at'] ?? '';
                     
                     DateTime? date;
@@ -145,7 +152,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  isCurrent ? "$tagName (Current)" : tagName,
+                                  isCurrent ? AppLocalizations.of(context)!.currentVersionLabel(tagName) : tagName,
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: colors.effectiveSeed,
