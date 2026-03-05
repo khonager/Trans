@@ -99,6 +99,7 @@ class JourneyStep {
     bool? isCancelled,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
+    String? startStationName,
     String? destinationName,
     String? headsign,
     String? tripId,

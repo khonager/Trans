@@ -89,7 +89,7 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
                 },
                 aspectRatio: null, // Free crop
                 baseColor: colors.scaffoldBg,
-                maskColor: Colors.black.withOpacity(0.5),
+                maskColor: Colors.black.withValues(alpha: 0.5),
                 radius: 0,
                 cornerDotBuilder: (size, edgeAlignment) => 
                    const DotControl(color: Colors.blueAccent),

@@ -323,7 +323,7 @@ class TransportApi {
     // TIME
     if (when != null) {
       // MOTIS expects ISO8601 without microseconds
-      params['time'] = when.toUtc().toIso8601String().split('.').first + 'Z';
+      params['time'] = '${when.toUtc().toIso8601String().split('.').first}Z';
       params['arriveBy'] = isArrival.toString();
     }
 

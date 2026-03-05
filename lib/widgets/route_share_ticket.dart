@@ -196,16 +196,8 @@ class RouteShareTicket extends StatelessWidget {
     );
   }
 
-  Widget _buildTicketInfo(String label, String value, {bool monospace = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 2),
-        Text(value, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, fontFamily: monospace ? 'monospace' : null)),
-      ],
-    );
-  }
+
+
 
   Widget _buildPerforatedDivider(Color cutoutColor) {
     return Container(

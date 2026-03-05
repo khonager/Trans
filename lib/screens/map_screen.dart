@@ -104,7 +104,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _isCompassMode = false;
   StreamSubscription<Position>? _positionStream;
   StreamSubscription<CompassEvent>? _compassStream;
-  double? _currentHeading;
+
 
   @override
   void initState() {
@@ -134,7 +134,7 @@ class _MapScreenState extends State<MapScreen> {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
        // Try request?
-       try { permission = await Geolocator.requestPermission(); } catch(_) {}
+       try { permission = await Geolocator.requestPermission(); } catch(e) { debugPrint('Permission error: $e'); }
        if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
           setState(() => _isCompassMode = false);
           return;
@@ -158,7 +158,6 @@ class _MapScreenState extends State<MapScreen> {
          if (!_isCompassMode) return;
          final heading = event.heading;
          if (heading != null) {
-            _currentHeading = heading;
             // Rotate map
             _mapController.rotate(-heading);
          }
@@ -374,7 +373,7 @@ class _MapScreenState extends State<MapScreen> {
         markers.add(Marker(
           point: LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude),
           width: 32, height: 32,
-          child: Container(decoration: BoxDecoration(color: Colors.blue.withOpacity(0.3), shape: BoxShape.circle), child: const Icon(Icons.my_location, color: Colors.blue, size: 16)),
+          child: Container(decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.3), shape: BoxShape.circle), child: const Icon(Icons.my_location, color: Colors.blue, size: 16)),
         ));
       }
 

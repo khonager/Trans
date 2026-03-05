@@ -128,11 +128,11 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                         borderRadius: BorderRadius.circular(16),
                         border: isCurrent 
                             ? Border.all(color: colors.effectiveSeed, width: 2)
-                            : Border.all(color: colors.divider.withOpacity(0.5)),
+                            : Border.all(color: colors.divider.withValues(alpha: 0.5)),
                         boxShadow: isCurrent 
                             ? [
                                 BoxShadow(
-                                  color: colors.effectiveSeed.withOpacity(0.4),
+                                  color: colors.effectiveSeed.withValues(alpha: 0.4),
                                   blurRadius: 15,
                                   spreadRadius: 2,
                                 )
@@ -148,7 +148,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: colors.effectiveSeed.withOpacity(0.2),
+                                  color: colors.effectiveSeed.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
