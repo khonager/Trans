@@ -64,9 +64,12 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
         actions: [
           IconButton(
             onPressed: _isCropping ? null : _onCrop,
-            icon: _isCropping 
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) 
-              : const Icon(Icons.check),
+            icon: _isCropping
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.check),
             tooltip: "Apply Crop",
           ),
         ],
@@ -91,8 +94,8 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
                 baseColor: colors.scaffoldBg,
                 maskColor: Colors.black.withValues(alpha: 0.5),
                 radius: 0,
-                cornerDotBuilder: (size, edgeAlignment) => 
-                   const DotControl(color: Colors.blueAccent),
+                cornerDotBuilder: (size, edgeAlignment) =>
+                    const DotControl(color: Colors.blueAccent),
                 interactive: true,
                 fixCropRect: false,
               ),

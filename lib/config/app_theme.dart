@@ -13,7 +13,8 @@ const List<Color> appThemeColors = [
 ];
 
 class AppTheme {
-  static ThemeData lightTheme(Color seed) => createTheme(seed, Brightness.light);
+  static ThemeData lightTheme(Color seed) =>
+      createTheme(seed, Brightness.light);
   static ThemeData darkTheme(Color seed) => createTheme(seed, Brightness.dark);
 }
 
@@ -25,8 +26,9 @@ class TransColors extends ThemeExtension<TransColors> {
   const TransColors({required this.seed, required this.brightness});
 
   bool get isDark => brightness == Brightness.dark;
-  
-  Color get effectiveSeed => (isDark && seed.toARGB32() == 0xFF000000) ? Colors.white : seed;
+
+  Color get effectiveSeed =>
+      (isDark && seed.toARGB32() == 0xFF000000) ? Colors.white : seed;
   Color get baseCard => isDark ? const Color(0xFF18181B) : Colors.white;
   Color get baseText => isDark ? Colors.white : Colors.black87;
   Color get subText => isDark ? Colors.white54 : Colors.grey.shade700;
@@ -40,35 +42,43 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get modalHandle => Colors.grey.shade600;
 
   // 2. APP BAR & NAVIGATION
-  Color get appBarBg => (isDark ? Colors.black : Colors.white).withValues(alpha: 0.8);
+  Color get appBarBg =>
+      (isDark ? Colors.black : Colors.white).withValues(alpha: 0.8);
   Color get appBarTitle => baseText;
   Color get appBarIconBg => effectiveSeed;
   Color get navBarBg => baseCard;
   Color get navBarSelected => effectiveSeed;
   Color get navBarUnselected => isDark ? Colors.white38 : Colors.grey.shade600;
-  Color get navBarIndicator => effectiveSeed.withValues(alpha: isDark ? 0.2 : 0.1);
+  Color get navBarIndicator =>
+      effectiveSeed.withValues(alpha: isDark ? 0.2 : 0.1);
 
   // 3. SEARCH & HOME
   Color get searchHeaderIconBg => effectiveSeed.withValues(alpha: 0.15);
   Color get searchHeaderIcon => effectiveSeed;
-  Color get searchInputFill => isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200;
+  Color get searchInputFill =>
+      isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.shade200;
   Color get searchInputIcon => isDark ? effectiveSeed : Colors.grey;
   Color get searchInputText => baseText;
   Color get searchHintText => isDark ? Colors.white38 : Colors.grey;
   Color get searchBtnBg => effectiveSeed;
-  Color get searchBtnText => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
-  
-  Color get timeContainerBg => isDark ? const Color(0xFF1F2937) : Colors.grey.shade100;
+  Color get searchBtnText =>
+      (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+
+  Color get timeContainerBg =>
+      isDark ? const Color(0xFF1F2937) : Colors.grey.shade100;
   Color get timeToggleBg => effectiveSeed.withValues(alpha: 0.15);
-  Color get timeToggleText => effectiveSeed; 
+  Color get timeToggleText => effectiveSeed;
   Color get sectionHeader => isDark ? Colors.white60 : Colors.grey.shade600;
 
   // 4. FAVORITES
   Color get favStationBg => effectiveSeed.withValues(alpha: isDark ? 0.2 : 0.1);
   Color get favStationIcon => effectiveSeed;
-  Color get favFriendBg => isDark ? Colors.green.withValues(alpha: 0.3) : Colors.green.withValues(alpha: 0.15);
+  Color get favFriendBg => isDark
+      ? Colors.green.withValues(alpha: 0.3)
+      : Colors.green.withValues(alpha: 0.15);
   Color get favFriendIcon => isDark ? Colors.white : Colors.green;
-  Color get favAddBg => isDark ? Colors.white24 : Colors.grey.withValues(alpha: 0.2);
+  Color get favAddBg =>
+      isDark ? Colors.white24 : Colors.grey.withValues(alpha: 0.2);
   Color get favAddIcon => isDark ? Colors.white : Colors.black;
   Color get favText => isDark ? Colors.white70 : Colors.black87;
 
@@ -77,16 +87,18 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get stepTransferBg => Colors.orange.withValues(alpha: 0.1);
   Color get stepTransferBorder => Colors.orange.withValues(alpha: 0.3);
   Color get stepTransferText => Colors.orange;
-  Color get stepTimeText => effectiveSeed; 
+  Color get stepTimeText => effectiveSeed;
   Color get stepPlatformText => Colors.greenAccent;
-  Color get stepStopoversBg => (isDark ? Colors.black : const Color(0xFFF3F4F6)).withValues(alpha: 0.5);
+  Color get stepStopoversBg =>
+      (isDark ? Colors.black : const Color(0xFFF3F4F6)).withValues(alpha: 0.5);
   Color get delayLate => Colors.red;
   Color get delayOnTime => Colors.green;
-  
+
   Color get chipBg => isDark ? Colors.white12 : Colors.grey.shade200;
   Color get chipFg => isDark ? Colors.white70 : Colors.grey.shade700;
   Color get chipActiveBg => effectiveSeed;
-  Color get chipActiveFg => (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
+  Color get chipActiveFg =>
+      (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
 
   // 6. FRIENDS TAB
   Color get friendCardActiveBg => baseCard.withValues(alpha: 0.9);
@@ -147,18 +159,20 @@ class TransColors extends ThemeExtension<TransColors> {
     return TransColors(seed: seed, brightness: brightness);
   }
 
-  static TransColors of(BuildContext context) => Theme.of(context).extension<TransColors>()!;
+  static TransColors of(BuildContext context) =>
+      Theme.of(context).extension<TransColors>()!;
 }
 
 ThemeData createTheme(Color seed, Brightness brightness) {
   final isDark = brightness == Brightness.dark;
-  final baseScheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
-  
-  final scheme = isDark 
+  final baseScheme =
+      ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+
+  final scheme = isDark
       ? baseScheme.copyWith(
-          primary: seed, 
+          primary: seed,
           onPrimary: Colors.white,
-          surface: Colors.black, 
+          surface: Colors.black,
           surfaceContainerLow: const Color(0xFF18181B),
         )
       : baseScheme.copyWith(
@@ -172,7 +186,9 @@ ThemeData createTheme(Color seed, Brightness brightness) {
     scaffoldBackgroundColor: scheme.surface,
     cardColor: isDark ? const Color(0xFF18181B) : Colors.white,
     appBarTheme: AppBarTheme(
-      backgroundColor: isDark ? Colors.black.withValues(alpha: 0.8) : Colors.white.withValues(alpha: 0.8),
+      backgroundColor: isDark
+          ? Colors.black.withValues(alpha: 0.8)
+          : Colors.white.withValues(alpha: 0.8),
       foregroundColor: isDark ? Colors.white : Colors.black,
     ),
     extensions: [
@@ -185,13 +201,17 @@ ThemeData createTheme(Color seed, Brightness brightness) {
         if (states.contains(WidgetState.selected)) {
           return IconThemeData(color: seed);
         }
-        return IconThemeData(color: TransColors.fromSeed(seed, brightness).navBarUnselected);
+        return IconThemeData(
+            color: TransColors.fromSeed(seed, brightness).navBarUnselected);
       }),
       labelTextStyle: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return TextStyle(color: seed, fontWeight: FontWeight.bold, fontSize: 12);
+          return TextStyle(
+              color: seed, fontWeight: FontWeight.bold, fontSize: 12);
         }
-        return TextStyle(color: TransColors.fromSeed(seed, brightness).navBarUnselected, fontSize: 12);
+        return TextStyle(
+            color: TransColors.fromSeed(seed, brightness).navBarUnselected,
+            fontSize: 12);
       }),
     ),
     sliderTheme: SliderThemeData(

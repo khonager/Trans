@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 // ignore_for_file: avoid_print
@@ -8,10 +7,11 @@ void main() async {
   final baseUrl = 'https://v6.db.transport.rest/journeys';
   // Example: Frankfurt Main Hbf to Berlin Hbf (long distance usually has delays)
   final fromId = '8000105';
-  final toId = '8011160'; 
-  
-  final uri = Uri.parse('$baseUrl?from=$fromId&to=$toId&results=3&stopovers=true');
-  
+  final toId = '8011160';
+
+  final uri =
+      Uri.parse('$baseUrl?from=$fromId&to=$toId&results=3&stopovers=true');
+
   print("Fetching $uri");
   try {
     final response = await http.get(uri);
