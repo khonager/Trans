@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:trans/models/journey.dart';
@@ -77,7 +78,7 @@ class RouteShareTicket extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("DEP", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.dep, style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
                         Text(
                           DateFormat('HH:mm').format(journey.departure),
                           style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
@@ -91,7 +92,7 @@ class RouteShareTicket extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        const Text("ARR", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.arr, style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
                         Text(
                           DateFormat('HH:mm').format(journey.arrival),
                           style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
@@ -131,7 +132,7 @@ class RouteShareTicket extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildStepHeaderDense(step, textColor),
+                              _buildStepHeaderDense(context, step, textColor),
                               const SizedBox(height: 4),
                               Text(
                                 isRide ? "${step.startStationName ?? '?'} • ${step.duration}".toUpperCase() : step.instruction,
@@ -154,7 +155,7 @@ class RouteShareTicket extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("PASSENGER", style: TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.passenger, style: TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
                         const SizedBox(height: 2),
                         Text(username.toUpperCase(), style: const TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w900, fontFamily: monospaceFont)),
                       ],
@@ -225,13 +226,13 @@ class RouteShareTicket extends StatelessWidget {
     );
   }
 
-  Widget _buildStepHeaderDense(JourneyStep step, Color textColor) {
+  Widget _buildStepHeaderDense(BuildContext context, JourneyStep step, Color textColor) {
     if (step.type == 'walk') {
       return Row(
         children: [
           const Icon(Icons.directions_walk, size: 14, color: Colors.orange),
           const SizedBox(width: 8),
-          const Text("WALK", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w900, fontSize: 14)),
+          Text(AppLocalizations.of(context)!.walk, style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w900, fontSize: 14)),
           const SizedBox(width: 8),
           Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],
@@ -243,7 +244,7 @@ class RouteShareTicket extends StatelessWidget {
         children: [
           const Icon(Icons.sync, size: 14, color: Colors.blueAccent),
           const SizedBox(width: 8),
-          const Text("TRANSFER", style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+          Text(AppLocalizations.of(context)!.transfer, style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 14)),
           const SizedBox(width: 8),
           Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],

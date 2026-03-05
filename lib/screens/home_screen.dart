@@ -10,6 +10,7 @@ import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../widgets/ticket_panel.dart';
 import '../config/app_theme.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -107,8 +108,8 @@ class _HomeScreenState extends State<HomeScreen> {
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          title: const Text("Reset Password"),
-          content: const Text("You have securely logged in via the password reset link. Please set a new password now."),
+          title: Text(AppLocalizations.of(context)!.resetPassword),
+          content: Text(AppLocalizations.of(context)!.resetPasswordMessage),
           actions: [
             ElevatedButton(
               onPressed: () {
@@ -118,10 +119,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 // but for now, directing them to the tab is a good start. 
                 // We'll show a snackbar to guide them.
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Tap the 'Edit' icon in your profile to set a new password.")),
+                  SnackBar(content: Text(AppLocalizations.of(context)!.resetPasswordSnackbar)),
                 );
               },
-              child: const Text("OK"),
+              child: Text(AppLocalizations.of(context)!.ok),
             ),
           ],
         ),
@@ -218,16 +219,16 @@ class _HomeScreenState extends State<HomeScreen> {
         final shouldQuit = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Quit App?'),
-            content: const Text('Do you want to exit the application?'),
+            title: Text(AppLocalizations.of(context)!.quitAppTitle),
+            content: Text(AppLocalizations.of(context)!.quitAppMessage),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('No'),
+                child: Text(AppLocalizations.of(context)!.no),
               ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Yes'),
+                child: Text(AppLocalizations.of(context)!.yes),
               ),
             ],
           ),
@@ -255,10 +256,10 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: _onTabChanged,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.directions), label: 'Routes'),
-          NavigationDestination(icon: Icon(Icons.people), label: 'Friends'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+        destinations: [
+          NavigationDestination(icon: const Icon(Icons.directions), label: AppLocalizations.of(context)!.routes),
+          NavigationDestination(icon: const Icon(Icons.people), label: AppLocalizations.of(context)!.friends),
+          NavigationDestination(icon: const Icon(Icons.settings), label: AppLocalizations.of(context)!.settings),
         ],
       ),
     ));

@@ -8,6 +8,7 @@ import 'package:trans/models/journey.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 enum RouteSortOption {
   earliestDeparture,
@@ -161,10 +162,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Route ticket copied to clipboard!"),
+            SnackBar(
+              content: Text(AppLocalizations.of(context)!.routeTicketCopied),
               behavior: SnackBarBehavior.floating,
-              duration: Duration(seconds: 2),
+              duration: const Duration(seconds: 2),
             ),
           );
         }
@@ -173,7 +174,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       debugPrint("Error copying ticket: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-           SnackBar(content: Text("Failed to copy: $e")),
+           SnackBar(content: Text(AppLocalizations.of(context)!.failedToCopy(e.toString()))),
         );
       }
     } finally {
@@ -200,7 +201,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
               ),
               Expanded(
                 child: Text(
-                  "${widget.candidates.length} Routes Found",
+                  AppLocalizations.of(context)!.routesFound(widget.candidates.length.toString()),
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -219,42 +220,42 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           child: Row(
             children: [
               _SortChip(
-                label: "Earliest Dep.",
+                label: AppLocalizations.of(context)!.earliestDep,
                 icon: Icons.schedule,
                 isSelected: _currentSort == RouteSortOption.earliestDeparture,
                 onTap: () => _onSortChanged(RouteSortOption.earliestDeparture),
               ),
               const SizedBox(width: 8),
               _SortChip(
-                label: "Earliest Arr.",
+                label: AppLocalizations.of(context)!.earliestArr,
                 icon: Icons.timer_off,
                 isSelected: _currentSort == RouteSortOption.earliestArrival,
                 onTap: () => _onSortChanged(RouteSortOption.earliestArrival),
               ),
               const SizedBox(width: 8),
               _SortChip(
-                label: "Fastest",
+                label: AppLocalizations.of(context)!.fastest,
                 icon: Icons.flash_on,
                 isSelected: _currentSort == RouteSortOption.shortestDuration,
                 onTap: () => _onSortChanged(RouteSortOption.shortestDuration),
               ),
               const SizedBox(width: 8),
               _SortChip(
-                label: "Least Transfers",
+                label: AppLocalizations.of(context)!.leastTransfers,
                 icon: Icons.directions_walk,
                 isSelected: _currentSort == RouteSortOption.leastTransfers,
                 onTap: () => _onSortChanged(RouteSortOption.leastTransfers),
               ),
               const SizedBox(width: 8),
               _SortChip(
-                label: "Least Wait",
+                label: AppLocalizations.of(context)!.leastWait,
                 icon: Icons.hourglass_empty,
                 isSelected: _currentSort == RouteSortOption.shortestWait,
                 onTap: () => _onSortChanged(RouteSortOption.shortestWait),
               ),
               const SizedBox(width: 8),
               _SortChip(
-                label: "Least Walking",
+                label: AppLocalizations.of(context)!.leastWalking,
                 icon: Icons.directions_walk,
                 isSelected: _currentSort == RouteSortOption.leastWalking,
                 onTap: () => _onSortChanged(RouteSortOption.leastWalking),
@@ -280,7 +281,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       child: _isLoadingMoreEarlier
                           ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
                           : _LoadTrigger(
-                              label: "Load Earlier",
+                              label: AppLocalizations.of(context)!.loadEarlier,
                               icon: Icons.keyboard_arrow_up,
                               onTap: _handleLoadEarlier,
                             ),
@@ -296,7 +297,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       child: _isLoadingMoreLater
                           ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
                           : _LoadTrigger(
-                              label: "Load Later",
+                              label: AppLocalizations.of(context)!.loadLater,
                               icon: Icons.keyboard_arrow_down,
                               onTap: _handleLoadLater,
                             ),
@@ -492,7 +493,7 @@ class _JourneyCard extends StatelessWidget {
                             Padding(
                               padding: const EdgeInsets.only(left: 8.0),
                               child: Text(
-                                "CANCELLED",
+                                AppLocalizations.of(context)!.cancelled,
                                 style: const TextStyle(
                                   color: Colors.red,
                                   fontSize: 14,
@@ -554,7 +555,7 @@ class _JourneyCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      "${journey.transferCount} transfers",
+                      AppLocalizations.of(context)!.transfersCount(journey.transferCount.toString()),
                       style: TextStyle(
                         color: colors.textSecondary,
                         fontSize: 12,

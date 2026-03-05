@@ -1,4 +1,6 @@
 import 'dart:ui'; // Needed for PointerDeviceKind
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -168,6 +170,16 @@ class _TransAppState extends State<TransApp> {
       title: 'Trans',
       debugShowCheckedModeBanner: false,
       scrollBehavior: CustomScrollBehavior(), // APPLY FIX
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('en'), // English, no country code
+        Locale('de'), // German, no country code
+      ],
       themeMode: _themeMode,
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),

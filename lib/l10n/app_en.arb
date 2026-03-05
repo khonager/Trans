@@ -1,0 +1,374 @@
+{
+  "@@locale": "en",
+  "appTitle": "Trans",
+  "@appTitle": {
+    "description": "The title of the application"
+  },
+  "resetPassword": "Reset Password",
+  "resetPasswordMessage": "You have securely logged in via the password reset link. Please set a new password now.",
+  "resetPasswordSnackbar": "Tap the 'Edit' icon in your profile to set a new password.",
+  "ok": "OK",
+  "quitAppTitle": "Quit App?",
+  "quitAppMessage": "Do you want to exit the application?",
+  "no": "No",
+  "yes": "Yes",
+  "routes": "Routes",
+  "friends": "Friends",
+  "settings": "Settings",
+  "changelogTitle": "Changelog",
+  "failedToLoadReleases": "Failed to load releases: {statusCode}",
+  "@failedToLoadReleases": {
+    "placeholders": {
+      "statusCode": {
+        "type": "String"
+      }
+    }
+  },
+  "errorLoadingReleases": "Error loading releases: {error}",
+  "@errorLoadingReleases": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "retry": "Retry",
+  "unknownVersion": "Unknown Version",
+  "noDescription": "No description.",
+  "currentVersionLabel": "{tagName} (Current)",
+  "@currentVersionLabel": {
+    "placeholders": {
+      "tagName": {
+        "type": "String"
+      }
+    }
+  },
+  "addNewFriend": "Add New Friend",
+  "searchByUsername": "Search by username...",
+  "requestSentTo": "Request sent to @{username}",
+  "@requestSentTo": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "friendsTitle": "Friends",
+  "activeNow": "Active Now",
+  "requests": "Requests",
+  "offline": "Offline",
+  "noFriendsYet": "No friends yet.",
+  "sentFriendRequest": "Sent a friend request",
+  "friendRequestAccepted": "Friend request accepted!",
+  "friendRequestDenied": "Friend request denied.",
+  "inactive": "Inactive",
+  "activeRecently": "Active recently",
+  "onLine": "On {line}",
+  "@onLine": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      }
+    }
+  },
+  "lastOnLine": "Last on {line}",
+  "@lastOnLine": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      }
+    }
+  },
+  "activeRecentlyGhost": "Active recently (Ghost)",
+  "unknown": "Unknown",
+  "chat": "Chat",
+  "remove": "Remove",
+  "removeFriendTitle": "Remove {username}?",
+  "@removeFriendTitle": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "removeFriendMessage": "They will be removed from your friends list.",
+  "cancel": "Cancel",
+  "block": "Block",
+  "removedFriend": "Removed {username}",
+  "@removedFriend": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "blockedFriend": "Blocked {username}",
+  "@blockedFriend": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "errorString": "Error: {error}",
+  "@errorString": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "routesFound": "{count} Routes Found",
+  "@routesFound": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "earliestDep": "Earliest Dep.",
+  "earliestArr": "Earliest Arr.",
+  "fastest": "Fastest",
+  "leastTransfers": "Least Transfers",
+  "leastWait": "Least Wait",
+  "leastWalking": "Least Walking",
+  "loadEarlier": "Load Earlier",
+  "loadLater": "Load Later",
+  "routeTicketCopied": "Route ticket copied to clipboard!",
+  "failedToCopy": "Failed to copy: {error}",
+  "@failedToCopy": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "cancelled": "CANCELLED",
+  "transfersCount": "{count} transfers",
+  "@transfersCount": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "locationPermissionDenied": "Location permission denied. Alarm cannot work.",
+  "locationPermissionPermanentlyDenied": "Location permission permanently denied.",
+  "missingDestCoords": "Cannot start alarm: Missing destination coordinates.",
+  "wakeUpApproaching": "Wake Up! Approaching {stop}!",
+  "@wakeUpApproaching": {
+    "placeholders": {
+      "stop": {
+        "type": "String"
+      }
+    }
+  },
+  "serviceBusyTryAgain": "Service temporarily busy. Try again or type more characters.",
+  "serviceBusyPleaseTryAgain": "Service temporarily busy. Please try again.",
+  "locationNotAvailable": "Location not available.",
+  "noRoutesFound": "No routes found.",
+  "noRoutesFoundBusy": "No routes found. The service may be temporarily busy - please try again.",
+  "requestTimedOut": "Request timed out. Please try again.",
+  "serviceBusyMoment": "Service temporarily busy. Please try again in a moment.",
+  "weakGps": "⚠️ Weak GPS",
+  "planJourney": "Plan Journey",
+  "tripTime": "Trip Time",
+  "now": "Now",
+  "findRoutes": "Find Routes",
+  "favorites": "Favorites",
+  "add": "Add",
+  "frequentJourneys": "Frequent Journeys",
+  "fromStation": "From {station}",
+  "@fromStation": {
+    "placeholders": {
+      "station": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotLoadMoreRoutes": "Could not load more routes: {error}",
+  "@couldNotLoadMoreRoutes": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotRefreshRoutes": "Could not refresh routes: {error}",
+  "@couldNotRefreshRoutes": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "refreshFailed": "Refresh failed: {error}",
+  "@refreshFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "cancelledL10n": " CANCELLED",
+  "boardAtPlatform": "Board at {station} (Pl. {platform})",
+  "@boardAtPlatform": {
+    "placeholders": {
+      "station": {
+        "type": "String"
+      },
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "boardAt": "Board at {station}",
+  "@boardAt": {
+    "placeholders": {
+      "station": {
+        "type": "String"
+      }
+    }
+  },
+  "noIntermediateStops": "No intermediate stops info.",
+  "getOffAtPlatform": "Get off at {station} (Pl. {platform})",
+  "@getOffAtPlatform": {
+    "placeholders": {
+      "station": {
+        "type": "String"
+      },
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "getOffAt": "Get off at {station}",
+  "@getOffAt": {
+    "placeholders": {
+      "station": {
+        "type": "String"
+      }
+    }
+  },
+  "station": "Station",
+  "friend": "Friend",
+  "friendSelected": "Friend Selected",
+  "delete": "Delete",
+  "save": "Save",
+  "alternatives": "Alternatives",
+  "errorPrefix": "Error: {error}",
+  "@errorPrefix": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "toDirection": "{line} to {dir}",
+  "@toDirection": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      },
+      "dir": {
+        "type": "String"
+      }
+    }
+  },
+  "previous": "PREVIOUS",
+  "dep": "DEP",
+  "arr": "ARR",
+  "passenger": "PASSENGER",
+  "walk": "WALK",
+  "transfer": "TRANSFER",
+  "noMessagesYet": "No messages yet.",
+  "cropTicket": "Crop Ticket",
+  "secureChat": "Secure Chat: {friendName}",
+  "@secureChat": {
+    "placeholders": {
+      "friendName": {
+        "type": "String"
+      }
+    }
+  },
+  "noSecureMessagesYet": "No secure messages yet.",
+  "useImage": "Use Image",
+  "renameTicket": "Rename Ticket",
+  "ticketHistory": "Ticket History",
+  "noHistoryFound": "No history found.",
+  "rename": "Rename",
+  "errorLoadingTicket": "Error loading ticket",
+  "changeTicket": "Change Ticket",
+  "addTicket": "Add Ticket",
+  "selectImageFromGallery": "Select image from gallery",
+  "previousSearches": "Previous Searches",
+  "clearHistory": "Clear History",
+  "confirmClearHistory": "Are you sure you want to delete your recent search history?",
+  "searchHistoryCleared": "Search history cleared.",
+  "blockedUsers": "Blocked Users",
+  "noBlockedUsers": "No blocked users",
+  "unblockedUser": "Unblocked {username}",
+  "@unblockedUser": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "unblock": "Unblock",
+  "deleteAccount": "Delete Account",
+  "deleteAccountWarning": "This action is irreversible. All your data will be permanently deleted.",
+  "enterPasswordToConfirm": "Please enter your password to confirm:",
+  "deleteForever": "Delete Forever",
+  "appName": "Trans",
+  "privacy": "Privacy",
+  "ghostMode": "Ghost Mode",
+  "hideLocation": "Hide location from everyone",
+  "darkMode": "Dark Mode",
+  "syncedWithSystem": "Synced with System",
+  "systemSyncActive": "System Sync Active. Long press to disable.",
+  "deutschlandTicketMode": "Deutschlandticket Mode",
+  "onlyLocalTransport": "Only local/regional transport",
+  "appearance": "Appearance",
+  "themeColor": "Theme Color",
+  "showTrainNumbers": "Show Train Numbers",
+  "displayTripIds": "Display trip IDs (e.g. RE1 (12345))",
+  "notificationsAndHaptics": "Notifications & Haptics",
+  "alarmTrigger": "Alarm Trigger",
+  "triggerThreshold": "Trigger Threshold",
+  "notifyAtThreshold": "Notify at {threshold} {remaining}",
+  "@notifyAtThreshold": {
+    "placeholders": {
+      "threshold": {
+        "type": "String"
+      },
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "alarmPattern": "Alarm Pattern",
+  "vibrationIntensity": "Vibration Intensity",
+  "alwaysWakeMe": "Always Wake Me",
+  "turnOnAlarmDefault": "Turn on alarm for every journey by default",
+  "dataAndPrivacy": "Data & Privacy",
+  "clearSearchHistory": "Clear Search History",
+  "dataSourceAdvanced": "Data Source (Advanced)",
+  "transportApi": "Transport API",
+  "profileSettings": "Profile",
+  "noUsername": "No Username",
+  "username": "Username",
+  "emailSettings": "Email",
+  "newPasswordOpt": "New Password (Optional)",
+  "profileUpdated": "Profile updated! Check email for confirmation if changed.",
+  "logOut": "Log Out",
+  "loginSignUp": "Login / Sign Up",
+  "usernameSignUp": "Username (Sign Up)",
+  "password": "Password",
+  "forgotPassword": "Forgot Password?",
+  "login": "Login",
+  "signUp": "Sign Up",
+  "enterEmailReset": "Enter your email to receive a password reset link.",
+  "passwordResetEmailSent": "Password reset email sent (if account exists).",
+  "send": "Send"
+}

@@ -7,7 +7,7 @@
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [Icon(Icons.history, color: colors.sectionHeader, size: 18), const SizedBox(width: 8), Text("Previous Searches", style: TextStyle(color: colors.sectionHeader, fontWeight: FontWeight.bold, fontSize: 13))]),
+          Row(children: [Icon(Icons.history, color: colors.sectionHeader, size: 18), const SizedBox(width: 8), Text(AppLocalizations.of(context)!.previousSearches, style: TextStyle(color: colors.sectionHeader, fontWeight: FontWeight.bold, fontSize: 13))]),
           const SizedBox(height: 12),
           SizedBox(
             height: 90,
@@ -50,7 +50,7 @@
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text("Frequent Journeys", style: TextStyle(color: colors.sectionHeader, fontWeight: FontWeight.bold, fontSize: 12)),
+            child: Text(AppLocalizations.of(context)!.frequentJourneys, style: TextStyle(color: colors.sectionHeader, fontWeight: FontWeight.bold, fontSize: 12)),
           ),
           ListView.separated(
             shrinkWrap: true,

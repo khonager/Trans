@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart'; // For kIsWeb
@@ -414,7 +415,7 @@ class _TicketPanelState extends State<TicketPanel> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
-            child: const Text("Use Image"),
+            child: Text(AppLocalizations.of(context)!.useImage),
           ),
         ],
       ),
@@ -505,11 +506,11 @@ class _TicketPanelState extends State<TicketPanel> {
     final newName = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Rename Ticket"),
+        title: Text(AppLocalizations.of(context)!.renameTicket),
         content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Enter label")),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(AppLocalizations.of(context)!.cancel)),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: Text(AppLocalizations.of(context)!.save)),
         ],
       )
     );
@@ -542,11 +543,11 @@ class _TicketPanelState extends State<TicketPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(AppLocalizations.of(context)!.ticketHistory, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Expanded(
               child: _history.isEmpty 
-                ? const Center(child: Text("No history found.")) 
+                ? Center(child: Text(AppLocalizations.of(context)!.noHistoryFound)) 
                 : ListView.separated(
                     itemCount: _history.length,
                     separatorBuilder: (_,__) => const Divider(),
@@ -573,8 +574,8 @@ class _TicketPanelState extends State<TicketPanel> {
                             if (value == 'delete') _deleteFile(file);
                           },
                           itemBuilder: (context) => [
-                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
-                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
+                            PopupMenuItem(value: 'rename', child: Text(AppLocalizations.of(context)!.rename)),
+                            PopupMenuItem(value: 'delete', child: Text(AppLocalizations.of(context)!.delete, style: const TextStyle(color: Colors.red))),
                           ],
                         ),
                       );
@@ -659,7 +660,7 @@ class _TicketPanelState extends State<TicketPanel> {
                         child: Image(
                           image: imageToShow,
                           fit: BoxFit.contain,
-                          errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket")),
+                          errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: Text(AppLocalizations.of(context)!.errorLoadingTicket)),
                         ),
                       ),
                     ),
@@ -677,7 +678,7 @@ class _TicketPanelState extends State<TicketPanel> {
                         ),
                         onPressed: _pickAndUploadImage,
                         icon: const Icon(Icons.edit),
-                        label: const Text("Change Ticket"),
+                        label: Text(AppLocalizations.of(context)!.changeTicket),
                       ),
                     )
                   ],
@@ -701,9 +702,9 @@ class _TicketPanelState extends State<TicketPanel> {
                           child: Icon(Icons.add_a_photo_rounded, size: 32, color: colors.textSecondary)
                         ),
                         const SizedBox(height: 16),
-                        Text("Add Ticket", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                        Text(AppLocalizations.of(context)!.addTicket, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)),
                         const SizedBox(height: 4),
-                        Text("Select image from gallery", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                        Text(AppLocalizations.of(context)!.selectImageFromGallery, style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                       ],
                     ),
                   ),

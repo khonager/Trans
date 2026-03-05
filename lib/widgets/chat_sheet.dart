@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import '../services/supabase_service.dart';
 import '../config/app_theme.dart';
 
@@ -67,7 +68,7 @@ class _ChatSheetState extends State<ChatSheet> {
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 final msgs = snapshot.data!;
-                if (msgs.isEmpty) return Center(child: Text("No messages yet.", style: TextStyle(color: colors.textSecondary)));
+                if (msgs.isEmpty) return Center(child: Text(AppLocalizations.of(context)!.noMessagesYet, style: TextStyle(color: colors.textSecondary)));
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
