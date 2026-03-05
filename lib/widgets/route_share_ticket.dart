@@ -53,7 +53,7 @@ class RouteShareTicket extends StatelessWidget {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(4),
-                          child: Image.asset('lib/assets/logo.png', width: 20, height: 20, errorBuilder: (_, __, ___) => const Icon(Icons.train, size: 20, color: accentColor)),
+                          child: Image.asset('lib/assets/logo_light.png', width: 20, height: 20, errorBuilder: (_, __, ___) => const Icon(Icons.train, size: 20, color: accentColor)),
                         ),
                         const SizedBox(width: 10),
                         const Text(

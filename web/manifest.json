@@ -10,6 +10,12 @@
     "prefer_related_applications": false,
     "icons": [
         {
+            "src": "trans-icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
             "src": "icons/Icon-192.png",
             "sizes": "192x192",
             "type": "image/png"
@@ -38,14 +44,26 @@
             "short_name": "Routes",
             "description": "View transit routes",
             "url": "/",
-            "icons": [{"src": "icons/Icon-192.png", "sizes": "192x192"}]
+            "icons": [
+                {
+                    "src": "trans-icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml"
+                }
+            ]
         },
         {
             "name": "Settings",
             "short_name": "Settings",
             "description": "App settings",
             "url": "/settings",
-            "icons": [{"src": "icons/Icon-192.png", "sizes": "192x192"}]
+            "icons": [
+                {
+                    "src": "trans-icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml"
+                }
+            ]
         }
     ]
 }

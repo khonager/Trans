@@ -137,7 +137,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     
     // Ensure logo is loaded
     if (mounted) {
-       await precacheImage(const AssetImage('lib/assets/logo.png'), context);
+        await precacheImage(const AssetImage('lib/assets/logo_light.png'), context);
     }
 
     // Allow frame to build so RepaintBoundary can paint the new journey
