@@ -21,7 +21,7 @@ import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart'; 
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import '../../l10n/app_localizations.dart';
 import '../map_screen.dart'; 
 import 'route_results_view.dart';
 
@@ -2346,7 +2346,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
               ],
               if (_currentType == 'friend') ...[
                  TextField(decoration: const InputDecoration(labelText: "Search Friend Username"), onSubmitted: (val) async { final res = await SupabaseService.searchUsers(val); if (res.isNotEmpty && mounted) { setState(() { _selectedFriendId = res.first['id']; if (_labelCtrl.text.isEmpty) { _labelCtrl.text = res.first['username']; } }); } }),
-                 if (_selectedFriendId != null) const Padding(padding: EdgeInsets.only(top: 8), child: Text(AppLocalizations.of(context)!.friendSelected, style: TextStyle(color: Colors.green))),
+                 if (_selectedFriendId != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(AppLocalizations.of(context)!.friendSelected, style: const TextStyle(color: Colors.green))),
               ],
               const SizedBox(height: 20),
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work') TextButton(onPressed: () async { await FavoritesManager.deleteFavorite(widget.favorite.id); if (mounted) Navigator.pop(context, true); }, child: Text(AppLocalizations.of(context)!.delete, style: TextStyle(color: Colors.red))), const SizedBox(width: 8), TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { if (_labelCtrl.text.isNotEmpty) { final newFav = Favorite(id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id, label: _labelCtrl.text, type: _currentType, station: _selectedStation, friendId: _selectedFriendId, iconCode: _selectedIconCode); await FavoritesManager.saveFavorite(newFav); if (mounted) Navigator.pop(context, true); } }, child: Text(AppLocalizations.of(context)!.save))])
@@ -2544,7 +2544,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         if (_isLoading) 
           const Expanded(child: Center(child: CircularProgressIndicator()))
         else if (_error != null && _results.isEmpty)
-          Expanded(child: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(AppLocalizations.of(context)!.errorPrefix(_error ?? "")), textAlign: TextAlign.center))))
+          Expanded(child: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(AppLocalizations.of(context)!.errorPrefix(_error ?? ""), textAlign: TextAlign.center))))
         else if (_results.isEmpty)
           const Expanded(child: Center(child: Text("No routes found.")))
         else

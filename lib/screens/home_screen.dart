@@ -10,7 +10,7 @@ import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../widgets/ticket_panel.dart';
 import '../config/app_theme.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import '../l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;

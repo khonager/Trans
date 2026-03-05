@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
   testWidgets('RouteShareTicket builds correctly with journey info', (WidgetTester tester) async {
