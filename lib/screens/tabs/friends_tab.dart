@@ -4,7 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../services/supabase_service.dart';
 import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart'; 
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import '../../l10n/app_localizations.dart';
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;

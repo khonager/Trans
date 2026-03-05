@@ -8,7 +8,7 @@ import 'package:trans/models/journey.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import '../../l10n/app_localizations.dart';
 
 enum RouteSortOption {
   earliestDeparture,

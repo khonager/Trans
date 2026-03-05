@@ -10,7 +10,7 @@ import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import '../../l10n/app_localizations.dart';
 import '../changelog_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -554,7 +554,7 @@ class _SettingsTabState extends State<SettingsTab> {
              Divider(color: colors.divider),
              ListTile(
                title: Text(AppLocalizations.of(context)!.triggerThreshold, style: TextStyle(color: colors.textPrimary)), 
-               subtitle: Text(AppLocalizations.of(context)!.notifyAtThreshold(_alarmTriggerThreshold, (_alarmTriggerThreshold.contains('%')) ? 'of leg covered' : 'from target')), style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+               subtitle: Text(AppLocalizations.of(context)!.notifyAtThreshold(_alarmTriggerThreshold, (_alarmTriggerThreshold.contains('%')) ? 'of leg covered' : 'from target'), style: TextStyle(fontSize: 12, color: colors.textSecondary)),
                trailing: DropdownButton<String>(
                  value: _alarmTriggerThreshold,
                  dropdownColor: colors.cardBg,
@@ -713,16 +713,16 @@ class _SettingsTabState extends State<SettingsTab> {
               if (!_isEditing) ...[
                 ListTile(contentPadding: EdgeInsets.zero, title: Text(_profile?['username'] ?? AppLocalizations.of(context)!.noUsername, style: TextStyle(fontSize: 18, color: colors.textPrimary)), subtitle: Text(user.email ?? "", style: TextStyle(color: colors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () { _usernameCtrl.text = _profile?['username'] ?? ""; _emailCtrl.text = user.email ?? ""; setState(() => _isEditing = true); })),
               ] else ...[
-                TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.username)),
-                TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings)), // Added Email Field
-                TextField(controller: _newPasswordCtrl, decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.newPasswordOpt), obscureText: true),
+                TextField(controller: _usernameCtrl, decoration: InputDecoration(labelText: AppLocalizations.of(context)!.username)),
+                TextField(controller: _emailCtrl, decoration: InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings)), // Added Email Field
+                TextField(controller: _newPasswordCtrl, decoration: InputDecoration(labelText: AppLocalizations.of(context)!.newPasswordOpt), obscureText: true),
                 const SizedBox(height: 10),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: Text(AppLocalizations.of(context)!.cancel)), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.profileUpdated))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: Text(AppLocalizations.of(context)!.save))])
               ],
               Divider(color: colors.divider),
               ListTile(contentPadding: EdgeInsets.zero, title: Text(AppLocalizations.of(context)!.logOut, style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); }),
               Divider(color: colors.divider),
-              ListTile(contentPadding: EdgeInsets.zero, title: const Text(AppLocalizations.of(context)!.deleteAccount, style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), leading: const Icon(Icons.delete_forever, color: Colors.red), onTap: _showDeleteAccountDialog),
+              ListTile(contentPadding: EdgeInsets.zero, title: Text(AppLocalizations.of(context)!.deleteAccount, style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), leading: const Icon(Icons.delete_forever, color: Colors.red), onTap: _showDeleteAccountDialog),
             ],
           ),
         )
@@ -738,11 +738,11 @@ class _SettingsTabState extends State<SettingsTab> {
         children: [
           Text(AppLocalizations.of(context)!.loginSignUp, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.emailSettings)),
+          TextField(controller: _emailCtrl, decoration: InputDecoration(hintText: AppLocalizations.of(context)!.emailSettings)),
           const SizedBox(height: 10),
-          TextField(controller: _usernameCtrl, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.usernameSignUp)),
+          TextField(controller: _usernameCtrl, decoration: InputDecoration(hintText: AppLocalizations.of(context)!.usernameSignUp)),
           const SizedBox(height: 10),
-          TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(hintText: AppLocalizations.of(context)!.password)),
+          TextField(controller: _passwordCtrl, obscureText: true, decoration: InputDecoration(hintText: AppLocalizations.of(context)!.password)),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
@@ -800,7 +800,7 @@ class _SettingsTabState extends State<SettingsTab> {
             const SizedBox(height: 10),
             TextField(
               controller: emailCtrl,
-              decoration: const InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings),
+              decoration: InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings),
               keyboardType: TextInputType.emailAddress,
             ),
           ],
