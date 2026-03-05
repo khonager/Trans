@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -82,7 +80,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
-  List<Station> _recentSearches = [];
   List<Map<String, dynamic>> _frequentJourneys = [];
 
   @override
@@ -102,7 +99,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final history = await SearchHistoryManager.getHistory();
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     debugPrint("Loaded history: ${history.length} items, frequent: ${frequent.length} items");
-    if (mounted) setState(() { _recentSearches = history; _frequentJourneys = frequent; });
+    if (mounted) setState(() { _frequentJourneys = frequent; });
   }
 
   @override
@@ -288,21 +285,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        return;
     }
     
-    final prefs = await SharedPreferences.getInstance();
-    final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+
 
     final firstRide = route.steps.firstWhere((s) => s.type == 'ride', orElse: () => route.steps.first);
-    final String currentLine = firstRide.line;
 
     double? targetLat = firstRide.endLat;
     double? targetLng = firstRide.endLng;
 
     if (targetLat == null || targetLng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.missingDestCoords)));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.missingDestCoords)));
       return;
     }
 
-    final String thresholdSetting = prefs.getString('alarm_trigger_threshold') ?? '5%';
 
     if (mounted) setState(() => _isWakeAlarmSet = true);
     
@@ -416,7 +410,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               double percentValue = 5;
               try {
                 percentValue = double.parse(thresholdSetting.replaceAll('%', ''));
-              } catch (_) {}
+              } catch (e) { /* ignore */ }
               triggerDist = segmentDist * (percentValue / 100.0);
            }
         }
@@ -747,11 +741,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     
     void flushTransferBuffer(DateTime? nextRideDeparture, String? nextStationName, String? nextStationId, String? nextPlatform, double? nextRideStartLat, double? nextRideStartLng, {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty && (lastArrival == null || nextRideDeparture == null)) return;
-      DateTime blockStart = (lastArrival != null) ? lastArrival! : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
+      DateTime blockStart = (lastArrival != null) ? lastArrival : (DateTime.tryParse(transferBuffer.first['departure'] ?? transferBuffer.first['plannedDeparture'] ?? '')?.toLocal() ?? DateTime.now());
       DateTime blockEnd = (nextRideDeparture != null) ? nextRideDeparture : (transferBuffer.isNotEmpty ? (DateTime.tryParse(transferBuffer.last['arrival'] ?? transferBuffer.last['plannedArrival'] ?? '')?.toLocal() ?? blockStart) : blockStart);
       
       int walkMinutes = 0;
-      for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).toLocal().difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture']).toLocal()).inMinutes; } catch(e) {} }
+      for (var leg in transferBuffer) { try { walkMinutes += DateTime.parse(leg['arrival'] ?? leg['plannedArrival']).toLocal().difference(DateTime.parse(leg['departure'] ?? leg['plannedDeparture']).toLocal()).inMinutes; } catch (e) { /* ignore */ } }
       
       int totalGapMinutes = blockEnd.difference(blockStart).inMinutes;
       if (totalGapMinutes < 0) totalGapMinutes = 0;
@@ -799,42 +793,42 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       bool isSignificantWalk = distanceInMeters > 50;
       bool isPhantomWalk = !isSignificantWalk && walkMinutes < 3 && nextRideDeparture != null && !isFinalWalk;
       
-      String _fmtPlat(String? p) => p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
+      String fmtPlat(String? p) => p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
       
       if (isAtSameStation && !isSignificantWalk) {
         if (lastPlatform != null && nextPlat != null && lastPlatform != nextPlat) {
-          instruction = "Switch from ${_fmtPlat(lastPlatform)} to ${_fmtPlat(nextPlat)}";
+          instruction = "Switch from ${fmtPlat(lastPlatform)} to ${fmtPlat(nextPlat)}";
         } else if (lastPlatform != null && nextPlat != null && lastPlatform == nextPlat) {
-          instruction = "Wait at ${_fmtPlat(lastPlatform)}";
+          instruction = "Wait at ${fmtPlat(lastPlatform)}";
         } else if (nextPlat != null) {
-          instruction = "Wait at ${_fmtPlat(nextPlat)}";
+          instruction = "Wait at ${fmtPlat(nextPlat)}";
         } else {
           instruction = "Wait at $destName"; // Same station generic wait
         }
       } else if (isPhantomWalk) {
         if (destName != null && !isAtSameStation) {
            instruction = "Transfer to $destName"; 
-           if (nextPlat != null) instruction += " (${_fmtPlat(nextPlat)})";
+           if (nextPlat != null) instruction += " (${fmtPlat(nextPlat)})";
         } else {
           instruction = "Wait for connection";
-          if (nextPlat != null) instruction += " at ${_fmtPlat(nextPlat)}";
+          if (nextPlat != null) instruction += " at ${fmtPlat(nextPlat)}";
         }
       } else {
          // It is a walk
         if (isFirstStep && destName != null) {
           instruction = "Walk to $destName"; 
-          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
         } else if (isFinalWalk && destName != null) {
           instruction = "Walk to destination"; 
         } else if (destName != null) {
           instruction = "Walk to $destName"; 
-          if (nextPlat != null) instruction += ", ${_fmtPlat(nextPlat)}";
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
           // If we have arrival platform from previous leg, maybe "Walk from Pl. A to Station..."?
           // But 'lastPlatform' is usually associated with 'lastStationName'. 
           // If we walked, we likely left the previous station area.
         } else {
           instruction = "Walk";
-          if (nextPlat != null) instruction += " to ${_fmtPlat(nextPlat)}";
+          if (nextPlat != null) instruction += " to ${fmtPlat(nextPlat)}";
         }
       }
 
@@ -873,7 +867,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (sArr != null) {
              scheduledArr = DateTime.parse(sArr).toLocal();
           }
-        } catch(e) {}
+        } catch (e) { /* ignore */ }
 
         // Parse real-time times, fallback to scheduled
         try { 
@@ -883,7 +877,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (leg['arrival'] != null) {
              arr = DateTime.parse(leg['arrival']).toLocal();
           }
-        } catch(e) {}
+        } catch (e) { /* ignore */ }
         
         // Fallbacks
         dep ??= scheduledDep;
@@ -974,7 +968,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         pDep = DateTime.parse(journeyData['plannedDeparture'] ?? journeyData['departure']).toLocal();
         pArr = DateTime.parse(journeyData['plannedArrival'] ?? journeyData['arrival']).toLocal();
       }
-    } catch(e) {}
+    } catch (e) { /* ignore */ }
     
     // Calculate transfer count (rides - 1)
     int rides = steps.where((s) => s.type == 'ride').length;
@@ -986,7 +980,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
          try {
            final parts = step.duration.split(' ');
            if (parts.isNotEmpty) waitMinutes += int.tryParse(parts[0]) ?? 0;
-         } catch(_) {}
+         } catch (e) { /* ignore */ }
        }
     }
 
@@ -996,7 +990,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
          try {
            final parts = step.duration.split(' ');
            if (parts.isNotEmpty) walkMinutes += int.tryParse(parts[0]) ?? 0;
-         } catch(_) {}
+         } catch (e) { /* ignore */ }
        }
     }
 
@@ -1023,7 +1017,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (candidatesData != null) {
       for (var d in candidatesData) {
-         try { candidates.add(_createJourney(d)); } catch(_) {}
+         try { candidates.add(_createJourney(d)); } catch (e) { /* ignore */ }
       }
       if (candidates.isNotEmpty) {
          final lastLeg = candidates.first.rawSource['legs'].last;
@@ -1070,7 +1064,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final currentTab = _tabs[idx];
         final List<Journey> newJourneys = [];
         for (var d in rawData) {
-          try { newJourneys.add(_createJourney(d)); } catch (_) {}
+          try { newJourneys.add(_createJourney(d)); } catch (e) { /* ignore */ }
         }
         
         // Remove duplicates and sort
@@ -1102,12 +1096,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (_fromController.text.isEmpty || _fromController.text == "Current Location") {
            Position? pos = widget.currentPosition;
            if (pos == null) {
-              try { pos = await Geolocator.getCurrentPosition(timeLimit: const Duration(seconds: 3)); } catch(_) {}
+              try { pos = await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 3)); } catch (e) { /* ignore */ }
            }
            if (pos != null) {
               // Use GPS directly
               from = Station(id: 'gps', name: 'Current Location', type: 'location', latitude: pos.latitude, longitude: pos.longitude);
-           } else { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.locationNotAvailable))); return; }
+           } else { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.locationNotAvailable))); return; }
         } else {
            setState(() => _isLoadingRoute = true);
            try { final results = await TransportApi.searchStations(_fromController.text); if (results.isNotEmpty) { from = results.first; _fromStation = from; } else { throw "Start not found"; } } catch (e) { if (mounted) { setState(() => _isLoadingRoute = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorPrefix(e.toString())))); } return; }
@@ -1116,7 +1110,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
      if (_toStation == null) {
         if (_toController.text.isNotEmpty) {
            setState(() => _isLoadingRoute = true);
-           try { final results = await TransportApi.searchStations(_toController.text); if (results.isNotEmpty) _toStation = results.first; else throw "Destination not found"; } catch (e) { if (mounted) { setState(() => _isLoadingRoute = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorPrefix(e.toString())))); } return; }
+           try { final results = await TransportApi.searchStations(_toController.text); if (results.isNotEmpty) { _toStation = results.first; } else { throw "Destination not found"; } } catch (e) { if (mounted) { setState(() => _isLoadingRoute = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorPrefix(e.toString())))); } return; }
         } else { return; }
      }
      setState(() => _isLoadingRoute = true);
@@ -1131,7 +1125,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        // But searchJourneys handles 'when'.
        String? currentTabId;
        final res = await TransportApi.searchJourneys(
-         from!, 
+         from, 
          _toStation!, 
          nahverkehrOnly: widget.onlyNahverkehr, 
          when: when, 
@@ -1151,7 +1145,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
            } else {
              _addJourneyTab(candidatesData: res, origin: from, destination: _toStation); 
            }
-           SearchHistoryManager.saveJourney(from!, _toStation!);
+           SearchHistoryManager.saveJourney(from, _toStation!);
            _loadHistoryData(); // Refresh UI
          } else if (currentTabId == null) { 
            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy))); 
@@ -1188,13 +1182,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _triggerVibration() async {
     if (kIsWeb) return; 
-    if (await Vibration.hasVibrator() ?? false) {
+    if (await Vibration.hasVibrator()) {
       final prefs = await SharedPreferences.getInstance();
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
       final pattern = _getVibrationPattern(patternName);
 
-      if (await Vibration.hasAmplitudeControl() ?? false) {
+      if (await Vibration.hasAmplitudeControl()) {
         final intensities = List<int>.generate(
           pattern.length,
           (i) => i.isEven ? 0 : intensity,
@@ -1246,7 +1240,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_activeTabId != null) {
       try {
         activeTab = _tabs.firstWhere((t) => t.id == _activeTabId);
-      } catch (_) {}
+      } catch (e) { /* ignore */ }
     }
 
     return Column(children: [
@@ -1489,7 +1483,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       children: [
                         GestureDetector(onTap: () => setState(() => _isArrival = !_isArrival), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: colors.timeToggleBg, borderRadius: BorderRadius.circular(12)), child: Text(_isArrival ? "Arrive by" : "Depart at", style: TextStyle(color: colors.timeToggleText, fontWeight: FontWeight.w600, fontSize: 13, letterSpacing: 0.5)))),
                         const SizedBox(width: 12),
-                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text(AppLocalizations.of(context)!.now, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
+                        Expanded(child: GestureDetector(onTap: () async { final now = DateTime.now(); final picked = await showDatePicker(context: context, initialDate: _selectedDate ?? now, firstDate: now.subtract(const Duration(days: 30)), lastDate: now.add(const Duration(days: 90))); if (picked != null) { setState(() { _selectedDate = picked; _selectedTime ??= TimeOfDay.now(); }); if (!mounted) return; final t = await showTimePicker(context: context, initialTime: _selectedTime!); if (t != null) setState(() => _selectedTime = t); } }, child: _selectedDate != null ? Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text("${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}", style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]) : Row(children: [Icon(Icons.calendar_today, size: 16, color: colors.sectionHeader), const SizedBox(width: 6), Text(AppLocalizations.of(context)!.now, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold))]))),
                         if (_selectedDate != null) IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => setState(() { _selectedDate = null; _selectedTime = null; })),
                       ],
                     ),
@@ -1499,7 +1493,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   const SizedBox(height: 20),
                   Text(AppLocalizations.of(context)!.favorites, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: colors.sectionHeader)),
                   const SizedBox(height: 8),
-                  SizedBox(height: 80, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _favorites.length + 1, separatorBuilder: (_,__) => const SizedBox(width: 12), itemBuilder: (ctx, idx) { if (idx == _favorites.length) { return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), Text(AppLocalizations.of(context)!.add, style: TextStyle(fontSize: 10))])); } final fav = _favorites[idx]; IconData icon = Icons.star; if (fav.type == 'friend') icon = Icons.person; else if (fav.label.toLowerCase() == 'home') icon = Icons.home; else if (fav.label.toLowerCase() == 'work') icon = Icons.work; if (fav.iconCode != null) { icon = kAvailableIcons.firstWhere((i) => i.codePoint == fav.iconCode, orElse: () => Icons.star); } Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg; Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon; return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))])); })),
+                  SizedBox(height: 80, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _favorites.length + 1, separatorBuilder: (_,__) => const SizedBox(width: 12), itemBuilder: (ctx, idx) { if (idx == _favorites.length) { return GestureDetector(onTap: _addNewFavorite, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: colors.favAddBg, shape: BoxShape.circle), child: Icon(Icons.add, color: colors.favAddIcon)), const SizedBox(height: 4), Text(AppLocalizations.of(context)!.add, style: TextStyle(fontSize: 10))])); } final fav = _favorites[idx]; IconData icon = Icons.star; if (fav.type == 'friend') { icon = Icons.person; } else if (fav.label.toLowerCase() == 'home') { icon = Icons.home; } else if (fav.label.toLowerCase() == 'work') { icon = Icons.work; } if (fav.iconCode != null) { icon = kAvailableIcons.firstWhere((i) => i.codePoint == fav.iconCode, orElse: () => Icons.star); } Color bg = fav.type == 'friend' ? colors.favFriendBg : colors.favStationBg; Color fg = fav.type == 'friend' ? colors.favFriendIcon : colors.favStationIcon; return GestureDetector(onTap: () => _onFavoriteTap(fav), onLongPress: () => _showEditFavoriteDialog(fav), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 48, height: 48, decoration: BoxDecoration(color: bg, shape: BoxShape.circle), child: Icon(icon, color: fg, size: 20)), const SizedBox(height: 4), Text(fav.label, style: TextStyle(fontSize: 10, color: colors.favText))])); })),
                   _buildFrequentJourneys(colors),
                 ],
               ),
@@ -1695,8 +1689,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
        isLocationHint = true;
     }
 
-    if (isSelected) iconColor = Colors.greenAccent; 
-    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || (isLocationHint && effectiveHint != "Station..."))) iconColor = Colors.blue;
+    if (isSelected) { iconColor = Colors.greenAccent; } 
+    else if (fieldKey == 'from' && ((_fromStation?.id == 'gps') || (isLocationHint && effectiveHint != "Station..."))) { iconColor = Colors.blue; }
     
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Padding(padding: const EdgeInsets.only(left: 4, bottom: 4), child: Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold))), TextField(
         controller: controller,
@@ -1765,7 +1759,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (partial.isEmpty || !mounted) return;
         final List<Journey> newJourneys = [];
         for (var d in partial) {
-             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+             try { newJourneys.add(_createJourney(d)); } catch (e) { /* ignore */ }
         }
         
         setState(() {
@@ -1820,7 +1814,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (partial.isEmpty || !mounted) return;
         final List<Journey> newJourneys = [];
         for (var d in partial) {
-             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+             try { newJourneys.add(_createJourney(d)); } catch (e) { /* ignore */ }
         }
         
         setState(() {
@@ -1866,7 +1860,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (partial.isEmpty || !mounted) return;
         final List<Journey> newJourneys = [];
         for (var d in partial) {
-             try { newJourneys.add(_createJourney(d)); } catch(_) {}
+             try { newJourneys.add(_createJourney(d)); } catch (e) { /* ignore */ }
         }
         
         // Find the best match
@@ -2181,7 +2175,7 @@ class _StepCardState extends State<_StepCard> {
                 dense: true, 
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20), 
                 leading: const Icon(Icons.login, size: 14, color: Colors.green), 
-                title: Text(step.platform != null ? AppLocalizations.of(context)!.boardAtPlatform(step.startStationName, step.platform!) : AppLocalizations.of(context)!.boardAt(step.startStationName), style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
+                title: Text(step.platform != null ? AppLocalizations.of(context)!.boardAtPlatform(step.startStationName ?? '', step.platform!) : AppLocalizations.of(context)!.boardAt(step.startStationName ?? ''), style: TextStyle(color: colors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)), 
                 trailing: Text(step.departureTime, style: TextStyle(color: colors.stepTimeText, fontWeight: FontWeight.bold, fontSize: 13))
               )
             ),
@@ -2205,7 +2199,7 @@ class _StepCardState extends State<_StepCard> {
                 if (actualDep != null) { 
                   final a = DateTime.parse(actualDep).toLocal(); 
                   final delay = a.difference(p).inMinutes; 
-                  if (delay > 2) { timeStr += " (+${delay}')"; timeColor = colors.delayLate; } 
+                  if (delay > 2) { timeStr += " (+$delay')"; timeColor = colors.delayLate; } 
                   else { timeColor = colors.delayOnTime; } 
                 } 
               } 
@@ -2314,7 +2308,9 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
               TextField(controller: _labelCtrl, decoration: const InputDecoration(labelText: "Label (e.g. Home, Bestie)")),
               const SizedBox(height: 10),
               Row(children: [
+                // ignore: deprecated_member_use
                 Expanded(child: RadioListTile<String>(title: Text(AppLocalizations.of(context)!.station), value: 'station', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
+                // ignore: deprecated_member_use
                 Expanded(child: RadioListTile<String>(title: Text(AppLocalizations.of(context)!.friend), value: 'friend', groupValue: _currentType, contentPadding: EdgeInsets.zero, onChanged: (val) => setState(() => _currentType = val!))),
               ]),
               const SizedBox(height: 10),
@@ -2349,7 +2345,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                  if (_selectedFriendId != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(AppLocalizations.of(context)!.friendSelected, style: const TextStyle(color: Colors.green))),
               ],
               const SizedBox(height: 20),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work') TextButton(onPressed: () async { await FavoritesManager.deleteFavorite(widget.favorite.id); if (mounted) Navigator.pop(context, true); }, child: Text(AppLocalizations.of(context)!.delete, style: TextStyle(color: Colors.red))), const SizedBox(width: 8), TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { if (_labelCtrl.text.isNotEmpty) { final newFav = Favorite(id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id, label: _labelCtrl.text, type: _currentType, station: _selectedStation, friendId: _selectedFriendId, iconCode: _selectedIconCode); await FavoritesManager.saveFavorite(newFav); if (mounted) Navigator.pop(context, true); } }, child: Text(AppLocalizations.of(context)!.save))])
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [if (!isNew && widget.favorite.id != 'home' && widget.favorite.id != 'work') TextButton(onPressed: () async { await FavoritesManager.deleteFavorite(widget.favorite.id); if (context.mounted) Navigator.pop(context, true); }, child: Text(AppLocalizations.of(context)!.delete, style: TextStyle(color: Colors.red))), const SizedBox(width: 8), TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")), ElevatedButton(onPressed: () async { if (_labelCtrl.text.isNotEmpty) { final newFav = Favorite(id: isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.favorite.id, label: _labelCtrl.text, type: _currentType, station: _selectedStation, friendId: _selectedFriendId, iconCode: _selectedIconCode); await FavoritesManager.saveFavorite(newFav); if (context.mounted) Navigator.pop(context, true); } }, child: Text(AppLocalizations.of(context)!.save))])
             ],
           ),
         ),

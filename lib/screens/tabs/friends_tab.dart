@@ -133,7 +133,9 @@ class _FriendsTabState extends State<FriendsTab> {
                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.requestSentTo(user['username']))));
                                 }
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorString(e.toString()))));
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.errorString(e.toString()))));
+                                }
                               }
                             },
                           ),
@@ -448,7 +450,7 @@ class _FriendsTabState extends State<FriendsTab> {
                        
                        if (confirm == true) {
                          await SupabaseService.removeFriend(friendId);
-                         if (mounted) {
+                         if (context.mounted) {
                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.removedFriend(friend['username']))));
                            setState(() => _expandedFriendId = null);
                          }
@@ -461,7 +463,7 @@ class _FriendsTabState extends State<FriendsTab> {
                      color: Colors.red, 
                      onTap: () async {
                        await SupabaseService.blockUser(friendId);
-                       if (mounted) {
+                       if (context.mounted) {
                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.blockedFriend(friend['username']))));
                          setState(() => _expandedFriendId = null);
                        }

@@ -1,4 +1,4 @@
-import 'dart:io';
+
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -111,10 +111,12 @@ class _SettingsTabState extends State<SettingsTab> {
     final profile = await SupabaseService.getCurrentProfile();
     // Location handled by stream now, but initial fetch is good to prevent flicker if stream is slow
     final location = await SupabaseService.getMyLocation();
-    if (mounted) setState(() {
+    if (mounted) {
+      setState(() {
       _profile = profile;
       _myLocation = location;
-    });
+      });
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -170,7 +172,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _testVibration() async {
     if (kIsWeb) return;
-    if (await Vibration.hasVibrator() ?? false) {
+    if (await Vibration.hasVibrator()) {
       List<int> pattern = [0, 500];
 
       switch (_vibrationPattern) {
@@ -204,7 +206,7 @@ class _SettingsTabState extends State<SettingsTab> {
         case 'bebop': pattern = [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000]; break;
       }
 
-      if (await Vibration.hasAmplitudeControl() ?? false) {
+      if (await Vibration.hasAmplitudeControl()) {
         // Correctly set intensity to 0 for pauses (even indices) and _vibrationIntensity for vibrations (odd indices)
         final intensities = List<int>.generate(
           pattern.length, 
@@ -300,8 +302,10 @@ class _SettingsTabState extends State<SettingsTab> {
                           trailing: TextButton(
                             onPressed: () async {
                               await SupabaseService.unblockUser(u['id']);
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.unblockedUser(u['username']))));
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.unblockedUser(u['username']))));
+                              }
                             },
                             child: Text(AppLocalizations.of(context)!.unblock),
                           ),
@@ -732,7 +736,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 TextField(controller: _emailCtrl, decoration: InputDecoration(labelText: AppLocalizations.of(context)!.emailSettings)), // Added Email Field
                 TextField(controller: _newPasswordCtrl, decoration: InputDecoration(labelText: AppLocalizations.of(context)!.newPasswordOpt), obscureText: true),
                 const SizedBox(height: 10),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: Text(AppLocalizations.of(context)!.cancel)), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.profileUpdated))); } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } }, child: Text(AppLocalizations.of(context)!.save))])
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [TextButton(onPressed: () => setState(() => _isEditing = false), child: Text(AppLocalizations.of(context)!.cancel)), ElevatedButton(onPressed: () async { try { if (_usernameCtrl.text.isNotEmpty) await SupabaseService.updateUsername(_usernameCtrl.text); if (_emailCtrl.text.isNotEmpty && _emailCtrl.text != user.email) await SupabaseService.updateEmail(_emailCtrl.text); if (_newPasswordCtrl.text.isNotEmpty) await SupabaseService.updatePassword(_newPasswordCtrl.text); setState(() => _isEditing = false); _loadProfile(); if (context.mounted) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.profileUpdated))); } } catch (e) { if (context.mounted) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); } } }, child: Text(AppLocalizations.of(context)!.save))])
               ],
               Divider(color: colors.divider),
               ListTile(contentPadding: EdgeInsets.zero, title: Text(AppLocalizations.of(context)!.logOut, style: TextStyle(color: Colors.red)), leading: const Icon(Icons.logout, color: Colors.red), onTap: () async { await SupabaseService.signOut(); if (mounted) setState(() {}); }),
@@ -774,7 +778,9 @@ class _SettingsTabState extends State<SettingsTab> {
                   await _loadProfile(); 
                   if (mounted) setState(() {}); 
                 } catch (e) { 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                  }
                 } 
               }, 
               child: Text(AppLocalizations.of(context)!.login)
@@ -786,7 +792,9 @@ class _SettingsTabState extends State<SettingsTab> {
                   await _loadProfile(); 
                   if (mounted) setState(() {}); 
                 } catch (e) { 
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e"))); 
+                  }
                 } 
               }, 
               child: Text(AppLocalizations.of(context)!.signUp)
