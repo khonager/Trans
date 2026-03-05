@@ -135,6 +135,47 @@ class TransportApi {
     return data.map((json) => Station.fromJson(json)).toList();
   }
 
+  /// Checks if a v6 journey leg is a non-Deutschlandticket service
+  /// (e.g. FlixBus, FlixTrain, IC Bus, or other long-distance coaches)
+  static bool _isNonDeutschlandticketLeg(Map<String, dynamic> leg) {
+    final line = leg['line'] as Map<String, dynamic>?;
+    if (line == null) return false;
+
+    // Check product type — nationalExpress/national are not covered
+    final product = (line['product'] as String?)?.toLowerCase() ?? '';
+    if (product == 'nationalexpress' || product == 'national') return true;
+
+    // Check productName for FlixBus/FlixTrain/IC Bus patterns
+    final productName = (line['productName'] as String?)?.toUpperCase() ?? '';
+    if (productName == 'FLX' || productName == 'FLIXBUS' || productName == 'FLIXTRAIN') return true;
+    if (productName == 'IC BUS' || productName == 'ICB') return true;
+
+    // Check line name for Flix patterns
+    final lineName = (line['name'] as String?)?.toUpperCase() ?? '';
+    if (lineName.contains('FLX') || lineName.contains('FLIX')) return true;
+
+    // Check operator name
+    final operator = line['operator'] as Map<String, dynamic>?;
+    if (operator != null) {
+      final opName = (operator['name'] as String?)?.toUpperCase() ?? '';
+      if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY')) return true;
+    }
+
+    return false;
+  }
+
+  /// Filters out journeys that contain non-Deutschlandticket legs
+  static List<Map<String, dynamic>> _filterForDeutschlandticket(
+      List<Map<String, dynamic>> journeys) {
+    return journeys.where((journey) {
+      final legs = journey['legs'] as List?;
+      if (legs == null) return true;
+      // Keep journey only if NO leg is a non-Deutschlandticket service
+      return !legs.any((leg) =>
+          leg is Map<String, dynamic> && _isNonDeutschlandticketLeg(leg));
+    }).toList();
+  }
+
   static Future<List<Map<String, dynamic>>> _searchJourneysV6(
     Station from,
     Station to, {
@@ -184,7 +225,12 @@ class TransportApi {
     final response = await _fetch(_getV6Uri('/journeys', params));
     final data = json.decode(response.body);
     if (data['journeys'] != null) {
-      return List<Map<String, dynamic>>.from(data['journeys']);
+      var journeys = List<Map<String, dynamic>>.from(data['journeys']);
+      // Post-filter: remove FlixBus/FlixTrain/IC Bus etc. when Deutschlandticket mode
+      if (nahverkehrOnly) {
+        journeys = _filterForDeutschlandticket(journeys);
+      }
+      return journeys;
     }
     return [];
   }
