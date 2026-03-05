@@ -15,7 +15,8 @@
   <meta name="apple-mobile-web-app-title" content="Trans">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="icon" type="image/svg+xml" href="trans-icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/Icon-192.png" />
 
   <title>Trans</title>
   <link rel="manifest" href="manifest.json">
@@ -48,15 +49,20 @@
 
 <body>
   <div class="loading-container">
-    <div class="custom-loader"></div>
+    <div class="loading-icon-wrapper">
+      <img src="trans-icon.svg" class="loading-icon" alt="Trans" />
+      <div class="loading-bar">
+        <div class="loading-bar-inner"></div>
+      </div>
+    </div>
     <div class="loading-text">Trans</div>
   </div>
 
   <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       background-color: #ffffff;
-      margin: 0;
-      padding: 0;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -69,45 +75,66 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      gap: 20px;
     }
 
-    .custom-loader {
-      width: 50px;
-      height: 50px;
-      border: 5px solid rgba(1, 117, 194, 0.2);
-      border-radius: 50%;
-      border-top-color: #0175C2;
-      animation: spin 1s ease-in-out infinite;
-      margin-bottom: 20px;
+    .loading-icon-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .loading-icon {
+      width: 100px;
+      height: 100px;
+      animation: bounce 1.4s ease-in-out infinite;
+    }
+
+    .loading-bar {
+      width: 120px;
+      height: 6px;
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .loading-bar-inner {
+      height: 100%;
+      width: 40%;
+      background: #5bcefa;
+      border-radius: 3px;
+      animation: slide 1.4s ease-in-out infinite;
     }
 
     .loading-text {
-      color: #0175C2;
-      font-size: 24px;
-      font-weight: 600;
-      letter-spacing: 1px;
+      color: #5bcefa;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      animation: fade 1.4s ease-in-out infinite;
     }
 
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-10px); }
     }
 
-    /* Support for dark mode devices while loading */
+    @keyframes slide {
+      0%   { transform: translateX(-100%); }
+      50%  { transform: translateX(150%); }
+      100% { transform: translateX(-100%); }
+    }
+
+    @keyframes fade {
+      0%, 100% { opacity: 0.5; }
+      50%       { opacity: 1; }
+    }
+
     @media (prefers-color-scheme: dark) {
-      body {
-        background-color: #121212;
-      }
-
-      .loading-text {
-        color: #64B5F6;
-      }
-
-      .custom-loader {
-        border-color: rgba(100, 181, 246, 0.2);
-        border-top-color: #64B5F6;
-      }
+      body { background-color: #121212; }
+      .loading-bar { background: rgba(255, 255, 255, 0.1); }
     }
   </style>
 

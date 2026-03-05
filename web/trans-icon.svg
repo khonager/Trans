@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 512 512"
+   width="100%"
+   height="100%"
+   version="1.1"
+   id="svg5"
+   xml:space="preserve"
+   xmlns="http://www.w3.org/2000/svg">
+  <defs id="defs5">
+    <style>
+      .stroke-adaptive { stroke: #000000; }
+      .fill-adaptive { fill: #000000; }
+      @media (prefers-color-scheme: dark) {
+        .stroke-adaptive { stroke: #ffffff; }
+        .fill-adaptive { fill: #ffffff; }
+      }
+    </style>
+  </defs>
+  <g id="g7">
+    <!-- Tracks -->
+    <g
+       stroke-width="14"
+       stroke-linecap="round"
+       id="g4"
+       transform="translate(-1.3853521,-25.353942)"
+       style="stroke-width:19.5;stroke-dasharray:none">
+      <line x1="166.24513" y1="406.82294" x2="345.51566" y2="406.82294" class="stroke-adaptive" style="stroke-width:19.5;stroke-dasharray:none;fill:none"/>
+      <line x1="134.61595" y1="453.56326" x2="377.38406" y2="453.56326" class="stroke-adaptive" style="stroke-width:19.5;stroke-dasharray:none;fill:none"/>
+      <line x1="195" y1="365" x2="120" y2="475" class="stroke-adaptive" style="stroke-width:19.5;stroke-dasharray:none;fill:none"/>
+      <line x1="317" y1="365" x2="392" y2="475" class="stroke-adaptive" style="stroke-width:19.5;stroke-dasharray:none;fill:none"/>
+    </g>
+    <!-- Phone body -->
+    <path
+       d="m 186,74.530612 c -16.56854,0 -30,13.43146 -30,29.999998 v 200 c 0,22.09139 17.90861,40 40,40 h 120 c 22.09139,0 40,-17.90861 40,-40 v -200 C 356,87.962072 342.56854,74.530612 326,74.530612 Z"
+       fill="#5bcefa"
+       stroke-width="14"
+       stroke-linejoin="round"
+       id="path4"
+       class="stroke-adaptive"
+       style="fill:#5bcefa;fill-opacity:1" />
+    <!-- Window -->
+    <path
+       d="m 313.11396,130 10.3759,98.23695 H 188.99987 L 199.37577,130 Z"
+       style="fill:#f5a9b8;fill-opacity:1;fill-rule:evenodd;stroke:#f5a9b8;stroke-width:20;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="path7-1" />
+    <!-- Light left -->
+    <circle cx="195" cy="307.53061" r="16"
+       id="circle4-6-9"
+       style="fill:#f5a9b8;fill-opacity:1;stroke:none" />
+    <!-- Light right -->
+    <circle cx="316.99997" cy="307.53061" r="16"
+       id="circle4-6-9-0"
+       style="fill:#f5a9b8;fill-opacity:1;stroke:none;stroke-opacity:1" />
+    <!-- Notch -->
+    <rect
+       class="fill-adaptive"
+       id="rect8-7-7-9"
+       width="90.080124"
+       height="29.73708"
+       x="210.9599"
+       y="67.530609"
+       ry="9.4227686"
+       rx="10.732995"
+       style="fill-opacity:1;fill-rule:nonzero;stroke:none" />
+  </g>
+</svg>
