@@ -28,6 +28,8 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onShowTrainNumbersChanged;
   final bool alwaysWakeMe;
   final Function(bool) onAlwaysWakeMeChanged;
+  final Locale? locale;
+  final Function(Locale) onLocaleChanged;
 
 
   const SettingsTab({
@@ -46,6 +48,8 @@ class SettingsTab extends StatefulWidget {
     required this.onShowTrainNumbersChanged,
     required this.alwaysWakeMe,
     required this.onAlwaysWakeMeChanged,
+    required this.locale,
+    required this.onLocaleChanged,
   });
 
   @override
@@ -543,6 +547,24 @@ class _SettingsTabState extends State<SettingsTab> {
                 return null;
               }),
               onChanged: widget.onShowTrainNumbersChanged,
+            ),
+            Divider(color: colors.divider),
+            ListTile(
+              title: Text(AppLocalizations.of(context)!.language, style: TextStyle(color: colors.textPrimary)),
+              trailing: DropdownButton<String>(
+                value: widget.locale?.languageCode ?? 'en',
+                dropdownColor: colors.cardBg,
+                underline: const SizedBox(),
+                items: [
+                   DropdownMenuItem(value: 'en', child: Text(AppLocalizations.of(context)!.english)),
+                   DropdownMenuItem(value: 'de', child: Text(AppLocalizations.of(context)!.german)),
+                ],
+                onChanged: (val) {
+                  if (val != null) {
+                    widget.onLocaleChanged(Locale(val));
+                  }
+                },
+              ),
             ),
           ]),
 
