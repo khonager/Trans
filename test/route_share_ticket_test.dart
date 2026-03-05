@@ -5,7 +5,8 @@ import 'package:trans/widgets/route_share_ticket.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
-  testWidgets('RouteShareTicket builds correctly with journey info', (WidgetTester tester) async {
+  testWidgets('RouteShareTicket builds correctly with journey info',
+      (WidgetTester tester) async {
     final now = DateTime.now();
     final journey = Journey(
       steps: [

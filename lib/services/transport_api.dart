@@ -147,7 +147,9 @@ class TransportApi {
 
     // Check productName for FlixBus/FlixTrain/IC Bus patterns
     final productName = (line['productName'] as String?)?.toUpperCase() ?? '';
-    if (productName == 'FLX' || productName == 'FLIXBUS' || productName == 'FLIXTRAIN') return true;
+    if (productName == 'FLX' ||
+        productName == 'FLIXBUS' ||
+        productName == 'FLIXTRAIN') return true;
     if (productName == 'IC BUS' || productName == 'ICB') return true;
 
     // Check line name for Flix patterns
@@ -158,7 +160,8 @@ class TransportApi {
     final operator = line['operator'] as Map<String, dynamic>?;
     if (operator != null) {
       final opName = (operator['name'] as String?)?.toUpperCase() ?? '';
-      if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY')) return true;
+      if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY'))
+        return true;
     }
 
     return false;
@@ -193,7 +196,10 @@ class TransportApi {
 
     // FROM: Use coordinates for GPS, locations (POIs), addresses, OR non-numeric IDs
     final fromIsNumeric = RegExp(r'^[0-9]+$').hasMatch(from.id);
-    if (from.id == 'gps' || from.type == 'location' || from.type == 'address' || !fromIsNumeric) {
+    if (from.id == 'gps' ||
+        from.type == 'location' ||
+        from.type == 'address' ||
+        !fromIsNumeric) {
       params['from.latitude'] = from.latitude;
       params['from.longitude'] = from.longitude;
       params['from.address'] = from.name;
@@ -203,7 +209,10 @@ class TransportApi {
 
     // TO: Use coordinates for GPS, locations (POIs), addresses, OR non-numeric IDs
     final toIsNumeric = RegExp(r'^[0-9]+$').hasMatch(to.id);
-    if (to.id == 'gps' || to.type == 'location' || to.type == 'address' || !toIsNumeric) {
+    if (to.id == 'gps' ||
+        to.type == 'location' ||
+        to.type == 'address' ||
+        !toIsNumeric) {
       params['to.latitude'] = to.latitude;
       params['to.longitude'] = to.longitude;
       params['to.address'] = to.name;
@@ -401,8 +410,7 @@ class TransportApi {
     try {
       // Try MOTIS/Transitous first
       final result = await _getNearbyStopsMotis(lat, lng);
-      _nearbyCache[cacheKey] =
-          _CacheEntry(result, const Duration(minutes: 30));
+      _nearbyCache[cacheKey] = _CacheEntry(result, const Duration(minutes: 30));
       return result;
     } catch (e) {
       debugPrint('Transitous getNearbyStops failed: $e, trying v6.db...');
@@ -497,7 +505,7 @@ class TransportApi {
 
       if (onPartialResults != null) {
         bool motisDone = false;
-        
+
         motisFuture.then((motisResults) {
           motisDone = true;
           if (motisResults.isNotEmpty) {
@@ -507,21 +515,23 @@ class TransportApi {
 
         v6Future.then((v6Results) {
           if (v6Results.isNotEmpty) {
-            for (var j in v6Results) { j['source'] = 'v6'; }
-            
+            for (var j in v6Results) {
+              j['source'] = 'v6';
+            }
+
             if (!motisDone) {
               // DB finished before Motis! Show DB results first.
               onPartialResults(v6Results);
             } else {
               // Motis is done, we need to merge DB with Motis results.
               motisFuture.then((motisResults) {
-                 final merged = mergeResults(motisResults, v6Results);
-                 onPartialResults(merged);
+                final merged = mergeResults(motisResults, v6Results);
+                onPartialResults(merged);
               });
             }
           }
         });
-        
+
         // Wait for both to formally complete the function call
         final resultsList = await Future.wait([motisFuture, v6Future]);
         final merged = mergeResults(resultsList[0], resultsList[1]);
@@ -567,7 +577,7 @@ class TransportApi {
     String generateKey(Map<String, dynamic> journey) {
       final dep = journey['departure'] ?? '';
       final arr = journey['arrival'] ?? '';
-      
+
       // Extract first line name to distinguish different routes at same time
       String firstLine = '';
       final legs = journey['legs'] as List?;
@@ -620,10 +630,7 @@ class TransportApi {
         final coordinates =
             data['routes'][0]['geometry']['coordinates'] as List;
         return coordinates.map<List<double>>((point) {
-          return [
-            (point[1] as num).toDouble(),
-            (point[0] as num).toDouble()
-          ];
+          return [(point[1] as num).toDouble(), (point[0] as num).toDouble()];
         }).toList();
       }
     } catch (e) {

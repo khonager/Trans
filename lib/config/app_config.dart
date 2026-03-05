@@ -7,8 +7,8 @@ class AppConfig {
     if (url != null && url.isNotEmpty) {
       return url;
     }
-    // 2. If this code is running in the CI/CD build, this file 
-    //    will be overwritten, so we should return an empty string 
+    // 2. If this code is running in the CI/CD build, this file
+    //    will be overwritten, so we should return an empty string
     //    here locally if .env is missing.
     return '';
   }
