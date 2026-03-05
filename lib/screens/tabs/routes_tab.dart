@@ -544,8 +544,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                    return false;
                  });
                  if (!exists) _suggestions.add(s);
+            }
+            
+            // Sort suggestions. First by whether it matches the query (already handled by API returning good matches), 
+            // then by distance if the names are identical.
+            _suggestions.sort((a, b) {
+              if (a is Station && b is Station) {
+                if (a.name == b.name && refLat != null && refLng != null && a.latitude != null && a.longitude != null && b.latitude != null && b.longitude != null) {
+                  double distA = Geolocator.distanceBetween(refLat, refLng, a.latitude!, a.longitude!);
+                  double distB = Geolocator.distanceBetween(refLat, refLng, b.latitude!, b.longitude!);
+                  return distA.compareTo(distB);
+                }
               }
-              _isSuggestionsLoading = false; 
+              return 0; // Keep original order otherwise
+            });
+
+            _isSuggestionsLoading = false; 
             });
           }
         } catch (e) {
