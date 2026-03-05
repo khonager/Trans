@@ -205,7 +205,7 @@ class _FriendsTabState extends State<FriendsTab> {
           child: _isLoading 
             ? const Center(child: CircularProgressIndicator()) 
             : ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 120), // ADDED BOTTOM PADDING FOR TICKET PANEL
                 children: [
                   if (activeFriends.isNotEmpty) ...[
                     _buildSectionHeader("Active Now", colors),
