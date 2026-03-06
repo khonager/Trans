@@ -15,7 +15,8 @@
   <meta name="apple-mobile-web-app-title" content="Trans">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <link rel="icon" type="image/svg+xml" href="trans-icon.svg" />
+  <link rel="icon" type="image/svg+xml" href="trans-dark.svg" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/svg+xml" href="trans-light.svg" media="(prefers-color-scheme: dark)" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/Icon-192.png" />
 
   <title>Trans</title>
@@ -50,7 +51,10 @@
 <body>
   <div class="loading-container">
     <div class="loading-icon-wrapper">
-      <img src="trans-icon.svg" class="loading-icon" alt="Trans" />
+      <picture class="loading-icon">
+        <source srcset="trans-light.svg" media="(prefers-color-scheme: dark)">
+        <img src="trans-dark.svg" class="loading-icon" alt="Trans" />
+      </picture>
       <div class="loading-bar">
         <div class="loading-bar-inner"></div>
       </div>
@@ -59,7 +63,11 @@
   </div>
 
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
     body {
       background-color: #ffffff;
@@ -117,24 +125,51 @@
     }
 
     @keyframes bounce {
-      0%, 100% { transform: translateY(0); }
-      50%       { transform: translateY(-10px); }
+
+      0%,
+      100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-10px);
+      }
     }
 
     @keyframes slide {
-      0%   { transform: translateX(-100%); }
-      50%  { transform: translateX(150%); }
-      100% { transform: translateX(-100%); }
+      0% {
+        transform: translateX(-100%);
+      }
+
+      50% {
+        transform: translateX(150%);
+      }
+
+      100% {
+        transform: translateX(-100%);
+      }
     }
 
     @keyframes fade {
-      0%, 100% { opacity: 0.5; }
-      50%       { opacity: 1; }
+
+      0%,
+      100% {
+        opacity: 0.5;
+      }
+
+      50% {
+        opacity: 1;
+      }
     }
 
     @media (prefers-color-scheme: dark) {
-      body { background-color: #121212; }
-      .loading-bar { background: rgba(255, 255, 255, 0.1); }
+      body {
+        background-color: #121212;
+      }
+
+      .loading-bar {
+        background: rgba(255, 255, 255, 0.1);
+      }
     }
   </style>
 
