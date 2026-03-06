@@ -8,10 +8,15 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-DARK_SVG="web/trans-dark.svg"
-LIGHT_SVG="web/trans-light.svg"
+DARK_SVG="assets/trans-dark.svg"
+LIGHT_SVG="assets/trans-light.svg"
 
 echo "Generating icons from $DARK_SVG and $LIGHT_SVG..."
+
+# 0. Copy SVGs to web/ for direct usage there
+echo "  -> web/ (copying SVGs)"
+cp "$DARK_SVG" "web/trans-dark.svg"
+cp "$LIGHT_SVG" "web/trans-light.svg"
 
 # Function to generate PNG from SVG
 gen_png() {
