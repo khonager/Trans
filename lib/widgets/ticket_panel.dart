@@ -1,6 +1,7 @@
 import 'dart:io';
+import '../l10n/app_localizations.dart';
 import 'dart:convert';
-import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -26,11 +27,12 @@ class TicketPanel extends StatefulWidget {
 }
 
 class _TicketPanelState extends State<TicketPanel> {
-  final DraggableScrollableController _sheetController = DraggableScrollableController();
-  
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
+
   File? _mobileFile;
   Uint8List? _webBytes;
-  
+
   List<dynamic> _history = [];
   bool _isLoading = false;
 
@@ -42,9 +44,11 @@ class _TicketPanelState extends State<TicketPanel> {
 
   void _toggleSheet() {
     if (_sheetController.size < 0.2) {
-      _sheetController.animateTo(0.85, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      _sheetController.animateTo(0.85,
+          duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     } else {
-      _sheetController.animateTo(0.1, duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
+      _sheetController.animateTo(0.1,
+          duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
     }
   }
 
@@ -64,12 +68,14 @@ class _TicketPanelState extends State<TicketPanel> {
       // MOBILE ONLY
       try {
         final directory = await getApplicationDocumentsDirectory();
-        final files = directory.listSync()
+        final files = directory
+            .listSync()
             .whereType<File>()
             .where((f) => f.path.contains('ticket_') && f.path.endsWith('.jpg'))
             .toList();
-        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-        
+        files.sort(
+            (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
         if (mounted) {
           setState(() {
             _history = files;
@@ -90,11 +96,13 @@ class _TicketPanelState extends State<TicketPanel> {
         if (response.statusCode == 200) {
           if (kIsWeb) {
             final prefs = await SharedPreferences.getInstance();
-            await prefs.setString('saved_ticket_base64', base64Encode(response.bodyBytes));
+            await prefs.setString(
+                'saved_ticket_base64', base64Encode(response.bodyBytes));
             setState(() => _webBytes = response.bodyBytes);
           } else {
             final directory = await getApplicationDocumentsDirectory();
-            final backupFile = File('${directory.path}/ticket_cloud_backup.jpg');
+            final backupFile =
+                File('${directory.path}/ticket_cloud_backup.jpg');
             await backupFile.writeAsBytes(response.bodyBytes);
             await _refreshHistory();
           }
@@ -105,15 +113,15 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-
-
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
     // Use constraints defensively ONLY on Web when running on a mobile device to prevent OOM
     // on iOS Safari and to significantly reduce synchronous JS execution time when parsing millions
     // of pixels into a Dart List<int>. We keep high res for native mobile and desktop where memory
     // and processing power allow.
-    final bool isMobileWeb = kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+    final bool isMobileWeb = kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.android);
 
     final XFile? image = await picker.pickImage(
       source: ImageSource.gallery,
@@ -121,7 +129,7 @@ class _TicketPanelState extends State<TicketPanel> {
       maxHeight: isMobileWeb ? 800 : null,
       imageQuality: isMobileWeb ? 85 : 100,
     );
-    
+
     if (image == null) return;
 
     if (kIsWeb) {
@@ -131,23 +139,24 @@ class _TicketPanelState extends State<TicketPanel> {
     }
 
     setState(() => _isLoading = true);
-    
+
     try {
       final bytes = await File(image.path).readAsBytes();
       await _processPick(bytes, isWeb: false, path: image.path);
     } catch (e) {
-       _handleError(e);
+      _handleError(e);
     }
   }
 
-  Future<void> _processPick(Uint8List bytes, {required bool isWeb, String? path, XFile? xFile}) async {
+  Future<void> _processPick(Uint8List bytes,
+      {required bool isWeb, String? path, XFile? xFile}) async {
     setState(() => _isLoading = true);
-    
+
     try {
       File? originalFile = !isWeb && path != null ? File(path) : null;
       File? processedFile;
       Uint8List? processedBytes;
-      
+
       Rect? qrBox;
 
       // 1. Scan for QR Code
@@ -155,10 +164,11 @@ class _TicketPanelState extends State<TicketPanel> {
       if (!isWeb && (Platform.isAndroid || Platform.isIOS)) {
         try {
           final inputImage = InputImage.fromFilePath(path!);
-          final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+          final barcodeScanner =
+              BarcodeScanner(formats: [BarcodeFormat.qrCode]);
           final barcodes = await barcodeScanner.processImage(inputImage);
           debugPrint("ML Kit found ${barcodes.length} barcodes");
-          
+
           if (barcodes.isNotEmpty) {
             qrBox = barcodes.first.boundingBox;
           }
@@ -167,85 +177,89 @@ class _TicketPanelState extends State<TicketPanel> {
           debugPrint("ML Kit scan failed, falling back to ZXing: $e");
         }
       }
-      
+
       // ZXing fallback (Desktop, Web, or when ML Kit found nothing / failed)
       if (qrBox == null) {
         try {
           var image = img.decodeImage(bytes);
           if (image != null) {
-              // Bake EXIF orientation into actual pixels (Samsung cameras store rotated images via EXIF)
-              image = img.bakeOrientation(image);
-              
-              // Ensure image is 4-channel RGBA (some JPEGs decode as 3-channel RGB)
-              if (image.numChannels != 4) {
-                image = image.convert(numChannels: 4);
+            // Bake EXIF orientation into actual pixels (Samsung cameras store rotated images via EXIF)
+            image = img.bakeOrientation(image);
+
+            // Ensure image is 4-channel RGBA (some JPEGs decode as 3-channel RGB)
+            if (image.numChannels != 4) {
+              image = image.convert(numChannels: 4);
+            }
+
+            debugPrint(
+                "ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
+
+            // FIX: package:image v4 stores pixels as RGBA in memory.
+            // On little-endian systems (all browsers), asUint32List() reads
+            // [R,G,B,A] bytes as 0xAABBGGRR. But ZXing's RGBLuminanceSource
+            // expects ARGB format (0xAARRGGBB). We must convert RGBA -> ARGB
+            // by swapping R and B channels, otherwise luminance is calculated
+            // incorrectly and QR detection fails on colored backgrounds.
+            final rawPixels = image.data?.buffer.asUint32List();
+
+            if (rawPixels != null) {
+              final argbPixels = List<int>.generate(rawPixels.length, (i) {
+                final rgba = rawPixels[i];
+                final r = rgba & 0xFF;
+                final g = (rgba >> 8) & 0xFF;
+                final b = (rgba >> 16) & 0xFF;
+                final a = (rgba >> 24) & 0xFF;
+                return (a << 24) | (r << 16) | (g << 8) | b;
+              });
+
+              final luminance = zxing.RGBLuminanceSource(
+                  image.width, image.height, argbPixels);
+
+              // Use TRY_HARDER + alsoInverted for better detection on screenshots
+              const hints = zxing.DecodeHint(
+                tryHarder: true,
+                alsoInverted: true,
+              );
+
+              zxing.Result? result;
+
+              // Try HybridBinarizer first (better for photos with uneven lighting)
+              try {
+                final binarizer = zxing.HybridBinarizer(luminance);
+                final bitmap = zxing.BinaryBitmap(binarizer);
+                result = zxing.MultiFormatReader().decode(bitmap, hints);
+              } catch (_) {
+                // Fallback: GlobalHistogramBinarizer (better for screenshots with uniform backgrounds)
+                try {
+                  final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
+                  final bitmap2 = zxing.BinaryBitmap(binarizer2);
+                  result = zxing.MultiFormatReader().decode(bitmap2, hints);
+                } catch (_) {}
               }
 
-              debugPrint("ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
-              
-              // FIX: package:image v4 stores pixels as RGBA in memory.
-              // On little-endian systems (all browsers), asUint32List() reads
-              // [R,G,B,A] bytes as 0xAABBGGRR. But ZXing's RGBLuminanceSource
-              // expects ARGB format (0xAARRGGBB). We must convert RGBA -> ARGB
-              // by swapping R and B channels, otherwise luminance is calculated
-              // incorrectly and QR detection fails on colored backgrounds.
-              final rawPixels = image.data?.buffer.asUint32List();
-              
-              if (rawPixels != null) {
-                  final argbPixels = List<int>.generate(rawPixels.length, (i) {
-                    final rgba = rawPixels[i];
-                    final r = rgba & 0xFF;
-                    final g = (rgba >> 8) & 0xFF;
-                    final b = (rgba >> 16) & 0xFF;
-                    final a = (rgba >> 24) & 0xFF;
-                    return (a << 24) | (r << 16) | (g << 8) | b;
-                  });
+              if (result != null) {
+                debugPrint("ZXing: found barcode: ${result.text}");
+                final points = result.resultPoints;
+                if (points != null && points.isNotEmpty) {
+                  double minX = double.infinity, minY = double.infinity;
+                  double maxX = 0, maxY = 0;
 
-                  final luminance = zxing.RGBLuminanceSource(image.width, image.height, argbPixels);
-                  
-                  // Use TRY_HARDER + alsoInverted for better detection on screenshots
-                  const hints = zxing.DecodeHint(
-                    tryHarder: true,
-                    alsoInverted: true,
-                  );
-                  
-                  zxing.Result? result;
-                  
-                  // Try HybridBinarizer first (better for photos with uneven lighting)
-                  try {
-                    final binarizer = zxing.HybridBinarizer(luminance);
-                    final bitmap = zxing.BinaryBitmap(binarizer);
-                    result = zxing.MultiFormatReader().decode(bitmap, hints);
-                  } catch (_) {
-                    // Fallback: GlobalHistogramBinarizer (better for screenshots with uniform backgrounds)
-                    try {
-                      final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
-                      final bitmap2 = zxing.BinaryBitmap(binarizer2);
-                      result = zxing.MultiFormatReader().decode(bitmap2, hints);
-                    } catch (_) {}
+                  for (var p in points) {
+                    if ((p?.x ?? 0) < minX) minX = p!.x;
+                    if ((p?.y ?? 0) < minY) minY = p!.y;
+                    if ((p?.x ?? 0) > maxX) maxX = p!.x;
+                    if ((p?.y ?? 0) > maxY) maxY = p!.y;
                   }
-                  
-                  if (result != null) {
-                    debugPrint("ZXing: found barcode: ${result.text}");
-                    final points = result.resultPoints;
-                    if (points != null && points.isNotEmpty) {
-                      double minX = double.infinity, minY = double.infinity;
-                      double maxX = 0, maxY = 0;
-                      
-                      for (var p in points) {
-                         if ((p?.x ?? 0) < minX) minX = p!.x;
-                         if ((p?.y ?? 0) < minY) minY = p!.y;
-                         if ((p?.x ?? 0) > maxX) maxX = p!.x;
-                         if ((p?.y ?? 0) > maxY) maxY = p!.y;
-                      }
-                      qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
-                    }
-                  } else {
-                    debugPrint("ZXing: no barcode found after trying both binarizers");
-                  }
+                  qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
+                }
+              } else {
+                debugPrint(
+                    "ZXing: no barcode found after trying both binarizers");
               }
+            }
           } else {
-              debugPrint("ZXing: failed to decode image bytes (${bytes.length} bytes)");
+            debugPrint(
+                "ZXing: failed to decode image bytes (${bytes.length} bytes)");
           }
         } catch (e) {
           debugPrint("ZXing scan failed: $e");
@@ -266,50 +280,49 @@ class _TicketPanelState extends State<TicketPanel> {
       if (processedFile != null || processedBytes != null) {
         // 2. Auto-Crop Successful -> Confirm
         final confirmed = await _showCropConfirmation(
-          file: processedFile, 
-          bytes: processedBytes, 
-          isAutoCrop: true
-        );
-        
+            file: processedFile, bytes: processedBytes, isAutoCrop: true);
+
         if (confirmed == true) {
-           await _processAndUpload(processedFile ?? File(''), isWebFile: xFile, directBytes: processedBytes);
+          await _processAndUpload(processedFile ?? File(''),
+              isWebFile: xFile, directBytes: processedBytes);
         } else if (confirmed == false) {
-           await _triggerManualCrop(originalFile, bytes: bytes);
+          await _triggerManualCrop(originalFile, bytes: bytes);
         }
       } else {
         // 3. No QR Found -> Confirm Original
         final confirmed = await _showCropConfirmation(
-          file: originalFile, 
-          bytes: bytes, 
-          isAutoCrop: false
-        );
-        
+            file: originalFile, bytes: bytes, isAutoCrop: false);
+
         if (confirmed == true) {
-          await _processAndUpload(originalFile ?? File(''), isWebFile: xFile, directBytes: isWeb ? bytes : null);
+          await _processAndUpload(originalFile ?? File(''),
+              isWebFile: xFile, directBytes: isWeb ? bytes : null);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
       }
-
     } catch (e) {
-       _handleError(e);
+      _handleError(e);
     }
   }
 
   Future<void> _triggerManualCrop(File? imageFile, {Uint8List? bytes}) async {
     // Desktop, Web, or Android Manual Crop
-    if (kIsWeb || Platform.isAndroid || !(Platform.isAndroid || Platform.isIOS)) {
-       final result = await Navigator.push<Uint8List>(
-         context,
-         MaterialPageRoute(builder: (_) => ManualCropWrapper(imageFile: imageFile, imageBytes: bytes)),
-       );
+    if (kIsWeb ||
+        Platform.isAndroid ||
+        !(Platform.isAndroid || Platform.isIOS)) {
+      final result = await Navigator.push<Uint8List>(
+        context,
+        MaterialPageRoute(
+            builder: (_) =>
+                ManualCropWrapper(imageFile: imageFile, imageBytes: bytes)),
+      );
 
-       if (result != null) {
-         await _processAndUpload(imageFile ?? File(''), directBytes: result);
-       } else {
-         setState(() => _isLoading = false);
-       }
-       return;
+      if (result != null) {
+        await _processAndUpload(imageFile ?? File(''), directBytes: result);
+      } else {
+        setState(() => _isLoading = false);
+      }
+      return;
     }
 
     // Mobile Manual Crop
@@ -375,10 +388,11 @@ class _TicketPanelState extends State<TicketPanel> {
       if (jpg == null) return null;
 
       final dir = await getTemporaryDirectory();
-      final targetPath = '${dir.path}/auto_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final targetPath =
+          '${dir.path}/auto_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final targetFile = File(targetPath);
       await targetFile.writeAsBytes(jpg);
-      
+
       return targetFile;
     } catch (e) {
       debugPrint("Auto-crop error: $e");
@@ -386,7 +400,8 @@ class _TicketPanelState extends State<TicketPanel> {
     }
   }
 
-  Future<bool?> _showCropConfirmation({File? file, Uint8List? bytes, required bool isAutoCrop}) async {
+  Future<bool?> _showCropConfirmation(
+      {File? file, Uint8List? bytes, required bool isAutoCrop}) async {
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -395,16 +410,16 @@ class _TicketPanelState extends State<TicketPanel> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-             Text(isAutoCrop 
-               ? "We detected a QR code. Use this crop?" 
-               : "No QR code detected. Use this image?"),
-             const SizedBox(height: 10),
-             Container(
-               constraints: const BoxConstraints(maxHeight: 200),
-               child: bytes != null 
-                 ? Image.memory(bytes)
-                 : (file != null ? Image.file(file) : const SizedBox.shrink()),
-             )
+            Text(isAutoCrop
+                ? "We detected a QR code. Use this crop?"
+                : "No QR code detected. Use this image?"),
+            const SizedBox(height: 10),
+            Container(
+              constraints: const BoxConstraints(maxHeight: 200),
+              child: bytes != null
+                  ? Image.memory(bytes)
+                  : (file != null ? Image.file(file) : const SizedBox.shrink()),
+            )
           ],
         ),
         actions: [
@@ -414,14 +429,15 @@ class _TicketPanelState extends State<TicketPanel> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
-            child: const Text("Use Image"),
+            child: Text(AppLocalizations.of(context)!.useImage),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _processAndUpload(File file, {XFile? isWebFile, Uint8List? directBytes}) async {
+  Future<void> _processAndUpload(File file,
+      {XFile? isWebFile, Uint8List? directBytes}) async {
     setState(() => _isLoading = true);
     try {
       Uint8List bytes;
@@ -433,15 +449,15 @@ class _TicketPanelState extends State<TicketPanel> {
         // Compress if on Mobile/Mac
         Uint8List? compressed;
         if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
-            try {
-              compressed = await FlutterImageCompress.compressWithFile(
-                file.path,
-                minWidth: 800,
-                minHeight: 800,
-                quality: 85,
-                format: CompressFormat.jpeg,
-              );
-            } catch (_) {} 
+          try {
+            compressed = await FlutterImageCompress.compressWithFile(
+              file.path,
+              minWidth: 800,
+              minHeight: 800,
+              quality: 85,
+              format: CompressFormat.jpeg,
+            );
+          } catch (_) {}
         }
         bytes = compressed ?? await file.readAsBytes();
       }
@@ -456,7 +472,7 @@ class _TicketPanelState extends State<TicketPanel> {
         final localPath = '${directory.path}/ticket_$timestamp.jpg';
         final localFile = File(localPath);
         await localFile.writeAsBytes(bytes);
-        
+
         await _refreshHistory();
         setState(() => _mobileFile = localFile);
       }
@@ -481,14 +497,14 @@ class _TicketPanelState extends State<TicketPanel> {
   void _openFullScreen(ImageProvider imageProvider) {
     showDialog(
       context: context,
-      barrierDismissible: true, 
+      barrierDismissible: true,
       builder: (_) => GestureDetector(
-        onTap: () => Navigator.pop(context), 
+        onTap: () => Navigator.pop(context),
         child: Container(
           color: Colors.black.withValues(alpha: 0.9),
           child: Center(
             child: Image(
-              image: imageProvider, 
+              image: imageProvider,
               fit: BoxFit.contain,
               width: double.infinity,
               height: double.infinity,
@@ -503,23 +519,28 @@ class _TicketPanelState extends State<TicketPanel> {
   void _renameFile(File file) async {
     final controller = TextEditingController();
     final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Rename Ticket"),
-        content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Enter label")),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text("Save")),
-        ],
-      )
-    );
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: Text(AppLocalizations.of(context)!.renameTicket),
+              content: TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(hintText: "Enter label")),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(AppLocalizations.of(context)!.cancel)),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, controller.text),
+                    child: Text(AppLocalizations.of(context)!.save)),
+              ],
+            ));
 
     if (newName != null && newName.isNotEmpty) {
       final dir = file.parent.path;
       final newPath = '$dir/ticket_${newName.replaceAll(" ", "_")}.jpg';
       await file.rename(newPath);
       _refreshHistory();
-      Navigator.pop(context); 
+      if (mounted) Navigator.pop(context);
     }
   }
 
@@ -530,7 +551,7 @@ class _TicketPanelState extends State<TicketPanel> {
     if (_mobileFile?.path == file.path) {
       setState(() => _mobileFile = _history.isNotEmpty ? _history.first : null);
     }
-    Navigator.pop(context); 
+    if (mounted) Navigator.pop(context);
   }
 
   void _showHistorySheet() {
@@ -542,44 +563,61 @@ class _TicketPanelState extends State<TicketPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Ticket History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(AppLocalizations.of(context)!.ticketHistory,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Expanded(
-              child: _history.isEmpty 
-                ? const Center(child: Text("No history found.")) 
-                : ListView.separated(
-                    itemCount: _history.length,
-                    separatorBuilder: (_,__) => const Divider(),
-                    itemBuilder: (ctx, idx) {
-                      final file = _history[idx] as File;
-                      String name = file.path.split('/').last.replaceAll('ticket_', '').replaceAll('.jpg', '');
-                      if (int.tryParse(name) != null) {
-                         final date = DateTime.fromMillisecondsSinceEpoch(int.parse(name));
-                         name = DateFormat('MMM dd, yyyy - HH:mm').format(date);
-                      } else {
-                         name = name.replaceAll('_', ' ');
-                      }
+              child: _history.isEmpty
+                  ? Center(
+                      child: Text(AppLocalizations.of(context)!.noHistoryFound))
+                  : ListView.separated(
+                      itemCount: _history.length,
+                      separatorBuilder: (_, __) => const Divider(),
+                      itemBuilder: (ctx, idx) {
+                        final file = _history[idx] as File;
+                        String name = file.path
+                            .split('/')
+                            .last
+                            .replaceAll('ticket_', '')
+                            .replaceAll('.jpg', '');
+                        if (int.tryParse(name) != null) {
+                          final date = DateTime.fromMillisecondsSinceEpoch(
+                              int.parse(name));
+                          name =
+                              DateFormat('MMM dd, yyyy - HH:mm').format(date);
+                        } else {
+                          name = name.replaceAll('_', ' ');
+                        }
 
-                      return ListTile(
-                        leading: Image.file(file, width: 40, height: 40, fit: BoxFit.cover),
-                        title: Text(name),
-                        onTap: () {
-                          setState(() => _mobileFile = file);
-                          Navigator.pop(ctx);
-                        },
-                        trailing: PopupMenuButton(
-                          onSelected: (value) {
-                            if (value == 'rename') _renameFile(file);
-                            if (value == 'delete') _deleteFile(file);
+                        return ListTile(
+                          leading: Image.file(file,
+                              width: 40, height: 40, fit: BoxFit.cover),
+                          title: Text(name),
+                          onTap: () {
+                            setState(() => _mobileFile = file);
+                            Navigator.pop(ctx);
                           },
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(value: 'rename', child: Text("Rename")),
-                            const PopupMenuItem(value: 'delete', child: Text("Delete", style: TextStyle(color: Colors.red))),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                          trailing: PopupMenuButton(
+                            onSelected: (value) {
+                              if (value == 'rename') _renameFile(file);
+                              if (value == 'delete') _deleteFile(file);
+                            },
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                  value: 'rename',
+                                  child: Text(
+                                      AppLocalizations.of(context)!.rename)),
+                              PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text(
+                                      AppLocalizations.of(context)!.delete,
+                                      style:
+                                          const TextStyle(color: Colors.red))),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
             )
           ],
         ),
@@ -590,7 +628,7 @@ class _TicketPanelState extends State<TicketPanel> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    
+
     ImageProvider? imageToShow;
     if (kIsWeb && _webBytes != null) {
       imageToShow = MemoryImage(_webBytes!);
@@ -599,85 +637,101 @@ class _TicketPanelState extends State<TicketPanel> {
     }
 
     return DraggableScrollableSheet(
-      controller: _sheetController, 
+      controller: _sheetController,
       initialChildSize: 0.1,
       minChildSize: 0.1,
       maxChildSize: 0.85,
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
-            color: colors.ticketSheetBg, 
+            color: colors.ticketSheetBg,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12, offset: const Offset(0, -4))
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 12,
+                  offset: const Offset(0, -4))
             ],
           ),
           child: ListView(
             controller: scrollController,
-            physics: const AlwaysScrollableScrollPhysics(), 
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             children: [
               GestureDetector(
-                onTap: _toggleSheet, 
+                onTap: _toggleSheet,
                 behavior: HitTestBehavior.opaque,
                 child: Column(
                   children: [
                     Center(
-                      child: Container(
-                        width: 40, 
-                        height: 4, 
-                        margin: const EdgeInsets.only(bottom: 20),
-                        decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2))
-                      )
-                    ),
+                        child: Container(
+                            width: 40,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 20),
+                            decoration: BoxDecoration(
+                                color: colors.modalHandle,
+                                borderRadius: BorderRadius.circular(2)))),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.confirmation_number_outlined, color: colors.ticketHeader),
+                        Icon(Icons.confirmation_number_outlined,
+                            color: colors.ticketHeader),
                         const SizedBox(width: 8),
-                        Text(
-                          "My Ticket", 
-                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.ticketHeader)
-                        ),
+                        Text("My Ticket",
+                            style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: colors.ticketHeader)),
                       ],
                     ),
                     const SizedBox(height: 24),
                   ],
                 ),
               ),
-              
               if (_isLoading)
-                Container(height: 300, alignment: Alignment.center, child: const CircularProgressIndicator())
+                Container(
+                    height: 300,
+                    alignment: Alignment.center,
+                    child: const CircularProgressIndicator())
               else if (imageToShow != null)
                 Column(
                   children: [
                     GestureDetector(
-                      onTap: () => _openFullScreen(imageToShow!), 
-                      onLongPress: kIsWeb ? null : _showHistorySheet, 
+                      onTap: () => _openFullScreen(imageToShow!),
+                      onLongPress: kIsWeb ? null : _showHistorySheet,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: Image(
                           image: imageToShow,
                           fit: BoxFit.contain,
-                          errorBuilder: (c,e,s) => Container(height: 200, alignment: Alignment.center, child: const Text("Error loading ticket")),
+                          errorBuilder: (c, e, s) => Container(
+                              height: 200,
+                              alignment: Alignment.center,
+                              child: Text(AppLocalizations.of(context)!
+                                  .errorLoadingTicket)),
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(kIsWeb ? "Tap for fullscreen" : "Tap for fullscreen • Hold for history", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                    Text(
+                        kIsWeb
+                            ? "Tap for fullscreen"
+                            : "Tap for fullscreen • Hold for history",
+                        style:
+                            const TextStyle(fontSize: 10, color: Colors.grey)),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
                       height: 50,
                       child: OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: colors.textPrimary,
-                          side: BorderSide(color: colors.divider),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
-                        ),
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(color: colors.divider),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12))),
                         onPressed: _pickAndUploadImage,
                         icon: const Icon(Icons.edit),
-                        label: const Text("Change Ticket"),
+                        label: Text(AppLocalizations.of(context)!.changeTicket),
                       ),
                     )
                   ],
@@ -688,7 +742,8 @@ class _TicketPanelState extends State<TicketPanel> {
                   child: Container(
                     height: 220,
                     decoration: BoxDecoration(
-                      color: colors.isDark ? Colors.white10 : Colors.grey.shade100,
+                      color:
+                          colors.isDark ? Colors.white10 : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(color: colors.ticketBorder, width: 2),
                     ),
@@ -696,14 +751,24 @@ class _TicketPanelState extends State<TicketPanel> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(color: colors.scaffoldBg, shape: BoxShape.circle),
-                          child: Icon(Icons.add_a_photo_rounded, size: 32, color: colors.textSecondary)
-                        ),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                                color: colors.scaffoldBg,
+                                shape: BoxShape.circle),
+                            child: Icon(Icons.add_a_photo_rounded,
+                                size: 32, color: colors.textSecondary)),
                         const SizedBox(height: 16),
-                        Text("Add Ticket", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                        Text(AppLocalizations.of(context)!.addTicket,
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: colors.textPrimary)),
                         const SizedBox(height: 4),
-                        Text("Select image from gallery", style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+                        Text(
+                            AppLocalizations.of(context)!
+                                .selectImageFromGallery,
+                            style: TextStyle(
+                                fontSize: 12, color: colors.textSecondary)),
                       ],
                     ),
                   ),

@@ -2,7 +2,7 @@ name: trans
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 2.4.0+1
+version: 2.4.2+4
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -10,10 +10,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
   
   intl: ^0.20.2
   http: ^1.1.0
-  flutter_markdown: ^0.7.7+1
+  flutter_markdown_plus: ^1.0.7
   geolocator: ^14.0.2
   geolocator_linux: ^0.2.1
   flutter_compass: ^0.8.0
@@ -42,13 +46,13 @@ dependencies:
   flutter_image_compress: ^2.4.0
   url_launcher: ^6.2.0
   package_info_plus: ^9.0.0
-  uuid: ^4.2.2
+  uuid: ^4.5.3
   qr_flutter: ^4.1.0
 
   # Ticket Logic
   google_mlkit_barcode_scanning: ^0.14.2
   image_cropper: ^11.0.0
-  image: ^4.2.0
+  image: ^4.8.0
   # Linux/Desktop Support
   zxing_lib: ^1.1.4
   crop_your_image: ^2.0.0
@@ -100,6 +104,7 @@ flutter_launcher_icons:
   adaptive_icon_foreground: "assets/icon.png"
 
 flutter:
+  generate: true
   uses-material-design: true
 
   assets:

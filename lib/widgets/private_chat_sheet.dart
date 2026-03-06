@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import '../services/supabase_service.dart';
 import '../config/app_theme.dart';
 
@@ -6,7 +7,8 @@ class PrivateChatSheet extends StatefulWidget {
   final String friendId;
   final String friendName;
 
-  const PrivateChatSheet({super.key, required this.friendId, required this.friendName});
+  const PrivateChatSheet(
+      {super.key, required this.friendId, required this.friendName});
 
   @override
   State<PrivateChatSheet> createState() => _PrivateChatSheetState();
@@ -27,7 +29,9 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
     return CircleAvatar(
       radius: 16,
       backgroundImage: url != null ? NetworkImage(url) : null,
-      child: url == null ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?") : null,
+      child: url == null
+          ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?")
+          : null,
     );
   }
 
@@ -49,19 +53,21 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
 
     return Container(
       height: sheetHeight,
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       decoration: BoxDecoration(
-        color: colors.cardBg, 
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24))
-      ),
+          color: colors.cardBg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
       child: Column(
         children: [
           Container(
-            width: 40, height: 4, 
+            width: 40,
+            height: 4,
             margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: colors.modalHandle, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+                color: colors.modalHandle,
+                borderRadius: BorderRadius.circular(2)),
           ),
-          
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
@@ -71,7 +77,13 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                   children: [
                     const Icon(Icons.lock, size: 16, color: Colors.green),
                     const SizedBox(width: 8),
-                    Text("Secure Chat: ${widget.friendName}", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colors.textPrimary)),
+                    Text(
+                        AppLocalizations.of(context)!
+                            .secureChat(widget.friendName),
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary)),
                   ],
                 ),
                 IconButton(
@@ -82,18 +94,23 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
             ),
           ),
           Divider(color: colors.divider),
-
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: SupabaseService.getPrivateMessages(widget.friendId),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                if (!snapshot.hasData)
+                  return const Center(child: CircularProgressIndicator());
                 final msgs = snapshot.data!;
-                
-                // Auto-scroll to bottom when new messages arrive
-                WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
-                if (msgs.isEmpty) return Center(child: Text("No secure messages yet.", style: TextStyle(color: colors.textSecondary)));
+                // Auto-scroll to bottom when new messages arrive
+                WidgetsBinding.instance
+                    .addPostFrameCallback((_) => _scrollToBottom());
+
+                if (msgs.isEmpty)
+                  return Center(
+                      child: Text(
+                          AppLocalizations.of(context)!.noSecureMessagesYet,
+                          style: TextStyle(color: colors.textSecondary)));
 
                 return ListView.builder(
                   controller: _scrollCtrl,
@@ -101,40 +118,53 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                   itemCount: msgs.length,
                   itemBuilder: (ctx, idx) {
                     final msg = msgs[idx];
-                    final isMe = msg['user_id'] == SupabaseService.currentUser?.id;
+                    final isMe =
+                        msg['user_id'] == SupabaseService.currentUser?.id;
                     final username = msg['username'] ?? 'Unknown';
                     final avatar = msg['avatar_url'];
                     final emoji = msg['avatar_emoji'];
-                    
+
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Row(
-                        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                        mainAxisAlignment: isMe
+                            ? MainAxisAlignment.end
+                            : MainAxisAlignment.start,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (!isMe) ...[
-                             _buildAvatar(avatar, emoji, username),
-                             const SizedBox(width: 8),
+                            _buildAvatar(avatar, emoji, username),
+                            const SizedBox(width: 8),
                           ],
                           Column(
-                            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                            crossAxisAlignment: isMe
+                                ? CrossAxisAlignment.end
+                                : CrossAxisAlignment.start,
                             children: [
                               Container(
-                                constraints: BoxConstraints(maxWidth: size.width * 0.7),
+                                constraints:
+                                    BoxConstraints(maxWidth: size.width * 0.7),
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: isMe ? Colors.green.shade800 : colors.chatBubbleFriendBg,
+                                  color: isMe
+                                      ? Colors.green.shade800
+                                      : colors.chatBubbleFriendBg,
                                   borderRadius: BorderRadius.only(
                                     topLeft: const Radius.circular(16),
                                     topRight: const Radius.circular(16),
-                                    bottomLeft: isMe ? const Radius.circular(16) : Radius.zero,
-                                    bottomRight: isMe ? Radius.zero : const Radius.circular(16),
+                                    bottomLeft: isMe
+                                        ? const Radius.circular(16)
+                                        : Radius.zero,
+                                    bottomRight: isMe
+                                        ? Radius.zero
+                                        : const Radius.circular(16),
                                   ),
                                 ),
-                                child: Text(
-                                  msg['content'], 
-                                  style: TextStyle(color: isMe ? Colors.white : colors.chatBubbleFriendText)
-                                ),
+                                child: Text(msg['content'],
+                                    style: TextStyle(
+                                        color: isMe
+                                            ? Colors.white
+                                            : colors.chatBubbleFriendText)),
                               ),
                             ],
                           )
@@ -146,7 +176,6 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
               },
             ),
           ),
-
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -156,20 +185,24 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                     controller: _msgCtrl,
                     style: TextStyle(color: colors.textPrimary),
                     decoration: InputDecoration(
-                      hintText: "Encrypted Message...",
-                      hintStyle: TextStyle(color: colors.textSecondary),
-                      filled: true,
-                      fillColor: colors.chatInputFill,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20)
-                    ),
+                        hintText: "Encrypted Message...",
+                        hintStyle: TextStyle(color: colors.textSecondary),
+                        filled: true,
+                        fillColor: colors.chatInputFill,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none),
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 20)),
                     onSubmitted: (_) => _send(),
                   ),
                 ),
                 const SizedBox(width: 8),
                 CircleAvatar(
                   backgroundColor: colors.chatSendBtnBg,
-                  child: IconButton(icon: Icon(Icons.send, color: colors.chatSendBtnIcon), onPressed: _send),
+                  child: IconButton(
+                      icon: Icon(Icons.send, color: colors.chatSendBtnIcon),
+                      onPressed: _send),
                 )
               ],
             ),
@@ -187,7 +220,8 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
       // Wait slightly for the stream to update then scroll
       Future.delayed(const Duration(milliseconds: 300), _scrollToBottom);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:trans/models/journey.dart';
@@ -53,18 +54,32 @@ class RouteShareTicket extends StatelessWidget {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(4),
-                          child: Image.asset('lib/assets/logo.png', width: 20, height: 20, errorBuilder: (_, __, ___) => const Icon(Icons.train, size: 20, color: accentColor)),
+                          child: Image.asset('lib/assets/logo_light.png',
+                              width: 20,
+                              height: 20,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.train,
+                                  size: 20,
+                                  color: accentColor)),
                         ),
                         const SizedBox(width: 10),
                         const Text(
                           "TRANSIT BOARDING PASS",
-                          style: TextStyle(color: accentColor, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 2.0),
+                          style: TextStyle(
+                              color: accentColor,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                              letterSpacing: 2.0),
                         ),
                       ],
                     ),
                     Text(
                       DateFormat('MM/dd/yyyy').format(journey.departure),
-                      style: const TextStyle(color: secondaryColor, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: monospaceFont),
+                      style: const TextStyle(
+                          color: secondaryColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: monospaceFont),
                     ),
                   ],
                 ),
@@ -77,24 +92,41 @@ class RouteShareTicket extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("DEP", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.dep,
+                            style: TextStyle(
+                                color: secondaryColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900)),
                         Text(
                           DateFormat('HH:mm').format(journey.departure),
-                          style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
+                          style: const TextStyle(
+                              color: textColor,
+                              fontSize: 48,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: monospaceFont),
                         ),
                       ],
                     ),
                     const Padding(
                       padding: EdgeInsets.only(bottom: 12),
-                      child: Icon(Icons.arrow_forward, color: secondaryColor, size: 24),
+                      child: Icon(Icons.arrow_forward,
+                          color: secondaryColor, size: 24),
                     ),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        const Text("ARR", style: TextStyle(color: secondaryColor, fontSize: 10, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.arr,
+                            style: TextStyle(
+                                color: secondaryColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900)),
                         Text(
                           DateFormat('HH:mm').format(journey.arrival),
-                          style: const TextStyle(color: textColor, fontSize: 48, fontWeight: FontWeight.w900, fontFamily: monospaceFont),
+                          style: const TextStyle(
+                              color: textColor,
+                              fontSize: 48,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: monospaceFont),
                         ),
                       ],
                     ),
@@ -124,18 +156,28 @@ class RouteShareTicket extends StatelessWidget {
                       children: [
                         Text(
                           step.departureTime,
-                          style: const TextStyle(color: textColor, fontWeight: FontWeight.w900, fontSize: 16, fontFamily: monospaceFont),
+                          style: const TextStyle(
+                              color: textColor,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              fontFamily: monospaceFont),
                         ),
                         const SizedBox(width: 20),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildStepHeaderDense(step, textColor),
+                              _buildStepHeaderDense(context, step, textColor),
                               const SizedBox(height: 4),
                               Text(
-                                isRide ? "${step.startStationName ?? '?'} • ${step.duration}".toUpperCase() : step.instruction,
-                                style: const TextStyle(color: secondaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                                isRide
+                                    ? "${step.startStationName ?? '?'} • ${step.duration}"
+                                        .toUpperCase()
+                                    : step.instruction,
+                                style: const TextStyle(
+                                    color: secondaryColor,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
@@ -154,14 +196,24 @@ class RouteShareTicket extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("PASSENGER", style: TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
+                        Text(AppLocalizations.of(context)!.passenger,
+                            style: TextStyle(
+                                color: Color(0xFF666666),
+                                fontSize: 8,
+                                fontWeight: FontWeight.w900)),
                         const SizedBox(height: 2),
-                        Text(username.toUpperCase(), style: const TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w900, fontFamily: monospaceFont)),
+                        Text(username.toUpperCase(),
+                            style: const TextStyle(
+                                color: textColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                fontFamily: monospaceFont)),
                       ],
                     ),
                     // Duration (Green, centered in this row essentially)
                     Text(
-                      FormatUtils.formatDuration(journey.duration.inMinutes).toUpperCase(),
+                      FormatUtils.formatDuration(journey.duration.inMinutes)
+                          .toUpperCase(),
                       style: const TextStyle(
                         color: Color(0xFF81C784), // Premium green
                         fontWeight: FontWeight.w900,
@@ -195,17 +247,6 @@ class RouteShareTicket extends StatelessWidget {
     );
   }
 
-  Widget _buildTicketInfo(String label, String value, {bool monospace = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Color(0xFF666666), fontSize: 8, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 2),
-        Text(value, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900, fontFamily: monospace ? 'monospace' : null)),
-      ],
-    );
-  }
-
   Widget _buildPerforatedDivider(Color cutoutColor) {
     return Container(
       color: const Color(0xFF1A1A1A),
@@ -214,60 +255,104 @@ class RouteShareTicket extends StatelessWidget {
         alignment: Alignment.center,
         children: [
           Row(
-            children: List.generate(40, (i) => Expanded(
-              child: Container(height: 1.5, color: i % 2 == 0 ? Colors.white24 : Colors.transparent, margin: const EdgeInsets.symmetric(horizontal: 2)),
-            )),
+            children: List.generate(
+                40,
+                (i) => Expanded(
+                      child: Container(
+                          height: 1.5,
+                          color:
+                              i % 2 == 0 ? Colors.white24 : Colors.transparent,
+                          margin: const EdgeInsets.symmetric(horizontal: 2)),
+                    )),
           ),
-          Positioned(left: -15, child: Container(width: 30, height: 30, decoration: BoxDecoration(color: cutoutColor, shape: BoxShape.circle))),
-          Positioned(right: -15, child: Container(width: 30, height: 30, decoration: BoxDecoration(color: cutoutColor, shape: BoxShape.circle))),
+          Positioned(
+              left: -15,
+              child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                      color: cutoutColor, shape: BoxShape.circle))),
+          Positioned(
+              right: -15,
+              child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                      color: cutoutColor, shape: BoxShape.circle))),
         ],
       ),
     );
   }
 
-  Widget _buildStepHeaderDense(JourneyStep step, Color textColor) {
+  Widget _buildStepHeaderDense(
+      BuildContext context, JourneyStep step, Color textColor) {
     if (step.type == 'walk') {
       return Row(
         children: [
           const Icon(Icons.directions_walk, size: 14, color: Colors.orange),
           const SizedBox(width: 8),
-          const Text("WALK", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w900, fontSize: 14)),
+          Text(AppLocalizations.of(context)!.walk,
+              style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14)),
           const SizedBox(width: 8),
-          Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          Text(step.duration,
+              style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],
       );
     }
 
     if (step.type == 'transfer') {
-       return Row(
+      return Row(
         children: [
           const Icon(Icons.sync, size: 14, color: Colors.blueAccent),
           const SizedBox(width: 8),
-          const Text("TRANSFER", style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+          Text(AppLocalizations.of(context)!.transfer,
+              style: TextStyle(
+                  color: Colors.blueAccent,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14)),
           const SizedBox(width: 8),
-          Text(step.duration, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          Text(step.duration,
+              style: const TextStyle(color: Colors.grey, fontSize: 12)),
         ],
       );
     }
 
     String lineName = step.line.trim();
     if (!showTrainNumbers) {
-       lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
-       if (step.tripId != null) lineName = lineName.replaceAll(step.tripId!, "").trim();
+      lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
+      if (step.tripId != null)
+        lineName = lineName.replaceAll(step.tripId!, "").trim();
     }
 
-    final dest = (step.destinationName ?? step.instruction.split('→').last.trim());
+    final dest =
+        (step.destinationName ?? step.instruction.split('→').last.trim());
     final head = (step.headsign ?? '').trim();
-    final isEnd = dest.isNotEmpty && head.isNotEmpty && (head.toLowerCase().contains(dest.toLowerCase()) || dest.toLowerCase().contains(head.toLowerCase()));
+    final isEnd = dest.isNotEmpty &&
+        head.isNotEmpty &&
+        (head.toLowerCase().contains(dest.toLowerCase()) ||
+            dest.toLowerCase().contains(head.toLowerCase()));
     final displayDest = isEnd ? "End of Line" : dest;
 
     return Row(
       children: [
-        Text(lineName, style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w900, fontSize: 16)),
+        Text(lineName,
+            style: const TextStyle(
+                color: Colors.blueAccent,
+                fontWeight: FontWeight.w900,
+                fontSize: 16)),
         const SizedBox(width: 8),
         const Icon(Icons.arrow_right_alt, color: Colors.white70, size: 16),
         const SizedBox(width: 8),
-        Expanded(child: Text(displayDest.toUpperCase(), overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15))),
+        Expanded(
+            child: Text(displayDest.toUpperCase(),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15))),
       ],
     );
   }

@@ -18,10 +18,10 @@ class JourneyStep {
   final String? arrivalPlatform;
   final List<dynamic>? stopovers;
   final int? chatCount;
-  
+
   // NEW: Store exact time for alternatives search
   final DateTime? dateTime;
-  
+
   // NEW: UI refinements
   final String? startStationName;
   final String? destinationName;
@@ -30,14 +30,14 @@ class JourneyStep {
 
   // Real-time data
   final int? departureDelay; // minutes
-  final int? arrivalDelay;   // minutes
+  final int? arrivalDelay; // minutes
   final bool isCancelled;
   final DateTime? plannedDeparture;
   final DateTime? plannedArrival;
 
   // New: Alarm state
   final bool isWakeAlarmOn;
-  
+
   // New: Display breakdown
   final Duration? walkDuration;
   final Duration? waitDuration;
@@ -99,13 +99,13 @@ class JourneyStep {
     bool? isCancelled,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
+    String? startStationName,
     String? destinationName,
     String? headsign,
     String? tripId,
     bool? isWakeAlarmOn,
     Duration? walkDuration,
-    Duration? waitDuration, 
-
+    Duration? waitDuration,
   }) {
     return JourneyStep(
       type: type ?? this.type,
@@ -142,7 +142,6 @@ class JourneyStep {
   }
 }
 
-
 class Journey {
   final List<JourneyStep> steps;
   final DateTime departure;
@@ -154,7 +153,7 @@ class Journey {
   final String source; // 'motis', 'v6'
   final Duration totalWalkingDuration;
   final DateTime? plannedDeparture; // NEW
-  final DateTime? plannedArrival;   // NEW
+  final DateTime? plannedArrival; // NEW
 
   Journey({
     required this.steps,
@@ -199,14 +198,18 @@ class Journey {
   }
 
   bool get isCancelled => steps.any((s) => s.isCancelled);
-  
-  int get departureDelay => steps
-      .firstWhere((s) => s.type == 'ride', orElse: () => steps.first)
-      .departureDelay ?? 0;
-      
-  int get arrivalDelay => steps
-      .lastWhere((s) => s.type == 'ride', orElse: () => steps.last)
-      .arrivalDelay ?? 0;
+
+  int get departureDelay =>
+      steps
+          .firstWhere((s) => s.type == 'ride', orElse: () => steps.first)
+          .departureDelay ??
+      0;
+
+  int get arrivalDelay =>
+      steps
+          .lastWhere((s) => s.type == 'ride', orElse: () => steps.last)
+          .arrivalDelay ??
+      0;
 }
 
 class RouteTab {
@@ -219,11 +222,11 @@ class RouteTab {
   final Station? origin; // NEW: Store origin station for pagination context
   final List<JourneyStep> steps; // Kept for legacy/active view
   final String? source;
-  
+
   // NEW: Multiple candidates (Search Results)
   final List<Journey>? candidates;
   // NEW: Manually opened journeys (The Stack)
-  final List<Journey> stack; 
+  final List<Journey> stack;
   // NEW: Currently selected journey (if any)
   final Journey? activeJourney;
   // NEW: State for expanding/collapsing the secondary row
@@ -240,11 +243,11 @@ class RouteTab {
     required this.steps,
     this.source,
     this.candidates,
-    this.stack = const [], 
+    this.stack = const [],
     this.activeJourney,
     this.isStackExpanded = true, // Default open
   });
-  
+
   RouteTab copyWith({
     String? id,
     String? title,
@@ -273,7 +276,8 @@ class RouteTab {
       source: source ?? this.source,
       candidates: candidates ?? this.candidates,
       stack: stack ?? this.stack,
-      activeJourney: clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
+      activeJourney:
+          clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
       isStackExpanded: isStackExpanded ?? this.isStackExpanded,
     );
   }

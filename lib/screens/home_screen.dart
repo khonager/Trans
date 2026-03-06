@@ -10,6 +10,7 @@ import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
 import '../widgets/ticket_panel.dart';
 import '../config/app_theme.dart';
+import '../l10n/app_localizations.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -22,6 +23,8 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onGhostModeChanged;
   final Function(Color) onColorChanged;
   final Color currentColor;
+  final Locale? locale;
+  final Function(Locale) onLocaleChanged;
 
   const HomeScreen({
     super.key,
@@ -35,6 +38,8 @@ class HomeScreen extends StatefulWidget {
     required this.onGhostModeChanged,
     required this.onColorChanged,
     required this.currentColor,
+    required this.locale,
+    required this.onLocaleChanged,
   });
 
   @override
@@ -43,12 +48,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
-  bool _showTrainNumbers = false; 
+  bool _showTrainNumbers = false;
   bool _alwaysWakeMe = false;
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
-
 
   @override
   void initState() {
@@ -88,7 +92,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _setupAuthListener() {
-    _authSubscription = SupabaseService.client.auth.onAuthStateChange.listen((data) {
+    _authSubscription =
+        SupabaseService.client.auth.onAuthStateChange.listen((data) {
       final AuthChangeEvent event = data.event;
       if (event == AuthChangeEvent.passwordRecovery) {
         _handlePasswordRecovery();
@@ -99,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _handlePasswordRecovery() {
     // Switch to Settings Tab
     _onTabChanged(2); // 2 is SettingsTab index
-    
+
     // Show Password Reset Dialog
     // We need to wait for the tab switch to settle or just show a global dialog
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -107,21 +112,23 @@ class _HomeScreenState extends State<HomeScreen> {
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          title: const Text("Reset Password"),
-          content: const Text("You have securely logged in via the password reset link. Please set a new password now."),
+          title: Text(AppLocalizations.of(context)!.resetPassword),
+          content: Text(AppLocalizations.of(context)!.resetPasswordMessage),
           actions: [
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
                 // The user is already on the settings tab, they can use the profile edit form.
                 // Optionally we could trigger the edit mode in SettingsTab if we had access to it,
-                // but for now, directing them to the tab is a good start. 
+                // but for now, directing them to the tab is a good start.
                 // We'll show a snackbar to guide them.
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Tap the 'Edit' icon in your profile to set a new password.")),
+                  SnackBar(
+                      content: Text(
+                          AppLocalizations.of(context)!.resetPasswordSnackbar)),
                 );
               },
-              child: const Text("OK"),
+              child: Text(AppLocalizations.of(context)!.ok),
             ),
           ],
         ),
@@ -160,12 +167,12 @@ class _HomeScreenState extends State<HomeScreen> {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) return;
       }
-      
+
       if (permission == LocationPermission.deniedForever) return;
 
       final pos = await Geolocator.getCurrentPosition();
       setState(() => _currentPosition = pos);
-      
+
       if (!widget.isGhostMode) {
         SupabaseService.updateLocation(pos);
       }
@@ -180,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final screens = [
       RoutesTab(
         key: _routesTabKey,
-        currentPosition: _currentPosition, 
+        currentPosition: _currentPosition,
         onlyNahverkehr: widget.onlyNahverkehr,
         showTrainNumbers: _showTrainNumbers,
         alwaysWakeMe: _alwaysWakeMe,
@@ -201,66 +208,76 @@ class _HomeScreenState extends State<HomeScreen> {
         onShowTrainNumbersChanged: _updateShowTrainNumbers,
         alwaysWakeMe: _alwaysWakeMe,
         onAlwaysWakeMeChanged: _updateAlwaysWakeMe,
+        locale: widget.locale,
+        onLocaleChanged: widget.onLocaleChanged,
       ),
     ];
 
     return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        if (didPop) return;
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
 
-        // 1. Try to handle back in RoutesTab if it is active
-        if (_currentIndex == 0 && (_routesTabKey.currentState?.handleBack() ?? false)) {
-          return;
-        }
+          // 1. Try to handle back in RoutesTab if it is active
+          if (_currentIndex == 0 &&
+              (_routesTabKey.currentState?.handleBack() ?? false)) {
+            return;
+          }
 
-        // 2. Otherwise ask to quit
-        final shouldQuit = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Quit App?'),
-            content: const Text('Do you want to exit the application?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('No'),
+          // 2. Otherwise ask to quit
+          final shouldQuit = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text(AppLocalizations.of(context)!.quitAppTitle),
+                  content: Text(AppLocalizations.of(context)!.quitAppMessage),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: Text(AppLocalizations.of(context)!.no),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: Text(AppLocalizations.of(context)!.yes),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+
+          if (shouldQuit) {
+            if (context.mounted) {
+              SystemNavigator.pop();
+            }
+          }
+        },
+        child: Scaffold(
+          backgroundColor: colors.scaffoldBg,
+          // ALLOW: Set to true to allow keyboard to push UI up
+          resizeToAvoidBottomInset: true,
+          body: Stack(
+            children: [
+              IndexedStack(
+                index: _currentIndex,
+                children: screens,
               ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Yes'),
-              ),
+              const TicketPanel(),
             ],
           ),
-        ) ?? false;
-
-        if (shouldQuit) {
-          if (context.mounted) {
-            SystemNavigator.pop();
-          }
-        }
-      },
-      child: Scaffold(
-      backgroundColor: colors.scaffoldBg,
-      // REVERT: Set to false to keep Ticket Panel stable
-      resizeToAvoidBottomInset: false, 
-      body: Stack(
-        children: [
-          IndexedStack(
-            index: _currentIndex,
-            children: screens,
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: _onTabChanged,
+            destinations: [
+              NavigationDestination(
+                  icon: const Icon(Icons.directions),
+                  label: AppLocalizations.of(context)!.routes),
+              NavigationDestination(
+                  icon: const Icon(Icons.people),
+                  label: AppLocalizations.of(context)!.friends),
+              NavigationDestination(
+                  icon: const Icon(Icons.settings),
+                  label: AppLocalizations.of(context)!.settings),
+            ],
           ),
-          const TicketPanel(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: _onTabChanged,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.directions), label: 'Routes'),
-          NavigationDestination(icon: Icon(Icons.people), label: 'Friends'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
-        ],
-      ),
-    ));
+        ));
   }
 }
