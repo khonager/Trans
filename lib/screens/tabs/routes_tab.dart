@@ -2531,7 +2531,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
 
-      final DateTime refDate = DateTime.now();
+      // Keep a small buffer in the past so recently due/late services are still refreshable.
+      DateTime refDate = DateTime.now().subtract(const Duration(minutes: 10));
+      if (route.candidates != null && route.candidates!.isNotEmpty) {
+        final firstCandidateTime = route.candidates!.first.plannedDeparture ??
+            route.candidates!.first.departure;
+        final candidateRef =
+            firstCandidateTime.subtract(const Duration(minutes: 3));
+        if (candidateRef.isBefore(refDate)) {
+          refDate = candidateRef;
+        }
+      }
 
       void handleResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty || !mounted) return;
@@ -2546,7 +2556,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _isLoadingRoute = false;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
-            _tabs[idx] = route.copyWith(candidates: newJourneys);
+            final currentRoute = _tabs[idx];
+            _tabs[idx] = currentRoute.copyWith(candidates: newJourneys);
           }
         });
       }
@@ -2587,6 +2598,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       void handleResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty || !mounted) return;
+        final idx = _tabs.indexWhere((t) => t.id == route.id);
+        if (idx == -1) return;
+        final currentRoute = _tabs[idx];
+        if (currentRoute.activeJourney == null) return;
+
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -2598,9 +2614,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         Journey? matched;
 
         // 1. Try Trip ID match of first ride
-        final oldFirstRide = route.activeJourney!.steps.firstWhere(
+        final oldFirstRide = currentRoute.activeJourney!.steps.firstWhere(
             (s) => s.type == 'ride',
-            orElse: () => route.activeJourney!.steps.first);
+            orElse: () => currentRoute.activeJourney!.steps.first);
         if (oldFirstRide.tripId != null) {
           matched = newJourneys.cast<Journey?>().firstWhere(
               (j) => j!.steps.any(
@@ -2611,31 +2627,64 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // 2. Try exact planned departure/arrival match
         matched ??= newJourneys.cast<Journey?>().firstWhere(
             (j) =>
-                j!.plannedDeparture == route.activeJourney!.plannedDeparture &&
-                j.plannedArrival == route.activeJourney!.plannedArrival,
+                j!.plannedDeparture ==
+                    currentRoute.activeJourney!.plannedDeparture &&
+                j.plannedArrival == currentRoute.activeJourney!.plannedArrival,
             orElse: () => null);
+
+        // 3. Fallback: closest departure time among same first ride line
+        if (matched == null && newJourneys.isNotEmpty) {
+          final oldJourney = currentRoute.activeJourney!;
+          final oldRide = oldJourney.steps.firstWhere((s) => s.type == 'ride',
+              orElse: () => oldJourney.steps.first);
+          final oldLine = oldRide.line.trim().toLowerCase();
+
+          final withSameLine = newJourneys.where((j) {
+            final firstRide = j.steps.firstWhere((s) => s.type == 'ride',
+                orElse: () => j.steps.first);
+            return oldLine.isNotEmpty &&
+                firstRide.line.trim().toLowerCase() == oldLine;
+          }).toList();
+
+          final pool = withSameLine.isNotEmpty ? withSameLine : newJourneys;
+          pool.sort((a, b) {
+            final da = (a.plannedDeparture ?? a.departure)
+                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
+                .inSeconds
+                .abs();
+            final db = (b.plannedDeparture ?? b.departure)
+                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
+                .inSeconds
+                .abs();
+            return da.compareTo(db);
+          });
+          matched = pool.first;
+        }
 
         if (matched != null) {
           final upd = matched;
           setState(() {
             _isLoadingRoute = false;
-            final idx = _tabs.indexWhere((t) => t.id == route.id);
-            if (idx != -1) {
-              final newStack = List<Journey>.from(route.stack);
+            final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
+            if (freshIdx != -1) {
+              final latest = _tabs[freshIdx];
+              final newStack = List<Journey>.from(latest.stack);
               final stackIdx = newStack.indexWhere((j) =>
                   j.plannedDeparture == upd.plannedDeparture &&
                   j.plannedArrival == upd.plannedArrival);
               if (stackIdx != -1) {
                 newStack[stackIdx] = upd;
+              } else {
+                newStack.add(upd);
               }
 
-              _tabs[idx] = route.copyWith(
-                activeJourney: upd,
-                steps: upd.steps,
-                stack: newStack,
-                totalDuration:
-                    FormatUtils.formatDuration(upd.duration.inMinutes),
-              );
+              _tabs[freshIdx] = latest.copyWith(
+                  activeJourney: upd,
+                  steps: upd.steps,
+                  stack: newStack,
+                  candidates: newJourneys,
+                  totalDuration:
+                      FormatUtils.formatDuration(upd.duration.inMinutes));
             }
           });
         }
@@ -2645,9 +2694,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         originStation,
         route.destination,
         nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate.subtract(const Duration(minutes: 5)), // Small buffer
+        when: refDate.subtract(const Duration(minutes: 20)),
         isArrival: false,
-        results: 10,
+        results: 20,
         onPartialResults: handleResults,
       );
 
