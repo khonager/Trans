@@ -36,6 +36,8 @@ class _TicketPanelState extends State<TicketPanel> {
   bool _showGeneratedQr = true;
   Uint8List? _styledQrBytes;
   int? _styledQrColorArgb;
+  bool _isGeneratingStyledQr = false;
+  Rect? _detectedQrBox;
 
   List<dynamic> _history = [];
   bool _isLoading = false;
@@ -70,6 +72,8 @@ class _TicketPanelState extends State<TicketPanel> {
           _webBytes = base64Decode(savedData);
           _styledQrBytes = null;
           _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = null;
         });
       }
     } else {
@@ -90,6 +94,8 @@ class _TicketPanelState extends State<TicketPanel> {
             if (files.isNotEmpty) _mobileFile = files.first;
             _styledQrBytes = null;
             _styledQrColorArgb = null;
+            _isGeneratingStyledQr = false;
+            _detectedQrBox = null;
           });
         }
       } catch (e) {
@@ -112,6 +118,8 @@ class _TicketPanelState extends State<TicketPanel> {
               _webBytes = response.bodyBytes;
               _styledQrBytes = null;
               _styledQrColorArgb = null;
+              _isGeneratingStyledQr = false;
+              _detectedQrBox = null;
             });
           } else {
             final directory = await getApplicationDocumentsDirectory();
@@ -196,7 +204,8 @@ class _TicketPanelState extends State<TicketPanel> {
         if (confirmed == true) {
           await _processAndUpload(processedFile ?? File(''),
               isWebFile: xFile,
-              directBytes: processedBytes);
+              directBytes: processedBytes,
+              detectedQrBox: null);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -208,7 +217,8 @@ class _TicketPanelState extends State<TicketPanel> {
         if (confirmed == true) {
           await _processAndUpload(originalFile ?? File(''),
               isWebFile: xFile,
-              directBytes: isWeb ? bytes : null);
+              directBytes: isWeb ? bytes : null,
+              detectedQrBox: qrBox);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -350,7 +360,7 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _processAndUpload(File file,
-      {XFile? isWebFile, Uint8List? directBytes}) async {
+      {XFile? isWebFile, Uint8List? directBytes, Rect? detectedQrBox}) async {
     setState(() => _isLoading = true);
     try {
       Uint8List bytes;
@@ -382,6 +392,8 @@ class _TicketPanelState extends State<TicketPanel> {
           _webBytes = bytes;
           _styledQrBytes = null;
           _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = detectedQrBox;
         });
       } else {
         final directory = await getApplicationDocumentsDirectory();
@@ -395,6 +407,8 @@ class _TicketPanelState extends State<TicketPanel> {
           _mobileFile = localFile;
           _styledQrBytes = null;
           _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = detectedQrBox;
         });
       }
 
@@ -519,6 +533,8 @@ class _TicketPanelState extends State<TicketPanel> {
                               _mobileFile = file;
                               _styledQrBytes = null;
                               _styledQrColorArgb = null;
+                              _isGeneratingStyledQr = false;
+                              _detectedQrBox = null;
                             });
                             Navigator.pop(ctx);
                           },
@@ -624,25 +640,50 @@ class _TicketPanelState extends State<TicketPanel> {
               else if (imageToShow != null)
                 Column(
                   children: [
-                    if (showGeneratedQr)
-                      _buildStyledQr(colors)
-                    else
-                      GestureDetector(
-                        onTap: () => _openFullScreen(imageToShow!),
-                        onLongPress: kIsWeb ? null : _showHistorySheet,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image(
-                            image: imageToShow,
-                            fit: BoxFit.contain,
-                            errorBuilder: (c, e, s) => Container(
-                                height: 200,
-                                alignment: Alignment.center,
-                                child: Text(AppLocalizations.of(context)!
-                                    .errorLoadingTicket)),
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        if (showGeneratedQr)
+                          _buildStyledQr(colors)
+                        else
+                          GestureDetector(
+                            onTap: () => _openFullScreen(imageToShow!),
+                            onLongPress: kIsWeb ? null : _showHistorySheet,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Image(
+                                image: imageToShow,
+                                fit: BoxFit.contain,
+                                errorBuilder: (c, e, s) => Container(
+                                    height: 200,
+                                    alignment: Alignment.center,
+                                    child: Text(AppLocalizations.of(context)!
+                                        .errorLoadingTicket)),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
+                        if (_isGeneratingStyledQr)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.35),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircularProgressIndicator(),
+                                    SizedBox(height: 12),
+                                    Text("Generating styled QR...",
+                                        style: TextStyle(color: Colors.white)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     Text(
                         showGeneratedQr
@@ -662,7 +703,9 @@ class _TicketPanelState extends State<TicketPanel> {
                             side: BorderSide(color: colors.divider),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12))),
-                        onPressed: () async {
+                        onPressed: _isGeneratingStyledQr
+                            ? null
+                            : () async {
                           if (showGeneratedQr) {
                             if (mounted) {
                               setState(() => _showGeneratedQr = false);
@@ -670,9 +713,22 @@ class _TicketPanelState extends State<TicketPanel> {
                             return;
                           }
 
-                          final available = await _ensureStyledQrForCurrentTicket(
-                            colors.effectiveSeed,
-                          );
+                          if (mounted) {
+                            setState(() => _isGeneratingStyledQr = true);
+                          }
+                          await Future<void>.delayed(
+                              const Duration(milliseconds: 16));
+
+                          bool available = false;
+                          try {
+                            available = await _ensureStyledQrForCurrentTicket(
+                              colors.effectiveSeed,
+                            );
+                          } finally {
+                            if (mounted) {
+                              setState(() => _isGeneratingStyledQr = false);
+                            }
+                          }
                           if (!available) return;
 
                           if (mounted) {
@@ -793,30 +849,29 @@ class _TicketPanelState extends State<TicketPanel> {
 
     if (bytes == null) return false;
 
-    if (mounted) setState(() => _isLoading = true);
-
-    final detection = await _detectQrInBytes(
-      bytes,
-      sourcePath: path,
-      allowMlKit: !kIsWeb,
-    );
-
-    final qrBox = detection.$1;
-    if (qrBox == null) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Could not isolate a QR code in this ticket image.")));
+    Rect? qrBox = _detectedQrBox;
+    if (qrBox == null && !kIsWeb) {
+      final detection = await _detectQrInBytes(
+        bytes,
+        sourcePath: path,
+        allowMlKit: !kIsWeb,
+      );
+      qrBox = detection.$1;
+      if (mounted && qrBox != null) {
+        setState(() => _detectedQrBox = qrBox);
       }
-      return false;
     }
 
-    final croppedQr = await _cropQrForStyle(bytes, qrBox) ?? bytes;
-    final styled = await _colorizeQrPattern(croppedQr, themeColor);
+    if (qrBox == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              "Could not isolate QR bounds. Styling the full image instead.")));
+    }
+
+    final styled = await _styleQrBytesInBackground(bytes, qrBox, themeArgb);
 
     if (mounted) {
       setState(() {
-        _isLoading = false;
         _styledQrBytes = styled;
         _styledQrColorArgb = themeArgb;
       });
@@ -833,30 +888,63 @@ class _TicketPanelState extends State<TicketPanel> {
     return true;
   }
 
-  Future<Uint8List?> _colorizeQrPattern(
-      Uint8List qrBytes, Color themeColor) async {
+  Future<Uint8List?> _styleQrBytesInBackground(
+      Uint8List sourceBytes, Rect? box, int themeArgb) async {
     try {
-      var image = img.decodeImage(qrBytes);
-      if (image == null) return null;
+      if (kIsWeb) {
+        return await _styleQrBytesChunkedWeb(sourceBytes, box, themeArgb);
+      }
+      return await compute(_styleQrBytesIsolate, <String, dynamic>{
+        'bytes': sourceBytes,
+        'left': box?.left,
+        'top': box?.top,
+        'width': box?.width,
+        'height': box?.height,
+        'themeArgb': themeArgb,
+      });
+    } catch (e) {
+      debugPrint("QR recolor isolate failed: $e");
+      return null;
+    }
+  }
 
+  Future<Uint8List?> _styleQrBytesChunkedWeb(
+      Uint8List sourceBytes, Rect? box, int themeArgb) async {
+    try {
+      var image = img.decodeImage(sourceBytes);
+      if (image == null) return null;
       image = img.bakeOrientation(image);
+
+      if (box != null) {
+        const padding = 6;
+        int x = (box.left - padding).floor();
+        int y = (box.top - padding).floor();
+        int w = (box.width + (padding * 2)).ceil();
+        int h = (box.height + (padding * 2)).ceil();
+
+        x = x.clamp(0, image.width - 1).toInt();
+        y = y.clamp(0, image.height - 1).toInt();
+        if (x + w > image.width) w = image.width - x;
+        if (y + h > image.height) h = image.height - y;
+        if (w >= 32 && h >= 32) {
+          image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+        }
+      }
       if (image.numChannels != 4) {
         image = image.convert(numChannels: 4);
       }
 
-      final rT = themeColor.red;
-      final gT = themeColor.green;
-      final bT = themeColor.blue;
-
-      // Binary-ish remap: dark modules -> theme color, light modules -> transparent.
+      final rT = (themeArgb >> 16) & 0xFF;
+      final gT = (themeArgb >> 8) & 0xFF;
+      final bT = themeArgb & 0xFF;
       const threshold = 150;
 
-      for (int y = 0; y < image.height; y++) {
-        for (int x = 0; x < image.width; x++) {
-          final p = image.getPixel(x, y);
+      for (int py = 0; py < image.height; py++) {
+        for (int px = 0; px < image.width; px++) {
+          final p = image.getPixel(px, py);
           final a = p.a.toInt();
           if (a < 20) {
-            image.setPixelRgba(x, y, 0, 0, 0, 0);
+            image.setPixelRgba(px, py, 0, 0, 0, 0);
             continue;
           }
 
@@ -866,49 +954,25 @@ class _TicketPanelState extends State<TicketPanel> {
           final luminance = ((299 * r) + (587 * g) + (114 * b)) ~/ 1000;
 
           if (luminance < threshold) {
-            image.setPixelRgba(x, y, rT, gT, bT, 255);
+            image.setPixelRgba(px, py, rT, gT, bT, 255);
           } else {
-            image.setPixelRgba(x, y, 0, 0, 0, 0);
+            image.setPixelRgba(px, py, 0, 0, 0, 0);
           }
+        }
+        if (py % 16 == 0) {
+          await Future<void>.delayed(Duration.zero);
         }
       }
 
-      final squared = _trimAndSquareQr(image);
+      final squared = await _trimAndSquareQrImageChunked(image);
       return Uint8List.fromList(img.encodePng(squared, level: 3));
     } catch (e) {
-      debugPrint("QR recolor failed: $e");
+      debugPrint("QR recolor web failed: $e");
       return null;
     }
   }
 
-  Future<Uint8List?> _cropQrForStyle(Uint8List bytes, Rect box) async {
-    try {
-      var image = img.decodeImage(bytes);
-      if (image == null) return null;
-
-      image = img.bakeOrientation(image);
-
-      const padding = 6;
-      int x = (box.left - padding).floor();
-      int y = (box.top - padding).floor();
-      int w = (box.width + (padding * 2)).ceil();
-      int h = (box.height + (padding * 2)).ceil();
-
-      x = x.clamp(0, image.width - 1).toInt();
-      y = y.clamp(0, image.height - 1).toInt();
-      if (x + w > image.width) w = image.width - x;
-      if (y + h > image.height) h = image.height - y;
-      if (w < 1 || h < 1) return null;
-
-      final cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
-      return Uint8List.fromList(img.encodePng(cropped, level: 3));
-    } catch (e) {
-      debugPrint("QR style crop failed: $e");
-      return null;
-    }
-  }
-
-  img.Image _trimAndSquareQr(img.Image image) {
+  Future<img.Image> _trimAndSquareQrImageChunked(img.Image image) async {
     int minX = image.width;
     int minY = image.height;
     int maxX = -1;
@@ -924,14 +988,16 @@ class _TicketPanelState extends State<TicketPanel> {
           if (y > maxY) maxY = y;
         }
       }
+      if (y % 24 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     if (maxX < minX || maxY < minY) return image;
 
-    const margin = 0;
     final contentW = maxX - minX + 1;
     final contentH = maxY - minY + 1;
-    int side = math.max(contentW, contentH) + (margin * 2);
+    int side = math.max(contentW, contentH);
 
     final cx = (minX + maxX) / 2.0;
     final cy = (minY + maxY) / 2.0;
@@ -1072,4 +1138,117 @@ class _TicketPanelState extends State<TicketPanel> {
 
     return (qrBox, qrPayload);
   }
+}
+
+Uint8List? _styleQrBytesIsolate(Map<String, dynamic> payload) {
+  try {
+    final sourceBytes = payload['bytes'] as Uint8List;
+    final leftNum = payload['left'] as num?;
+    final topNum = payload['top'] as num?;
+    final widthNum = payload['width'] as num?;
+    final heightNum = payload['height'] as num?;
+    final themeArgb = payload['themeArgb'] as int;
+
+    var image = img.decodeImage(sourceBytes);
+    if (image == null) return null;
+    image = img.bakeOrientation(image);
+
+    if (leftNum != null &&
+        topNum != null &&
+        widthNum != null &&
+        heightNum != null) {
+      const padding = 6;
+      int x = (leftNum.toDouble() - padding).floor();
+      int y = (topNum.toDouble() - padding).floor();
+      int w = (widthNum.toDouble() + (padding * 2)).ceil();
+      int h = (heightNum.toDouble() + (padding * 2)).ceil();
+
+      x = x.clamp(0, image.width - 1).toInt();
+      y = y.clamp(0, image.height - 1).toInt();
+      if (x + w > image.width) w = image.width - x;
+      if (y + h > image.height) h = image.height - y;
+      if (w >= 32 && h >= 32) {
+        image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      }
+    }
+    if (image.numChannels != 4) {
+      image = image.convert(numChannels: 4);
+    }
+
+    final rT = (themeArgb >> 16) & 0xFF;
+    final gT = (themeArgb >> 8) & 0xFF;
+    final bT = themeArgb & 0xFF;
+
+    const threshold = 150;
+    for (int py = 0; py < image.height; py++) {
+      for (int px = 0; px < image.width; px++) {
+        final p = image.getPixel(px, py);
+        final a = p.a.toInt();
+        if (a < 20) {
+          image.setPixelRgba(px, py, 0, 0, 0, 0);
+          continue;
+        }
+
+        final r = p.r.toInt();
+        final g = p.g.toInt();
+        final b = p.b.toInt();
+        final luminance = ((299 * r) + (587 * g) + (114 * b)) ~/ 1000;
+
+        if (luminance < threshold) {
+          image.setPixelRgba(px, py, rT, gT, bT, 255);
+        } else {
+          image.setPixelRgba(px, py, 0, 0, 0, 0);
+        }
+      }
+    }
+
+    final squared = _trimAndSquareQrImage(image);
+    return Uint8List.fromList(img.encodePng(squared, level: 3));
+  } catch (_) {
+    return null;
+  }
+}
+
+img.Image _trimAndSquareQrImage(img.Image image) {
+  int minX = image.width;
+  int minY = image.height;
+  int maxX = -1;
+  int maxY = -1;
+
+  for (int y = 0; y < image.height; y++) {
+    for (int x = 0; x < image.width; x++) {
+      final a = image.getPixel(x, y).a.toInt();
+      if (a > 20) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return image;
+
+  final contentW = maxX - minX + 1;
+  final contentH = maxY - minY + 1;
+  int side = math.max(contentW, contentH);
+
+  final cx = (minX + maxX) / 2.0;
+  final cy = (minY + maxY) / 2.0;
+
+  int x = (cx - side / 2).floor();
+  int y = (cy - side / 2).floor();
+
+  if (side > image.width) side = image.width;
+  if (side > image.height) side = image.height;
+
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  if (x + side > image.width) x = image.width - side;
+  if (y + side > image.height) y = image.height - side;
+
+  x = x.clamp(0, image.width - 1).toInt();
+  y = y.clamp(0, image.height - 1).toInt();
+
+  return img.copyCrop(image, x: x, y: y, width: side, height: side);
 }
