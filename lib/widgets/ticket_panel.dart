@@ -706,35 +706,37 @@ class _TicketPanelState extends State<TicketPanel> {
                         onPressed: _isGeneratingStyledQr
                             ? null
                             : () async {
-                          if (showGeneratedQr) {
-                            if (mounted) {
-                              setState(() => _showGeneratedQr = false);
-                            }
-                            return;
-                          }
+                                if (showGeneratedQr) {
+                                  if (mounted) {
+                                    setState(() => _showGeneratedQr = false);
+                                  }
+                                  return;
+                                }
 
-                          if (mounted) {
-                            setState(() => _isGeneratingStyledQr = true);
-                          }
-                          await Future<void>.delayed(
-                              const Duration(milliseconds: 16));
+                                if (mounted) {
+                                  setState(() => _isGeneratingStyledQr = true);
+                                }
+                                await Future<void>.delayed(
+                                    const Duration(milliseconds: 16));
 
-                          bool available = false;
-                          try {
-                            available = await _ensureStyledQrForCurrentTicket(
-                              colors.effectiveSeed,
-                            );
-                          } finally {
-                            if (mounted) {
-                              setState(() => _isGeneratingStyledQr = false);
-                            }
-                          }
-                          if (!available) return;
+                                bool available = false;
+                                try {
+                                  available =
+                                      await _ensureStyledQrForCurrentTicket(
+                                    colors.effectiveSeed,
+                                  );
+                                } finally {
+                                  if (mounted) {
+                                    setState(
+                                        () => _isGeneratingStyledQr = false);
+                                  }
+                                }
+                                if (!available) return;
 
-                          if (mounted) {
-                            setState(() => _showGeneratedQr = true);
-                          }
-                        },
+                                if (mounted) {
+                                  setState(() => _showGeneratedQr = true);
+                                }
+                              },
                         icon: Icon(showGeneratedQr
                             ? Icons.image_outlined
                             : Icons.qr_code_2_outlined),
