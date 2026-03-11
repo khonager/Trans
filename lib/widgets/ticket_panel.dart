@@ -18,6 +18,7 @@ import 'package:image/image.dart' as img;
 import 'package:zxing_lib/zxing.dart' as zxing;
 import 'package:zxing_lib/common.dart' as zxing;
 import 'package:trans/widgets/manual_crop_wrapper.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class TicketPanel extends StatefulWidget {
   const TicketPanel({super.key});
@@ -32,6 +33,8 @@ class _TicketPanelState extends State<TicketPanel> {
 
   File? _mobileFile;
   Uint8List? _webBytes;
+  String? _detectedQrPayload;
+  bool _showGeneratedQr = true;
 
   List<dynamic> _history = [];
   bool _isLoading = false;
@@ -62,7 +65,10 @@ class _TicketPanelState extends State<TicketPanel> {
       final prefs = await SharedPreferences.getInstance();
       final savedData = prefs.getString('saved_ticket_base64');
       if (savedData != null) {
-        setState(() => _webBytes = base64Decode(savedData));
+        setState(() {
+          _webBytes = base64Decode(savedData);
+          _detectedQrPayload = null;
+        });
       }
     } else {
       // MOBILE ONLY
@@ -80,6 +86,7 @@ class _TicketPanelState extends State<TicketPanel> {
           setState(() {
             _history = files;
             if (files.isNotEmpty) _mobileFile = files.first;
+            _detectedQrPayload = null;
           });
         }
       } catch (e) {
@@ -98,7 +105,10 @@ class _TicketPanelState extends State<TicketPanel> {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString(
                 'saved_ticket_base64', base64Encode(response.bodyBytes));
-            setState(() => _webBytes = response.bodyBytes);
+            setState(() {
+              _webBytes = response.bodyBytes;
+              _detectedQrPayload = null;
+            });
           } else {
             final directory = await getApplicationDocumentsDirectory();
             final backupFile =
@@ -156,115 +166,13 @@ class _TicketPanelState extends State<TicketPanel> {
       File? originalFile = !isWeb && path != null ? File(path) : null;
       File? processedFile;
       Uint8List? processedBytes;
-
-      Rect? qrBox;
-
-      // 1. Scan for QR Code
-      // Try ML Kit first on mobile (fast, native), fall back to ZXing (pure Dart)
-      if (!isWeb && (Platform.isAndroid || Platform.isIOS)) {
-        try {
-          final inputImage = InputImage.fromFilePath(path!);
-          final barcodeScanner =
-              BarcodeScanner(formats: [BarcodeFormat.qrCode]);
-          final barcodes = await barcodeScanner.processImage(inputImage);
-          debugPrint("ML Kit found ${barcodes.length} barcodes");
-
-          if (barcodes.isNotEmpty) {
-            qrBox = barcodes.first.boundingBox;
-          }
-          barcodeScanner.close();
-        } catch (e) {
-          debugPrint("ML Kit scan failed, falling back to ZXing: $e");
-        }
-      }
-
-      // ZXing fallback (Desktop, Web, or when ML Kit found nothing / failed)
-      if (qrBox == null) {
-        try {
-          var image = img.decodeImage(bytes);
-          if (image != null) {
-            // Bake EXIF orientation into actual pixels (Samsung cameras store rotated images via EXIF)
-            image = img.bakeOrientation(image);
-
-            // Ensure image is 4-channel RGBA (some JPEGs decode as 3-channel RGB)
-            if (image.numChannels != 4) {
-              image = image.convert(numChannels: 4);
-            }
-
-            debugPrint(
-                "ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
-
-            // FIX: package:image v4 stores pixels as RGBA in memory.
-            // On little-endian systems (all browsers), asUint32List() reads
-            // [R,G,B,A] bytes as 0xAABBGGRR. But ZXing's RGBLuminanceSource
-            // expects ARGB format (0xAARRGGBB). We must convert RGBA -> ARGB
-            // by swapping R and B channels, otherwise luminance is calculated
-            // incorrectly and QR detection fails on colored backgrounds.
-            final rawPixels = image.data?.buffer.asUint32List();
-
-            if (rawPixels != null) {
-              final argbPixels = List<int>.generate(rawPixels.length, (i) {
-                final rgba = rawPixels[i];
-                final r = rgba & 0xFF;
-                final g = (rgba >> 8) & 0xFF;
-                final b = (rgba >> 16) & 0xFF;
-                final a = (rgba >> 24) & 0xFF;
-                return (a << 24) | (r << 16) | (g << 8) | b;
-              });
-
-              final luminance = zxing.RGBLuminanceSource(
-                  image.width, image.height, argbPixels);
-
-              // Use TRY_HARDER + alsoInverted for better detection on screenshots
-              const hints = zxing.DecodeHint(
-                tryHarder: true,
-                alsoInverted: true,
-              );
-
-              zxing.Result? result;
-
-              // Try HybridBinarizer first (better for photos with uneven lighting)
-              try {
-                final binarizer = zxing.HybridBinarizer(luminance);
-                final bitmap = zxing.BinaryBitmap(binarizer);
-                result = zxing.MultiFormatReader().decode(bitmap, hints);
-              } catch (_) {
-                // Fallback: GlobalHistogramBinarizer (better for screenshots with uniform backgrounds)
-                try {
-                  final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
-                  final bitmap2 = zxing.BinaryBitmap(binarizer2);
-                  result = zxing.MultiFormatReader().decode(bitmap2, hints);
-                } catch (_) {}
-              }
-
-              if (result != null) {
-                debugPrint("ZXing: found barcode: ${result.text}");
-                final points = result.resultPoints;
-                if (points != null && points.isNotEmpty) {
-                  double minX = double.infinity, minY = double.infinity;
-                  double maxX = 0, maxY = 0;
-
-                  for (var p in points) {
-                    if ((p?.x ?? 0) < minX) minX = p!.x;
-                    if ((p?.y ?? 0) < minY) minY = p!.y;
-                    if ((p?.x ?? 0) > maxX) maxX = p!.x;
-                    if ((p?.y ?? 0) > maxY) maxY = p!.y;
-                  }
-                  qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
-                }
-              } else {
-                debugPrint(
-                    "ZXing: no barcode found after trying both binarizers");
-              }
-            }
-          } else {
-            debugPrint(
-                "ZXing: failed to decode image bytes (${bytes.length} bytes)");
-          }
-        } catch (e) {
-          debugPrint("ZXing scan failed: $e");
-        }
-      }
+      final detection = await _detectQrInBytes(
+        bytes,
+        sourcePath: path,
+        allowMlKit: !isWeb,
+      );
+      final qrBox = detection.$1;
+      final qrPayload = detection.$2;
 
       // Auto-crop if found
       if (qrBox != null) {
@@ -284,7 +192,9 @@ class _TicketPanelState extends State<TicketPanel> {
 
         if (confirmed == true) {
           await _processAndUpload(processedFile ?? File(''),
-              isWebFile: xFile, directBytes: processedBytes);
+              isWebFile: xFile,
+              directBytes: processedBytes,
+              qrPayload: qrPayload);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -295,7 +205,9 @@ class _TicketPanelState extends State<TicketPanel> {
 
         if (confirmed == true) {
           await _processAndUpload(originalFile ?? File(''),
-              isWebFile: xFile, directBytes: isWeb ? bytes : null);
+              isWebFile: xFile,
+              directBytes: isWeb ? bytes : null,
+              qrPayload: qrPayload);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -437,7 +349,7 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _processAndUpload(File file,
-      {XFile? isWebFile, Uint8List? directBytes}) async {
+      {XFile? isWebFile, Uint8List? directBytes, String? qrPayload}) async {
     setState(() => _isLoading = true);
     try {
       Uint8List bytes;
@@ -465,7 +377,10 @@ class _TicketPanelState extends State<TicketPanel> {
       if (kIsWeb) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('saved_ticket_base64', base64Encode(bytes));
-        setState(() => _webBytes = bytes);
+        setState(() {
+          _webBytes = bytes;
+          _detectedQrPayload = qrPayload;
+        });
       } else {
         final directory = await getApplicationDocumentsDirectory();
         final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -474,7 +389,10 @@ class _TicketPanelState extends State<TicketPanel> {
         await localFile.writeAsBytes(bytes);
 
         await _refreshHistory();
-        setState(() => _mobileFile = localFile);
+        setState(() {
+          _mobileFile = localFile;
+          _detectedQrPayload = qrPayload;
+        });
       }
 
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');
@@ -594,7 +512,10 @@ class _TicketPanelState extends State<TicketPanel> {
                               width: 40, height: 40, fit: BoxFit.cover),
                           title: Text(name),
                           onTap: () {
-                            setState(() => _mobileFile = file);
+                            setState(() {
+                              _mobileFile = file;
+                              _detectedQrPayload = null;
+                            });
                             Navigator.pop(ctx);
                           },
                           trailing: PopupMenuButton(
@@ -635,6 +556,9 @@ class _TicketPanelState extends State<TicketPanel> {
     } else if (!kIsWeb && _mobileFile != null) {
       imageToShow = FileImage(_mobileFile!);
     }
+
+    final bool showGeneratedQr =
+        imageToShow != null && _showGeneratedQr && _detectedQrPayload != null;
 
     return DraggableScrollableSheet(
       controller: _sheetController,
@@ -696,29 +620,62 @@ class _TicketPanelState extends State<TicketPanel> {
               else if (imageToShow != null)
                 Column(
                   children: [
-                    GestureDetector(
-                      onTap: () => _openFullScreen(imageToShow!),
-                      onLongPress: kIsWeb ? null : _showHistorySheet,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image(
-                          image: imageToShow,
-                          fit: BoxFit.contain,
-                          errorBuilder: (c, e, s) => Container(
-                              height: 200,
-                              alignment: Alignment.center,
-                              child: Text(AppLocalizations.of(context)!
-                                  .errorLoadingTicket)),
+                    if (showGeneratedQr)
+                      _buildGeneratedQr(colors)
+                    else
+                      GestureDetector(
+                        onTap: () => _openFullScreen(imageToShow!),
+                        onLongPress: kIsWeb ? null : _showHistorySheet,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image(
+                            image: imageToShow,
+                            fit: BoxFit.contain,
+                            errorBuilder: (c, e, s) => Container(
+                                height: 200,
+                                alignment: Alignment.center,
+                                child: Text(AppLocalizations.of(context)!
+                                    .errorLoadingTicket)),
+                          ),
                         ),
                       ),
-                    ),
                     const SizedBox(height: 8),
                     Text(
-                        kIsWeb
-                            ? "Tap for fullscreen"
-                            : "Tap for fullscreen • Hold for history",
+                        showGeneratedQr
+                            ? "Generated from scanned ticket QR"
+                            : (kIsWeb
+                                ? "Tap for fullscreen"
+                                : "Tap for fullscreen • Hold for history"),
                         style:
                             const TextStyle(fontSize: 10, color: Colors.grey)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(color: colors.divider),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12))),
+                        onPressed: () async {
+                          if (!_showGeneratedQr) {
+                            final available =
+                                await _ensureQrPayloadForCurrentTicket();
+                            if (!available) return;
+                          }
+                          if (mounted) {
+                            setState(() => _showGeneratedQr = !_showGeneratedQr);
+                          }
+                        },
+                        icon: Icon(showGeneratedQr
+                            ? Icons.image_outlined
+                            : Icons.qr_code_2_outlined),
+                        label: Text(showGeneratedQr
+                            ? "Show Original Ticket"
+                            : "Show Clean QR"),
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
@@ -778,5 +735,200 @@ class _TicketPanelState extends State<TicketPanel> {
         );
       },
     );
+  }
+
+  Widget _buildGeneratedQr(TransColors colors) {
+    final payload = _detectedQrPayload;
+    if (payload == null) return const SizedBox.shrink();
+
+    final qrColor = colors.effectiveSeed.computeLuminance() > 0.85
+        ? Colors.black
+        : colors.effectiveSeed;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.isDark ? Colors.white10 : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.divider),
+      ),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Center(
+          child: QrImageView(
+            data: payload,
+            version: QrVersions.auto,
+            size: 300,
+            backgroundColor: Colors.transparent,
+            eyeStyle: QrEyeStyle(
+              eyeShape: QrEyeShape.square,
+              color: qrColor,
+            ),
+            dataModuleStyle: QrDataModuleStyle(
+              dataModuleShape: QrDataModuleShape.square,
+              color: qrColor,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _ensureQrPayloadForCurrentTicket() async {
+    if (_detectedQrPayload != null && _detectedQrPayload!.isNotEmpty) {
+      return true;
+    }
+
+    Uint8List? bytes;
+    String? path;
+
+    if (kIsWeb) {
+      bytes = _webBytes;
+    } else if (_mobileFile != null) {
+      path = _mobileFile!.path;
+      bytes = await _mobileFile!.readAsBytes();
+    }
+
+    if (bytes == null) return false;
+
+    if (mounted) setState(() => _isLoading = true);
+
+    final detection = await _detectQrInBytes(
+      bytes,
+      sourcePath: path,
+      allowMlKit: !kIsWeb,
+    );
+
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _detectedQrPayload = detection.$2;
+      });
+    }
+
+    if (detection.$2 == null || detection.$2!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("No readable QR payload found in this ticket image.")));
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<(Rect?, String?)> _detectQrInBytes(
+    Uint8List bytes, {
+    String? sourcePath,
+    required bool allowMlKit,
+  }) async {
+    Rect? qrBox;
+    String? qrPayload;
+
+    // Try ML Kit first on mobile platforms.
+    if (allowMlKit &&
+        sourcePath != null &&
+        !kIsWeb &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      try {
+        final inputImage = InputImage.fromFilePath(sourcePath);
+        final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+        final barcodes = await barcodeScanner.processImage(inputImage);
+        debugPrint("ML Kit found ${barcodes.length} barcodes");
+
+        if (barcodes.isNotEmpty) {
+          qrBox = barcodes.first.boundingBox;
+          qrPayload = barcodes.first.rawValue ?? barcodes.first.displayValue;
+          debugPrint("ML Kit payload found: ${qrPayload != null}");
+        }
+        barcodeScanner.close();
+      } catch (e) {
+        debugPrint("ML Kit scan failed, falling back to ZXing: $e");
+      }
+    }
+
+    // ZXing fallback for web/desktop or missing data.
+    if (qrBox == null || qrPayload == null || qrPayload.isEmpty) {
+      try {
+        var image = img.decodeImage(bytes);
+        if (image == null) {
+          debugPrint(
+              "ZXing: failed to decode image bytes (${bytes.length} bytes)");
+          return (qrBox, qrPayload);
+        }
+
+        // Bake EXIF orientation into actual pixels.
+        image = img.bakeOrientation(image);
+
+        // Ensure image is 4-channel RGBA.
+        if (image.numChannels != 4) {
+          image = image.convert(numChannels: 4);
+        }
+
+        debugPrint(
+            "ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
+
+        final rawPixels = image.data?.buffer.asUint32List();
+        if (rawPixels == null) return (qrBox, qrPayload);
+
+        // Convert RGBA -> ARGB expected by RGBLuminanceSource.
+        final argbPixels = List<int>.generate(rawPixels.length, (i) {
+          final rgba = rawPixels[i];
+          final r = rgba & 0xFF;
+          final g = (rgba >> 8) & 0xFF;
+          final b = (rgba >> 16) & 0xFF;
+          final a = (rgba >> 24) & 0xFF;
+          return (a << 24) | (r << 16) | (g << 8) | b;
+        });
+
+        final luminance =
+            zxing.RGBLuminanceSource(image.width, image.height, argbPixels);
+
+        const hints = zxing.DecodeHint(
+          tryHarder: true,
+          alsoInverted: true,
+        );
+
+        zxing.Result? result;
+        try {
+          final binarizer = zxing.HybridBinarizer(luminance);
+          final bitmap = zxing.BinaryBitmap(binarizer);
+          result = zxing.MultiFormatReader().decode(bitmap, hints);
+        } catch (_) {
+          try {
+            final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
+            final bitmap2 = zxing.BinaryBitmap(binarizer2);
+            result = zxing.MultiFormatReader().decode(bitmap2, hints);
+          } catch (_) {}
+        }
+
+        if (result == null) {
+          debugPrint("ZXing: no barcode found after trying both binarizers");
+          return (qrBox, qrPayload);
+        }
+
+        qrPayload = result.text;
+        debugPrint("ZXing: found barcode payload (${qrPayload.length} chars)");
+
+        final points = result.resultPoints;
+        if (points != null && points.isNotEmpty) {
+          double minX = double.infinity, minY = double.infinity;
+          double maxX = 0, maxY = 0;
+
+          for (var p in points) {
+            if ((p?.x ?? 0) < minX) minX = p!.x;
+            if ((p?.y ?? 0) < minY) minY = p!.y;
+            if ((p?.x ?? 0) > maxX) maxX = p!.x;
+            if ((p?.y ?? 0) > maxY) maxY = p!.y;
+          }
+          qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
+        }
+      } catch (e) {
+        debugPrint("ZXing scan failed: $e");
+      }
+    }
+
+    return (qrBox, qrPayload);
   }
 }
