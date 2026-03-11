@@ -90,7 +90,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
+  bool _fromUsesCurrentLocation = true;
+  bool _isRefreshingLocation = false;
+  Position? _manualCurrentPosition;
   List<Map<String, dynamic>> _frequentJourneys = [];
+
+  Position? get _effectiveCurrentPosition =>
+      _manualCurrentPosition ?? widget.currentPosition;
 
   @override
   void initState() {
@@ -120,26 +126,109 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void didUpdateWidget(RoutesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.currentPosition != oldWidget.currentPosition) {
+      _manualCurrentPosition = null;
+      if (_fromStation == null &&
+          _isCurrentLocationText(_fromController.text)) {
+        _fromUsesCurrentLocation = true;
+      }
       _resolveCurrentAddress();
     }
   }
 
+  bool _isCurrentLocationText(String text, {String? addressOverride}) {
+    final normalized = text.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    if (normalized == 'current location') return true;
+    final address = (addressOverride ?? _currentAddress)?.trim().toLowerCase();
+    return address != null && address.isNotEmpty && normalized == address;
+  }
+
   Future<void> _resolveCurrentAddress() async {
-    if (widget.currentPosition == null) return;
+    final position = _effectiveCurrentPosition;
+    if (position == null) return;
     try {
       // Use getNearbyStops to find the nearest stop or address
       // Prioritize "address" or "station" type from results
       final stops = await TransportApi.getNearbyStops(
-          widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+          position.latitude, position.longitude);
       if (stops.isNotEmpty) {
+        final previousAddress = _currentAddress;
+        final nextAddress = stops.first.name;
         if (mounted) {
           setState(() {
-            _currentAddress = stops.first.name;
+            _currentAddress = nextAddress;
+            if (_fromStation == null &&
+                _fromUsesCurrentLocation &&
+                _isCurrentLocationText(_fromController.text,
+                    addressOverride: previousAddress)) {
+              _fromController.text = nextAddress;
+            }
           });
         }
       }
     } catch (e) {
       debugPrint("Error resolving address: $e");
+    }
+  }
+
+  Future<void> _refreshCurrentLocationManually() async {
+    if (_isRefreshingLocation) return;
+    setState(() => _isRefreshingLocation = true);
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:
+                  Text(AppLocalizations.of(context)!.locationNotAvailable)));
+        }
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  AppLocalizations.of(context)!.locationPermissionDenied)));
+        }
+        return;
+      }
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(AppLocalizations.of(context)!
+                  .locationPermissionPermanentlyDenied)));
+        }
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.high)
+          .timeout(const Duration(seconds: 8));
+      final stops =
+          await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
+      final nextAddress = stops.isNotEmpty ? stops.first.name : null;
+
+      if (!mounted) return;
+      setState(() {
+        _manualCurrentPosition = pos;
+        _fromStation = null;
+        _fromUsesCurrentLocation = true;
+        _currentAddress = nextAddress;
+        _fromController.text = nextAddress ?? 'Current Location';
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.locationNotAvailable)));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingLocation = false);
+      }
     }
   }
 
@@ -360,9 +449,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (defaultTargetPlatform == TargetPlatform.iOS)
       activeSettings = appleSettings;
 
-    if (widget.currentPosition != null) {
+    if (_effectiveCurrentPosition != null) {
       // We don't have a single "currentLine" anymore since multiple legs might be active
-      SupabaseService.updateLocation(widget.currentPosition!);
+      SupabaseService.updateLocation(_effectiveCurrentPosition!);
     }
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
@@ -503,7 +592,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             builder: (_) => MapScreen(
                 steps: route.steps,
                 focusStep: focusStep,
-                currentPosition: widget.currentPosition)));
+                currentPosition: _effectiveCurrentPosition)));
   }
 
   // --- SEARCH LOGIC ---
@@ -547,6 +636,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (field == 'from') {
         setState(() {
           _fromStation = null;
+          _fromUsesCurrentLocation = true;
           _suggestions = [];
           _isSuggestionsLoading = false;
         });
@@ -561,6 +651,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       return;
     }
+    if (field == 'from') {
+      setState(() {
+        _fromStation = null;
+        _fromUsesCurrentLocation = _isCurrentLocationText(query);
+      });
+    }
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 600), () async {
@@ -574,9 +670,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _toStation!.longitude != null) {
             refLat = _toStation!.latitude;
             refLng = _toStation!.longitude;
-          } else if (widget.currentPosition != null) {
-            refLat = widget.currentPosition!.latitude;
-            refLng = widget.currentPosition!.longitude;
+          } else if (_effectiveCurrentPosition != null) {
+            refLat = _effectiveCurrentPosition!.latitude;
+            refLng = _effectiveCurrentPosition!.longitude;
           }
         } else if (field == 'to') {
           if (_fromStation != null &&
@@ -584,9 +680,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _fromStation!.longitude != null) {
             refLat = _fromStation!.latitude;
             refLng = _fromStation!.longitude;
-          } else if (widget.currentPosition != null) {
-            refLat = widget.currentPosition!.latitude;
-            refLng = widget.currentPosition!.longitude;
+          } else if (_effectiveCurrentPosition != null) {
+            refLat = _effectiveCurrentPosition!.latitude;
+            refLng = _effectiveCurrentPosition!.longitude;
           }
         }
 
@@ -663,6 +759,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       if (_activeSearchField == 'from') {
         _fromStation = station;
+        _fromUsesCurrentLocation = false;
         _fromController.text = station.name;
         if (_toStation == null) {
           _activeSearchField = 'to';
@@ -723,6 +820,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       setState(() {
         if (currentField == 'from') {
           _fromStation = target;
+          _fromUsesCurrentLocation = false;
           _fromController.text = target!.name;
           if (_toStation == null) {
             _activeSearchField = 'to';
@@ -733,16 +831,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _toStation = target;
           _toController.text = target!.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
-          if (_fromStation == null && widget.currentPosition == null) {
+          if (_fromStation == null && _effectiveCurrentPosition == null) {
             _activeSearchField = 'from';
             _fromFocusNode.requestFocus();
           }
         } else {
-          if (_fromStation != null || widget.currentPosition != null) {
+          if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
             _toController.text = target!.name;
           } else {
             _fromStation = target;
+            _fromUsesCurrentLocation = false;
             _fromController.text = target!.name;
             _toFocusNode.requestFocus();
             _scrollToTop();
@@ -1321,9 +1420,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute) return;
     Station? from = _fromStation;
     if (from == null) {
-      if (_fromController.text.isEmpty ||
-          _fromController.text == "Current Location") {
-        Position? pos = widget.currentPosition;
+      if (_fromUsesCurrentLocation ||
+          _isCurrentLocationText(_fromController.text)) {
+        Position? pos = _effectiveCurrentPosition;
         if (pos == null) {
           try {
             pos = await Geolocator.getCurrentPosition()
@@ -1622,7 +1721,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final bool canSearch =
-        (_fromStation != null || widget.currentPosition != null) &&
+        (_fromStation != null || _effectiveCurrentPosition != null) &&
             _toStation != null &&
             !_isLoadingRoute;
     final colors = TransColors.of(context);
@@ -1919,7 +2018,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     _buildTextField("From", _fromController, _fromFocusNode,
                         _fromStation != null, 'from',
                         hint: (_fromStation == null &&
-                                widget.currentPosition != null)
+                                _effectiveCurrentPosition != null)
                             ? "Current Location"
                             : "Station or Address..."),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
@@ -2155,6 +2254,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 onTap: () {
                   setState(() {
                     _fromStation = from;
+                    _fromUsesCurrentLocation = false;
                     _fromController.text = from.name;
                     _toStation = to;
                     _toController.text = to.name;
@@ -2294,9 +2394,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               _toStation!.longitude != null) {
                             refLat = _toStation!.latitude;
                             refLng = _toStation!.longitude;
-                          } else if (widget.currentPosition != null) {
-                            refLat = widget.currentPosition!.latitude;
-                            refLng = widget.currentPosition!.longitude;
+                          } else if (_effectiveCurrentPosition != null) {
+                            refLat = _effectiveCurrentPosition!.latitude;
+                            refLng = _effectiveCurrentPosition!.longitude;
                           }
                         } else if (_activeSearchField == 'to') {
                           if (_fromStation != null &&
@@ -2304,9 +2404,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               _fromStation!.longitude != null) {
                             refLat = _fromStation!.latitude;
                             refLng = _fromStation!.longitude;
-                          } else if (widget.currentPosition != null) {
-                            refLat = widget.currentPosition!.latitude;
-                            refLng = widget.currentPosition!.longitude;
+                          } else if (_effectiveCurrentPosition != null) {
+                            refLat = _effectiveCurrentPosition!.latitude;
+                            refLng = _effectiveCurrentPosition!.longitude;
                           }
                         }
 
@@ -2365,7 +2465,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (fieldKey == 'from' &&
         _fromStation == null &&
-        widget.currentPosition != null) {
+        _effectiveCurrentPosition != null) {
       effectiveHint = _currentAddress ?? "Current Location";
       isLocationHint = true;
     }
@@ -2396,12 +2496,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 isLocationHint &&
                 _currentAddress != null) {
               controller.text = _currentAddress!;
+              _fromUsesCurrentLocation = true;
               // Select all text so user can easily overwrite it
               controller.selection = TextSelection(
                   baseOffset: 0, extentOffset: controller.text.length);
               _onSearchChanged(_currentAddress!, fieldKey);
             } else if (fieldKey == 'from' &&
                 controller.text == _currentAddress) {
+              _fromUsesCurrentLocation = true;
               // If already populated with current address, select all on tap
               controller.selection = TextSelection(
                   baseOffset: 0, extentOffset: controller.text.length);
@@ -2414,10 +2516,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           decoration: InputDecoration(
               filled: true,
               fillColor: colors.searchInputFill,
-              prefixIcon: Icon(
-                  fieldKey == 'from' ? Icons.my_location : Icons.location_on,
-                  color: iconColor,
-                  size: 20),
+              prefixIcon: fieldKey == 'from'
+                  ? IconButton(
+                      tooltip: 'Refresh location',
+                      onPressed: _isRefreshingLocation
+                          ? null
+                          : () => _refreshCurrentLocationManually(),
+                      icon: _isRefreshingLocation
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: iconColor,
+                              ),
+                            )
+                          : Icon(Icons.my_location, color: iconColor, size: 20),
+                    )
+                  : Icon(Icons.location_on, color: iconColor, size: 20),
               suffixIcon: (controller.text.isNotEmpty || isSelected)
                   ? IconButton(
                       icon: Icon(Icons.close,
