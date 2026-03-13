@@ -399,10 +399,8 @@ class _SettingsTabState extends State<SettingsTab> {
     if (confirmed == true) {
       await SearchHistoryManager.clearHistory();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content:
-                    Text(AppLocalizations.of(context)!.searchHistoryCleared)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.searchHistoryCleared)));
       }
     }
   }

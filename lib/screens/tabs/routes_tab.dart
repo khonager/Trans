@@ -396,16 +396,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(l10n.locationPermissionDenied)));
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.locationPermissionDenied)));
         }
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(l10n.locationPermissionPermanentlyDenied)));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(l10n.locationPermissionPermanentlyDenied)));
       }
       return;
     }
@@ -418,8 +418,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (targetLat == null || targetLng == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(l10n.missingDestCoords)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.missingDestCoords)));
       }
       return;
     }
@@ -1082,9 +1082,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform != nextPlat) {
-          instruction =
-              AppLocalizations.of(context)!
-                  .switchPlatform(fmtPlat(lastPlatform), fmtPlat(nextPlat));
+          instruction = AppLocalizations.of(context)!
+              .switchPlatform(fmtPlat(lastPlatform), fmtPlat(nextPlat));
         } else if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform == nextPlat) {
@@ -1093,8 +1092,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else if (nextPlat != null) {
           instruction = AppLocalizations.of(context)!.waitAt(fmtPlat(nextPlat));
         } else {
-          instruction =
-              AppLocalizations.of(context)!.waitAt(destName ?? '');
+          instruction = AppLocalizations.of(context)!.waitAt(destName ?? '');
         }
       } else if (isPhantomWalk) {
         isWaitInstruction = true;
@@ -1474,8 +1472,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               longitude: pos.longitude);
         } else {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(l10n.locationNotAvailable)));
+            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(l10n.locationNotAvailable)));
           }
           return;
         }
@@ -1568,8 +1566,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     } on TimeoutException catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(l10n.requestTimedOut)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
       if (mounted) {
@@ -2056,7 +2054,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         AppLocalizations.of(context)!.fromLabel,
                         _fromController,
                         _fromFocusNode,
-                        _fromStation != null, 'from',
+                        _fromStation != null,
+                        'from',
                         hint: (_fromStation == null &&
                                 _effectiveCurrentPosition != null)
                             ? AppLocalizations.of(context)!.currentLocation
@@ -2769,7 +2768,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     match ??= freshRideSteps.cast<JourneyStep?>().firstWhere(
         (candidate) =>
-            candidate!.line.trim().toLowerCase() == step.line.trim().toLowerCase() &&
+            candidate!.line.trim().toLowerCase() ==
+                step.line.trim().toLowerCase() &&
             candidate.startStationName == step.startStationName &&
             candidate.destinationName == step.destinationName,
         orElse: () => null);
@@ -3295,7 +3295,8 @@ class _StepCardState extends State<_StepCard> {
                               child: SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: Row(children: [
-                                    _buildActionChip(context,
+                                    _buildActionChip(
+                                        context,
                                         Icons.chat_bubble_outline,
                                         AppLocalizations.of(context)!.chat,
                                         onTap: () => widget.onChat(step.line)),
@@ -3588,7 +3589,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(isNew
+              Text(
+                  isNew
                       ? AppLocalizations.of(context)!.addFavorite
                       : AppLocalizations.of(context)!.editFavorite,
                   style: TextStyle(
@@ -3886,12 +3888,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         processResults(results);
       }
     } catch (e) {
-                  if (mounted) {
-                    setState(() {
-                      _error = e.toString();
-                      _isLoading = false;
-                    });
-                  }
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -4106,7 +4108,8 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                         style: TextStyle(color: colors.textSecondary)),
                     if (delayMin > 0)
                       TextSpan(
-                          text: " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
+                          text:
+                              " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
                           style: const TextStyle(
                               color: Colors.orange,
                               fontWeight: FontWeight.bold)),

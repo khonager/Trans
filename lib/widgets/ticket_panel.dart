@@ -682,8 +682,9 @@ class _TicketPanelState extends State<TicketPanel> {
                                   children: [
                                     CircularProgressIndicator(),
                                     SizedBox(height: 12),
-                                    Text(AppLocalizations.of(context)!
-                                        .generatingStyledQr,
+                                    Text(
+                                        AppLocalizations.of(context)!
+                                            .generatingStyledQr,
                                         style: TextStyle(color: Colors.white)),
                                   ],
                                 ),
@@ -892,7 +893,8 @@ class _TicketPanelState extends State<TicketPanel> {
     if (styled == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.couldNotRecolorQrCode)));
+            content:
+                Text(AppLocalizations.of(context)!.couldNotRecolorQrCode)));
       }
       return false;
     }
