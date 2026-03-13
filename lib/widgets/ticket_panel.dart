@@ -259,14 +259,14 @@ class _TicketPanelState extends State<TicketPanel> {
         sourcePath: imageFile.path,
         uiSettings: [
           AndroidUiSettings(
-            toolbarTitle: 'Crop Ticket',
+            toolbarTitle: AppLocalizations.of(context)!.cropTicket,
             toolbarColor: TransColors.of(context).navBarBg,
             toolbarWidgetColor: TransColors.of(context).textPrimary,
             initAspectRatio: CropAspectRatioPreset.original,
             lockAspectRatio: false,
           ),
           IOSUiSettings(
-            title: 'Crop Ticket',
+            title: AppLocalizations.of(context)!.cropTicket,
           ),
         ],
       );
@@ -329,13 +329,15 @@ class _TicketPanelState extends State<TicketPanel> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(isAutoCrop ? "QR Code Detected" : "Confirm Ticket"),
+        title: Text(isAutoCrop
+            ? AppLocalizations.of(context)!.qrCodeDetected
+            : AppLocalizations.of(context)!.confirmTicket),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(isAutoCrop
-                ? "We detected a QR code. Use this crop?"
-                : "No QR code detected. Use this image?"),
+                ? AppLocalizations.of(context)!.detectedQrUseCrop
+                : AppLocalizations.of(context)!.noQrUseImage),
             const SizedBox(height: 10),
             Container(
               constraints: const BoxConstraints(maxHeight: 200),
@@ -348,7 +350,9 @@ class _TicketPanelState extends State<TicketPanel> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false), // No -> Manual Crop
-            child: Text(isAutoCrop ? "No, Edit Crop" : "Crop / Edit"),
+            child: Text(isAutoCrop
+                ? AppLocalizations.of(context)!.editCrop
+                : AppLocalizations.of(context)!.cropEdit),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
@@ -424,7 +428,9 @@ class _TicketPanelState extends State<TicketPanel> {
     if (mounted) {
       setState(() => _isLoading = false);
       String msg = e.toString();
-      if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
+      if (msg.contains("Bucket")) {
+        msg = AppLocalizations.of(context)!.savedLocallyCloudUploadFailed;
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
@@ -459,7 +465,8 @@ class _TicketPanelState extends State<TicketPanel> {
               title: Text(AppLocalizations.of(context)!.renameTicket),
               content: TextField(
                   controller: controller,
-                  decoration: const InputDecoration(hintText: "Enter label")),
+                  decoration: InputDecoration(
+                      hintText: AppLocalizations.of(context)!.enterLabel)),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -621,7 +628,7 @@ class _TicketPanelState extends State<TicketPanel> {
                         Icon(Icons.confirmation_number_outlined,
                             color: colors.ticketHeader),
                         const SizedBox(width: 8),
-                        Text("My Ticket",
+                        Text(AppLocalizations.of(context)!.myTicket,
                             style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
@@ -675,7 +682,8 @@ class _TicketPanelState extends State<TicketPanel> {
                                   children: [
                                     CircularProgressIndicator(),
                                     SizedBox(height: 12),
-                                    Text("Generating styled QR...",
+                                    Text(AppLocalizations.of(context)!
+                                        .generatingStyledQr,
                                         style: TextStyle(color: Colors.white)),
                                   ],
                                 ),
@@ -687,10 +695,12 @@ class _TicketPanelState extends State<TicketPanel> {
                     const SizedBox(height: 8),
                     Text(
                         showGeneratedQr
-                            ? "Styled from original ticket QR pattern"
+                            ? AppLocalizations.of(context)!
+                                .styledFromOriginalTicketQrPattern
                             : (kIsWeb
-                                ? "Tap for fullscreen"
-                                : "Tap for fullscreen • Hold for history"),
+                                ? AppLocalizations.of(context)!.tapForFullscreen
+                                : AppLocalizations.of(context)!
+                                    .tapForFullscreenHoldForHistory),
                         style:
                             const TextStyle(fontSize: 10, color: Colors.grey)),
                     const SizedBox(height: 12),
@@ -741,8 +751,8 @@ class _TicketPanelState extends State<TicketPanel> {
                             ? Icons.image_outlined
                             : Icons.qr_code_2_outlined),
                         label: Text(showGeneratedQr
-                            ? "Show Original Ticket"
-                            : "Show Styled QR"),
+                            ? AppLocalizations.of(context)!.showOriginalTicket
+                            : AppLocalizations.of(context)!.showStyledQr),
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -865,9 +875,9 @@ class _TicketPanelState extends State<TicketPanel> {
     }
 
     if (qrBox == null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              "Could not isolate QR bounds. Styling the full image instead.")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context)!.couldNotIsolateQrBounds)));
     }
 
     final styled = await _styleQrBytesInBackground(bytes, qrBox, themeArgb);
@@ -881,8 +891,8 @@ class _TicketPanelState extends State<TicketPanel> {
 
     if (styled == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Could not recolor this QR code image.")));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.couldNotRecolorQrCode)));
       }
       return false;
     }

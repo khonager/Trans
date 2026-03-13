@@ -63,8 +63,8 @@ class RouteShareTicket extends StatelessWidget {
                                   color: accentColor)),
                         ),
                         const SizedBox(width: 10),
-                        const Text(
-                          "TRANSIT BOARDING PASS",
+                        Text(
+                          AppLocalizations.of(context)!.transitBoardingPass,
                           style: TextStyle(
                               color: accentColor,
                               fontWeight: FontWeight.w900,
@@ -334,7 +334,7 @@ class RouteShareTicket extends StatelessWidget {
         head.isNotEmpty &&
         (head.toLowerCase().contains(dest.toLowerCase()) ||
             dest.toLowerCase().contains(head.toLowerCase()));
-    final displayDest = isEnd ? "End of Line" : dest;
+    final displayDest = isEnd ? AppLocalizations.of(context)!.endOfLine : dest;
 
     return Row(
       children: [

@@ -70,7 +70,7 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
                     height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.check),
-            tooltip: "Apply Crop",
+            tooltip: AppLocalizations.of(context)!.applyCrop,
           ),
         ],
       ),

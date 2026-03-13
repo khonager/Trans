@@ -536,6 +536,48 @@ abstract class AppLocalizations {
   /// **'Now'**
   String get now;
 
+  /// No description provided for @currentLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Current Location'**
+  String get currentLocation;
+
+  /// No description provided for @stationOrAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Station or Address...'**
+  String get stationOrAddress;
+
+  /// No description provided for @fromLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get fromLabel;
+
+  /// No description provided for @toLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get toLabel;
+
+  /// No description provided for @arriveBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Arrive by'**
+  String get arriveBy;
+
+  /// No description provided for @departAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Depart at'**
+  String get departAt;
+
+  /// No description provided for @refreshLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh location'**
+  String get refreshLocation;
+
   /// No description provided for @findRoutes.
   ///
   /// In en, this message translates to:
@@ -716,6 +758,12 @@ abstract class AppLocalizations {
   /// **'Crop Ticket'**
   String get cropTicket;
 
+  /// No description provided for @applyCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply Crop'**
+  String get applyCrop;
+
   /// No description provided for @secureChat.
   ///
   /// In en, this message translates to:
@@ -733,6 +781,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Use Image'**
   String get useImage;
+
+  /// No description provided for @saySomething.
+  ///
+  /// In en, this message translates to:
+  /// **'Say something...'**
+  String get saySomething;
+
+  /// No description provided for @qrCodeDetected.
+  ///
+  /// In en, this message translates to:
+  /// **'QR Code Detected'**
+  String get qrCodeDetected;
+
+  /// No description provided for @confirmTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Ticket'**
+  String get confirmTicket;
+
+  /// No description provided for @detectedQrUseCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'We detected a QR code. Use this crop?'**
+  String get detectedQrUseCrop;
+
+  /// No description provided for @noQrUseImage.
+  ///
+  /// In en, this message translates to:
+  /// **'No QR code detected. Use this image?'**
+  String get noQrUseImage;
+
+  /// No description provided for @editCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Crop'**
+  String get editCrop;
+
+  /// No description provided for @cropEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Crop / Edit'**
+  String get cropEdit;
 
   /// No description provided for @renameTicket.
   ///
@@ -757,6 +847,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Rename'**
   String get rename;
+
+  /// No description provided for @enterLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter label'**
+  String get enterLabel;
 
   /// No description provided for @errorLoadingTicket.
   ///
@@ -805,6 +901,240 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Search history cleared.'**
   String get searchHistoryCleared;
+
+  /// No description provided for @myTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'My Ticket'**
+  String get myTicket;
+
+  /// No description provided for @generatingStyledQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating styled QR...'**
+  String get generatingStyledQr;
+
+  /// No description provided for @styledFromOriginalTicketQrPattern.
+  ///
+  /// In en, this message translates to:
+  /// **'Styled from original ticket QR pattern'**
+  String get styledFromOriginalTicketQrPattern;
+
+  /// No description provided for @tapForFullscreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap for fullscreen'**
+  String get tapForFullscreen;
+
+  /// No description provided for @tapForFullscreenHoldForHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap for fullscreen • Hold for history'**
+  String get tapForFullscreenHoldForHistory;
+
+  /// No description provided for @showOriginalTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Original Ticket'**
+  String get showOriginalTicket;
+
+  /// No description provided for @showStyledQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Styled QR'**
+  String get showStyledQr;
+
+  /// No description provided for @savedLocallyCloudUploadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved locally. Cloud upload failed.'**
+  String get savedLocallyCloudUploadFailed;
+
+  /// No description provided for @couldNotIsolateQrBounds.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not isolate QR bounds. Styling the full image instead.'**
+  String get couldNotIsolateQrBounds;
+
+  /// No description provided for @couldNotRecolorQrCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not recolor this QR code image.'**
+  String get couldNotRecolorQrCode;
+
+  /// No description provided for @transitBoardingPass.
+  ///
+  /// In en, this message translates to:
+  /// **'TRANSIT BOARDING PASS'**
+  String get transitBoardingPass;
+
+  /// No description provided for @endOfLine.
+  ///
+  /// In en, this message translates to:
+  /// **'End of Line'**
+  String get endOfLine;
+
+  /// No description provided for @wakeAlarmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Trans Wake Alarm'**
+  String get wakeAlarmTitle;
+
+  /// No description provided for @wakeAlarmTracking.
+  ///
+  /// In en, this message translates to:
+  /// **'Tracking your journey...'**
+  String get wakeAlarmTracking;
+
+  /// No description provided for @alternative.
+  ///
+  /// In en, this message translates to:
+  /// **'Alternative'**
+  String get alternative;
+
+  /// No description provided for @routeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Route'**
+  String get routeLabel;
+
+  /// No description provided for @destinationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination'**
+  String get destinationLabel;
+
+  /// No description provided for @details.
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get details;
+
+  /// No description provided for @startNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Start not found'**
+  String get startNotFound;
+
+  /// No description provided for @destinationNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination not found'**
+  String get destinationNotFound;
+
+  /// No description provided for @departsAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Departs {time}'**
+  String departsAt(String time);
+
+  /// No description provided for @lateByMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'(+{minutes} late)'**
+  String lateByMinutes(String minutes);
+
+  /// No description provided for @switchPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch from {fromPlatform} to {toPlatform}'**
+  String switchPlatform(String fromPlatform, String toPlatform);
+
+  /// No description provided for @waitAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait at {place}'**
+  String waitAt(String place);
+
+  /// No description provided for @transferTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer to {destination}'**
+  String transferTo(String destination);
+
+  /// No description provided for @waitForConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for connection'**
+  String get waitForConnection;
+
+  /// No description provided for @walkTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk to {destination}'**
+  String walkTo(String destination);
+
+  /// No description provided for @walkToDestination.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk to destination'**
+  String get walkToDestination;
+
+  /// No description provided for @walkLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk'**
+  String get walkLabel;
+
+  /// No description provided for @atPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'at {platform}'**
+  String atPlatform(String platform);
+
+  /// No description provided for @toPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'to {platform}'**
+  String toPlatform(String platform);
+
+  /// No description provided for @addFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Favorite'**
+  String get addFavorite;
+
+  /// No description provided for @editFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Favorite'**
+  String get editFavorite;
+
+  /// No description provided for @favoriteLabelHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Label (e.g. Home, Bestie)'**
+  String get favoriteLabelHint;
+
+  /// No description provided for @searchStationName.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Station Name'**
+  String get searchStationName;
+
+  /// No description provided for @searchFriendUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Friend Username'**
+  String get searchFriendUsername;
+
+  /// No description provided for @alarmOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Alarm ON'**
+  String get alarmOn;
+
+  /// No description provided for @wakeMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Wake Me'**
+  String get wakeMe;
+
+  /// No description provided for @altShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Alt'**
+  String get altShort;
 
   /// No description provided for @blockedUsers.
   ///

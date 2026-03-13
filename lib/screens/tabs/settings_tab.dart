@@ -400,7 +400,9 @@ class _SettingsTabState extends State<SettingsTab> {
       await SearchHistoryManager.clearHistory();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Search history cleared.")));
+            SnackBar(
+                content:
+                    Text(AppLocalizations.of(context)!.searchHistoryCleared)));
     }
   }
 
@@ -506,7 +508,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 obscureText: true,
                 style: TextStyle(color: TransColors.of(context).textPrimary),
                 decoration: InputDecoration(
-                  labelText: "Password",
+                  labelText: AppLocalizations.of(context)!.password,
                   errorText: errorMsg,
                   border: const OutlineInputBorder(),
                   labelStyle:
@@ -1251,7 +1253,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Widget _buildMyStatus(TransColors colors) {
-    String statusText = "Inactive";
+    String statusText = AppLocalizations.of(context)!.inactive;
     Color statusColor = colors.statusOffline;
     Widget? statusIcon;
 
@@ -1263,18 +1265,18 @@ class _SettingsTabState extends State<SettingsTab> {
       final currentLine = _myLocation!['current_line'];
 
       if (isActive) {
-        statusText = "Active recently";
+        statusText = AppLocalizations.of(context)!.activeRecently;
         statusColor = colors.statusActive;
 
         if (currentLine != null && currentLine.toString().isNotEmpty) {
           final diff = now.difference(updated);
           if (diff.inMinutes < 10) {
-            statusText = "On $currentLine";
+            statusText = AppLocalizations.of(context)!.onLine(currentLine);
             statusColor = colors.statusOnline;
             statusIcon = Icon(Icons.directions_bus,
                 size: 12, color: colors.statusOnline);
           } else {
-            statusText = "Last on $currentLine";
+            statusText = AppLocalizations.of(context)!.lastOnLine(currentLine);
             statusColor = colors.textSecondary;
             statusIcon =
                 Icon(Icons.history, size: 12, color: colors.textSecondary);
@@ -1284,7 +1286,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
       if (widget.isGhostMode) {
         if (isActive && currentLine == null) {
-          statusText = "Active recently (Ghost)";
+          statusText = AppLocalizations.of(context)!.activeRecentlyGhost;
           statusColor = colors.textSecondary;
         }
       }

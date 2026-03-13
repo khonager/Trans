@@ -100,7 +100,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get noFriendsYet => 'Noch keine Freunde.';
 
   @override
-  String get sentFriendRequest => 'Hat eine Freundschaftsanfrage gesendet';
+  String get sentFriendRequest => 'Freundschaftsanfrage gesendet';
 
   @override
   String get friendRequestAccepted => 'Freundschaftsanfrage akzeptiert!';
@@ -230,7 +230,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get serviceBusyTryAgain =>
-      'Dienst vorübergehend ausgelastet. Versuchen Sie es erneut.';
+      'Dienst vorübergehend ausgelastet. Versuchen Sie es erneut oder geben Sie mehr Zeichen ein.';
 
   @override
   String get serviceBusyPleaseTryAgain =>
@@ -265,6 +265,27 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get now => 'Jetzt';
+
+  @override
+  String get currentLocation => 'Aktueller Standort';
+
+  @override
+  String get stationOrAddress => 'Station oder Adresse...';
+
+  @override
+  String get fromLabel => 'Von';
+
+  @override
+  String get toLabel => 'Nach';
+
+  @override
+  String get arriveBy => 'Ankunft bis';
+
+  @override
+  String get departAt => 'Abfahrt um';
+
+  @override
+  String get refreshLocation => 'Standort aktualisieren';
 
   @override
   String get findRoutes => 'Routen finden';
@@ -353,7 +374,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get previous => 'Bisherige';
+  String get previous => 'Frühere';
 
   @override
   String get dep => 'ABF';
@@ -362,7 +383,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get arr => 'ANK';
 
   @override
-  String get passenger => 'PASSAGIER';
+  String get passenger => 'FAHRGAST';
 
   @override
   String get walk => 'GEHEN';
@@ -377,6 +398,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get cropTicket => 'Ticket zuschneiden';
 
   @override
+  String get applyCrop => 'Zuschnitt übernehmen';
+
+  @override
   String secureChat(String friendName) {
     return 'Sicherer Chat: $friendName';
   }
@@ -386,6 +410,28 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get useImage => 'Bild verwenden';
+
+  @override
+  String get saySomething => 'Nachricht schreiben...';
+
+  @override
+  String get qrCodeDetected => 'QR-Code erkannt';
+
+  @override
+  String get confirmTicket => 'Ticket bestätigen';
+
+  @override
+  String get detectedQrUseCrop =>
+      'Wir haben einen QR-Code erkannt. Diesen Zuschnitt verwenden?';
+
+  @override
+  String get noQrUseImage => 'Kein QR-Code erkannt. Dieses Bild verwenden?';
+
+  @override
+  String get editCrop => 'Zuschnitt bearbeiten';
+
+  @override
+  String get cropEdit => 'Zuschneiden / Bearbeiten';
 
   @override
   String get renameTicket => 'Ticket umbenennen';
@@ -398,6 +444,9 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get rename => 'Umbenennen';
+
+  @override
+  String get enterLabel => 'Bezeichnung eingeben';
 
   @override
   String get errorLoadingTicket => 'Fehler beim Laden des Tickets';
@@ -423,6 +472,144 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get searchHistoryCleared => 'Suchverlauf gelöscht.';
+
+  @override
+  String get myTicket => 'Mein Ticket';
+
+  @override
+  String get generatingStyledQr => 'Stilisierter QR-Code wird erstellt...';
+
+  @override
+  String get styledFromOriginalTicketQrPattern =>
+      'Aus dem QR-Muster des Originaltickets erstellt';
+
+  @override
+  String get tapForFullscreen => 'Tippen für Vollbild';
+
+  @override
+  String get tapForFullscreenHoldForHistory =>
+      'Tippen für Vollbild • Halten für Verlauf';
+
+  @override
+  String get showOriginalTicket => 'Originalticket anzeigen';
+
+  @override
+  String get showStyledQr => 'Stilisierten QR-Code anzeigen';
+
+  @override
+  String get savedLocallyCloudUploadFailed =>
+      'Lokal gespeichert. Cloud-Upload fehlgeschlagen.';
+
+  @override
+  String get couldNotIsolateQrBounds =>
+      'QR-Bereich konnte nicht sauber erkannt werden. Stattdessen wird das ganze Bild stilisiert.';
+
+  @override
+  String get couldNotRecolorQrCode =>
+      'Dieses QR-Code-Bild konnte nicht umgefärbt werden.';
+
+  @override
+  String get transitBoardingPass => 'FAHRKARTE';
+
+  @override
+  String get endOfLine => 'Endstation';
+
+  @override
+  String get wakeAlarmTitle => 'Trans-Weckalarm';
+
+  @override
+  String get wakeAlarmTracking => 'Ihre Reise wird verfolgt...';
+
+  @override
+  String get alternative => 'Alternative';
+
+  @override
+  String get routeLabel => 'Route';
+
+  @override
+  String get destinationLabel => 'Ziel';
+
+  @override
+  String get details => 'Details';
+
+  @override
+  String get startNotFound => 'Start nicht gefunden';
+
+  @override
+  String get destinationNotFound => 'Ziel nicht gefunden';
+
+  @override
+  String departsAt(String time) {
+    return 'Abfahrt $time';
+  }
+
+  @override
+  String lateByMinutes(String minutes) {
+    return '(+$minutes Min. verspätet)';
+  }
+
+  @override
+  String switchPlatform(String fromPlatform, String toPlatform) {
+    return 'Wechsel von $fromPlatform zu $toPlatform';
+  }
+
+  @override
+  String waitAt(String place) {
+    return 'Warten bei $place';
+  }
+
+  @override
+  String transferTo(String destination) {
+    return 'Umsteigen nach $destination';
+  }
+
+  @override
+  String get waitForConnection => 'Auf Anschluss warten';
+
+  @override
+  String walkTo(String destination) {
+    return 'Zu $destination laufen';
+  }
+
+  @override
+  String get walkToDestination => 'Zum Ziel laufen';
+
+  @override
+  String get walkLabel => 'Laufen';
+
+  @override
+  String atPlatform(String platform) {
+    return 'bei $platform';
+  }
+
+  @override
+  String toPlatform(String platform) {
+    return 'zu $platform';
+  }
+
+  @override
+  String get addFavorite => 'Favorit hinzufügen';
+
+  @override
+  String get editFavorite => 'Favorit bearbeiten';
+
+  @override
+  String get favoriteLabelHint => 'Bezeichnung (z. B. Zuhause, Bestie)';
+
+  @override
+  String get searchStationName => 'Stationsnamen suchen';
+
+  @override
+  String get searchFriendUsername => 'Freundes-Benutzernamen suchen';
+
+  @override
+  String get alarmOn => 'Alarm an';
+
+  @override
+  String get wakeMe => 'Weck mich';
+
+  @override
+  String get altShort => 'Alt';
 
   @override
   String get blockedUsers => 'Blockierte Nutzer';

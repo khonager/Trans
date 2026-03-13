@@ -174,6 +174,13 @@
   "planJourney": "Plan Journey",
   "tripTime": "Trip Time",
   "now": "Now",
+  "currentLocation": "Current Location",
+  "stationOrAddress": "Station or Address...",
+  "fromLabel": "From",
+  "toLabel": "To",
+  "arriveBy": "Arrive by",
+  "departAt": "Depart at",
+  "refreshLocation": "Refresh location",
   "findRoutes": "Find Routes",
   "favorites": "Favorites",
   "add": "Add",
@@ -283,6 +290,7 @@
   "transfer": "TRANSFER",
   "noMessagesYet": "No messages yet.",
   "cropTicket": "Crop Ticket",
+  "applyCrop": "Apply Crop",
   "secureChat": "Secure Chat: {friendName}",
   "@secureChat": {
     "placeholders": {
@@ -293,10 +301,18 @@
   },
   "noSecureMessagesYet": "No secure messages yet.",
   "useImage": "Use Image",
+  "saySomething": "Say something...",
+  "qrCodeDetected": "QR Code Detected",
+  "confirmTicket": "Confirm Ticket",
+  "detectedQrUseCrop": "We detected a QR code. Use this crop?",
+  "noQrUseImage": "No QR code detected. Use this image?",
+  "editCrop": "Edit Crop",
+  "cropEdit": "Crop / Edit",
   "renameTicket": "Rename Ticket",
   "ticketHistory": "Ticket History",
   "noHistoryFound": "No history found.",
   "rename": "Rename",
+  "enterLabel": "Enter label",
   "errorLoadingTicket": "Error loading ticket",
   "changeTicket": "Change Ticket",
   "addTicket": "Add Ticket",
@@ -305,6 +321,104 @@
   "clearHistory": "Clear History",
   "confirmClearHistory": "Are you sure you want to delete your recent search history?",
   "searchHistoryCleared": "Search history cleared.",
+  "myTicket": "My Ticket",
+  "generatingStyledQr": "Generating styled QR...",
+  "styledFromOriginalTicketQrPattern": "Styled from original ticket QR pattern",
+  "tapForFullscreen": "Tap for fullscreen",
+  "tapForFullscreenHoldForHistory": "Tap for fullscreen • Hold for history",
+  "showOriginalTicket": "Show Original Ticket",
+  "showStyledQr": "Show Styled QR",
+  "savedLocallyCloudUploadFailed": "Saved locally. Cloud upload failed.",
+  "couldNotIsolateQrBounds": "Could not isolate QR bounds. Styling the full image instead.",
+  "couldNotRecolorQrCode": "Could not recolor this QR code image.",
+  "transitBoardingPass": "TRANSIT BOARDING PASS",
+  "endOfLine": "End of Line",
+  "wakeAlarmTitle": "Trans Wake Alarm",
+  "wakeAlarmTracking": "Tracking your journey...",
+  "alternative": "Alternative",
+  "routeLabel": "Route",
+  "destinationLabel": "Destination",
+  "details": "Details",
+  "startNotFound": "Start not found",
+  "destinationNotFound": "Destination not found",
+  "departsAt": "Departs {time}",
+  "@departsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lateByMinutes": "(+{minutes} late)",
+  "@lateByMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "switchPlatform": "Switch from {fromPlatform} to {toPlatform}",
+  "@switchPlatform": {
+    "placeholders": {
+      "fromPlatform": {
+        "type": "String"
+      },
+      "toPlatform": {
+        "type": "String"
+      }
+    }
+  },
+  "waitAt": "Wait at {place}",
+  "@waitAt": {
+    "placeholders": {
+      "place": {
+        "type": "String"
+      }
+    }
+  },
+  "transferTo": "Transfer to {destination}",
+  "@transferTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "waitForConnection": "Wait for connection",
+  "walkTo": "Walk to {destination}",
+  "@walkTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "walkToDestination": "Walk to destination",
+  "walkLabel": "Walk",
+  "atPlatform": "at {platform}",
+  "@atPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "toPlatform": "to {platform}",
+  "@toPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "addFavorite": "Add Favorite",
+  "editFavorite": "Edit Favorite",
+  "favoriteLabelHint": "Label (e.g. Home, Bestie)",
+  "searchStationName": "Search Station Name",
+  "searchFriendUsername": "Search Friend Username",
+  "alarmOn": "Alarm ON",
+  "wakeMe": "Wake Me",
+  "altShort": "Alt",
   "blockedUsers": "Blocked Users",
   "noBlockedUsers": "No blocked users",
   "unblockedUser": "Unblocked {username}",

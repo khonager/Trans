@@ -27,7 +27,7 @@
   "requests": "Anfragen",
   "offline": "Offline",
   "noFriendsYet": "Noch keine Freunde.",
-  "sentFriendRequest": "Hat eine Freundschaftsanfrage gesendet",
+  "sentFriendRequest": "Freundschaftsanfrage gesendet",
   "friendRequestAccepted": "Freundschaftsanfrage akzeptiert!",
   "friendRequestDenied": "Freundschaftsanfrage abgelehnt.",
   "inactive": "Inaktiv",
@@ -62,7 +62,7 @@
   "locationPermissionPermanentlyDenied": "Standortberechtigung dauerhaft verweigert.",
   "missingDestCoords": "Alarm kann nicht gestartet werden: Zielkoordinaten fehlen.",
   "wakeUpApproaching": "Aufwachen! Sie nähern sich {stop}!",
-  "serviceBusyTryAgain": "Dienst vorübergehend ausgelastet. Versuchen Sie es erneut.",
+  "serviceBusyTryAgain": "Dienst vorübergehend ausgelastet. Versuchen Sie es erneut oder geben Sie mehr Zeichen ein.",
   "serviceBusyPleaseTryAgain": "Dienst vorübergehend ausgelastet. Bitte versuchen Sie es erneut.",
   "locationNotAvailable": "Standort nicht verfügbar.",
   "noRoutesFound": "Keine Routen gefunden.",
@@ -73,6 +73,13 @@
   "planJourney": "Reise planen",
   "tripTime": "Reisezeit",
   "now": "Jetzt",
+  "currentLocation": "Aktueller Standort",
+  "stationOrAddress": "Station oder Adresse...",
+  "fromLabel": "Von",
+  "toLabel": "Nach",
+  "arriveBy": "Ankunft bis",
+  "departAt": "Abfahrt um",
+  "refreshLocation": "Standort aktualisieren",
   "findRoutes": "Routen finden",
   "favorites": "Favoriten",
   "add": "Hinzufügen",
@@ -95,21 +102,30 @@
   "alternatives": "Alternativen",
   "errorPrefix": "Fehler: {error}",
   "toDirection": "{line} nach {dir}",
-  "previous": "Bisherige",
+  "previous": "Frühere",
   "dep": "ABF",
   "arr": "ANK",
-  "passenger": "PASSAGIER",
+  "passenger": "FAHRGAST",
   "walk": "GEHEN",
   "transfer": "UMSTIEG",
   "noMessagesYet": "Noch keine Nachrichten.",
   "cropTicket": "Ticket zuschneiden",
+  "applyCrop": "Zuschnitt übernehmen",
   "secureChat": "Sicherer Chat: {friendName}",
   "noSecureMessagesYet": "Keine sicheren Nachrichten bisher.",
   "useImage": "Bild verwenden",
+  "saySomething": "Nachricht schreiben...",
+  "qrCodeDetected": "QR-Code erkannt",
+  "confirmTicket": "Ticket bestätigen",
+  "detectedQrUseCrop": "Wir haben einen QR-Code erkannt. Diesen Zuschnitt verwenden?",
+  "noQrUseImage": "Kein QR-Code erkannt. Dieses Bild verwenden?",
+  "editCrop": "Zuschnitt bearbeiten",
+  "cropEdit": "Zuschneiden / Bearbeiten",
   "renameTicket": "Ticket umbenennen",
   "ticketHistory": "Ticket-Verlauf",
   "noHistoryFound": "Kein Verlauf gefunden.",
   "rename": "Umbenennen",
+  "enterLabel": "Bezeichnung eingeben",
   "errorLoadingTicket": "Fehler beim Laden des Tickets",
   "changeTicket": "Ticket ändern",
   "addTicket": "Ticket hinzufügen",
@@ -118,6 +134,104 @@
   "clearHistory": "Verlauf löschen",
   "confirmClearHistory": "Sind Sie sicher, dass Sie Ihren Suchverlauf löschen möchten?",
   "searchHistoryCleared": "Suchverlauf gelöscht.",
+  "myTicket": "Mein Ticket",
+  "generatingStyledQr": "Stilisierter QR-Code wird erstellt...",
+  "styledFromOriginalTicketQrPattern": "Aus dem QR-Muster des Originaltickets erstellt",
+  "tapForFullscreen": "Tippen für Vollbild",
+  "tapForFullscreenHoldForHistory": "Tippen für Vollbild • Halten für Verlauf",
+  "showOriginalTicket": "Originalticket anzeigen",
+  "showStyledQr": "Stilisierten QR-Code anzeigen",
+  "savedLocallyCloudUploadFailed": "Lokal gespeichert. Cloud-Upload fehlgeschlagen.",
+  "couldNotIsolateQrBounds": "QR-Bereich konnte nicht sauber erkannt werden. Stattdessen wird das ganze Bild stilisiert.",
+  "couldNotRecolorQrCode": "Dieses QR-Code-Bild konnte nicht umgefärbt werden.",
+  "transitBoardingPass": "FAHRKARTE",
+  "endOfLine": "Endstation",
+  "wakeAlarmTitle": "Trans-Weckalarm",
+  "wakeAlarmTracking": "Ihre Reise wird verfolgt...",
+  "alternative": "Alternative",
+  "routeLabel": "Route",
+  "destinationLabel": "Ziel",
+  "details": "Details",
+  "startNotFound": "Start nicht gefunden",
+  "destinationNotFound": "Ziel nicht gefunden",
+  "departsAt": "Abfahrt {time}",
+  "@departsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lateByMinutes": "(+{minutes} Min. verspätet)",
+  "@lateByMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "switchPlatform": "Wechsel von {fromPlatform} zu {toPlatform}",
+  "@switchPlatform": {
+    "placeholders": {
+      "fromPlatform": {
+        "type": "String"
+      },
+      "toPlatform": {
+        "type": "String"
+      }
+    }
+  },
+  "waitAt": "Warten bei {place}",
+  "@waitAt": {
+    "placeholders": {
+      "place": {
+        "type": "String"
+      }
+    }
+  },
+  "transferTo": "Umsteigen nach {destination}",
+  "@transferTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "waitForConnection": "Auf Anschluss warten",
+  "walkTo": "Zu {destination} laufen",
+  "@walkTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "walkToDestination": "Zum Ziel laufen",
+  "walkLabel": "Laufen",
+  "atPlatform": "bei {platform}",
+  "@atPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "toPlatform": "zu {platform}",
+  "@toPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "addFavorite": "Favorit hinzufügen",
+  "editFavorite": "Favorit bearbeiten",
+  "favoriteLabelHint": "Bezeichnung (z. B. Zuhause, Bestie)",
+  "searchStationName": "Stationsnamen suchen",
+  "searchFriendUsername": "Freundes-Benutzernamen suchen",
+  "alarmOn": "Alarm an",
+  "wakeMe": "Weck mich",
+  "altShort": "Alt",
   "blockedUsers": "Blockierte Nutzer",
   "noBlockedUsers": "Keine blockierten Nutzer",
   "unblockedUser": "{username} entsperrt",

@@ -167,7 +167,7 @@ class _ChatSheetState extends State<ChatSheet> {
                     controller: _msgCtrl,
                     style: TextStyle(color: colors.textPrimary),
                     decoration: InputDecoration(
-                        hintText: "Say something...",
+                        hintText: AppLocalizations.of(context)!.saySomething,
                         hintStyle: TextStyle(color: colors.textSecondary),
                         filled: true,
                         fillColor: colors.chatInputFill,
