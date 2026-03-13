@@ -2699,6 +2699,67 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  JourneyStep? _findRealtimeMatchForStep(
+      JourneyStep step, List<JourneyStep> freshRideSteps) {
+    JourneyStep? match;
+
+    if (step.tripId != null && step.tripId!.isNotEmpty) {
+      match = freshRideSteps.cast<JourneyStep?>().firstWhere(
+          (candidate) => candidate!.tripId == step.tripId,
+          orElse: () => null);
+    }
+
+    match ??= freshRideSteps.cast<JourneyStep?>().firstWhere(
+        (candidate) =>
+            candidate!.plannedDeparture == step.plannedDeparture &&
+            candidate.plannedArrival == step.plannedArrival,
+        orElse: () => null);
+
+    match ??= freshRideSteps.cast<JourneyStep?>().firstWhere(
+        (candidate) =>
+            candidate!.line.trim().toLowerCase() == step.line.trim().toLowerCase() &&
+            candidate.startStationName == step.startStationName &&
+            candidate.destinationName == step.destinationName,
+        orElse: () => null);
+
+    return match;
+  }
+
+  Journey _mergeRealtimeIntoJourney(Journey existing, Journey fresh) {
+    final freshRideSteps =
+        fresh.steps.where((step) => step.type == 'ride').toList();
+
+    final mergedSteps = existing.steps.map((step) {
+      if (step.type != 'ride') return step;
+
+      final match = _findRealtimeMatchForStep(step, freshRideSteps);
+      if (match == null) return step;
+
+      return step.copyWith(
+        departureTime: match.departureTime,
+        arrivalTime: match.arrivalTime,
+        dateTime: match.dateTime,
+        platform: match.platform ?? step.platform,
+        arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
+        departureDelay: match.departureDelay,
+        arrivalDelay: match.arrivalDelay,
+        isCancelled: match.isCancelled,
+        plannedDeparture: match.plannedDeparture ?? step.plannedDeparture,
+        plannedArrival: match.plannedArrival ?? step.plannedArrival,
+      );
+    }).toList();
+
+    return existing.copyWith(
+      steps: mergedSteps,
+      departure: fresh.departure,
+      arrival: fresh.arrival,
+      duration: fresh.duration,
+      plannedDeparture: fresh.plannedDeparture ?? existing.plannedDeparture,
+      plannedArrival: fresh.plannedArrival ?? existing.plannedArrival,
+      rawSource: fresh.rawSource,
+    );
+  }
+
   Future<void> _refreshActiveJourney(RouteTab route) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
@@ -2778,7 +2839,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         if (matched != null) {
-          final upd = matched;
+          final upd =
+              _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
           setState(() {
             _isLoadingRoute = false;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
@@ -2786,19 +2848,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               final latest = _tabs[freshIdx];
               final newStack = List<Journey>.from(latest.stack);
               final stackIdx = newStack.indexWhere((j) =>
-                  j.plannedDeparture == upd.plannedDeparture &&
-                  j.plannedArrival == upd.plannedArrival);
+                  j.plannedDeparture ==
+                      currentRoute.activeJourney!.plannedDeparture &&
+                  j.plannedArrival ==
+                      currentRoute.activeJourney!.plannedArrival);
               if (stackIdx != -1) {
                 newStack[stackIdx] = upd;
-              } else {
-                newStack.add(upd);
               }
 
               _tabs[freshIdx] = latest.copyWith(
                   activeJourney: upd,
                   steps: upd.steps,
                   stack: newStack,
-                  candidates: newJourneys,
                   totalDuration:
                       FormatUtils.formatDuration(upd.duration.inMinutes));
             }
