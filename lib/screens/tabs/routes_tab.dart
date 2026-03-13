@@ -1782,7 +1782,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 textAlign: TextAlign.center)),
 
       // Main Tab Bar
-      if (_tabs.isNotEmpty) {
+      if (_tabs.isNotEmpty)
         SizedBox(
             height: 60,
             child: ListView.builder(
@@ -1800,7 +1800,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   }
                   return _buildTabItem(_tabs[idx], colors);
                 })),
-      }
 
       // Secondary Tab Row (Alternatives)
       if (activeTab != null &&
@@ -3607,7 +3606,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                 Expanded(
                     child: RadioGroup<String>(
                   groupValue: _currentType,
-                  onChanged: (val) => setState(() => _currentType = val),
+                  onChanged: (val) =>
+                      setState(() => _currentType = val ?? _currentType),
                   child: RadioListTile<String>(
                       title: Text(AppLocalizations.of(context)!.station),
                       value: 'station',
@@ -3616,7 +3616,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                 Expanded(
                     child: RadioGroup<String>(
                   groupValue: _currentType,
-                  onChanged: (val) => setState(() => _currentType = val),
+                  onChanged: (val) =>
+                      setState(() => _currentType = val ?? _currentType),
                   child: RadioListTile<String>(
                       title: Text(AppLocalizations.of(context)!.friend),
                       value: 'friend',
