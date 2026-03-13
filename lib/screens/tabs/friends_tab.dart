@@ -132,8 +132,9 @@ class _FriendsTabState extends State<FriendsTab> {
                     separatorBuilder: (_, __) => Divider(color: colors.divider),
                     itemBuilder: (ctx, idx) {
                       final user = searchResults[idx];
-                      if (user['id'] == SupabaseService.currentUser?.id)
+                      if (user['id'] == SupabaseService.currentUser?.id) {
                         return const SizedBox.shrink();
+                      }
 
                       return ListTile(
                         leading: _buildAvatarHelper(user),

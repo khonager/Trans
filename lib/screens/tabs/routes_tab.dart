@@ -116,10 +116,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items");
-    if (mounted)
+    if (mounted) {
       setState(() {
         _frequentJourneys = frequent;
       });
+    }
   }
 
   @override
@@ -212,7 +213,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       final pos = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.high)
+              locationSettings:
+                  const LocationSettings(accuracy: LocationAccuracy.high))
           .timeout(const Duration(seconds: 8));
       final stops =
           await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
@@ -385,6 +387,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
+    final l10n = AppLocalizations.of(context)!;
 
     // 1. Request Permissions
     await NotificationManager.requestPermissions();
@@ -392,18 +395,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(
-                  AppLocalizations.of(context)!.locationPermissionDenied)));
+              content: Text(l10n.locationPermissionDenied)));
+        }
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!
-                .locationPermissionPermanentlyDenied)));
+            content: Text(l10n.locationPermissionPermanentlyDenied)));
+      }
       return;
     }
 
@@ -414,13 +417,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     double? targetLng = firstRide.endLng;
 
     if (targetLat == null || targetLng == null) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.missingDestCoords)));
+            content: Text(l10n.missingDestCoords)));
+      }
       return;
     }
 
-    if (mounted) setState(() => _isWakeAlarmSet = true);
+    if (mounted) {
+      setState(() => _isWakeAlarmSet = true);
+    }
 
     // 2. Configure Background Location (Foreground Service)
     AndroidSettings androidSettings = AndroidSettings(
@@ -430,8 +436,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       intervalDuration: const Duration(seconds: 10),
       // Foreground Notification to keep service alive
       foregroundNotificationConfig: ForegroundNotificationConfig(
-        notificationTitle: AppLocalizations.of(context)!.wakeAlarmTitle,
-        notificationText: AppLocalizations.of(context)!.wakeAlarmTracking,
+        notificationTitle: l10n.wakeAlarmTitle,
+        notificationText: l10n.wakeAlarmTracking,
         notificationIcon: AndroidResource(name: 'ic_launcher'),
         enableWakeLock: true,
       ),
@@ -451,10 +457,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
 
     LocationSettings activeSettings = settings;
-    if (defaultTargetPlatform == TargetPlatform.android)
+    if (defaultTargetPlatform == TargetPlatform.android) {
       activeSettings = androidSettings;
-    if (defaultTargetPlatform == TargetPlatform.iOS)
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
       activeSettings = appleSettings;
+    }
 
     if (_effectiveCurrentPosition != null) {
       // We don't have a single "currentLine" anymore since multiple legs might be active
@@ -629,11 +637,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         results.addAll(history);
       }
     }
-    if (mounted)
+    if (mounted) {
       setState(() {
         _suggestions = results;
         _isSuggestionsLoading = false;
       });
+    }
   }
 
   void _onSearchChanged(String query, String field) {
@@ -815,9 +824,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (mounted && stops.isNotEmpty) target = stops.first;
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text("Error: $e")));
+        }
       } finally {
         if (mounted) setState(() => _isLoadingRoute = false);
       }
@@ -861,8 +871,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _closeTab(String id) {
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
-      if (_activeTabId == id)
+      if (_activeTabId == id) {
         _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
+      }
     });
     _stopWakeAlarm();
   }
@@ -971,7 +982,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         double? nextRideStartLng,
         {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty &&
-          (lastArrival == null || nextRideDeparture == null)) return;
+          (lastArrival == null || nextRideDeparture == null)) {
+        return;
+      }
       DateTime blockStart = (lastArrival != null)
           ? lastArrival
           : (DateTime.tryParse(transferBuffer.first['departure'] ??
@@ -1439,6 +1452,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _findRoutes() async {
     if (_isLoadingRoute) return;
+    final l10n = AppLocalizations.of(context)!;
     Station? from = _fromStation;
     if (from == null) {
       if (_fromUsesCurrentLocation ||
@@ -1454,15 +1468,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           // Use GPS directly
           from = Station(
               id: 'gps',
-              name: AppLocalizations.of(context)!.currentLocation,
+              name: l10n.currentLocation,
               type: 'location',
               latitude: pos.latitude,
               longitude: pos.longitude);
         } else {
-          if (mounted)
+          if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content:
-                    Text(AppLocalizations.of(context)!.locationNotAvailable)));
+                content: Text(l10n.locationNotAvailable)));
+          }
           return;
         }
       } else {
@@ -1474,7 +1488,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             from = results.first;
             _fromStation = from;
           } else {
-            throw AppLocalizations.of(context)!.startNotFound;
+            throw l10n.startNotFound;
           }
         } catch (e) {
           if (mounted) {
@@ -1495,7 +1509,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (results.isNotEmpty) {
             _toStation = results.first;
           } else {
-            throw AppLocalizations.of(context)!.destinationNotFound;
+            throw l10n.destinationNotFound;
           }
         } catch (e) {
           if (mounted) {
@@ -1553,9 +1567,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       }
     } on TimeoutException catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.requestTimedOut)));
+            content: Text(l10n.requestTimedOut)));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1767,7 +1782,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 textAlign: TextAlign.center)),
 
       // Main Tab Bar
-      if (_tabs.isNotEmpty)
+      if (_tabs.isNotEmpty) {
         SizedBox(
             height: 60,
             child: ListView.builder(
@@ -1775,15 +1790,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: _tabs.length + 1,
                 itemBuilder: (ctx, idx) {
-                  if (idx == _tabs.length)
+                  if (idx == _tabs.length) {
                     return Padding(
                         padding: const EdgeInsets.only(bottom: 20),
                         child: IconButton(
                             icon: const Icon(Icons.add_circle_outline),
                             onPressed: () =>
                                 setState(() => _activeTabId = null)));
+                  }
                   return _buildTabItem(_tabs[idx], colors);
                 })),
+      }
 
       // Secondary Tab Row (Alternatives)
       if (activeTab != null &&
@@ -2106,8 +2123,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       final t = await showTimePicker(
                                           context: context,
                                           initialTime: _selectedTime!);
-                                      if (t != null)
+                                      if (t != null) {
                                         setState(() => _selectedTime = t);
+                                      }
                                     }
                                   },
                                   child: _selectedDate != null
@@ -2339,8 +2357,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Widget _buildSuggestionsList() {
-    if (!_isSuggestionsLoading && _suggestions.isEmpty)
+    if (!_isSuggestionsLoading && _suggestions.isEmpty) {
       return const SizedBox.shrink();
+    }
     final colors = TransColors.of(context);
     return GestureDetector(
       onTap: () {
@@ -2411,8 +2430,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         }
                         final station = item as Station;
                         IconData leadingIcon = Icons.place;
-                        if (station.type == 'address')
+                        if (station.type == 'address') {
                           leadingIcon = Icons.home_work;
+                        }
 
                         double? refLat;
                         double? refLng;
@@ -2659,10 +2679,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       appendResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotLoadMoreRoutes(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -2721,10 +2742,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       handleResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotRefreshRoutes(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -2910,10 +2932,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       handleResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
                 AppLocalizations.of(context)!.refreshFailed(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -2970,9 +2993,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             onPressed: () => setState(() {
                                   final idx =
                                       _tabs.indexWhere((t) => t.id == route.id);
-                                  if (idx != -1)
+                                  if (idx != -1) {
                                     _tabs[idx] = route.copyWith(
                                         clearActiveJourney: true);
+                                  }
                                 })),
                       if (route.candidates != null &&
                           route.candidates!.length > 1)
@@ -3580,24 +3604,24 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                           AppLocalizations.of(context)!.favoriteLabelHint)),
               const SizedBox(height: 10),
               Row(children: [
-                // ignore: deprecated_member_use
                 Expanded(
-                    child: RadioListTile<String>(
-                        title: Text(AppLocalizations.of(context)!.station),
-                        value: 'station',
-                        groupValue: _currentType,
-                        contentPadding: EdgeInsets.zero,
-                        onChanged: (val) =>
-                            setState(() => _currentType = val!))),
-                // ignore: deprecated_member_use
+                    child: RadioGroup<String>(
+                  groupValue: _currentType,
+                  onChanged: (val) => setState(() => _currentType = val),
+                  child: RadioListTile<String>(
+                      title: Text(AppLocalizations.of(context)!.station),
+                      value: 'station',
+                      contentPadding: EdgeInsets.zero),
+                )),
                 Expanded(
-                    child: RadioListTile<String>(
-                        title: Text(AppLocalizations.of(context)!.friend),
-                        value: 'friend',
-                        groupValue: _currentType,
-                        contentPadding: EdgeInsets.zero,
-                        onChanged: (val) =>
-                            setState(() => _currentType = val!))),
+                    child: RadioGroup<String>(
+                  groupValue: _currentType,
+                  onChanged: (val) => setState(() => _currentType = val),
+                  child: RadioListTile<String>(
+                      title: Text(AppLocalizations.of(context)!.friend),
+                      value: 'friend',
+                      contentPadding: EdgeInsets.zero),
+                )),
               ]),
               const SizedBox(height: 10),
               SingleChildScrollView(
@@ -3663,11 +3687,12 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                         try {
                           final res = await TransportApi.searchStations(val)
                               .timeout(const Duration(seconds: 10));
-                          if (mounted)
+                          if (mounted) {
                             setState(() {
                               _suggestions = res;
                               _isLoading = false;
                             });
+                          }
                         } catch (e) {
                           if (mounted) setState(() => _isLoading = false);
                         }
@@ -3693,8 +3718,9 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     setState(() {
                                       _selectedStation = s;
                                       _suggestions = [];
-                                      if (_labelCtrl.text.isEmpty)
+                                      if (_labelCtrl.text.isEmpty) {
                                         _labelCtrl.text = s.name;
+                                      }
                                     });
                                   });
                             }))
@@ -3859,11 +3885,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         processResults(results);
       }
     } catch (e) {
-      if (mounted)
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
+                  if (mounted) {
+                    setState(() {
+                      _error = e.toString();
+                      _isLoading = false;
+                    });
+                  }
     }
   }
 
@@ -3906,12 +3933,13 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
 
       processResults(results);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _isLoading = false;
           _isMoreLoading = false;
         });
+      }
     }
   }
 

@@ -98,19 +98,21 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: SupabaseService.getPrivateMessages(widget.friendId),
               builder: (context, snapshot) {
-                if (!snapshot.hasData)
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
+                }
                 final msgs = snapshot.data!;
 
                 // Auto-scroll to bottom when new messages arrive
                 WidgetsBinding.instance
                     .addPostFrameCallback((_) => _scrollToBottom());
 
-                if (msgs.isEmpty)
+                if (msgs.isEmpty) {
                   return Center(
                       child: Text(
                           AppLocalizations.of(context)!.noSecureMessagesYet,
                           style: TextStyle(color: colors.textSecondary)));
+                }
 
                 return ListView.builder(
                   controller: _scrollCtrl,

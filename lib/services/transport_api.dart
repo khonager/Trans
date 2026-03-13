@@ -149,8 +149,12 @@ class TransportApi {
     final productName = (line['productName'] as String?)?.toUpperCase() ?? '';
     if (productName == 'FLX' ||
         productName == 'FLIXBUS' ||
-        productName == 'FLIXTRAIN') return true;
-    if (productName == 'IC BUS' || productName == 'ICB') return true;
+        productName == 'FLIXTRAIN') {
+      return true;
+    }
+    if (productName == 'IC BUS' || productName == 'ICB') {
+      return true;
+    }
 
     // Check line name for Flix patterns
     final lineName = (line['name'] as String?)?.toUpperCase() ?? '';
@@ -160,8 +164,9 @@ class TransportApi {
     final operator = line['operator'] as Map<String, dynamic>?;
     if (operator != null) {
       final opName = (operator['name'] as String?)?.toUpperCase() ?? '';
-      if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY'))
+      if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY')) {
         return true;
+      }
     }
 
     return false;

@@ -398,11 +398,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (confirmed == true) {
       await SearchHistoryManager.clearHistory();
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
                 content:
                     Text(AppLocalizations.of(context)!.searchHistoryCleared)));
+      }
     }
   }
 
@@ -416,8 +417,9 @@ class _SettingsTabState extends State<SettingsTab> {
       builder: (ctx) => FutureBuilder<List<Map<String, dynamic>>>(
         future: SupabaseService.getBlockedUsers(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting)
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
+          }
           final users = snapshot.data ?? [];
           return Container(
             padding: const EdgeInsets.all(20),
@@ -658,8 +660,9 @@ class _SettingsTabState extends State<SettingsTab> {
                   value: widget.isGhostMode,
                   activeTrackColor: Colors.red,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return Colors.white;
+                    }
                     return null;
                   }),
                   onChanged: (val) {
@@ -684,8 +687,9 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: Switch(
                 value: widget.isDarkMode,
                 thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected))
+                  if (states.contains(WidgetState.selected)) {
                     return widget.useSystemTheme ? Colors.grey : primaryColor;
+                  }
                   return null;
                 }),
                 onChanged: widget.useSystemTheme
@@ -713,8 +717,9 @@ class _SettingsTabState extends State<SettingsTab> {
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: widget.onlyNahverkehr,
                 thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected))
+                  if (states.contains(WidgetState.selected)) {
                     return primaryColor;
+                  }
                   return null;
                 }),
                 onChanged: widget.onNahverkehrChanged),
@@ -1064,16 +1069,19 @@ class _SettingsTabState extends State<SettingsTab> {
                       ElevatedButton(
                           onPressed: () async {
                             try {
-                              if (_usernameCtrl.text.isNotEmpty)
+                              if (_usernameCtrl.text.isNotEmpty) {
                                 await SupabaseService.updateUsername(
                                     _usernameCtrl.text);
+                              }
                               if (_emailCtrl.text.isNotEmpty &&
-                                  _emailCtrl.text != user.email)
+                                  _emailCtrl.text != user.email) {
                                 await SupabaseService.updateEmail(
                                     _emailCtrl.text);
-                              if (_newPasswordCtrl.text.isNotEmpty)
+                              }
+                              if (_newPasswordCtrl.text.isNotEmpty) {
                                 await SupabaseService.updatePassword(
                                     _newPasswordCtrl.text);
+                              }
                               setState(() => _isEditing = false);
                               _loadProfile();
                               if (context.mounted) {

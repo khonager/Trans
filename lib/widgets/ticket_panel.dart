@@ -676,7 +676,7 @@ class _TicketPanelState extends State<TicketPanel> {
                                 color: Colors.black.withValues(alpha: 0.35),
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              child: const Center(
+                              child: Center(
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [

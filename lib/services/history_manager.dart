@@ -98,8 +98,9 @@ class SearchHistoryManager {
     // Sort by frecency score descending
     journeys.sort((a, b) => _calculateScore(b).compareTo(_calculateScore(a)));
 
-    if (journeys.length > 30)
+    if (journeys.length > 30) {
       journeys = journeys.sublist(0, 30); // Keep top 30 in long term cache
+    }
 
     List<String> jsonList = journeys.map((e) => json.encode(e)).toList();
     await prefs.setStringList(_keyJourneys, jsonList);
@@ -117,8 +118,9 @@ class SearchHistoryManager {
     // Re-calculate and sort dynamically based on modern current time
     journeys.sort((a, b) => _calculateScore(b).compareTo(_calculateScore(a)));
 
-    if (journeys.length > 10)
+    if (journeys.length > 10) {
       return journeys.sublist(0, 10); // Return only top 10 relevant to display
+    }
     return journeys;
   }
 

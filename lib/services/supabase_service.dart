@@ -78,8 +78,9 @@ class SupabaseService {
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final req in data) {
-            if (req['receiver_id'] != user.id || req['status'] != 'pending')
+            if (req['receiver_id'] != user.id || req['status'] != 'pending') {
               continue;
+            }
 
             final created = DateTime.parse(req['created_at']);
             if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
