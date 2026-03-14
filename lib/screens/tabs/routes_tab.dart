@@ -705,6 +705,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return "${distInKm.toStringAsFixed(1)} km";
   }
 
+  double? _distanceFromReference(Station station) {
+    final ref = _suggestionReferencePoint();
+    if (ref.lat == null ||
+        ref.lng == null ||
+        station.latitude == null ||
+        station.longitude == null) {
+      return null;
+    }
+
+    return Geolocator.distanceBetween(
+        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
+  }
+
   List<_SuggestionSection> _buildSuggestionSections() {
     final favorites = <Favorite>[];
     final stations = <Station>[];
@@ -733,24 +746,41 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       groupedStations[city]!.add(station);
     }
 
-    final ref = _suggestionReferencePoint();
+    cityOrder.sort((a, b) {
+      final aBest = groupedStations[a]!
+          .map(_distanceFromReference)
+          .whereType<double>()
+          .fold<double?>(null,
+              (best, value) => best == null || value < best ? value : best);
+      final bBest = groupedStations[b]!
+          .map(_distanceFromReference)
+          .whereType<double>()
+          .fold<double?>(null,
+              (best, value) => best == null || value < best ? value : best);
+
+      if (aBest != null && bBest != null) {
+        return aBest.compareTo(bBest);
+      }
+      if (aBest != null) return -1;
+      if (bBest != null) return 1;
+      return a.toLowerCase().compareTo(b.toLowerCase());
+    });
+
     for (final city in cityOrder) {
       final cityStations = groupedStations[city]!;
       cityStations.sort((a, b) {
-        final sameName = a.name.toLowerCase() == b.name.toLowerCase();
-        if (sameName &&
-            ref.lat != null &&
-            ref.lng != null &&
-            a.latitude != null &&
-            a.longitude != null &&
-            b.latitude != null &&
-            b.longitude != null) {
-          final distA = Geolocator.distanceBetween(
-              ref.lat!, ref.lng!, a.latitude!, a.longitude!);
-          final distB = Geolocator.distanceBetween(
-              ref.lat!, ref.lng!, b.latitude!, b.longitude!);
-          return distA.compareTo(distB);
+        final distA = _distanceFromReference(a);
+        final distB = _distanceFromReference(b);
+
+        if (distA != null && distB != null) {
+          final distanceComparison = distA.compareTo(distB);
+          if (distanceComparison != 0) return distanceComparison;
+        } else if (distA != null) {
+          return -1;
+        } else if (distB != null) {
+          return 1;
         }
+
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
       sections.add(_SuggestionSection(title: city, items: cityStations));
