@@ -39,6 +39,8 @@ const List<IconData> kAvailableIcons = [
   Icons.local_airport
 ];
 
+enum RouteHistoryView { frequent, recent }
+
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -94,6 +96,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isRefreshingLocation = false;
   Position? _manualCurrentPosition;
   List<Map<String, dynamic>> _frequentJourneys = [];
+  List<Map<String, dynamic>> _recentJourneys = [];
+  List<Map<String, dynamic>> _savedJourneys = [];
+  RouteHistoryView _historyView = RouteHistoryView.frequent;
 
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
@@ -114,11 +119,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadHistoryData() async {
     final history = await SearchHistoryManager.getHistory();
     final frequent = await SearchHistoryManager.getFrequentJourneys();
+    final recent = await SearchHistoryManager.getRecentJourneys();
+    final saved = await SearchHistoryManager.getSavedJourneys();
     debugPrint(
-        "Loaded history: ${history.length} items, frequent: ${frequent.length} items");
+        "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
       setState(() {
         _frequentJourneys = frequent;
+        _recentJourneys = recent;
+        _savedJourneys = saved;
       });
     }
   }
@@ -878,6 +887,43 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _stopWakeAlarm();
   }
 
+  bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
+    return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  bool _isRouteSaved(RouteTab route) {
+    final from = route.origin;
+    if (from == null) return false;
+    return _savedJourneys
+        .any((item) => _journeyMatches(item, from, route.destination));
+  }
+
+  Future<void> _toggleSavedRoute(RouteTab route) async {
+    final from = route.origin;
+    if (from == null) return;
+
+    final saved =
+        await SearchHistoryManager.toggleSavedJourney(from, route.destination);
+    await _loadHistoryData();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(saved ? 'Route saved' : 'Route removed from saved')));
+  }
+
+  void _applyRouteHistorySelection(Map<String, dynamic> item) {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+    setState(() {
+      _fromStation = from;
+      _fromUsesCurrentLocation = false;
+      _fromController.text = from.name;
+      _toStation = to;
+      _toController.text = to.name;
+    });
+    _findRoutes();
+  }
+
   void _showChat(BuildContext context, String lineName) {
     showModalBottomSheet(
         context: context,
@@ -1557,8 +1603,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             _addJourneyTab(
                 candidatesData: res, origin: from, destination: _toStation);
           }
-          SearchHistoryManager.saveJourney(from, _toStation!);
-          _loadHistoryData(); // Refresh UI
+          await SearchHistoryManager.saveJourney(from, _toStation!);
+          await SearchHistoryManager.saveRecentJourney(from, _toStation!);
+          await _loadHistoryData(); // Refresh UI
         } else if (currentTabId == null) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
@@ -2259,7 +2306,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                                 color: colors.favText))
                                       ]));
                             })),
-                    _buildFrequentJourneys(colors),
+                    _buildRouteHistorySection(colors),
+                    _buildSavedJourneys(colors),
                   ],
                 ),
               ),
@@ -2270,8 +2318,91 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildFrequentJourneys(TransColors colors) {
-    if (_frequentJourneys.isEmpty) return const SizedBox.shrink();
+  Widget _buildRouteHistorySection(TransColors colors) {
+    if (_frequentJourneys.isEmpty && _recentJourneys.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final showingFrequent = _historyView == RouteHistoryView.frequent;
+    final journeys = showingFrequent ? _frequentJourneys : _recentJourneys;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text(
+                      showingFrequent
+                          ? AppLocalizations.of(context)!.frequentJourneys
+                          : 'Recent routes',
+                      style: TextStyle(
+                          color: colors.sectionHeader,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                    color: colors.chipBg,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.white10)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildHistoryToggleChip(
+                        colors: colors,
+                        label: 'Frequent',
+                        selected: showingFrequent,
+                        onTap: () => setState(
+                            () => _historyView = RouteHistoryView.frequent)),
+                    _buildHistoryToggleChip(
+                        colors: colors,
+                        label: 'Recent',
+                        selected: !showingFrequent,
+                        onTap: () => setState(
+                            () => _historyView = RouteHistoryView.recent)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (journeys.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                  color: colors.cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white10)),
+              child: Text('No recent routes yet',
+                  style: TextStyle(color: colors.searchHintText)),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: journeys.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
+                  colors: colors,
+                  item: journeys[idx],
+                  icon: showingFrequent ? Icons.bolt : Icons.history),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavedJourneys(TransColors colors) {
+    if (_savedJourneys.isEmpty) return const SizedBox.shrink();
+
     return Container(
       margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
       child: Column(
@@ -2279,7 +2410,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text(AppLocalizations.of(context)!.frequentJourneys,
+            child: Text('Saved routes',
                 style: TextStyle(
                     color: colors.sectionHeader,
                     fontWeight: FontWeight.bold,
@@ -2288,68 +2419,82 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _frequentJourneys.length,
+            itemCount: _savedJourneys.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (ctx, idx) {
-              final item = _frequentJourneys[idx];
-              final from = Station.fromJson(item['from']);
-              final to = Station.fromJson(item['to']);
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _fromStation = from;
-                    _fromUsesCurrentLocation = false;
-                    _fromController.text = from.name;
-                    _toStation = to;
-                    _toController.text = to.name;
-                  });
-                  _findRoutes();
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                      color: colors.cardBg,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white10)),
-                  child: Row(
-                    children: [
-                      Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color:
-                                  colors.navBarSelected.withValues(alpha: 0.2),
-                              shape: BoxShape.circle),
-                          child: Icon(Icons.bookmark,
-                              color: colors.navBarSelected, size: 18)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(to.name,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14)),
-                            const SizedBox(height: 2),
-                            Text(
-                                AppLocalizations.of(context)!
-                                    .fromStation(from.name),
-                                style: TextStyle(
-                                    color: colors.searchHintText,
-                                    fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right,
-                          color: colors.searchHintText, size: 20)
-                    ],
-                  ),
-                ),
-              );
-            },
+            itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
+                colors: colors,
+                item: _savedJourneys[idx],
+                icon: Icons.bookmark),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryToggleChip(
+      {required TransColors colors,
+      required String label,
+      required bool selected,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+            color: selected ? colors.navBarSelected : Colors.transparent,
+            borderRadius: BorderRadius.circular(999)),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? Colors.white : colors.textSecondary,
+                fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                fontSize: 12)),
+      ),
+    );
+  }
+
+  Widget _buildRouteHistoryCard(
+      {required TransColors colors,
+      required Map<String, dynamic> item,
+      required IconData icon}) {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+
+    return GestureDetector(
+      onTap: () => _applyRouteHistorySelection(item),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: colors.cardBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white10)),
+        child: Row(
+          children: [
+            Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                    color: colors.navBarSelected.withValues(alpha: 0.2),
+                    shape: BoxShape.circle),
+                child: Icon(icon, color: colors.navBarSelected, size: 18)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(to.name,
+                      style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text(AppLocalizations.of(context)!.fromStation(from.name),
+                      style: TextStyle(
+                          color: colors.searchHintText, fontSize: 12)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: colors.searchHintText, size: 20)
+          ],
+        ),
       ),
     );
   }
@@ -3052,6 +3197,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               ]
                             ])
                           ])),
+                      IconButton(
+                          icon: Icon(
+                              _isRouteSaved(route)
+                                  ? Icons.bookmark
+                                  : Icons.bookmark_border,
+                              color: colors.navBarSelected),
+                          onPressed: route.origin == null
+                              ? null
+                              : () => _toggleSavedRoute(route)),
                       IconButton(
                           icon: const Icon(Icons.map, color: Colors.blue),
                           onPressed: () => _openMap(route)),
