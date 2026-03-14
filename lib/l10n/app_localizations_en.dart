@@ -657,6 +657,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get systemSyncActive => 'System Sync Active. Long press to disable.';
 
   @override
+  String get systemSyncEnabled => 'System Sync Enabled';
+
+  @override
+  String get manualModeEnabled => 'Manual Mode Enabled';
+
+  @override
   String get deutschlandTicketMode => 'Deutschlandticket Mode';
 
   @override
@@ -681,6 +687,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alarmTrigger => 'Alarm Trigger';
 
   @override
+  String get alertAtDestination => 'Alert at destination';
+
+  @override
+  String alertStopsBefore(String count) {
+    return 'Alert $count stops before';
+  }
+
+  @override
+  String get atDest => 'At Dest';
+
+  @override
+  String get oneStop => '1 Stop';
+
+  @override
+  String get twoStops => '2 Stops';
+
+  @override
+  String get threeStops => '3 Stops';
+
+  @override
   String get triggerThreshold => 'Trigger Threshold';
 
   @override
@@ -690,6 +716,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alarmPattern => 'Alarm Pattern';
+
+  @override
+  String get ofLegCovered => 'of leg covered';
+
+  @override
+  String get fromTarget => 'from target';
+
+  @override
+  String get fivePercentRemaining => '5% Remaining';
+
+  @override
+  String get tenPercentRemaining => '10% Remaining';
+
+  @override
+  String get fixed500m => 'Fixed 500m';
 
   @override
   String get vibrationIntensity => 'Vibration Intensity';
@@ -713,6 +754,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get transportApi => 'Transport API';
 
   @override
+  String selectedApiMode(String mode) {
+    return 'Selected: $mode';
+  }
+
+  @override
+  String get autoRecommended => 'Auto (Recommended)';
+
+  @override
+  String get transitousOpenSource => 'Transitous (Open Source)';
+
+  @override
+  String get deutscheBahnLegacy => 'Deutsche Bahn (Legacy)';
+
+  @override
+  String get autoModeShort => 'Auto';
+
+  @override
+  String get dbV6 => 'DB (v6)';
+
+  @override
   String get profileSettings => 'Profile';
 
   @override
@@ -730,6 +791,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get profileUpdated =>
       'Profile updated! Check email for confirmation if changed.';
+
+  @override
+  String get incorrectPasswordOrRpcMissing =>
+      'Incorrect password or error (RPC missing?)';
 
   @override
   String get logOut => 'Log Out';

@@ -540,8 +540,8 @@ class _SettingsTabState extends State<SettingsTab> {
                         }
                       } catch (e) {
                         setState(() {
-                          errorMsg =
-                              "Incorrect password or error (RPC missing?)";
+                          errorMsg = AppLocalizations.of(context)!
+                              .incorrectPasswordOrRpcMissing;
                           isLoading = false;
                         });
                       }
@@ -703,8 +703,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 widget.onSystemSyncChanged(newState);
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text(newState
-                        ? "System Sync Enabled 🔄"
-                        : "Manual Mode Enabled 🖐️")));
+                        ? AppLocalizations.of(context)!.systemSyncEnabled
+                        : AppLocalizations.of(context)!.manualModeEnabled)));
               },
             ),
             SwitchListTile(
@@ -792,18 +792,29 @@ class _SettingsTabState extends State<SettingsTab> {
                 title: Text(AppLocalizations.of(context)!.alarmTrigger,
                     style: TextStyle(color: colors.textPrimary)),
                 subtitle: Text(
-                    "Alert ${_stopsBeforeAlarm == 0 ? 'at destination' : '$_stopsBeforeAlarm stops before'}",
+                    _stopsBeforeAlarm == 0
+                        ? AppLocalizations.of(context)!.alertAtDestination
+                        : AppLocalizations.of(context)!
+                            .alertStopsBefore(_stopsBeforeAlarm.toString()),
                     style:
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 trailing: DropdownButton<int>(
                     value: _stopsBeforeAlarm,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text("At Dest")),
-                      DropdownMenuItem(value: 1, child: Text("1 Stop")),
-                      DropdownMenuItem(value: 2, child: Text("2 Stops")),
-                      DropdownMenuItem(value: 3, child: Text("3 Stops")),
+                    items: [
+                      DropdownMenuItem(
+                          value: 0,
+                          child: Text(AppLocalizations.of(context)!.atDest)),
+                      DropdownMenuItem(
+                          value: 1,
+                          child: Text(AppLocalizations.of(context)!.oneStop)),
+                      DropdownMenuItem(
+                          value: 2,
+                          child: Text(AppLocalizations.of(context)!.twoStops)),
+                      DropdownMenuItem(
+                          value: 3,
+                          child: Text(AppLocalizations.of(context)!.threeStops)),
                     ],
                     onChanged: (val) => _saveAlarmSettings(val!))),
             Divider(color: colors.divider),
@@ -814,21 +825,26 @@ class _SettingsTabState extends State<SettingsTab> {
                     AppLocalizations.of(context)!.notifyAtThreshold(
                         _alarmTriggerThreshold,
                         (_alarmTriggerThreshold.contains('%'))
-                            ? 'of leg covered'
-                            : 'from target'),
+                            ? AppLocalizations.of(context)!.ofLegCovered
+                            : AppLocalizations.of(context)!.fromTarget),
                     style:
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 trailing: DropdownButton<String>(
                     value: _alarmTriggerThreshold,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: const [
+                    items: [
                       DropdownMenuItem(
-                          value: '5%', child: Text("5% Remaining")),
+                          value: '5%',
+                          child: Text(
+                              AppLocalizations.of(context)!.fivePercentRemaining)),
                       DropdownMenuItem(
-                          value: '10%', child: Text("10% Remaining")),
+                          value: '10%',
+                          child: Text(
+                              AppLocalizations.of(context)!.tenPercentRemaining)),
                       DropdownMenuItem(
-                          value: '500m', child: Text("Fixed 500m")),
+                          value: '500m',
+                          child: Text(AppLocalizations.of(context)!.fixed500m)),
                     ],
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
@@ -938,16 +954,24 @@ class _SettingsTabState extends State<SettingsTab> {
               title: Text(AppLocalizations.of(context)!.transportApi,
                   style: TextStyle(color: colors.textPrimary)),
               subtitle: Text(
-                  "Selected: ${_apiMode == 'auto' ? 'Auto (Recommended)' : _apiMode == 'motis' ? 'Transitous (Open Source)' : 'Deutsche Bahn (Legacy)'}",
+                  AppLocalizations.of(context)!.selectedApiMode(_apiMode == 'auto'
+                      ? AppLocalizations.of(context)!.autoRecommended
+                      : _apiMode == 'motis'
+                          ? AppLocalizations.of(context)!.transitousOpenSource
+                          : AppLocalizations.of(context)!.deutscheBahnLegacy),
                   style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               trailing: DropdownButton<String>(
                 value: _apiMode,
                 dropdownColor: colors.cardBg,
                 underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: 'auto', child: Text("Auto")),
-                  DropdownMenuItem(value: 'motis', child: Text("Transitous")),
-                  DropdownMenuItem(value: 'v6', child: Text("DB (v6)")),
+                items: [
+                  DropdownMenuItem(
+                      value: 'auto',
+                      child: Text(AppLocalizations.of(context)!.autoModeShort)),
+                  const DropdownMenuItem(value: 'motis', child: Text("Transitous")),
+                  DropdownMenuItem(
+                      value: 'v6',
+                      child: Text(AppLocalizations.of(context)!.dbV6)),
                 ],
                 onChanged: (val) => _saveApiMode(val!),
               ),

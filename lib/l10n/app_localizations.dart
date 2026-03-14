@@ -1226,6 +1226,18 @@ abstract class AppLocalizations {
   /// **'System Sync Active. Long press to disable.'**
   String get systemSyncActive;
 
+  /// No description provided for @systemSyncEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'System Sync Enabled'**
+  String get systemSyncEnabled;
+
+  /// No description provided for @manualModeEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Manual Mode Enabled'**
+  String get manualModeEnabled;
+
   /// No description provided for @deutschlandTicketMode.
   ///
   /// In en, this message translates to:
@@ -1274,6 +1286,42 @@ abstract class AppLocalizations {
   /// **'Alarm Trigger'**
   String get alarmTrigger;
 
+  /// No description provided for @alertAtDestination.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert at destination'**
+  String get alertAtDestination;
+
+  /// No description provided for @alertStopsBefore.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert {count} stops before'**
+  String alertStopsBefore(String count);
+
+  /// No description provided for @atDest.
+  ///
+  /// In en, this message translates to:
+  /// **'At Dest'**
+  String get atDest;
+
+  /// No description provided for @oneStop.
+  ///
+  /// In en, this message translates to:
+  /// **'1 Stop'**
+  String get oneStop;
+
+  /// No description provided for @twoStops.
+  ///
+  /// In en, this message translates to:
+  /// **'2 Stops'**
+  String get twoStops;
+
+  /// No description provided for @threeStops.
+  ///
+  /// In en, this message translates to:
+  /// **'3 Stops'**
+  String get threeStops;
+
   /// No description provided for @triggerThreshold.
   ///
   /// In en, this message translates to:
@@ -1291,6 +1339,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Alarm Pattern'**
   String get alarmPattern;
+
+  /// No description provided for @ofLegCovered.
+  ///
+  /// In en, this message translates to:
+  /// **'of leg covered'**
+  String get ofLegCovered;
+
+  /// No description provided for @fromTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'from target'**
+  String get fromTarget;
+
+  /// No description provided for @fivePercentRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'5% Remaining'**
+  String get fivePercentRemaining;
+
+  /// No description provided for @tenPercentRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'10% Remaining'**
+  String get tenPercentRemaining;
+
+  /// No description provided for @fixed500m.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed 500m'**
+  String get fixed500m;
 
   /// No description provided for @vibrationIntensity.
   ///
@@ -1334,6 +1412,42 @@ abstract class AppLocalizations {
   /// **'Transport API'**
   String get transportApi;
 
+  /// No description provided for @selectedApiMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected: {mode}'**
+  String selectedApiMode(String mode);
+
+  /// No description provided for @autoRecommended.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto (Recommended)'**
+  String get autoRecommended;
+
+  /// No description provided for @transitousOpenSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Transitous (Open Source)'**
+  String get transitousOpenSource;
+
+  /// No description provided for @deutscheBahnLegacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Deutsche Bahn (Legacy)'**
+  String get deutscheBahnLegacy;
+
+  /// No description provided for @autoModeShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get autoModeShort;
+
+  /// No description provided for @dbV6.
+  ///
+  /// In en, this message translates to:
+  /// **'DB (v6)'**
+  String get dbV6;
+
   /// No description provided for @profileSettings.
   ///
   /// In en, this message translates to:
@@ -1369,6 +1483,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Profile updated! Check email for confirmation if changed.'**
   String get profileUpdated;
+
+  /// No description provided for @incorrectPasswordOrRpcMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Incorrect password or error (RPC missing?)'**
+  String get incorrectPasswordOrRpcMissing;
 
   /// No description provided for @logOut.
   ///

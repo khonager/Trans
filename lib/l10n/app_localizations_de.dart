@@ -662,6 +662,12 @@ class AppLocalizationsDe extends AppLocalizations {
       'System-Sync aktiv. Gedrückt halten zum Deaktivieren.';
 
   @override
+  String get systemSyncEnabled => 'System-Sync aktiviert';
+
+  @override
+  String get manualModeEnabled => 'Manueller Modus aktiviert';
+
+  @override
   String get deutschlandTicketMode => 'Deutschlandticket-Modus';
 
   @override
@@ -686,6 +692,26 @@ class AppLocalizationsDe extends AppLocalizations {
   String get alarmTrigger => 'Alarm-Auslöser';
 
   @override
+  String get alertAtDestination => 'Alarm am Ziel';
+
+  @override
+  String alertStopsBefore(String count) {
+    return 'Alarm $count Haltestellen vorher';
+  }
+
+  @override
+  String get atDest => 'Am Ziel';
+
+  @override
+  String get oneStop => '1 Halt';
+
+  @override
+  String get twoStops => '2 Halte';
+
+  @override
+  String get threeStops => '3 Halte';
+
+  @override
   String get triggerThreshold => 'Auslöseschwelle';
 
   @override
@@ -695,6 +721,21 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get alarmPattern => 'Alarm-Muster';
+
+  @override
+  String get ofLegCovered => 'der Strecke geschafft';
+
+  @override
+  String get fromTarget => 'bis zum Ziel';
+
+  @override
+  String get fivePercentRemaining => '5 % verbleibend';
+
+  @override
+  String get tenPercentRemaining => '10 % verbleibend';
+
+  @override
+  String get fixed500m => 'Feste 500 m';
 
   @override
   String get vibrationIntensity => 'Vibrationsintensität';
@@ -718,6 +759,26 @@ class AppLocalizationsDe extends AppLocalizations {
   String get transportApi => 'Transport-API';
 
   @override
+  String selectedApiMode(String mode) {
+    return 'Ausgewählt: $mode';
+  }
+
+  @override
+  String get autoRecommended => 'Auto (Empfohlen)';
+
+  @override
+  String get transitousOpenSource => 'Transitous (Open Source)';
+
+  @override
+  String get deutscheBahnLegacy => 'Deutsche Bahn (Legacy)';
+
+  @override
+  String get autoModeShort => 'Auto';
+
+  @override
+  String get dbV6 => 'DB (v6)';
+
+  @override
   String get profileSettings => 'Profil';
 
   @override
@@ -735,6 +796,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get profileUpdated =>
       'Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).';
+
+  @override
+  String get incorrectPasswordOrRpcMissing =>
+      'Falsches Passwort oder Fehler (RPC fehlt?)';
 
   @override
   String get logOut => 'Abmelden';

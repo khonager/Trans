@@ -247,6 +247,8 @@
   "darkMode": "Dunkelmodus",
   "syncedWithSystem": "Mit System synchronisiert",
   "systemSyncActive": "System-Sync aktiv. Gedrückt halten zum Deaktivieren.",
+  "systemSyncEnabled": "System-Sync aktiviert",
+  "manualModeEnabled": "Manueller Modus aktiviert",
   "deutschlandTicketMode": "Deutschlandticket-Modus",
   "onlyLocalTransport": "Nur Nahverkehr",
   "appearance": "Erscheinungsbild",
@@ -255,9 +257,27 @@
   "displayTripIds": "Fahrt-IDs anzeigen (z.B. RE1 (12345))",
   "notificationsAndHaptics": "Benachrichtigungen & Haptik",
   "alarmTrigger": "Alarm-Auslöser",
+  "alertAtDestination": "Alarm am Ziel",
+  "alertStopsBefore": "Alarm {count} Haltestellen vorher",
+  "@alertStopsBefore": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "atDest": "Am Ziel",
+  "oneStop": "1 Halt",
+  "twoStops": "2 Halte",
+  "threeStops": "3 Halte",
   "triggerThreshold": "Auslöseschwelle",
   "notifyAtThreshold": "Benachrichtigung bei {threshold} {remaining}",
   "alarmPattern": "Alarm-Muster",
+  "ofLegCovered": "der Strecke geschafft",
+  "fromTarget": "bis zum Ziel",
+  "fivePercentRemaining": "5 % verbleibend",
+  "tenPercentRemaining": "10 % verbleibend",
+  "fixed500m": "Feste 500 m",
   "vibrationIntensity": "Vibrationsintensität",
   "alwaysWakeMe": "Immer wecken",
   "turnOnAlarmDefault": "Alarm immer standardmäßig aktivieren",
@@ -265,12 +285,26 @@
   "clearSearchHistory": "Suchverlauf leeren",
   "dataSourceAdvanced": "Datenquelle (Erweitert)",
   "transportApi": "Transport-API",
+  "selectedApiMode": "Ausgewählt: {mode}",
+  "@selectedApiMode": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "autoRecommended": "Auto (Empfohlen)",
+  "transitousOpenSource": "Transitous (Open Source)",
+  "deutscheBahnLegacy": "Deutsche Bahn (Legacy)",
+  "autoModeShort": "Auto",
+  "dbV6": "DB (v6)",
   "profileSettings": "Profil",
   "noUsername": "Kein Benutzername",
   "username": "Benutzername",
   "emailSettings": "E-Mail",
   "newPasswordOpt": "Neues Passwort (Optional)",
   "profileUpdated": "Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).",
+  "incorrectPasswordOrRpcMissing": "Falsches Passwort oder Fehler (RPC fehlt?)",
   "logOut": "Abmelden",
   "loginSignUp": "Anmelden / Registrieren",
   "usernameSignUp": "Benutzername (Registrierung)",
