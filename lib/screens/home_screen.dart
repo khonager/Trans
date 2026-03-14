@@ -53,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
+  bool _isShowingRecoveryDialog = false;
 
   @override
   void initState() {
@@ -111,37 +112,107 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _handlePasswordRecovery() {
-    // Switch to Settings Tab
-    _onTabChanged(2); // 2 is SettingsTab index
+    if (_isShowingRecoveryDialog) return;
+    _isShowingRecoveryDialog = true;
+    _onTabChanged(2);
 
-    // Show Password Reset Dialog
-    // We need to wait for the tab switch to settle or just show a global dialog
+    final newPasswordCtrl = TextEditingController();
+    final confirmPasswordCtrl = TextEditingController();
+    bool isSaving = false;
+    final messenger = ScaffoldMessenger.of(context);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: Text(AppLocalizations.of(context)!.resetPassword),
-          content: Text(AppLocalizations.of(context)!.resetPasswordMessage),
-          actions: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                // The user is already on the settings tab, they can use the profile edit form.
-                // Optionally we could trigger the edit mode in SettingsTab if we had access to it,
-                // but for now, directing them to the tab is a good start.
-                // We'll show a snackbar to guide them.
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                      content: Text(
-                          AppLocalizations.of(context)!.resetPasswordSnackbar)),
-                );
-              },
-              child: Text(AppLocalizations.of(context)!.ok),
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(AppLocalizations.of(context)!.resetPassword),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(AppLocalizations.of(context)!.resetPasswordMessage),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: newPasswordCtrl,
+                  autofocus: true,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)!.newPasswordOpt,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmPasswordCtrl,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: AppLocalizations.of(context)!.confirmPassword,
+                  ),
+                ),
+              ],
             ),
-          ],
+            actions: [
+              ElevatedButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final password = newPasswordCtrl.text.trim();
+                        final confirm = confirmPasswordCtrl.text.trim();
+
+                        if (password.isEmpty || confirm.isEmpty) {
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(AppLocalizations.of(context)!
+                                  .fillRequiredFields),
+                            ),
+                          );
+                          return;
+                        }
+
+                        if (password != confirm) {
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(AppLocalizations.of(context)!
+                                  .passwordsDoNotMatch),
+                            ),
+                          );
+                          return;
+                        }
+
+                        setState(() => isSaving = true);
+                        try {
+                          await SupabaseService.updatePassword(password);
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(AppLocalizations.of(context)!
+                                  .passwordUpdated),
+                            ),
+                          );
+                        } catch (e) {
+                          if (!dialogContext.mounted) return;
+                          messenger.showSnackBar(
+                              SnackBar(content: Text("Error: $e")));
+                          setState(() => isSaving = false);
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(AppLocalizations.of(context)!.update),
+              ),
+            ],
+          ),
         ),
-      );
+      ).whenComplete(() {
+        _isShowingRecoveryDialog = false;
+        newPasswordCtrl.dispose();
+        confirmPasswordCtrl.dispose();
+      });
     });
   }
 

@@ -791,7 +791,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get emailSettings => 'E-Mail';
 
   @override
-  String get newPasswordOpt => 'Neues Passwort (Optional)';
+  String get newPasswordOpt => 'Neues Passwort';
 
   @override
   String get profileUpdated =>
@@ -802,13 +802,56 @@ class AppLocalizationsDe extends AppLocalizations {
       'Falsches Passwort oder Fehler (RPC fehlt?)';
 
   @override
+  String get changeUsername => 'Benutzernamen ändern';
+
+  @override
+  String get changeEmail => 'E-Mail ändern';
+
+  @override
+  String get changePassword => 'Passwort ändern';
+
+  @override
+  String get emailChangeHint =>
+      'Beim Ändern der E-Mail wird zuerst ein Bestätigungslink gesendet.';
+
+  @override
+  String get passwordChangeHint =>
+      'Wählen Sie ein neues Passwort für Ihr Konto.';
+
+  @override
+  String get confirmPassword => 'Passwort bestätigen';
+
+  @override
+  String get passwordsDoNotMatch => 'Die Passwörter stimmen nicht überein.';
+
+  @override
+  String get enterValidEmail => 'Geben Sie eine gültige E-Mail-Adresse ein.';
+
+  @override
+  String get fillRequiredFields =>
+      'Bitte füllen Sie die erforderlichen Felder aus.';
+
+  @override
+  String get usernameUpdated => 'Benutzername aktualisiert.';
+
+  @override
+  String get emailUpdateSent =>
+      'Bitte prüfen Sie Ihre E-Mails, um die Adressänderung zu bestätigen.';
+
+  @override
+  String get passwordUpdated => 'Passwort aktualisiert.';
+
+  @override
+  String get update => 'Aktualisieren';
+
+  @override
   String get logOut => 'Abmelden';
 
   @override
   String get loginSignUp => 'Anmelden / Registrieren';
 
   @override
-  String get usernameSignUp => 'Benutzername (Registrierung)';
+  String get usernameSignUp => 'Benutzername';
 
   @override
   String get password => 'Passwort';

@@ -786,7 +786,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get emailSettings => 'Email';
 
   @override
-  String get newPasswordOpt => 'New Password (Optional)';
+  String get newPasswordOpt => 'New Password';
 
   @override
   String get profileUpdated =>
@@ -797,13 +797,54 @@ class AppLocalizationsEn extends AppLocalizations {
       'Incorrect password or error (RPC missing?)';
 
   @override
+  String get changeUsername => 'Change Username';
+
+  @override
+  String get changeEmail => 'Change Email';
+
+  @override
+  String get changePassword => 'Change Password';
+
+  @override
+  String get emailChangeHint =>
+      'Changing your email will send a confirmation link before the address updates.';
+
+  @override
+  String get passwordChangeHint => 'Choose a new password for your account.';
+
+  @override
+  String get confirmPassword => 'Confirm Password';
+
+  @override
+  String get passwordsDoNotMatch => 'Passwords do not match.';
+
+  @override
+  String get enterValidEmail => 'Enter a valid email address.';
+
+  @override
+  String get fillRequiredFields => 'Fill in the required fields.';
+
+  @override
+  String get usernameUpdated => 'Username updated.';
+
+  @override
+  String get emailUpdateSent =>
+      'Check your email to confirm the address change.';
+
+  @override
+  String get passwordUpdated => 'Password updated.';
+
+  @override
+  String get update => 'Update';
+
+  @override
   String get logOut => 'Log Out';
 
   @override
   String get loginSignUp => 'Login / Sign Up';
 
   @override
-  String get usernameSignUp => 'Username (Sign Up)';
+  String get usernameSignUp => 'Username';
 
   @override
   String get password => 'Password';

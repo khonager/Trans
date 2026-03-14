@@ -1475,7 +1475,7 @@ abstract class AppLocalizations {
   /// No description provided for @newPasswordOpt.
   ///
   /// In en, this message translates to:
-  /// **'New Password (Optional)'**
+  /// **'New Password'**
   String get newPasswordOpt;
 
   /// No description provided for @profileUpdated.
@@ -1489,6 +1489,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Incorrect password or error (RPC missing?)'**
   String get incorrectPasswordOrRpcMissing;
+
+  /// No description provided for @changeUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Username'**
+  String get changeUsername;
+
+  /// No description provided for @changeEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Email'**
+  String get changeEmail;
+
+  /// No description provided for @changePassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Password'**
+  String get changePassword;
+
+  /// No description provided for @emailChangeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Changing your email will send a confirmation link before the address updates.'**
+  String get emailChangeHint;
+
+  /// No description provided for @passwordChangeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a new password for your account.'**
+  String get passwordChangeHint;
+
+  /// No description provided for @confirmPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Password'**
+  String get confirmPassword;
+
+  /// No description provided for @passwordsDoNotMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Passwords do not match.'**
+  String get passwordsDoNotMatch;
+
+  /// No description provided for @enterValidEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid email address.'**
+  String get enterValidEmail;
+
+  /// No description provided for @fillRequiredFields.
+  ///
+  /// In en, this message translates to:
+  /// **'Fill in the required fields.'**
+  String get fillRequiredFields;
+
+  /// No description provided for @usernameUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Username updated.'**
+  String get usernameUpdated;
+
+  /// No description provided for @emailUpdateSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your email to confirm the address change.'**
+  String get emailUpdateSent;
+
+  /// No description provided for @passwordUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Password updated.'**
+  String get passwordUpdated;
+
+  /// No description provided for @update.
+  ///
+  /// In en, this message translates to:
+  /// **'Update'**
+  String get update;
 
   /// No description provided for @logOut.
   ///
@@ -1505,7 +1583,7 @@ abstract class AppLocalizations {
   /// No description provided for @usernameSignUp.
   ///
   /// In en, this message translates to:
-  /// **'Username (Sign Up)'**
+  /// **'Username'**
   String get usernameSignUp;
 
   /// No description provided for @password.
