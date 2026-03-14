@@ -1430,18 +1430,23 @@ class _SettingsTabState extends State<SettingsTab> {
           TextField(
               controller: _emailCtrl,
               keyboardType: TextInputType.emailAddress,
+              textInputAction:
+                  _isLoginMode ? TextInputAction.next : TextInputAction.next,
               decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.emailSettings)),
           if (!_isLoginMode) ...[
             const SizedBox(height: 10),
             TextField(
                 controller: _usernameCtrl,
+                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                     hintText: AppLocalizations.of(context)!.usernameSignUp)),
           ],
           const SizedBox(height: 10),
           TextField(
               controller: _passwordCtrl,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submitAuth(),
               obscureText: true,
               decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.password)),
