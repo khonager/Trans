@@ -1,6 +1,7 @@
 import 'dart:io';
 import '../l10n/app_localizations.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
@@ -32,6 +33,11 @@ class _TicketPanelState extends State<TicketPanel> {
 
   File? _mobileFile;
   Uint8List? _webBytes;
+  bool _showGeneratedQr = true;
+  Uint8List? _styledQrBytes;
+  int? _styledQrColorArgb;
+  bool _isGeneratingStyledQr = false;
+  Rect? _detectedQrBox;
 
   List<dynamic> _history = [];
   bool _isLoading = false;
@@ -62,7 +68,13 @@ class _TicketPanelState extends State<TicketPanel> {
       final prefs = await SharedPreferences.getInstance();
       final savedData = prefs.getString('saved_ticket_base64');
       if (savedData != null) {
-        setState(() => _webBytes = base64Decode(savedData));
+        setState(() {
+          _webBytes = base64Decode(savedData);
+          _styledQrBytes = null;
+          _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = null;
+        });
       }
     } else {
       // MOBILE ONLY
@@ -80,6 +92,10 @@ class _TicketPanelState extends State<TicketPanel> {
           setState(() {
             _history = files;
             if (files.isNotEmpty) _mobileFile = files.first;
+            _styledQrBytes = null;
+            _styledQrColorArgb = null;
+            _isGeneratingStyledQr = false;
+            _detectedQrBox = null;
           });
         }
       } catch (e) {
@@ -98,7 +114,13 @@ class _TicketPanelState extends State<TicketPanel> {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString(
                 'saved_ticket_base64', base64Encode(response.bodyBytes));
-            setState(() => _webBytes = response.bodyBytes);
+            setState(() {
+              _webBytes = response.bodyBytes;
+              _styledQrBytes = null;
+              _styledQrColorArgb = null;
+              _isGeneratingStyledQr = false;
+              _detectedQrBox = null;
+            });
           } else {
             final directory = await getApplicationDocumentsDirectory();
             final backupFile =
@@ -156,115 +178,12 @@ class _TicketPanelState extends State<TicketPanel> {
       File? originalFile = !isWeb && path != null ? File(path) : null;
       File? processedFile;
       Uint8List? processedBytes;
-
-      Rect? qrBox;
-
-      // 1. Scan for QR Code
-      // Try ML Kit first on mobile (fast, native), fall back to ZXing (pure Dart)
-      if (!isWeb && (Platform.isAndroid || Platform.isIOS)) {
-        try {
-          final inputImage = InputImage.fromFilePath(path!);
-          final barcodeScanner =
-              BarcodeScanner(formats: [BarcodeFormat.qrCode]);
-          final barcodes = await barcodeScanner.processImage(inputImage);
-          debugPrint("ML Kit found ${barcodes.length} barcodes");
-
-          if (barcodes.isNotEmpty) {
-            qrBox = barcodes.first.boundingBox;
-          }
-          barcodeScanner.close();
-        } catch (e) {
-          debugPrint("ML Kit scan failed, falling back to ZXing: $e");
-        }
-      }
-
-      // ZXing fallback (Desktop, Web, or when ML Kit found nothing / failed)
-      if (qrBox == null) {
-        try {
-          var image = img.decodeImage(bytes);
-          if (image != null) {
-            // Bake EXIF orientation into actual pixels (Samsung cameras store rotated images via EXIF)
-            image = img.bakeOrientation(image);
-
-            // Ensure image is 4-channel RGBA (some JPEGs decode as 3-channel RGB)
-            if (image.numChannels != 4) {
-              image = image.convert(numChannels: 4);
-            }
-
-            debugPrint(
-                "ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
-
-            // FIX: package:image v4 stores pixels as RGBA in memory.
-            // On little-endian systems (all browsers), asUint32List() reads
-            // [R,G,B,A] bytes as 0xAABBGGRR. But ZXing's RGBLuminanceSource
-            // expects ARGB format (0xAARRGGBB). We must convert RGBA -> ARGB
-            // by swapping R and B channels, otherwise luminance is calculated
-            // incorrectly and QR detection fails on colored backgrounds.
-            final rawPixels = image.data?.buffer.asUint32List();
-
-            if (rawPixels != null) {
-              final argbPixels = List<int>.generate(rawPixels.length, (i) {
-                final rgba = rawPixels[i];
-                final r = rgba & 0xFF;
-                final g = (rgba >> 8) & 0xFF;
-                final b = (rgba >> 16) & 0xFF;
-                final a = (rgba >> 24) & 0xFF;
-                return (a << 24) | (r << 16) | (g << 8) | b;
-              });
-
-              final luminance = zxing.RGBLuminanceSource(
-                  image.width, image.height, argbPixels);
-
-              // Use TRY_HARDER + alsoInverted for better detection on screenshots
-              const hints = zxing.DecodeHint(
-                tryHarder: true,
-                alsoInverted: true,
-              );
-
-              zxing.Result? result;
-
-              // Try HybridBinarizer first (better for photos with uneven lighting)
-              try {
-                final binarizer = zxing.HybridBinarizer(luminance);
-                final bitmap = zxing.BinaryBitmap(binarizer);
-                result = zxing.MultiFormatReader().decode(bitmap, hints);
-              } catch (_) {
-                // Fallback: GlobalHistogramBinarizer (better for screenshots with uniform backgrounds)
-                try {
-                  final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
-                  final bitmap2 = zxing.BinaryBitmap(binarizer2);
-                  result = zxing.MultiFormatReader().decode(bitmap2, hints);
-                } catch (_) {}
-              }
-
-              if (result != null) {
-                debugPrint("ZXing: found barcode: ${result.text}");
-                final points = result.resultPoints;
-                if (points != null && points.isNotEmpty) {
-                  double minX = double.infinity, minY = double.infinity;
-                  double maxX = 0, maxY = 0;
-
-                  for (var p in points) {
-                    if ((p?.x ?? 0) < minX) minX = p!.x;
-                    if ((p?.y ?? 0) < minY) minY = p!.y;
-                    if ((p?.x ?? 0) > maxX) maxX = p!.x;
-                    if ((p?.y ?? 0) > maxY) maxY = p!.y;
-                  }
-                  qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
-                }
-              } else {
-                debugPrint(
-                    "ZXing: no barcode found after trying both binarizers");
-              }
-            }
-          } else {
-            debugPrint(
-                "ZXing: failed to decode image bytes (${bytes.length} bytes)");
-          }
-        } catch (e) {
-          debugPrint("ZXing scan failed: $e");
-        }
-      }
+      final detection = await _detectQrInBytes(
+        bytes,
+        sourcePath: path,
+        allowMlKit: !isWeb,
+      );
+      final qrBox = detection.$1;
 
       // Auto-crop if found
       if (qrBox != null) {
@@ -284,7 +203,9 @@ class _TicketPanelState extends State<TicketPanel> {
 
         if (confirmed == true) {
           await _processAndUpload(processedFile ?? File(''),
-              isWebFile: xFile, directBytes: processedBytes);
+              isWebFile: xFile,
+              directBytes: processedBytes,
+              detectedQrBox: null);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -295,7 +216,9 @@ class _TicketPanelState extends State<TicketPanel> {
 
         if (confirmed == true) {
           await _processAndUpload(originalFile ?? File(''),
-              isWebFile: xFile, directBytes: isWeb ? bytes : null);
+              isWebFile: xFile,
+              directBytes: isWeb ? bytes : null,
+              detectedQrBox: qrBox);
         } else if (confirmed == false) {
           await _triggerManualCrop(originalFile, bytes: bytes);
         }
@@ -336,14 +259,14 @@ class _TicketPanelState extends State<TicketPanel> {
         sourcePath: imageFile.path,
         uiSettings: [
           AndroidUiSettings(
-            toolbarTitle: 'Crop Ticket',
+            toolbarTitle: AppLocalizations.of(context)!.cropTicket,
             toolbarColor: TransColors.of(context).navBarBg,
             toolbarWidgetColor: TransColors.of(context).textPrimary,
             initAspectRatio: CropAspectRatioPreset.original,
             lockAspectRatio: false,
           ),
           IOSUiSettings(
-            title: 'Crop Ticket',
+            title: AppLocalizations.of(context)!.cropTicket,
           ),
         ],
       );
@@ -406,13 +329,15 @@ class _TicketPanelState extends State<TicketPanel> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(isAutoCrop ? "QR Code Detected" : "Confirm Ticket"),
+        title: Text(isAutoCrop
+            ? AppLocalizations.of(context)!.qrCodeDetected
+            : AppLocalizations.of(context)!.confirmTicket),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(isAutoCrop
-                ? "We detected a QR code. Use this crop?"
-                : "No QR code detected. Use this image?"),
+                ? AppLocalizations.of(context)!.detectedQrUseCrop
+                : AppLocalizations.of(context)!.noQrUseImage),
             const SizedBox(height: 10),
             Container(
               constraints: const BoxConstraints(maxHeight: 200),
@@ -425,7 +350,9 @@ class _TicketPanelState extends State<TicketPanel> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false), // No -> Manual Crop
-            child: Text(isAutoCrop ? "No, Edit Crop" : "Crop / Edit"),
+            child: Text(isAutoCrop
+                ? AppLocalizations.of(context)!.editCrop
+                : AppLocalizations.of(context)!.cropEdit),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true), // Yes -> Use it
@@ -437,7 +364,7 @@ class _TicketPanelState extends State<TicketPanel> {
   }
 
   Future<void> _processAndUpload(File file,
-      {XFile? isWebFile, Uint8List? directBytes}) async {
+      {XFile? isWebFile, Uint8List? directBytes, Rect? detectedQrBox}) async {
     setState(() => _isLoading = true);
     try {
       Uint8List bytes;
@@ -465,7 +392,13 @@ class _TicketPanelState extends State<TicketPanel> {
       if (kIsWeb) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('saved_ticket_base64', base64Encode(bytes));
-        setState(() => _webBytes = bytes);
+        setState(() {
+          _webBytes = bytes;
+          _styledQrBytes = null;
+          _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = detectedQrBox;
+        });
       } else {
         final directory = await getApplicationDocumentsDirectory();
         final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -474,7 +407,13 @@ class _TicketPanelState extends State<TicketPanel> {
         await localFile.writeAsBytes(bytes);
 
         await _refreshHistory();
-        setState(() => _mobileFile = localFile);
+        setState(() {
+          _mobileFile = localFile;
+          _styledQrBytes = null;
+          _styledQrColorArgb = null;
+          _isGeneratingStyledQr = false;
+          _detectedQrBox = detectedQrBox;
+        });
       }
 
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');
@@ -489,7 +428,9 @@ class _TicketPanelState extends State<TicketPanel> {
     if (mounted) {
       setState(() => _isLoading = false);
       String msg = e.toString();
-      if (msg.contains("Bucket")) msg = "Saved locally. Cloud upload failed.";
+      if (msg.contains("Bucket")) {
+        msg = AppLocalizations.of(context)!.savedLocallyCloudUploadFailed;
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
@@ -524,7 +465,8 @@ class _TicketPanelState extends State<TicketPanel> {
               title: Text(AppLocalizations.of(context)!.renameTicket),
               content: TextField(
                   controller: controller,
-                  decoration: const InputDecoration(hintText: "Enter label")),
+                  decoration: InputDecoration(
+                      hintText: AppLocalizations.of(context)!.enterLabel)),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -594,7 +536,13 @@ class _TicketPanelState extends State<TicketPanel> {
                               width: 40, height: 40, fit: BoxFit.cover),
                           title: Text(name),
                           onTap: () {
-                            setState(() => _mobileFile = file);
+                            setState(() {
+                              _mobileFile = file;
+                              _styledQrBytes = null;
+                              _styledQrColorArgb = null;
+                              _isGeneratingStyledQr = false;
+                              _detectedQrBox = null;
+                            });
                             Navigator.pop(ctx);
                           },
                           trailing: PopupMenuButton(
@@ -635,6 +583,9 @@ class _TicketPanelState extends State<TicketPanel> {
     } else if (!kIsWeb && _mobileFile != null) {
       imageToShow = FileImage(_mobileFile!);
     }
+
+    final bool showGeneratedQr =
+        imageToShow != null && _showGeneratedQr && _styledQrBytes != null;
 
     return DraggableScrollableSheet(
       controller: _sheetController,
@@ -677,7 +628,7 @@ class _TicketPanelState extends State<TicketPanel> {
                         Icon(Icons.confirmation_number_outlined,
                             color: colors.ticketHeader),
                         const SizedBox(width: 8),
-                        Text("My Ticket",
+                        Text(AppLocalizations.of(context)!.myTicket,
                             style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.bold,
@@ -696,29 +647,115 @@ class _TicketPanelState extends State<TicketPanel> {
               else if (imageToShow != null)
                 Column(
                   children: [
-                    GestureDetector(
-                      onTap: () => _openFullScreen(imageToShow!),
-                      onLongPress: kIsWeb ? null : _showHistorySheet,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image(
-                          image: imageToShow,
-                          fit: BoxFit.contain,
-                          errorBuilder: (c, e, s) => Container(
-                              height: 200,
-                              alignment: Alignment.center,
-                              child: Text(AppLocalizations.of(context)!
-                                  .errorLoadingTicket)),
-                        ),
-                      ),
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        if (showGeneratedQr)
+                          _buildStyledQr(colors)
+                        else
+                          GestureDetector(
+                            onTap: () => _openFullScreen(imageToShow!),
+                            onLongPress: kIsWeb ? null : _showHistorySheet,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Image(
+                                image: imageToShow,
+                                fit: BoxFit.contain,
+                                errorBuilder: (c, e, s) => Container(
+                                    height: 200,
+                                    alignment: Alignment.center,
+                                    child: Text(AppLocalizations.of(context)!
+                                        .errorLoadingTicket)),
+                              ),
+                            ),
+                          ),
+                        if (_isGeneratingStyledQr)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.35),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircularProgressIndicator(),
+                                    SizedBox(height: 12),
+                                    Text(
+                                        AppLocalizations.of(context)!
+                                            .generatingStyledQr,
+                                        style: TextStyle(color: Colors.white)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(
-                        kIsWeb
-                            ? "Tap for fullscreen"
-                            : "Tap for fullscreen • Hold for history",
+                        showGeneratedQr
+                            ? AppLocalizations.of(context)!
+                                .styledFromOriginalTicketQrPattern
+                            : (kIsWeb
+                                ? AppLocalizations.of(context)!.tapForFullscreen
+                                : AppLocalizations.of(context)!
+                                    .tapForFullscreenHoldForHistory),
                         style:
                             const TextStyle(fontSize: 10, color: Colors.grey)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: colors.textPrimary,
+                            side: BorderSide(color: colors.divider),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12))),
+                        onPressed: _isGeneratingStyledQr
+                            ? null
+                            : () async {
+                                if (showGeneratedQr) {
+                                  if (mounted) {
+                                    setState(() => _showGeneratedQr = false);
+                                  }
+                                  return;
+                                }
+
+                                if (mounted) {
+                                  setState(() => _isGeneratingStyledQr = true);
+                                }
+                                await Future<void>.delayed(
+                                    const Duration(milliseconds: 16));
+
+                                bool available = false;
+                                try {
+                                  available =
+                                      await _ensureStyledQrForCurrentTicket(
+                                    colors.effectiveSeed,
+                                  );
+                                } finally {
+                                  if (mounted) {
+                                    setState(
+                                        () => _isGeneratingStyledQr = false);
+                                  }
+                                }
+                                if (!available) return;
+
+                                if (mounted) {
+                                  setState(() => _showGeneratedQr = true);
+                                }
+                              },
+                        icon: Icon(showGeneratedQr
+                            ? Icons.image_outlined
+                            : Icons.qr_code_2_outlined),
+                        label: Text(showGeneratedQr
+                            ? AppLocalizations.of(context)!.showOriginalTicket
+                            : AppLocalizations.of(context)!.showStyledQr),
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,
@@ -779,4 +816,453 @@ class _TicketPanelState extends State<TicketPanel> {
       },
     );
   }
+
+  Widget _buildStyledQr(TransColors colors) {
+    final styled = _styledQrBytes;
+    if (styled == null) return const SizedBox.shrink();
+    final qrBg = colors.isDark ? const Color(0xFF0F1115) : Colors.white;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: qrBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.divider),
+      ),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Center(
+          child: Image.memory(
+            styled,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.none,
+            gaplessPlayback: true,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _ensureStyledQrForCurrentTicket(Color themeColor) async {
+    final themeArgb = themeColor.toARGB32();
+    if (_styledQrBytes != null && _styledQrColorArgb == themeArgb) {
+      return true;
+    }
+
+    Uint8List? bytes;
+    String? path;
+
+    if (kIsWeb) {
+      bytes = _webBytes;
+    } else if (_mobileFile != null) {
+      path = _mobileFile!.path;
+      bytes = await _mobileFile!.readAsBytes();
+    }
+
+    if (bytes == null) return false;
+
+    Rect? qrBox = _detectedQrBox;
+    if (qrBox == null && !kIsWeb) {
+      final detection = await _detectQrInBytes(
+        bytes,
+        sourcePath: path,
+        allowMlKit: !kIsWeb,
+      );
+      qrBox = detection.$1;
+      if (mounted && qrBox != null) {
+        setState(() => _detectedQrBox = qrBox);
+      }
+    }
+
+    if (qrBox == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context)!.couldNotIsolateQrBounds)));
+    }
+
+    final styled = await _styleQrBytesInBackground(bytes, qrBox, themeArgb);
+
+    if (mounted) {
+      setState(() {
+        _styledQrBytes = styled;
+        _styledQrColorArgb = themeArgb;
+      });
+    }
+
+    if (styled == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(AppLocalizations.of(context)!.couldNotRecolorQrCode)));
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<Uint8List?> _styleQrBytesInBackground(
+      Uint8List sourceBytes, Rect? box, int themeArgb) async {
+    try {
+      if (kIsWeb) {
+        return await _styleQrBytesChunkedWeb(sourceBytes, box, themeArgb);
+      }
+      return await compute(_styleQrBytesIsolate, <String, dynamic>{
+        'bytes': sourceBytes,
+        'left': box?.left,
+        'top': box?.top,
+        'width': box?.width,
+        'height': box?.height,
+        'themeArgb': themeArgb,
+      });
+    } catch (e) {
+      debugPrint("QR recolor isolate failed: $e");
+      return null;
+    }
+  }
+
+  Future<Uint8List?> _styleQrBytesChunkedWeb(
+      Uint8List sourceBytes, Rect? box, int themeArgb) async {
+    try {
+      var image = img.decodeImage(sourceBytes);
+      if (image == null) return null;
+      image = img.bakeOrientation(image);
+
+      if (box != null) {
+        const padding = 6;
+        int x = (box.left - padding).floor();
+        int y = (box.top - padding).floor();
+        int w = (box.width + (padding * 2)).ceil();
+        int h = (box.height + (padding * 2)).ceil();
+
+        x = x.clamp(0, image.width - 1).toInt();
+        y = y.clamp(0, image.height - 1).toInt();
+        if (x + w > image.width) w = image.width - x;
+        if (y + h > image.height) h = image.height - y;
+        if (w >= 32 && h >= 32) {
+          image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+        }
+      }
+      if (image.numChannels != 4) {
+        image = image.convert(numChannels: 4);
+      }
+
+      final rT = (themeArgb >> 16) & 0xFF;
+      final gT = (themeArgb >> 8) & 0xFF;
+      final bT = themeArgb & 0xFF;
+      const threshold = 150;
+
+      for (int py = 0; py < image.height; py++) {
+        for (int px = 0; px < image.width; px++) {
+          final p = image.getPixel(px, py);
+          final a = p.a.toInt();
+          if (a < 20) {
+            image.setPixelRgba(px, py, 0, 0, 0, 0);
+            continue;
+          }
+
+          final r = p.r.toInt();
+          final g = p.g.toInt();
+          final b = p.b.toInt();
+          final luminance = ((299 * r) + (587 * g) + (114 * b)) ~/ 1000;
+
+          if (luminance < threshold) {
+            image.setPixelRgba(px, py, rT, gT, bT, 255);
+          } else {
+            image.setPixelRgba(px, py, 0, 0, 0, 0);
+          }
+        }
+        if (py % 16 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+
+      final squared = await _trimAndSquareQrImageChunked(image);
+      return Uint8List.fromList(img.encodePng(squared, level: 3));
+    } catch (e) {
+      debugPrint("QR recolor web failed: $e");
+      return null;
+    }
+  }
+
+  Future<img.Image> _trimAndSquareQrImageChunked(img.Image image) async {
+    int minX = image.width;
+    int minY = image.height;
+    int maxX = -1;
+    int maxY = -1;
+
+    for (int y = 0; y < image.height; y++) {
+      for (int x = 0; x < image.width; x++) {
+        final a = image.getPixel(x, y).a.toInt();
+        if (a > 20) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+      if (y % 24 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    if (maxX < minX || maxY < minY) return image;
+
+    final contentW = maxX - minX + 1;
+    final contentH = maxY - minY + 1;
+    int side = math.max(contentW, contentH);
+
+    final cx = (minX + maxX) / 2.0;
+    final cy = (minY + maxY) / 2.0;
+
+    int x = (cx - side / 2).floor();
+    int y = (cy - side / 2).floor();
+
+    if (side > image.width) side = image.width;
+    if (side > image.height) side = image.height;
+
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x + side > image.width) x = image.width - side;
+    if (y + side > image.height) y = image.height - side;
+
+    x = x.clamp(0, image.width - 1).toInt();
+    y = y.clamp(0, image.height - 1).toInt();
+
+    return img.copyCrop(image, x: x, y: y, width: side, height: side);
+  }
+
+  Future<(Rect?, String?)> _detectQrInBytes(
+    Uint8List bytes, {
+    String? sourcePath,
+    required bool allowMlKit,
+  }) async {
+    Rect? qrBox;
+    String? qrPayload;
+
+    // Try ML Kit first on mobile platforms.
+    if (allowMlKit &&
+        sourcePath != null &&
+        !kIsWeb &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      try {
+        final inputImage = InputImage.fromFilePath(sourcePath);
+        final barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+        final barcodes = await barcodeScanner.processImage(inputImage);
+        debugPrint("ML Kit found ${barcodes.length} barcodes");
+
+        if (barcodes.isNotEmpty) {
+          // Prefer the largest QR in frame (ticket images can include extra tiny codes).
+          final best = barcodes.reduce((a, b) {
+            final aArea = (a.boundingBox.width * a.boundingBox.height).abs();
+            final bArea = (b.boundingBox.width * b.boundingBox.height).abs();
+            return aArea >= bArea ? a : b;
+          });
+          qrBox = best.boundingBox;
+          qrPayload = best.rawValue ?? best.displayValue;
+          debugPrint("ML Kit payload found: ${qrPayload != null}");
+        }
+        barcodeScanner.close();
+      } catch (e) {
+        debugPrint("ML Kit scan failed, falling back to ZXing: $e");
+      }
+    }
+
+    // ZXing fallback for web/desktop or missing data.
+    if (qrBox == null || qrPayload == null || qrPayload.isEmpty) {
+      try {
+        var image = img.decodeImage(bytes);
+        if (image == null) {
+          debugPrint(
+              "ZXing: failed to decode image bytes (${bytes.length} bytes)");
+          return (qrBox, qrPayload);
+        }
+
+        // Bake EXIF orientation into actual pixels.
+        image = img.bakeOrientation(image);
+
+        // Ensure image is 4-channel RGBA.
+        if (image.numChannels != 4) {
+          image = image.convert(numChannels: 4);
+        }
+
+        debugPrint(
+            "ZXing: decoded image ${image.width}x${image.height} (channels: ${image.numChannels})");
+
+        final rawPixels = image.data?.buffer.asUint32List();
+        if (rawPixels == null) return (qrBox, qrPayload);
+
+        // Convert RGBA -> ARGB expected by RGBLuminanceSource.
+        final argbPixels = List<int>.generate(rawPixels.length, (i) {
+          final rgba = rawPixels[i];
+          final r = rgba & 0xFF;
+          final g = (rgba >> 8) & 0xFF;
+          final b = (rgba >> 16) & 0xFF;
+          final a = (rgba >> 24) & 0xFF;
+          return (a << 24) | (r << 16) | (g << 8) | b;
+        });
+
+        final luminance =
+            zxing.RGBLuminanceSource(image.width, image.height, argbPixels);
+
+        const hints = zxing.DecodeHint(
+          tryHarder: true,
+          alsoInverted: true,
+        );
+
+        zxing.Result? result;
+        try {
+          final binarizer = zxing.HybridBinarizer(luminance);
+          final bitmap = zxing.BinaryBitmap(binarizer);
+          result = zxing.MultiFormatReader().decode(bitmap, hints);
+        } catch (_) {
+          try {
+            final binarizer2 = zxing.GlobalHistogramBinarizer(luminance);
+            final bitmap2 = zxing.BinaryBitmap(binarizer2);
+            result = zxing.MultiFormatReader().decode(bitmap2, hints);
+          } catch (_) {}
+        }
+
+        if (result == null) {
+          debugPrint("ZXing: no barcode found after trying both binarizers");
+          return (qrBox, qrPayload);
+        }
+
+        qrPayload = result.text;
+        debugPrint("ZXing: found barcode payload (${qrPayload.length} chars)");
+
+        final points = result.resultPoints;
+        if (points != null && points.isNotEmpty) {
+          double minX = double.infinity, minY = double.infinity;
+          double maxX = 0, maxY = 0;
+
+          for (var p in points) {
+            if ((p?.x ?? 0) < minX) minX = p!.x;
+            if ((p?.y ?? 0) < minY) minY = p!.y;
+            if ((p?.x ?? 0) > maxX) maxX = p!.x;
+            if ((p?.y ?? 0) > maxY) maxY = p!.y;
+          }
+          qrBox = Rect.fromLTRB(minX, minY, maxX, maxY);
+        }
+      } catch (e) {
+        debugPrint("ZXing scan failed: $e");
+      }
+    }
+
+    return (qrBox, qrPayload);
+  }
+}
+
+Uint8List? _styleQrBytesIsolate(Map<String, dynamic> payload) {
+  try {
+    final sourceBytes = payload['bytes'] as Uint8List;
+    final leftNum = payload['left'] as num?;
+    final topNum = payload['top'] as num?;
+    final widthNum = payload['width'] as num?;
+    final heightNum = payload['height'] as num?;
+    final themeArgb = payload['themeArgb'] as int;
+
+    var image = img.decodeImage(sourceBytes);
+    if (image == null) return null;
+    image = img.bakeOrientation(image);
+
+    if (leftNum != null &&
+        topNum != null &&
+        widthNum != null &&
+        heightNum != null) {
+      const padding = 6;
+      int x = (leftNum.toDouble() - padding).floor();
+      int y = (topNum.toDouble() - padding).floor();
+      int w = (widthNum.toDouble() + (padding * 2)).ceil();
+      int h = (heightNum.toDouble() + (padding * 2)).ceil();
+
+      x = x.clamp(0, image.width - 1).toInt();
+      y = y.clamp(0, image.height - 1).toInt();
+      if (x + w > image.width) w = image.width - x;
+      if (y + h > image.height) h = image.height - y;
+      if (w >= 32 && h >= 32) {
+        image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      }
+    }
+    if (image.numChannels != 4) {
+      image = image.convert(numChannels: 4);
+    }
+
+    final rT = (themeArgb >> 16) & 0xFF;
+    final gT = (themeArgb >> 8) & 0xFF;
+    final bT = themeArgb & 0xFF;
+
+    const threshold = 150;
+    for (int py = 0; py < image.height; py++) {
+      for (int px = 0; px < image.width; px++) {
+        final p = image.getPixel(px, py);
+        final a = p.a.toInt();
+        if (a < 20) {
+          image.setPixelRgba(px, py, 0, 0, 0, 0);
+          continue;
+        }
+
+        final r = p.r.toInt();
+        final g = p.g.toInt();
+        final b = p.b.toInt();
+        final luminance = ((299 * r) + (587 * g) + (114 * b)) ~/ 1000;
+
+        if (luminance < threshold) {
+          image.setPixelRgba(px, py, rT, gT, bT, 255);
+        } else {
+          image.setPixelRgba(px, py, 0, 0, 0, 0);
+        }
+      }
+    }
+
+    final squared = _trimAndSquareQrImage(image);
+    return Uint8List.fromList(img.encodePng(squared, level: 3));
+  } catch (_) {
+    return null;
+  }
+}
+
+img.Image _trimAndSquareQrImage(img.Image image) {
+  int minX = image.width;
+  int minY = image.height;
+  int maxX = -1;
+  int maxY = -1;
+
+  for (int y = 0; y < image.height; y++) {
+    for (int x = 0; x < image.width; x++) {
+      final a = image.getPixel(x, y).a.toInt();
+      if (a > 20) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return image;
+
+  final contentW = maxX - minX + 1;
+  final contentH = maxY - minY + 1;
+  int side = math.max(contentW, contentH);
+
+  final cx = (minX + maxX) / 2.0;
+  final cy = (minY + maxY) / 2.0;
+
+  int x = (cx - side / 2).floor();
+  int y = (cy - side / 2).floor();
+
+  if (side > image.width) side = image.width;
+  if (side > image.height) side = image.height;
+
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  if (x + side > image.width) x = image.width - side;
+  if (y + side > image.height) y = image.height - side;
+
+  x = x.clamp(0, image.width - 1).toInt();
+  y = y.clamp(0, image.height - 1).toInt();
+
+  return img.copyCrop(image, x: x, y: y, width: side, height: side);
 }

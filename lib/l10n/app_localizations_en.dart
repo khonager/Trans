@@ -266,6 +266,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get now => 'Now';
 
   @override
+  String get currentLocation => 'Current Location';
+
+  @override
+  String get stationOrAddress => 'Station or Address...';
+
+  @override
+  String get fromLabel => 'From';
+
+  @override
+  String get toLabel => 'To';
+
+  @override
+  String get arriveBy => 'Arrive by';
+
+  @override
+  String get departAt => 'Depart at';
+
+  @override
+  String get refreshLocation => 'Refresh location';
+
+  @override
   String get findRoutes => 'Find Routes';
 
   @override
@@ -376,6 +397,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cropTicket => 'Crop Ticket';
 
   @override
+  String get applyCrop => 'Apply Crop';
+
+  @override
   String secureChat(String friendName) {
     return 'Secure Chat: $friendName';
   }
@@ -385,6 +409,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get useImage => 'Use Image';
+
+  @override
+  String get saySomething => 'Say something...';
+
+  @override
+  String get qrCodeDetected => 'QR Code Detected';
+
+  @override
+  String get confirmTicket => 'Confirm Ticket';
+
+  @override
+  String get detectedQrUseCrop => 'We detected a QR code. Use this crop?';
+
+  @override
+  String get noQrUseImage => 'No QR code detected. Use this image?';
+
+  @override
+  String get editCrop => 'Edit Crop';
+
+  @override
+  String get cropEdit => 'Crop / Edit';
 
   @override
   String get renameTicket => 'Rename Ticket';
@@ -397,6 +442,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rename => 'Rename';
+
+  @override
+  String get enterLabel => 'Enter label';
 
   @override
   String get errorLoadingTicket => 'Error loading ticket';
@@ -422,6 +470,143 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get searchHistoryCleared => 'Search history cleared.';
+
+  @override
+  String get myTicket => 'My Ticket';
+
+  @override
+  String get generatingStyledQr => 'Generating styled QR...';
+
+  @override
+  String get styledFromOriginalTicketQrPattern =>
+      'Styled from original ticket QR pattern';
+
+  @override
+  String get tapForFullscreen => 'Tap for fullscreen';
+
+  @override
+  String get tapForFullscreenHoldForHistory =>
+      'Tap for fullscreen • Hold for history';
+
+  @override
+  String get showOriginalTicket => 'Show Original Ticket';
+
+  @override
+  String get showStyledQr => 'Show Styled QR';
+
+  @override
+  String get savedLocallyCloudUploadFailed =>
+      'Saved locally. Cloud upload failed.';
+
+  @override
+  String get couldNotIsolateQrBounds =>
+      'Could not isolate QR bounds. Styling the full image instead.';
+
+  @override
+  String get couldNotRecolorQrCode => 'Could not recolor this QR code image.';
+
+  @override
+  String get transitBoardingPass => 'TRANSIT BOARDING PASS';
+
+  @override
+  String get endOfLine => 'End of Line';
+
+  @override
+  String get wakeAlarmTitle => 'Trans Wake Alarm';
+
+  @override
+  String get wakeAlarmTracking => 'Tracking your journey...';
+
+  @override
+  String get alternative => 'Alternative';
+
+  @override
+  String get routeLabel => 'Route';
+
+  @override
+  String get destinationLabel => 'Destination';
+
+  @override
+  String get details => 'Details';
+
+  @override
+  String get startNotFound => 'Start not found';
+
+  @override
+  String get destinationNotFound => 'Destination not found';
+
+  @override
+  String departsAt(String time) {
+    return 'Departs $time';
+  }
+
+  @override
+  String lateByMinutes(String minutes) {
+    return '(+$minutes late)';
+  }
+
+  @override
+  String switchPlatform(String fromPlatform, String toPlatform) {
+    return 'Switch from $fromPlatform to $toPlatform';
+  }
+
+  @override
+  String waitAt(String place) {
+    return 'Wait at $place';
+  }
+
+  @override
+  String transferTo(String destination) {
+    return 'Transfer to $destination';
+  }
+
+  @override
+  String get waitForConnection => 'Wait for connection';
+
+  @override
+  String walkTo(String destination) {
+    return 'Walk to $destination';
+  }
+
+  @override
+  String get walkToDestination => 'Walk to destination';
+
+  @override
+  String get walkLabel => 'Walk';
+
+  @override
+  String atPlatform(String platform) {
+    return 'at $platform';
+  }
+
+  @override
+  String toPlatform(String platform) {
+    return 'to $platform';
+  }
+
+  @override
+  String get addFavorite => 'Add Favorite';
+
+  @override
+  String get editFavorite => 'Edit Favorite';
+
+  @override
+  String get favoriteLabelHint => 'Label (e.g. Home, Bestie)';
+
+  @override
+  String get searchStationName => 'Search Station Name';
+
+  @override
+  String get searchFriendUsername => 'Search Friend Username';
+
+  @override
+  String get alarmOn => 'Alarm ON';
+
+  @override
+  String get wakeMe => 'Wake Me';
+
+  @override
+  String get altShort => 'Alt';
 
   @override
   String get blockedUsers => 'Blocked Users';
@@ -472,6 +657,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get systemSyncActive => 'System Sync Active. Long press to disable.';
 
   @override
+  String get systemSyncEnabled => 'System Sync Enabled';
+
+  @override
+  String get manualModeEnabled => 'Manual Mode Enabled';
+
+  @override
   String get deutschlandTicketMode => 'Deutschlandticket Mode';
 
   @override
@@ -496,6 +687,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alarmTrigger => 'Alarm Trigger';
 
   @override
+  String get alertAtDestination => 'Alert at destination';
+
+  @override
+  String alertStopsBefore(String count) {
+    return 'Alert $count stops before';
+  }
+
+  @override
+  String get atDest => 'At Dest';
+
+  @override
+  String get oneStop => '1 Stop';
+
+  @override
+  String get twoStops => '2 Stops';
+
+  @override
+  String get threeStops => '3 Stops';
+
+  @override
   String get triggerThreshold => 'Trigger Threshold';
 
   @override
@@ -505,6 +716,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alarmPattern => 'Alarm Pattern';
+
+  @override
+  String get ofLegCovered => 'of leg covered';
+
+  @override
+  String get fromTarget => 'from target';
+
+  @override
+  String get fivePercentRemaining => '5% Remaining';
+
+  @override
+  String get tenPercentRemaining => '10% Remaining';
+
+  @override
+  String get fixed500m => 'Fixed 500m';
 
   @override
   String get vibrationIntensity => 'Vibration Intensity';
@@ -528,6 +754,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get transportApi => 'Transport API';
 
   @override
+  String selectedApiMode(String mode) {
+    return 'Selected: $mode';
+  }
+
+  @override
+  String get autoRecommended => 'Auto (Recommended)';
+
+  @override
+  String get transitousOpenSource => 'Transitous (Open Source)';
+
+  @override
+  String get deutscheBahnLegacy => 'Deutsche Bahn (Legacy)';
+
+  @override
+  String get autoModeShort => 'Auto';
+
+  @override
+  String get dbV6 => 'DB (v6)';
+
+  @override
   String get profileSettings => 'Profile';
 
   @override
@@ -540,11 +786,56 @@ class AppLocalizationsEn extends AppLocalizations {
   String get emailSettings => 'Email';
 
   @override
-  String get newPasswordOpt => 'New Password (Optional)';
+  String get newPasswordOpt => 'New Password';
 
   @override
   String get profileUpdated =>
       'Profile updated! Check email for confirmation if changed.';
+
+  @override
+  String get incorrectPasswordOrRpcMissing =>
+      'Incorrect password or error (RPC missing?)';
+
+  @override
+  String get changeUsername => 'Change Username';
+
+  @override
+  String get changeEmail => 'Change Email';
+
+  @override
+  String get changePassword => 'Change Password';
+
+  @override
+  String get emailChangeHint =>
+      'Changing your email will send a confirmation link before the address updates.';
+
+  @override
+  String get passwordChangeHint => 'Choose a new password for your account.';
+
+  @override
+  String get confirmPassword => 'Confirm Password';
+
+  @override
+  String get passwordsDoNotMatch => 'Passwords do not match.';
+
+  @override
+  String get enterValidEmail => 'Enter a valid email address.';
+
+  @override
+  String get fillRequiredFields => 'Fill in the required fields.';
+
+  @override
+  String get usernameUpdated => 'Username updated.';
+
+  @override
+  String get emailUpdateSent =>
+      'Check your email to confirm the address change.';
+
+  @override
+  String get passwordUpdated => 'Password updated.';
+
+  @override
+  String get update => 'Update';
 
   @override
   String get logOut => 'Log Out';
@@ -553,7 +844,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loginSignUp => 'Login / Sign Up';
 
   @override
-  String get usernameSignUp => 'Username (Sign Up)';
+  String get usernameSignUp => 'Username';
 
   @override
   String get password => 'Password';

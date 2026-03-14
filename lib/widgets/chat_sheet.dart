@@ -76,13 +76,15 @@ class _ChatSheetState extends State<ChatSheet> {
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: SupabaseService.getMessages(widget.lineId),
               builder: (context, snapshot) {
-                if (!snapshot.hasData)
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
+                }
                 final msgs = snapshot.data!;
-                if (msgs.isEmpty)
+                if (msgs.isEmpty) {
                   return Center(
                       child: Text(AppLocalizations.of(context)!.noMessagesYet,
                           style: TextStyle(color: colors.textSecondary)));
+                }
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
@@ -167,7 +169,7 @@ class _ChatSheetState extends State<ChatSheet> {
                     controller: _msgCtrl,
                     style: TextStyle(color: colors.textPrimary),
                     decoration: InputDecoration(
-                        hintText: "Say something...",
+                        hintText: AppLocalizations.of(context)!.saySomething,
                         hintStyle: TextStyle(color: colors.textSecondary),
                         filled: true,
                         fillColor: colors.chatInputFill,

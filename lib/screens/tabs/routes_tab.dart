@@ -90,7 +90,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
+  bool _fromUsesCurrentLocation = true;
+  bool _isRefreshingLocation = false;
+  Position? _manualCurrentPosition;
   List<Map<String, dynamic>> _frequentJourneys = [];
+
+  Position? get _effectiveCurrentPosition =>
+      _manualCurrentPosition ?? widget.currentPosition;
 
   @override
   void initState() {
@@ -110,36 +116,128 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items");
-    if (mounted)
+    if (mounted) {
       setState(() {
         _frequentJourneys = frequent;
       });
+    }
   }
 
   @override
   void didUpdateWidget(RoutesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.currentPosition != oldWidget.currentPosition) {
+      _manualCurrentPosition = null;
+      if (_fromStation == null &&
+          _isCurrentLocationText(_fromController.text)) {
+        _fromUsesCurrentLocation = true;
+      }
       _resolveCurrentAddress();
     }
   }
 
+  bool _isCurrentLocationText(String text, {String? addressOverride}) {
+    final normalized = text.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    final localizedCurrentLocation =
+        AppLocalizations.of(context)?.currentLocation.toLowerCase();
+    if (normalized == 'current location' ||
+        (localizedCurrentLocation != null &&
+            normalized == localizedCurrentLocation)) {
+      return true;
+    }
+    final address = (addressOverride ?? _currentAddress)?.trim().toLowerCase();
+    return address != null && address.isNotEmpty && normalized == address;
+  }
+
   Future<void> _resolveCurrentAddress() async {
-    if (widget.currentPosition == null) return;
+    final position = _effectiveCurrentPosition;
+    if (position == null) return;
     try {
       // Use getNearbyStops to find the nearest stop or address
       // Prioritize "address" or "station" type from results
       final stops = await TransportApi.getNearbyStops(
-          widget.currentPosition!.latitude, widget.currentPosition!.longitude);
+          position.latitude, position.longitude);
       if (stops.isNotEmpty) {
+        final previousAddress = _currentAddress;
+        final nextAddress = stops.first.name;
         if (mounted) {
           setState(() {
-            _currentAddress = stops.first.name;
+            _currentAddress = nextAddress;
+            if (_fromStation == null &&
+                _fromUsesCurrentLocation &&
+                _isCurrentLocationText(_fromController.text,
+                    addressOverride: previousAddress)) {
+              _fromController.text = nextAddress;
+            }
           });
         }
       }
     } catch (e) {
       debugPrint("Error resolving address: $e");
+    }
+  }
+
+  Future<void> _refreshCurrentLocationManually() async {
+    if (_isRefreshingLocation) return;
+    setState(() => _isRefreshingLocation = true);
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:
+                  Text(AppLocalizations.of(context)!.locationNotAvailable)));
+        }
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  AppLocalizations.of(context)!.locationPermissionDenied)));
+        }
+        return;
+      }
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(AppLocalizations.of(context)!
+                  .locationPermissionPermanentlyDenied)));
+        }
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+              locationSettings:
+                  const LocationSettings(accuracy: LocationAccuracy.high))
+          .timeout(const Duration(seconds: 8));
+      final stops =
+          await TransportApi.getNearbyStops(pos.latitude, pos.longitude);
+      final nextAddress = stops.isNotEmpty ? stops.first.name : null;
+
+      if (!mounted) return;
+      setState(() {
+        _manualCurrentPosition = pos;
+        _fromStation = null;
+        _fromUsesCurrentLocation = true;
+        _currentAddress = nextAddress;
+        _fromController.text =
+            nextAddress ?? AppLocalizations.of(context)!.currentLocation;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.locationNotAvailable)));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshingLocation = false);
+      }
     }
   }
 
@@ -289,6 +387,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _startWakeAlarm(RouteTab route) async {
     if (route.steps.isEmpty) return;
+    final l10n = AppLocalizations.of(context)!;
 
     // 1. Request Permissions
     await NotificationManager.requestPermissions();
@@ -296,18 +395,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(
-                  AppLocalizations.of(context)!.locationPermissionDenied)));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.locationPermissionDenied)));
+        }
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!
-                .locationPermissionPermanentlyDenied)));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(l10n.locationPermissionPermanentlyDenied)));
+      }
       return;
     }
 
@@ -318,13 +417,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     double? targetLng = firstRide.endLng;
 
     if (targetLat == null || targetLng == null) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.missingDestCoords)));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.missingDestCoords)));
+      }
       return;
     }
 
-    if (mounted) setState(() => _isWakeAlarmSet = true);
+    if (mounted) {
+      setState(() => _isWakeAlarmSet = true);
+    }
 
     // 2. Configure Background Location (Foreground Service)
     AndroidSettings androidSettings = AndroidSettings(
@@ -333,9 +435,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       forceLocationManager: true,
       intervalDuration: const Duration(seconds: 10),
       // Foreground Notification to keep service alive
-      foregroundNotificationConfig: const ForegroundNotificationConfig(
-        notificationTitle: "Trans Wake Alarm",
-        notificationText: "Tracking your journey...",
+      foregroundNotificationConfig: ForegroundNotificationConfig(
+        notificationTitle: l10n.wakeAlarmTitle,
+        notificationText: l10n.wakeAlarmTracking,
         notificationIcon: AndroidResource(name: 'ic_launcher'),
         enableWakeLock: true,
       ),
@@ -355,14 +457,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
 
     LocationSettings activeSettings = settings;
-    if (defaultTargetPlatform == TargetPlatform.android)
+    if (defaultTargetPlatform == TargetPlatform.android) {
       activeSettings = androidSettings;
-    if (defaultTargetPlatform == TargetPlatform.iOS)
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
       activeSettings = appleSettings;
+    }
 
-    if (widget.currentPosition != null) {
+    if (_effectiveCurrentPosition != null) {
       // We don't have a single "currentLine" anymore since multiple legs might be active
-      SupabaseService.updateLocation(widget.currentPosition!);
+      SupabaseService.updateLocation(_effectiveCurrentPosition!);
     }
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
@@ -503,7 +607,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             builder: (_) => MapScreen(
                 steps: route.steps,
                 focusStep: focusStep,
-                currentPosition: widget.currentPosition)));
+                currentPosition: _effectiveCurrentPosition)));
   }
 
   // --- SEARCH LOGIC ---
@@ -533,11 +637,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         results.addAll(history);
       }
     }
-    if (mounted)
+    if (mounted) {
       setState(() {
         _suggestions = results;
         _isSuggestionsLoading = false;
       });
+    }
   }
 
   void _onSearchChanged(String query, String field) {
@@ -547,6 +652,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (field == 'from') {
         setState(() {
           _fromStation = null;
+          _fromUsesCurrentLocation = true;
           _suggestions = [];
           _isSuggestionsLoading = false;
         });
@@ -561,6 +667,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       return;
     }
+    if (field == 'from') {
+      setState(() {
+        _fromStation = null;
+        _fromUsesCurrentLocation = _isCurrentLocationText(query);
+      });
+    }
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 600), () async {
@@ -574,9 +686,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _toStation!.longitude != null) {
             refLat = _toStation!.latitude;
             refLng = _toStation!.longitude;
-          } else if (widget.currentPosition != null) {
-            refLat = widget.currentPosition!.latitude;
-            refLng = widget.currentPosition!.longitude;
+          } else if (_effectiveCurrentPosition != null) {
+            refLat = _effectiveCurrentPosition!.latitude;
+            refLng = _effectiveCurrentPosition!.longitude;
           }
         } else if (field == 'to') {
           if (_fromStation != null &&
@@ -584,9 +696,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _fromStation!.longitude != null) {
             refLat = _fromStation!.latitude;
             refLng = _fromStation!.longitude;
-          } else if (widget.currentPosition != null) {
-            refLat = widget.currentPosition!.latitude;
-            refLng = widget.currentPosition!.longitude;
+          } else if (_effectiveCurrentPosition != null) {
+            refLat = _effectiveCurrentPosition!.latitude;
+            refLng = _effectiveCurrentPosition!.longitude;
           }
         }
 
@@ -663,6 +775,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       if (_activeSearchField == 'from') {
         _fromStation = station;
+        _fromUsesCurrentLocation = false;
         _fromController.text = station.name;
         if (_toStation == null) {
           _activeSearchField = 'to';
@@ -711,9 +824,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (mounted && stops.isNotEmpty) target = stops.first;
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text("Error: $e")));
+        }
       } finally {
         if (mounted) setState(() => _isLoadingRoute = false);
       }
@@ -723,6 +837,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       setState(() {
         if (currentField == 'from') {
           _fromStation = target;
+          _fromUsesCurrentLocation = false;
           _fromController.text = target!.name;
           if (_toStation == null) {
             _activeSearchField = 'to';
@@ -733,16 +848,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _toStation = target;
           _toController.text = target!.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
-          if (_fromStation == null && widget.currentPosition == null) {
+          if (_fromStation == null && _effectiveCurrentPosition == null) {
             _activeSearchField = 'from';
             _fromFocusNode.requestFocus();
           }
         } else {
-          if (_fromStation != null || widget.currentPosition != null) {
+          if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
             _toController.text = target!.name;
           } else {
             _fromStation = target;
+            _fromUsesCurrentLocation = false;
             _fromController.text = target!.name;
             _toFocusNode.requestFocus();
             _scrollToTop();
@@ -755,8 +871,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _closeTab(String id) {
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
-      if (_activeTabId == id)
+      if (_activeTabId == id) {
         _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
+      }
     });
     _stopWakeAlarm();
   }
@@ -829,8 +946,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     singleJourneyData: journey,
                     origin: fromDummy,
                     destination: toDummy,
-                    title: "Alternative",
-                    subtitle: "Departs ${DateFormat('HH:mm').format(depTime)}");
+                    title: AppLocalizations.of(context)!.alternative,
+                    subtitle: AppLocalizations.of(context)!
+                        .departsAt(DateFormat('HH:mm').format(depTime)));
               }
             });
           },
@@ -864,7 +982,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         double? nextRideStartLng,
         {bool isFinalWalk = false}) {
       if (transferBuffer.isEmpty &&
-          (lastArrival == null || nextRideDeparture == null)) return;
+          (lastArrival == null || nextRideDeparture == null)) {
+        return;
+      }
       DateTime blockStart = (lastArrival != null)
           ? lastArrival
           : (DateTime.tryParse(transferBuffer.first['departure'] ??
@@ -924,6 +1044,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       // Determine instruction text based on context
       String instruction;
+      bool isWaitInstruction = false;
       bool isAtSameStation = (lastStationId != null &&
               nextStationId != null &&
               lastStationId == nextStationId) ||
@@ -957,53 +1078,58 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
 
       if (isAtSameStation && !isSignificantWalk) {
+        isWaitInstruction = true;
         if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform != nextPlat) {
-          instruction =
-              "Switch from ${fmtPlat(lastPlatform)} to ${fmtPlat(nextPlat)}";
+          instruction = AppLocalizations.of(context)!
+              .switchPlatform(fmtPlat(lastPlatform), fmtPlat(nextPlat));
         } else if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform == nextPlat) {
-          instruction = "Wait at ${fmtPlat(lastPlatform)}";
+          instruction =
+              AppLocalizations.of(context)!.waitAt(fmtPlat(lastPlatform));
         } else if (nextPlat != null) {
-          instruction = "Wait at ${fmtPlat(nextPlat)}";
+          instruction = AppLocalizations.of(context)!.waitAt(fmtPlat(nextPlat));
         } else {
-          instruction = "Wait at $destName"; // Same station generic wait
+          instruction = AppLocalizations.of(context)!.waitAt(destName ?? '');
         }
       } else if (isPhantomWalk) {
+        isWaitInstruction = true;
         if (destName != null && !isAtSameStation) {
-          instruction = "Transfer to $destName";
+          instruction = AppLocalizations.of(context)!.transferTo(destName);
           if (nextPlat != null) instruction += " (${fmtPlat(nextPlat)})";
         } else {
-          instruction = "Wait for connection";
-          if (nextPlat != null) instruction += " at ${fmtPlat(nextPlat)}";
+          instruction = AppLocalizations.of(context)!.waitForConnection;
+          if (nextPlat != null) {
+            instruction +=
+                " ${AppLocalizations.of(context)!.atPlatform(fmtPlat(nextPlat))}";
+          }
         }
       } else {
         // It is a walk
         if (isFirstStep && destName != null) {
-          instruction = "Walk to $destName";
+          instruction = AppLocalizations.of(context)!.walkTo(destName);
           if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
         } else if (isFinalWalk && destName != null) {
-          instruction = "Walk to destination";
+          instruction = AppLocalizations.of(context)!.walkToDestination;
         } else if (destName != null) {
-          instruction = "Walk to $destName";
+          instruction = AppLocalizations.of(context)!.walkTo(destName);
           if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
           // If we have arrival platform from previous leg, maybe "Walk from Pl. A to Station..."?
           // But 'lastPlatform' is usually associated with 'lastStationName'.
           // If we walked, we likely left the previous station area.
         } else {
-          instruction = "Walk";
-          if (nextPlat != null) instruction += " to ${fmtPlat(nextPlat)}";
+          instruction = AppLocalizations.of(context)!.walkLabel;
+          if (nextPlat != null) {
+            instruction +=
+                " ${AppLocalizations.of(context)!.toPlatform(fmtPlat(nextPlat))}";
+          }
         }
       }
 
       steps.add(JourneyStep(
-        type: instruction.startsWith("Wait") ||
-                instruction.startsWith("Switch") ||
-                instruction.startsWith("Transfer")
-            ? 'wait'
-            : 'walk',
+        type: isWaitInstruction ? 'wait' : 'walk',
         line: 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
@@ -1217,7 +1343,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   String _addJourneyTab(
       {Map<String, dynamic>? singleJourneyData,
       List<Map<String, dynamic>>? candidatesData,
-      String title = "Route",
+      String title = "",
       String? subtitle,
       Station? origin,
       Station? destination}) {
@@ -1236,7 +1362,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final lastLeg = candidates.first.rawSource['legs'].last;
         dest = Station(
             id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ?? "Destination",
+            name: lastLeg['destination']['name'] ??
+                AppLocalizations.of(context)!.destinationLabel,
             type: "station");
       }
     } else if (singleJourneyData != null) {
@@ -1246,7 +1373,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final lastLeg = singleJourneyData['legs'].last;
         dest = Station(
             id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ?? "Destination",
+            name: lastLeg['destination']['name'] ??
+                AppLocalizations.of(context)!.destinationLabel,
             type: "station");
       } catch (_) {
         return id;
@@ -1260,8 +1388,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _tabs.add(RouteTab(
         id: id,
-        title: title == "Route" ? dest!.name : title,
-        subtitle: subtitle ?? "Details",
+        title:
+            title == AppLocalizations.of(context)!.routeLabel || title.isEmpty
+                ? dest!.name
+                : title,
+        subtitle: subtitle ?? AppLocalizations.of(context)!.details,
         eta: activeJourney != null
             ? DateFormat('HH:mm').format(activeJourney.arrival)
             : "--:--",
@@ -1319,11 +1450,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _findRoutes() async {
     if (_isLoadingRoute) return;
+    final l10n = AppLocalizations.of(context)!;
     Station? from = _fromStation;
     if (from == null) {
-      if (_fromController.text.isEmpty ||
-          _fromController.text == "Current Location") {
-        Position? pos = widget.currentPosition;
+      if (_fromUsesCurrentLocation ||
+          _isCurrentLocationText(_fromController.text)) {
+        Position? pos = _effectiveCurrentPosition;
         if (pos == null) {
           try {
             pos = await Geolocator.getCurrentPosition()
@@ -1334,15 +1466,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           // Use GPS directly
           from = Station(
               id: 'gps',
-              name: 'Current Location',
+              name: l10n.currentLocation,
               type: 'location',
               latitude: pos.latitude,
               longitude: pos.longitude);
         } else {
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content:
-                    Text(AppLocalizations.of(context)!.locationNotAvailable)));
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(l10n.locationNotAvailable)));
+          }
           return;
         }
       } else {
@@ -1354,7 +1486,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             from = results.first;
             _fromStation = from;
           } else {
-            throw "Start not found";
+            throw l10n.startNotFound;
           }
         } catch (e) {
           if (mounted) {
@@ -1375,7 +1507,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (results.isNotEmpty) {
             _toStation = results.first;
           } else {
-            throw "Destination not found";
+            throw l10n.destinationNotFound;
           }
         } catch (e) {
           if (mounted) {
@@ -1433,9 +1565,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       }
     } on TimeoutException catch (_) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.requestTimedOut)));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1622,7 +1755,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final bool canSearch =
-        (_fromStation != null || widget.currentPosition != null) &&
+        (_fromStation != null || _effectiveCurrentPosition != null) &&
             _toStation != null &&
             !_isLoadingRoute;
     final colors = TransColors.of(context);
@@ -1655,13 +1788,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: _tabs.length + 1,
                 itemBuilder: (ctx, idx) {
-                  if (idx == _tabs.length)
+                  if (idx == _tabs.length) {
                     return Padding(
                         padding: const EdgeInsets.only(bottom: 20),
                         child: IconButton(
                             icon: const Icon(Icons.add_circle_outline),
                             onPressed: () =>
                                 setState(() => _activeTabId = null)));
+                  }
                   return _buildTabItem(_tabs[idx], colors);
                 })),
 
@@ -1916,16 +2050,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               color: colors.textPrimary))
                     ]),
                     const SizedBox(height: 20),
-                    _buildTextField("From", _fromController, _fromFocusNode,
-                        _fromStation != null, 'from',
+                    _buildTextField(
+                        AppLocalizations.of(context)!.fromLabel,
+                        _fromController,
+                        _fromFocusNode,
+                        _fromStation != null,
+                        'from',
                         hint: (_fromStation == null &&
-                                widget.currentPosition != null)
-                            ? "Current Location"
-                            : "Station or Address..."),
+                                _effectiveCurrentPosition != null)
+                            ? AppLocalizations.of(context)!.currentLocation
+                            : AppLocalizations.of(context)!.stationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     const SizedBox(height: 12),
-                    _buildTextField("To", _toController, _toFocusNode,
-                        _toStation != null, 'to'),
+                    _buildTextField(AppLocalizations.of(context)!.toLabel,
+                        _toController, _toFocusNode, _toStation != null, 'to'),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -1952,7 +2090,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       color: colors.timeToggleBg,
                                       borderRadius: BorderRadius.circular(12)),
                                   child: Text(
-                                      _isArrival ? "Arrive by" : "Depart at",
+                                      _isArrival
+                                          ? AppLocalizations.of(context)!
+                                              .arriveBy
+                                          : AppLocalizations.of(context)!
+                                              .departAt,
                                       style: TextStyle(
                                           color: colors.timeToggleText,
                                           fontWeight: FontWeight.w600,
@@ -1979,8 +2121,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       final t = await showTimePicker(
                                           context: context,
                                           initialTime: _selectedTime!);
-                                      if (t != null)
+                                      if (t != null) {
                                         setState(() => _selectedTime = t);
+                                      }
                                     }
                                   },
                                   child: _selectedDate != null
@@ -2155,6 +2298,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 onTap: () {
                   setState(() {
                     _fromStation = from;
+                    _fromUsesCurrentLocation = false;
                     _fromController.text = from.name;
                     _toStation = to;
                     _toController.text = to.name;
@@ -2211,8 +2355,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Widget _buildSuggestionsList() {
-    if (!_isSuggestionsLoading && _suggestions.isEmpty)
+    if (!_isSuggestionsLoading && _suggestions.isEmpty) {
       return const SizedBox.shrink();
+    }
     final colors = TransColors.of(context);
     return GestureDetector(
       onTap: () {
@@ -2283,8 +2428,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         }
                         final station = item as Station;
                         IconData leadingIcon = Icons.place;
-                        if (station.type == 'address')
+                        if (station.type == 'address') {
                           leadingIcon = Icons.home_work;
+                        }
 
                         double? refLat;
                         double? refLng;
@@ -2294,9 +2440,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               _toStation!.longitude != null) {
                             refLat = _toStation!.latitude;
                             refLng = _toStation!.longitude;
-                          } else if (widget.currentPosition != null) {
-                            refLat = widget.currentPosition!.latitude;
-                            refLng = widget.currentPosition!.longitude;
+                          } else if (_effectiveCurrentPosition != null) {
+                            refLat = _effectiveCurrentPosition!.latitude;
+                            refLng = _effectiveCurrentPosition!.longitude;
                           }
                         } else if (_activeSearchField == 'to') {
                           if (_fromStation != null &&
@@ -2304,9 +2450,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               _fromStation!.longitude != null) {
                             refLat = _fromStation!.latitude;
                             refLng = _fromStation!.longitude;
-                          } else if (widget.currentPosition != null) {
-                            refLat = widget.currentPosition!.latitude;
-                            refLng = widget.currentPosition!.longitude;
+                          } else if (_effectiveCurrentPosition != null) {
+                            refLat = _effectiveCurrentPosition!.latitude;
+                            refLng = _effectiveCurrentPosition!.longitude;
                           }
                         }
 
@@ -2356,7 +2502,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildTextField(String label, TextEditingController controller,
       FocusNode focusNode, bool isSelected, String fieldKey,
-      {String hint = "Station..."}) {
+      {String hint = ""}) {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
 
@@ -2365,8 +2511,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (fieldKey == 'from' &&
         _fromStation == null &&
-        widget.currentPosition != null) {
-      effectiveHint = _currentAddress ?? "Current Location";
+        _effectiveCurrentPosition != null) {
+      effectiveHint =
+          _currentAddress ?? AppLocalizations.of(context)!.currentLocation;
       isLocationHint = true;
     }
 
@@ -2374,7 +2521,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       iconColor = Colors.greenAccent;
     } else if (fieldKey == 'from' &&
         ((_fromStation?.id == 'gps') ||
-            (isLocationHint && effectiveHint != "Station..."))) {
+            (isLocationHint &&
+                effectiveHint !=
+                    AppLocalizations.of(context)!.stationOrAddress))) {
       iconColor = Colors.blue;
     }
 
@@ -2396,12 +2545,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 isLocationHint &&
                 _currentAddress != null) {
               controller.text = _currentAddress!;
+              _fromUsesCurrentLocation = true;
               // Select all text so user can easily overwrite it
               controller.selection = TextSelection(
                   baseOffset: 0, extentOffset: controller.text.length);
               _onSearchChanged(_currentAddress!, fieldKey);
             } else if (fieldKey == 'from' &&
                 controller.text == _currentAddress) {
+              _fromUsesCurrentLocation = true;
               // If already populated with current address, select all on tap
               controller.selection = TextSelection(
                   baseOffset: 0, extentOffset: controller.text.length);
@@ -2414,10 +2565,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           decoration: InputDecoration(
               filled: true,
               fillColor: colors.searchInputFill,
-              prefixIcon: Icon(
-                  fieldKey == 'from' ? Icons.my_location : Icons.location_on,
-                  color: iconColor,
-                  size: 20),
+              prefixIcon: fieldKey == 'from'
+                  ? IconButton(
+                      tooltip: AppLocalizations.of(context)!.refreshLocation,
+                      onPressed: _isRefreshingLocation
+                          ? null
+                          : () => _refreshCurrentLocationManually(),
+                      icon: _isRefreshingLocation
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: iconColor,
+                              ),
+                            )
+                          : Icon(Icons.my_location, color: iconColor, size: 20),
+                    )
+                  : Icon(Icons.location_on, color: iconColor, size: 20),
               suffixIcon: (controller.text.isNotEmpty || isSelected)
                   ? IconButton(
                       icon: Icon(Icons.close,
@@ -2512,10 +2677,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       appendResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotLoadMoreRoutes(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -2531,7 +2697,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
 
-      final DateTime refDate = DateTime.now();
+      // Keep a small buffer in the past so recently due/late services are still refreshable.
+      DateTime refDate = DateTime.now().subtract(const Duration(minutes: 10));
+      if (route.candidates != null && route.candidates!.isNotEmpty) {
+        final firstCandidateTime = route.candidates!.first.plannedDeparture ??
+            route.candidates!.first.departure;
+        final candidateRef =
+            firstCandidateTime.subtract(const Duration(minutes: 3));
+        if (candidateRef.isBefore(refDate)) {
+          refDate = candidateRef;
+        }
+      }
 
       void handleResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty || !mounted) return;
@@ -2546,7 +2722,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _isLoadingRoute = false;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
-            _tabs[idx] = route.copyWith(candidates: newJourneys);
+            final currentRoute = _tabs[idx];
+            _tabs[idx] = currentRoute.copyWith(candidates: newJourneys);
           }
         });
       }
@@ -2563,13 +2740,76 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       handleResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotRefreshRoutes(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
+  }
+
+  JourneyStep? _findRealtimeMatchForStep(
+      JourneyStep step, List<JourneyStep> freshRideSteps) {
+    JourneyStep? match;
+
+    if (step.tripId != null && step.tripId!.isNotEmpty) {
+      match = freshRideSteps.cast<JourneyStep?>().firstWhere(
+          (candidate) => candidate!.tripId == step.tripId,
+          orElse: () => null);
+    }
+
+    match ??= freshRideSteps.cast<JourneyStep?>().firstWhere(
+        (candidate) =>
+            candidate!.plannedDeparture == step.plannedDeparture &&
+            candidate.plannedArrival == step.plannedArrival,
+        orElse: () => null);
+
+    match ??= freshRideSteps.cast<JourneyStep?>().firstWhere(
+        (candidate) =>
+            candidate!.line.trim().toLowerCase() ==
+                step.line.trim().toLowerCase() &&
+            candidate.startStationName == step.startStationName &&
+            candidate.destinationName == step.destinationName,
+        orElse: () => null);
+
+    return match;
+  }
+
+  Journey _mergeRealtimeIntoJourney(Journey existing, Journey fresh) {
+    final freshRideSteps =
+        fresh.steps.where((step) => step.type == 'ride').toList();
+
+    final mergedSteps = existing.steps.map((step) {
+      if (step.type != 'ride') return step;
+
+      final match = _findRealtimeMatchForStep(step, freshRideSteps);
+      if (match == null) return step;
+
+      return step.copyWith(
+        departureTime: match.departureTime,
+        arrivalTime: match.arrivalTime,
+        dateTime: match.dateTime,
+        platform: match.platform ?? step.platform,
+        arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
+        departureDelay: match.departureDelay,
+        arrivalDelay: match.arrivalDelay,
+        isCancelled: match.isCancelled,
+        plannedDeparture: match.plannedDeparture ?? step.plannedDeparture,
+        plannedArrival: match.plannedArrival ?? step.plannedArrival,
+      );
+    }).toList();
+
+    return existing.copyWith(
+      steps: mergedSteps,
+      departure: fresh.departure,
+      arrival: fresh.arrival,
+      duration: fresh.duration,
+      plannedDeparture: fresh.plannedDeparture ?? existing.plannedDeparture,
+      plannedArrival: fresh.plannedArrival ?? existing.plannedArrival,
+      rawSource: fresh.rawSource,
+    );
   }
 
   Future<void> _refreshActiveJourney(RouteTab route) async {
@@ -2587,6 +2827,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       void handleResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty || !mounted) return;
+        final idx = _tabs.indexWhere((t) => t.id == route.id);
+        if (idx == -1) return;
+        final currentRoute = _tabs[idx];
+        if (currentRoute.activeJourney == null) return;
+
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -2598,9 +2843,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         Journey? matched;
 
         // 1. Try Trip ID match of first ride
-        final oldFirstRide = route.activeJourney!.steps.firstWhere(
+        final oldFirstRide = currentRoute.activeJourney!.steps.firstWhere(
             (s) => s.type == 'ride',
-            orElse: () => route.activeJourney!.steps.first);
+            orElse: () => currentRoute.activeJourney!.steps.first);
         if (oldFirstRide.tripId != null) {
           matched = newJourneys.cast<Journey?>().firstWhere(
               (j) => j!.steps.any(
@@ -2611,31 +2856,64 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // 2. Try exact planned departure/arrival match
         matched ??= newJourneys.cast<Journey?>().firstWhere(
             (j) =>
-                j!.plannedDeparture == route.activeJourney!.plannedDeparture &&
-                j.plannedArrival == route.activeJourney!.plannedArrival,
+                j!.plannedDeparture ==
+                    currentRoute.activeJourney!.plannedDeparture &&
+                j.plannedArrival == currentRoute.activeJourney!.plannedArrival,
             orElse: () => null);
 
+        // 3. Fallback: closest departure time among same first ride line
+        if (matched == null && newJourneys.isNotEmpty) {
+          final oldJourney = currentRoute.activeJourney!;
+          final oldRide = oldJourney.steps.firstWhere((s) => s.type == 'ride',
+              orElse: () => oldJourney.steps.first);
+          final oldLine = oldRide.line.trim().toLowerCase();
+
+          final withSameLine = newJourneys.where((j) {
+            final firstRide = j.steps.firstWhere((s) => s.type == 'ride',
+                orElse: () => j.steps.first);
+            return oldLine.isNotEmpty &&
+                firstRide.line.trim().toLowerCase() == oldLine;
+          }).toList();
+
+          final pool = withSameLine.isNotEmpty ? withSameLine : newJourneys;
+          pool.sort((a, b) {
+            final da = (a.plannedDeparture ?? a.departure)
+                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
+                .inSeconds
+                .abs();
+            final db = (b.plannedDeparture ?? b.departure)
+                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
+                .inSeconds
+                .abs();
+            return da.compareTo(db);
+          });
+          matched = pool.first;
+        }
+
         if (matched != null) {
-          final upd = matched;
+          final upd =
+              _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
           setState(() {
             _isLoadingRoute = false;
-            final idx = _tabs.indexWhere((t) => t.id == route.id);
-            if (idx != -1) {
-              final newStack = List<Journey>.from(route.stack);
+            final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
+            if (freshIdx != -1) {
+              final latest = _tabs[freshIdx];
+              final newStack = List<Journey>.from(latest.stack);
               final stackIdx = newStack.indexWhere((j) =>
-                  j.plannedDeparture == upd.plannedDeparture &&
-                  j.plannedArrival == upd.plannedArrival);
+                  j.plannedDeparture ==
+                      currentRoute.activeJourney!.plannedDeparture &&
+                  j.plannedArrival ==
+                      currentRoute.activeJourney!.plannedArrival);
               if (stackIdx != -1) {
                 newStack[stackIdx] = upd;
               }
 
-              _tabs[idx] = route.copyWith(
-                activeJourney: upd,
-                steps: upd.steps,
-                stack: newStack,
-                totalDuration:
-                    FormatUtils.formatDuration(upd.duration.inMinutes),
-              );
+              _tabs[freshIdx] = latest.copyWith(
+                  activeJourney: upd,
+                  steps: upd.steps,
+                  stack: newStack,
+                  totalDuration:
+                      FormatUtils.formatDuration(upd.duration.inMinutes));
             }
           });
         }
@@ -2645,18 +2923,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         originStation,
         route.destination,
         nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate.subtract(const Duration(minutes: 5)), // Small buffer
+        when: refDate.subtract(const Duration(minutes: 20)),
         isArrival: false,
-        results: 10,
+        results: 20,
         onPartialResults: handleResults,
       );
 
       handleResults(newResults);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
                 AppLocalizations.of(context)!.refreshFailed(e.toString()))));
+      }
     } finally {
       if (mounted) setState(() => _isLoadingRoute = false);
     }
@@ -2713,9 +2992,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             onPressed: () => setState(() {
                                   final idx =
                                       _tabs.indexWhere((t) => t.id == route.id);
-                                  if (idx != -1)
+                                  if (idx != -1) {
                                     _tabs[idx] = route.copyWith(
                                         clearActiveJourney: true);
+                                  }
                                 })),
                       if (route.candidates != null &&
                           route.candidates!.length > 1)
@@ -2927,7 +3207,8 @@ class _StepCardState extends State<_StepCard> {
                       head.isNotEmpty &&
                       (head.toLowerCase().contains(dest.toLowerCase()) ||
                           dest.toLowerCase().contains(head.toLowerCase()));
-                  final displayDest = isEnd ? "End of Line" : dest;
+                  final displayDest =
+                      isEnd ? AppLocalizations.of(context)!.endOfLine : dest;
 
                   // Title: Bus Number -> Destination (Expanded) + Arrow (Right)
                   return Row(
@@ -3014,14 +3295,19 @@ class _StepCardState extends State<_StepCard> {
                               child: SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: Row(children: [
-                                    _buildActionChip(context,
-                                        Icons.chat_bubble_outline, "Chat",
+                                    _buildActionChip(
+                                        context,
+                                        Icons.chat_bubble_outline,
+                                        AppLocalizations.of(context)!.chat,
                                         onTap: () => widget.onChat(step.line)),
                                     const SizedBox(width: 8),
                                     if (step.startStationId != null &&
                                         step.dateTime != null) ...[
                                       _buildActionChip(
-                                          context, Icons.alt_route, "Alt",
+                                          context,
+                                          Icons.alt_route,
+                                          AppLocalizations.of(context)!
+                                              .altShort,
                                           onTap: () =>
                                               widget.onOpenAlternatives(
                                                   step.startStationId!,
@@ -3034,8 +3320,10 @@ class _StepCardState extends State<_StepCard> {
                                         context,
                                         Icons.vibration,
                                         step.isWakeAlarmOn
-                                            ? "Alarm ON"
-                                            : "Wake Me",
+                                            ? AppLocalizations.of(context)!
+                                                .alarmOn
+                                            : AppLocalizations.of(context)!
+                                                .wakeMe,
                                         isActive: step.isWakeAlarmOn,
                                         onTap: widget.onAlarmToggle)
                                   ]))),
@@ -3184,9 +3472,10 @@ class _StepCardState extends State<_StepCard> {
                                       ]));
                             }))
                   else
-                    const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text("No intermediate stops info.")),
+                    Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                            AppLocalizations.of(context)!.noIntermediateStops)),
                   // Always show the link to the final destination as the last item
                   Container(
                       decoration: BoxDecoration(color: colors.stepStopoversBg),
@@ -3300,7 +3589,10 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(isNew ? "Add Favorite" : "Edit Favorite",
+              Text(
+                  isNew
+                      ? AppLocalizations.of(context)!.addFavorite
+                      : AppLocalizations.of(context)!.editFavorite,
                   style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -3308,28 +3600,31 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
               const SizedBox(height: 20),
               TextField(
                   controller: _labelCtrl,
-                  decoration: const InputDecoration(
-                      labelText: "Label (e.g. Home, Bestie)")),
+                  decoration: InputDecoration(
+                      labelText:
+                          AppLocalizations.of(context)!.favoriteLabelHint)),
               const SizedBox(height: 10),
               Row(children: [
-                // ignore: deprecated_member_use
                 Expanded(
-                    child: RadioListTile<String>(
-                        title: Text(AppLocalizations.of(context)!.station),
-                        value: 'station',
-                        groupValue: _currentType,
-                        contentPadding: EdgeInsets.zero,
-                        onChanged: (val) =>
-                            setState(() => _currentType = val!))),
-                // ignore: deprecated_member_use
+                    child: RadioGroup<String>(
+                  groupValue: _currentType,
+                  onChanged: (val) =>
+                      setState(() => _currentType = val ?? _currentType),
+                  child: RadioListTile<String>(
+                      title: Text(AppLocalizations.of(context)!.station),
+                      value: 'station',
+                      contentPadding: EdgeInsets.zero),
+                )),
                 Expanded(
-                    child: RadioListTile<String>(
-                        title: Text(AppLocalizations.of(context)!.friend),
-                        value: 'friend',
-                        groupValue: _currentType,
-                        contentPadding: EdgeInsets.zero,
-                        onChanged: (val) =>
-                            setState(() => _currentType = val!))),
+                    child: RadioGroup<String>(
+                  groupValue: _currentType,
+                  onChanged: (val) =>
+                      setState(() => _currentType = val ?? _currentType),
+                  child: RadioListTile<String>(
+                      title: Text(AppLocalizations.of(context)!.friend),
+                      value: 'friend',
+                      contentPadding: EdgeInsets.zero),
+                )),
               ]),
               const SizedBox(height: 10),
               SingleChildScrollView(
@@ -3372,7 +3667,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                   TextField(
                     controller: _searchCtrl,
                     decoration: InputDecoration(
-                        labelText: "Search Station Name",
+                        labelText:
+                            AppLocalizations.of(context)!.searchStationName,
                         prefixIcon: const Icon(Icons.search),
                         suffix: SizedBox(
                             width: 16,
@@ -3394,11 +3690,12 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                         try {
                           final res = await TransportApi.searchStations(val)
                               .timeout(const Duration(seconds: 10));
-                          if (mounted)
+                          if (mounted) {
                             setState(() {
                               _suggestions = res;
                               _isLoading = false;
                             });
+                          }
                         } catch (e) {
                           if (mounted) setState(() => _isLoading = false);
                         }
@@ -3424,8 +3721,9 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     setState(() {
                                       _selectedStation = s;
                                       _suggestions = [];
-                                      if (_labelCtrl.text.isEmpty)
+                                      if (_labelCtrl.text.isEmpty) {
                                         _labelCtrl.text = s.name;
+                                      }
                                     });
                                   });
                             }))
@@ -3433,8 +3731,9 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
               ],
               if (_currentType == 'friend') ...[
                 TextField(
-                    decoration: const InputDecoration(
-                        labelText: "Search Friend Username"),
+                    decoration: InputDecoration(
+                        labelText:
+                            AppLocalizations.of(context)!.searchFriendUsername),
                     onSubmitted: (val) async {
                       final res = await SupabaseService.searchUsers(val);
                       if (res.isNotEmpty && mounted) {
@@ -3468,7 +3767,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                 const SizedBox(width: 8),
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
-                    child: const Text("Cancel")),
+                    child: Text(AppLocalizations.of(context)!.cancel)),
                 ElevatedButton(
                     onPressed: () async {
                       if (_labelCtrl.text.isNotEmpty) {
@@ -3589,11 +3888,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         processResults(results);
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _isLoading = false;
         });
+      }
     }
   }
 
@@ -3636,12 +3936,13 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
 
       processResults(results);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _isLoading = false;
           _isMoreLoading = false;
         });
+      }
     }
   }
 
@@ -3718,7 +4019,9 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                               .errorPrefix(_error ?? ""),
                           textAlign: TextAlign.center))))
         else if (_results.isEmpty)
-          const Expanded(child: Center(child: Text("No routes found.")))
+          Expanded(
+              child: Center(
+                  child: Text(AppLocalizations.of(context)!.noRoutesFound)))
         else
           Expanded(
             child: ListView.builder(
@@ -3800,11 +4103,13 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                   ),
                   subtitle: Text.rich(TextSpan(children: [
                     TextSpan(
-                        text: "Departs ${DateFormat('HH:mm').format(depTime)}",
+                        text: AppLocalizations.of(context)!
+                            .departsAt(DateFormat('HH:mm').format(depTime)),
                         style: TextStyle(color: colors.textSecondary)),
                     if (delayMin > 0)
                       TextSpan(
-                          text: " (+$delayMin late)",
+                          text:
+                              " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
                           style: const TextStyle(
                               color: Colors.orange,
                               fontWeight: FontWeight.bold)),

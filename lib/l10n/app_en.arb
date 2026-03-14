@@ -174,6 +174,13 @@
   "planJourney": "Plan Journey",
   "tripTime": "Trip Time",
   "now": "Now",
+  "currentLocation": "Current Location",
+  "stationOrAddress": "Station or Address...",
+  "fromLabel": "From",
+  "toLabel": "To",
+  "arriveBy": "Arrive by",
+  "departAt": "Depart at",
+  "refreshLocation": "Refresh location",
   "findRoutes": "Find Routes",
   "favorites": "Favorites",
   "add": "Add",
@@ -283,6 +290,7 @@
   "transfer": "TRANSFER",
   "noMessagesYet": "No messages yet.",
   "cropTicket": "Crop Ticket",
+  "applyCrop": "Apply Crop",
   "secureChat": "Secure Chat: {friendName}",
   "@secureChat": {
     "placeholders": {
@@ -293,10 +301,18 @@
   },
   "noSecureMessagesYet": "No secure messages yet.",
   "useImage": "Use Image",
+  "saySomething": "Say something...",
+  "qrCodeDetected": "QR Code Detected",
+  "confirmTicket": "Confirm Ticket",
+  "detectedQrUseCrop": "We detected a QR code. Use this crop?",
+  "noQrUseImage": "No QR code detected. Use this image?",
+  "editCrop": "Edit Crop",
+  "cropEdit": "Crop / Edit",
   "renameTicket": "Rename Ticket",
   "ticketHistory": "Ticket History",
   "noHistoryFound": "No history found.",
   "rename": "Rename",
+  "enterLabel": "Enter label",
   "errorLoadingTicket": "Error loading ticket",
   "changeTicket": "Change Ticket",
   "addTicket": "Add Ticket",
@@ -305,6 +321,104 @@
   "clearHistory": "Clear History",
   "confirmClearHistory": "Are you sure you want to delete your recent search history?",
   "searchHistoryCleared": "Search history cleared.",
+  "myTicket": "My Ticket",
+  "generatingStyledQr": "Generating styled QR...",
+  "styledFromOriginalTicketQrPattern": "Styled from original ticket QR pattern",
+  "tapForFullscreen": "Tap for fullscreen",
+  "tapForFullscreenHoldForHistory": "Tap for fullscreen • Hold for history",
+  "showOriginalTicket": "Show Original Ticket",
+  "showStyledQr": "Show Styled QR",
+  "savedLocallyCloudUploadFailed": "Saved locally. Cloud upload failed.",
+  "couldNotIsolateQrBounds": "Could not isolate QR bounds. Styling the full image instead.",
+  "couldNotRecolorQrCode": "Could not recolor this QR code image.",
+  "transitBoardingPass": "TRANSIT BOARDING PASS",
+  "endOfLine": "End of Line",
+  "wakeAlarmTitle": "Trans Wake Alarm",
+  "wakeAlarmTracking": "Tracking your journey...",
+  "alternative": "Alternative",
+  "routeLabel": "Route",
+  "destinationLabel": "Destination",
+  "details": "Details",
+  "startNotFound": "Start not found",
+  "destinationNotFound": "Destination not found",
+  "departsAt": "Departs {time}",
+  "@departsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lateByMinutes": "(+{minutes} late)",
+  "@lateByMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "switchPlatform": "Switch from {fromPlatform} to {toPlatform}",
+  "@switchPlatform": {
+    "placeholders": {
+      "fromPlatform": {
+        "type": "String"
+      },
+      "toPlatform": {
+        "type": "String"
+      }
+    }
+  },
+  "waitAt": "Wait at {place}",
+  "@waitAt": {
+    "placeholders": {
+      "place": {
+        "type": "String"
+      }
+    }
+  },
+  "transferTo": "Transfer to {destination}",
+  "@transferTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "waitForConnection": "Wait for connection",
+  "walkTo": "Walk to {destination}",
+  "@walkTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "walkToDestination": "Walk to destination",
+  "walkLabel": "Walk",
+  "atPlatform": "at {platform}",
+  "@atPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "toPlatform": "to {platform}",
+  "@toPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "addFavorite": "Add Favorite",
+  "editFavorite": "Edit Favorite",
+  "favoriteLabelHint": "Label (e.g. Home, Bestie)",
+  "searchStationName": "Search Station Name",
+  "searchFriendUsername": "Search Friend Username",
+  "alarmOn": "Alarm ON",
+  "wakeMe": "Wake Me",
+  "altShort": "Alt",
   "blockedUsers": "Blocked Users",
   "noBlockedUsers": "No blocked users",
   "unblockedUser": "Unblocked {username}",
@@ -327,6 +441,8 @@
   "darkMode": "Dark Mode",
   "syncedWithSystem": "Synced with System",
   "systemSyncActive": "System Sync Active. Long press to disable.",
+  "systemSyncEnabled": "System Sync Enabled",
+  "manualModeEnabled": "Manual Mode Enabled",
   "deutschlandTicketMode": "Deutschlandticket Mode",
   "onlyLocalTransport": "Only local/regional transport",
   "appearance": "Appearance",
@@ -335,6 +451,19 @@
   "displayTripIds": "Display trip IDs (e.g. RE1 (12345))",
   "notificationsAndHaptics": "Notifications & Haptics",
   "alarmTrigger": "Alarm Trigger",
+  "alertAtDestination": "Alert at destination",
+  "alertStopsBefore": "Alert {count} stops before",
+  "@alertStopsBefore": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "atDest": "At Dest",
+  "oneStop": "1 Stop",
+  "twoStops": "2 Stops",
+  "threeStops": "3 Stops",
   "triggerThreshold": "Trigger Threshold",
   "notifyAtThreshold": "Notify at {threshold} {remaining}",
   "@notifyAtThreshold": {
@@ -348,6 +477,11 @@
     }
   },
   "alarmPattern": "Alarm Pattern",
+  "ofLegCovered": "of leg covered",
+  "fromTarget": "from target",
+  "fivePercentRemaining": "5% Remaining",
+  "tenPercentRemaining": "10% Remaining",
+  "fixed500m": "Fixed 500m",
   "vibrationIntensity": "Vibration Intensity",
   "alwaysWakeMe": "Always Wake Me",
   "turnOnAlarmDefault": "Turn on alarm for every journey by default",
@@ -355,15 +489,42 @@
   "clearSearchHistory": "Clear Search History",
   "dataSourceAdvanced": "Data Source (Advanced)",
   "transportApi": "Transport API",
+  "selectedApiMode": "Selected: {mode}",
+  "@selectedApiMode": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "autoRecommended": "Auto (Recommended)",
+  "transitousOpenSource": "Transitous (Open Source)",
+  "deutscheBahnLegacy": "Deutsche Bahn (Legacy)",
+  "autoModeShort": "Auto",
+  "dbV6": "DB (v6)",
   "profileSettings": "Profile",
   "noUsername": "No Username",
   "username": "Username",
   "emailSettings": "Email",
-  "newPasswordOpt": "New Password (Optional)",
+  "newPasswordOpt": "New Password",
   "profileUpdated": "Profile updated! Check email for confirmation if changed.",
+  "incorrectPasswordOrRpcMissing": "Incorrect password or error (RPC missing?)",
+  "changeUsername": "Change Username",
+  "changeEmail": "Change Email",
+  "changePassword": "Change Password",
+  "emailChangeHint": "Changing your email will send a confirmation link before the address updates.",
+  "passwordChangeHint": "Choose a new password for your account.",
+  "confirmPassword": "Confirm Password",
+  "passwordsDoNotMatch": "Passwords do not match.",
+  "enterValidEmail": "Enter a valid email address.",
+  "fillRequiredFields": "Fill in the required fields.",
+  "usernameUpdated": "Username updated.",
+  "emailUpdateSent": "Check your email to confirm the address change.",
+  "passwordUpdated": "Password updated.",
+  "update": "Update",
   "logOut": "Log Out",
   "loginSignUp": "Login / Sign Up",
-  "usernameSignUp": "Username (Sign Up)",
+  "usernameSignUp": "Username",
   "password": "Password",
   "forgotPassword": "Forgot Password?",
   "login": "Login",

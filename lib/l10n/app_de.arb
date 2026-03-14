@@ -27,7 +27,7 @@
   "requests": "Anfragen",
   "offline": "Offline",
   "noFriendsYet": "Noch keine Freunde.",
-  "sentFriendRequest": "Hat eine Freundschaftsanfrage gesendet",
+  "sentFriendRequest": "Freundschaftsanfrage gesendet",
   "friendRequestAccepted": "Freundschaftsanfrage akzeptiert!",
   "friendRequestDenied": "Freundschaftsanfrage abgelehnt.",
   "inactive": "Inaktiv",
@@ -62,7 +62,7 @@
   "locationPermissionPermanentlyDenied": "Standortberechtigung dauerhaft verweigert.",
   "missingDestCoords": "Alarm kann nicht gestartet werden: Zielkoordinaten fehlen.",
   "wakeUpApproaching": "Aufwachen! Sie nähern sich {stop}!",
-  "serviceBusyTryAgain": "Dienst vorübergehend ausgelastet. Versuchen Sie es erneut.",
+  "serviceBusyTryAgain": "Dienst vorübergehend ausgelastet. Versuchen Sie es erneut oder geben Sie mehr Zeichen ein.",
   "serviceBusyPleaseTryAgain": "Dienst vorübergehend ausgelastet. Bitte versuchen Sie es erneut.",
   "locationNotAvailable": "Standort nicht verfügbar.",
   "noRoutesFound": "Keine Routen gefunden.",
@@ -73,6 +73,13 @@
   "planJourney": "Reise planen",
   "tripTime": "Reisezeit",
   "now": "Jetzt",
+  "currentLocation": "Aktueller Standort",
+  "stationOrAddress": "Station oder Adresse...",
+  "fromLabel": "Von",
+  "toLabel": "Nach",
+  "arriveBy": "Ankunft bis",
+  "departAt": "Abfahrt um",
+  "refreshLocation": "Standort aktualisieren",
   "findRoutes": "Routen finden",
   "favorites": "Favoriten",
   "add": "Hinzufügen",
@@ -95,21 +102,30 @@
   "alternatives": "Alternativen",
   "errorPrefix": "Fehler: {error}",
   "toDirection": "{line} nach {dir}",
-  "previous": "Bisherige",
+  "previous": "Frühere",
   "dep": "ABF",
   "arr": "ANK",
-  "passenger": "PASSAGIER",
+  "passenger": "FAHRGAST",
   "walk": "GEHEN",
   "transfer": "UMSTIEG",
   "noMessagesYet": "Noch keine Nachrichten.",
   "cropTicket": "Ticket zuschneiden",
+  "applyCrop": "Zuschnitt übernehmen",
   "secureChat": "Sicherer Chat: {friendName}",
   "noSecureMessagesYet": "Keine sicheren Nachrichten bisher.",
   "useImage": "Bild verwenden",
+  "saySomething": "Nachricht schreiben...",
+  "qrCodeDetected": "QR-Code erkannt",
+  "confirmTicket": "Ticket bestätigen",
+  "detectedQrUseCrop": "Wir haben einen QR-Code erkannt. Diesen Zuschnitt verwenden?",
+  "noQrUseImage": "Kein QR-Code erkannt. Dieses Bild verwenden?",
+  "editCrop": "Zuschnitt bearbeiten",
+  "cropEdit": "Zuschneiden / Bearbeiten",
   "renameTicket": "Ticket umbenennen",
   "ticketHistory": "Ticket-Verlauf",
   "noHistoryFound": "Kein Verlauf gefunden.",
   "rename": "Umbenennen",
+  "enterLabel": "Bezeichnung eingeben",
   "errorLoadingTicket": "Fehler beim Laden des Tickets",
   "changeTicket": "Ticket ändern",
   "addTicket": "Ticket hinzufügen",
@@ -118,6 +134,104 @@
   "clearHistory": "Verlauf löschen",
   "confirmClearHistory": "Sind Sie sicher, dass Sie Ihren Suchverlauf löschen möchten?",
   "searchHistoryCleared": "Suchverlauf gelöscht.",
+  "myTicket": "Mein Ticket",
+  "generatingStyledQr": "Stilisierter QR-Code wird erstellt...",
+  "styledFromOriginalTicketQrPattern": "Aus dem QR-Muster des Originaltickets erstellt",
+  "tapForFullscreen": "Tippen für Vollbild",
+  "tapForFullscreenHoldForHistory": "Tippen für Vollbild • Halten für Verlauf",
+  "showOriginalTicket": "Originalticket anzeigen",
+  "showStyledQr": "Stilisierten QR-Code anzeigen",
+  "savedLocallyCloudUploadFailed": "Lokal gespeichert. Cloud-Upload fehlgeschlagen.",
+  "couldNotIsolateQrBounds": "QR-Bereich konnte nicht sauber erkannt werden. Stattdessen wird das ganze Bild stilisiert.",
+  "couldNotRecolorQrCode": "Dieses QR-Code-Bild konnte nicht umgefärbt werden.",
+  "transitBoardingPass": "FAHRKARTE",
+  "endOfLine": "Endstation",
+  "wakeAlarmTitle": "Trans-Weckalarm",
+  "wakeAlarmTracking": "Ihre Reise wird verfolgt...",
+  "alternative": "Alternative",
+  "routeLabel": "Route",
+  "destinationLabel": "Ziel",
+  "details": "Details",
+  "startNotFound": "Start nicht gefunden",
+  "destinationNotFound": "Ziel nicht gefunden",
+  "departsAt": "Abfahrt {time}",
+  "@departsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lateByMinutes": "(+{minutes} Min. verspätet)",
+  "@lateByMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      }
+    }
+  },
+  "switchPlatform": "Wechsel von {fromPlatform} zu {toPlatform}",
+  "@switchPlatform": {
+    "placeholders": {
+      "fromPlatform": {
+        "type": "String"
+      },
+      "toPlatform": {
+        "type": "String"
+      }
+    }
+  },
+  "waitAt": "Warten bei {place}",
+  "@waitAt": {
+    "placeholders": {
+      "place": {
+        "type": "String"
+      }
+    }
+  },
+  "transferTo": "Umsteigen nach {destination}",
+  "@transferTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "waitForConnection": "Auf Anschluss warten",
+  "walkTo": "Zu {destination} laufen",
+  "@walkTo": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "walkToDestination": "Zum Ziel laufen",
+  "walkLabel": "Laufen",
+  "atPlatform": "bei {platform}",
+  "@atPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "toPlatform": "zu {platform}",
+  "@toPlatform": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "addFavorite": "Favorit hinzufügen",
+  "editFavorite": "Favorit bearbeiten",
+  "favoriteLabelHint": "Bezeichnung (z. B. Zuhause, Bestie)",
+  "searchStationName": "Stationsnamen suchen",
+  "searchFriendUsername": "Freundes-Benutzernamen suchen",
+  "alarmOn": "Alarm an",
+  "wakeMe": "Weck mich",
+  "altShort": "Alt",
   "blockedUsers": "Blockierte Nutzer",
   "noBlockedUsers": "Keine blockierten Nutzer",
   "unblockedUser": "{username} entsperrt",
@@ -133,6 +247,8 @@
   "darkMode": "Dunkelmodus",
   "syncedWithSystem": "Mit System synchronisiert",
   "systemSyncActive": "System-Sync aktiv. Gedrückt halten zum Deaktivieren.",
+  "systemSyncEnabled": "System-Sync aktiviert",
+  "manualModeEnabled": "Manueller Modus aktiviert",
   "deutschlandTicketMode": "Deutschlandticket-Modus",
   "onlyLocalTransport": "Nur Nahverkehr",
   "appearance": "Erscheinungsbild",
@@ -141,9 +257,27 @@
   "displayTripIds": "Fahrt-IDs anzeigen (z.B. RE1 (12345))",
   "notificationsAndHaptics": "Benachrichtigungen & Haptik",
   "alarmTrigger": "Alarm-Auslöser",
+  "alertAtDestination": "Alarm am Ziel",
+  "alertStopsBefore": "Alarm {count} Haltestellen vorher",
+  "@alertStopsBefore": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "atDest": "Am Ziel",
+  "oneStop": "1 Halt",
+  "twoStops": "2 Halte",
+  "threeStops": "3 Halte",
   "triggerThreshold": "Auslöseschwelle",
   "notifyAtThreshold": "Benachrichtigung bei {threshold} {remaining}",
   "alarmPattern": "Alarm-Muster",
+  "ofLegCovered": "der Strecke geschafft",
+  "fromTarget": "bis zum Ziel",
+  "fivePercentRemaining": "5 % verbleibend",
+  "tenPercentRemaining": "10 % verbleibend",
+  "fixed500m": "Feste 500 m",
   "vibrationIntensity": "Vibrationsintensität",
   "alwaysWakeMe": "Immer wecken",
   "turnOnAlarmDefault": "Alarm immer standardmäßig aktivieren",
@@ -151,15 +285,42 @@
   "clearSearchHistory": "Suchverlauf leeren",
   "dataSourceAdvanced": "Datenquelle (Erweitert)",
   "transportApi": "Transport-API",
+  "selectedApiMode": "Ausgewählt: {mode}",
+  "@selectedApiMode": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "autoRecommended": "Auto (Empfohlen)",
+  "transitousOpenSource": "Transitous (Open Source)",
+  "deutscheBahnLegacy": "Deutsche Bahn (Legacy)",
+  "autoModeShort": "Auto",
+  "dbV6": "DB (v6)",
   "profileSettings": "Profil",
   "noUsername": "Kein Benutzername",
   "username": "Benutzername",
   "emailSettings": "E-Mail",
-  "newPasswordOpt": "Neues Passwort (Optional)",
+  "newPasswordOpt": "Neues Passwort",
   "profileUpdated": "Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).",
+  "incorrectPasswordOrRpcMissing": "Falsches Passwort oder Fehler (RPC fehlt?)",
+  "changeUsername": "Benutzernamen ändern",
+  "changeEmail": "E-Mail ändern",
+  "changePassword": "Passwort ändern",
+  "emailChangeHint": "Beim Ändern der E-Mail wird zuerst ein Bestätigungslink gesendet.",
+  "passwordChangeHint": "Wählen Sie ein neues Passwort für Ihr Konto.",
+  "confirmPassword": "Passwort bestätigen",
+  "passwordsDoNotMatch": "Die Passwörter stimmen nicht überein.",
+  "enterValidEmail": "Geben Sie eine gültige E-Mail-Adresse ein.",
+  "fillRequiredFields": "Bitte füllen Sie die erforderlichen Felder aus.",
+  "usernameUpdated": "Benutzername aktualisiert.",
+  "emailUpdateSent": "Bitte prüfen Sie Ihre E-Mails, um die Adressänderung zu bestätigen.",
+  "passwordUpdated": "Passwort aktualisiert.",
+  "update": "Aktualisieren",
   "logOut": "Abmelden",
   "loginSignUp": "Anmelden / Registrieren",
-  "usernameSignUp": "Benutzername (Registrierung)",
+  "usernameSignUp": "Benutzername",
   "password": "Passwort",
   "forgotPassword": "Passwort vergessen?",
   "login": "Anmelden",

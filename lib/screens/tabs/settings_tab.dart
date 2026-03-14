@@ -58,9 +58,8 @@ class _SettingsTabState extends State<SettingsTab> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
-  final _newPasswordCtrl = TextEditingController();
 
-  bool _isEditing = false;
+  bool _isLoginMode = true;
 
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _myLocation;
@@ -81,7 +80,6 @@ class _SettingsTabState extends State<SettingsTab> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
-    _newPasswordCtrl.dispose();
     super.dispose();
   }
 
@@ -398,9 +396,10 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (confirmed == true) {
       await SearchHistoryManager.clearHistory();
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Search history cleared.")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.searchHistoryCleared)));
+      }
     }
   }
 
@@ -414,8 +413,9 @@ class _SettingsTabState extends State<SettingsTab> {
       builder: (ctx) => FutureBuilder<List<Map<String, dynamic>>>(
         future: SupabaseService.getBlockedUsers(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting)
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
+          }
           final users = snapshot.data ?? [];
           return Container(
             padding: const EdgeInsets.all(20),
@@ -506,7 +506,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 obscureText: true,
                 style: TextStyle(color: TransColors.of(context).textPrimary),
                 decoration: InputDecoration(
-                  labelText: "Password",
+                  labelText: AppLocalizations.of(context)!.password,
                   errorText: errorMsg,
                   border: const OutlineInputBorder(),
                   labelStyle:
@@ -538,8 +538,8 @@ class _SettingsTabState extends State<SettingsTab> {
                         }
                       } catch (e) {
                         setState(() {
-                          errorMsg =
-                              "Incorrect password or error (RPC missing?)";
+                          errorMsg = AppLocalizations.of(context)!
+                              .incorrectPasswordOrRpcMissing;
                           isLoading = false;
                         });
                       }
@@ -557,6 +557,281 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       ),
     );
+  }
+
+  Future<void> _showUsernameDialog() async {
+    final colors = TransColors.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final ctrl =
+        TextEditingController(text: (_profile?['username'] ?? '').toString());
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: colors.cardBg,
+          title: Text(AppLocalizations.of(context)!.changeUsername,
+              style: TextStyle(color: colors.textPrimary)),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            style: TextStyle(color: colors.textPrimary),
+            decoration: InputDecoration(
+              labelText: AppLocalizations.of(context)!.username,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: Text(AppLocalizations.of(context)!.cancel),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final username = ctrl.text.trim();
+                      if (username.isEmpty) {
+                        _showMessage(l10n.fillRequiredFields);
+                        return;
+                      }
+
+                      setState(() => isSaving = true);
+                      try {
+                        await SupabaseService.updateUsername(username);
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        await _loadProfile();
+                        _showMessage(l10n.usernameUpdated);
+                      } catch (e) {
+                        if (!ctx.mounted) return;
+                        _showMessage("Error: $e");
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(AppLocalizations.of(context)!.save),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    ctrl.dispose();
+  }
+
+  Future<void> _showEmailDialog(String currentEmail) async {
+    final colors = TransColors.of(context);
+    final ctrl = TextEditingController(text: currentEmail);
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: colors.cardBg,
+          title: Text(AppLocalizations.of(context)!.changeEmail,
+              style: TextStyle(color: colors.textPrimary)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppLocalizations.of(context)!.emailChangeHint,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.done,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.emailSettings,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: Text(AppLocalizations.of(context)!.cancel),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final email = ctrl.text.trim();
+                      if (!_looksLikeEmail(email)) {
+                        _showMessage(
+                            AppLocalizations.of(context)!.enterValidEmail);
+                        return;
+                      }
+                      if (email == currentEmail) {
+                        Navigator.pop(ctx);
+                        return;
+                      }
+
+                      setState(() => isSaving = true);
+                      try {
+                        await SupabaseService.updateEmail(email);
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        _showMessage(
+                            AppLocalizations.of(context)!.emailUpdateSent);
+                      } catch (e) {
+                        if (!ctx.mounted) return;
+                        _showMessage("Error: $e");
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(AppLocalizations.of(context)!.save),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    ctrl.dispose();
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final colors = TransColors.of(context);
+    final newPasswordCtrl = TextEditingController();
+    final confirmPasswordCtrl = TextEditingController();
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: colors.cardBg,
+          title: Text(AppLocalizations.of(context)!.changePassword,
+              style: TextStyle(color: colors.textPrimary)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                AppLocalizations.of(context)!.passwordChangeHint,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: newPasswordCtrl,
+                autofocus: true,
+                obscureText: true,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.newPasswordOpt,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmPasswordCtrl,
+                obscureText: true,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.confirmPassword,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: Text(AppLocalizations.of(context)!.cancel),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final password = newPasswordCtrl.text.trim();
+                      final confirm = confirmPasswordCtrl.text.trim();
+                      if (password.isEmpty || confirm.isEmpty) {
+                        _showMessage(
+                            AppLocalizations.of(context)!.fillRequiredFields);
+                        return;
+                      }
+                      if (password != confirm) {
+                        _showMessage(
+                            AppLocalizations.of(context)!.passwordsDoNotMatch);
+                        return;
+                      }
+
+                      setState(() => isSaving = true);
+                      try {
+                        await SupabaseService.updatePassword(password);
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        _showMessage(
+                            AppLocalizations.of(context)!.passwordUpdated);
+                      } catch (e) {
+                        if (!ctx.mounted) return;
+                        _showMessage("Error: $e");
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(AppLocalizations.of(context)!.save),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    newPasswordCtrl.dispose();
+    confirmPasswordCtrl.dispose();
+  }
+
+  Future<void> _submitAuth() async {
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    final username = _usernameCtrl.text.trim();
+
+    if (!_looksLikeEmail(email) ||
+        password.isEmpty ||
+        (!_isLoginMode && username.isEmpty)) {
+      _showMessage(AppLocalizations.of(context)!.fillRequiredFields);
+      return;
+    }
+
+    try {
+      if (_isLoginMode) {
+        await SupabaseService.signIn(email, password);
+      } else {
+        await SupabaseService.signUp(email, password, username);
+      }
+      _passwordCtrl.clear();
+      await _loadProfile();
+      if (mounted) setState(() {});
+    } catch (e) {
+      _showMessage("$e");
+    }
+  }
+
+  bool _looksLikeEmail(String value) {
+    return value.contains('@') && value.contains('.');
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -656,8 +931,9 @@ class _SettingsTabState extends State<SettingsTab> {
                   value: widget.isGhostMode,
                   activeTrackColor: Colors.red,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return Colors.white;
+                    }
                     return null;
                   }),
                   onChanged: (val) {
@@ -682,8 +958,9 @@ class _SettingsTabState extends State<SettingsTab> {
               trailing: Switch(
                 value: widget.isDarkMode,
                 thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected))
+                  if (states.contains(WidgetState.selected)) {
                     return widget.useSystemTheme ? Colors.grey : primaryColor;
+                  }
                   return null;
                 }),
                 onChanged: widget.useSystemTheme
@@ -699,8 +976,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 widget.onSystemSyncChanged(newState);
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text(newState
-                        ? "System Sync Enabled 🔄"
-                        : "Manual Mode Enabled 🖐️")));
+                        ? AppLocalizations.of(context)!.systemSyncEnabled
+                        : AppLocalizations.of(context)!.manualModeEnabled)));
               },
             ),
             SwitchListTile(
@@ -711,8 +988,9 @@ class _SettingsTabState extends State<SettingsTab> {
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 value: widget.onlyNahverkehr,
                 thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected))
+                  if (states.contains(WidgetState.selected)) {
                     return primaryColor;
+                  }
                   return null;
                 }),
                 onChanged: widget.onNahverkehrChanged),
@@ -787,18 +1065,30 @@ class _SettingsTabState extends State<SettingsTab> {
                 title: Text(AppLocalizations.of(context)!.alarmTrigger,
                     style: TextStyle(color: colors.textPrimary)),
                 subtitle: Text(
-                    "Alert ${_stopsBeforeAlarm == 0 ? 'at destination' : '$_stopsBeforeAlarm stops before'}",
+                    _stopsBeforeAlarm == 0
+                        ? AppLocalizations.of(context)!.alertAtDestination
+                        : AppLocalizations.of(context)!
+                            .alertStopsBefore(_stopsBeforeAlarm.toString()),
                     style:
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 trailing: DropdownButton<int>(
                     value: _stopsBeforeAlarm,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text("At Dest")),
-                      DropdownMenuItem(value: 1, child: Text("1 Stop")),
-                      DropdownMenuItem(value: 2, child: Text("2 Stops")),
-                      DropdownMenuItem(value: 3, child: Text("3 Stops")),
+                    items: [
+                      DropdownMenuItem(
+                          value: 0,
+                          child: Text(AppLocalizations.of(context)!.atDest)),
+                      DropdownMenuItem(
+                          value: 1,
+                          child: Text(AppLocalizations.of(context)!.oneStop)),
+                      DropdownMenuItem(
+                          value: 2,
+                          child: Text(AppLocalizations.of(context)!.twoStops)),
+                      DropdownMenuItem(
+                          value: 3,
+                          child:
+                              Text(AppLocalizations.of(context)!.threeStops)),
                     ],
                     onChanged: (val) => _saveAlarmSettings(val!))),
             Divider(color: colors.divider),
@@ -809,21 +1099,26 @@ class _SettingsTabState extends State<SettingsTab> {
                     AppLocalizations.of(context)!.notifyAtThreshold(
                         _alarmTriggerThreshold,
                         (_alarmTriggerThreshold.contains('%'))
-                            ? 'of leg covered'
-                            : 'from target'),
+                            ? AppLocalizations.of(context)!.ofLegCovered
+                            : AppLocalizations.of(context)!.fromTarget),
                     style:
                         TextStyle(fontSize: 12, color: colors.textSecondary)),
                 trailing: DropdownButton<String>(
                     value: _alarmTriggerThreshold,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: const [
+                    items: [
                       DropdownMenuItem(
-                          value: '5%', child: Text("5% Remaining")),
+                          value: '5%',
+                          child: Text(AppLocalizations.of(context)!
+                              .fivePercentRemaining)),
                       DropdownMenuItem(
-                          value: '10%', child: Text("10% Remaining")),
+                          value: '10%',
+                          child: Text(AppLocalizations.of(context)!
+                              .tenPercentRemaining)),
                       DropdownMenuItem(
-                          value: '500m', child: Text("Fixed 500m")),
+                          value: '500m',
+                          child: Text(AppLocalizations.of(context)!.fixed500m)),
                     ],
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
@@ -933,16 +1228,26 @@ class _SettingsTabState extends State<SettingsTab> {
               title: Text(AppLocalizations.of(context)!.transportApi,
                   style: TextStyle(color: colors.textPrimary)),
               subtitle: Text(
-                  "Selected: ${_apiMode == 'auto' ? 'Auto (Recommended)' : _apiMode == 'motis' ? 'Transitous (Open Source)' : 'Deutsche Bahn (Legacy)'}",
+                  AppLocalizations.of(context)!.selectedApiMode(_apiMode ==
+                          'auto'
+                      ? AppLocalizations.of(context)!.autoRecommended
+                      : _apiMode == 'motis'
+                          ? AppLocalizations.of(context)!.transitousOpenSource
+                          : AppLocalizations.of(context)!.deutscheBahnLegacy),
                   style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               trailing: DropdownButton<String>(
                 value: _apiMode,
                 dropdownColor: colors.cardBg,
                 underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: 'auto', child: Text("Auto")),
-                  DropdownMenuItem(value: 'motis', child: Text("Transitous")),
-                  DropdownMenuItem(value: 'v6', child: Text("DB (v6)")),
+                items: [
+                  DropdownMenuItem(
+                      value: 'auto',
+                      child: Text(AppLocalizations.of(context)!.autoModeShort)),
+                  const DropdownMenuItem(
+                      value: 'motis', child: Text("Transitous")),
+                  DropdownMenuItem(
+                      value: 'v6',
+                      child: Text(AppLocalizations.of(context)!.dbV6)),
                 ],
                 onChanged: (val) => _saveApiMode(val!),
               ),
@@ -1019,78 +1324,52 @@ class _SettingsTabState extends State<SettingsTab> {
               borderRadius: BorderRadius.circular(16)),
           child: Column(
             children: [
-              if (!_isEditing) ...[
-                ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(
-                        _profile?['username'] ??
-                            AppLocalizations.of(context)!.noUsername,
-                        style:
-                            TextStyle(fontSize: 18, color: colors.textPrimary)),
-                    subtitle: Text(user.email ?? "",
-                        style: TextStyle(color: colors.textSecondary)),
-                    trailing: IconButton(
-                        icon: const Icon(Icons.edit),
-                        onPressed: () {
-                          _usernameCtrl.text = _profile?['username'] ?? "";
-                          _emailCtrl.text = user.email ?? "";
-                          setState(() => _isEditing = true);
-                        })),
-              ] else ...[
-                TextField(
-                    controller: _usernameCtrl,
-                    decoration: InputDecoration(
-                        labelText: AppLocalizations.of(context)!.username)),
-                TextField(
-                    controller: _emailCtrl,
-                    decoration: InputDecoration(
-                        labelText: AppLocalizations.of(context)!
-                            .emailSettings)), // Added Email Field
-                TextField(
-                    controller: _newPasswordCtrl,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context)!.newPasswordOpt),
-                    obscureText: true),
-                const SizedBox(height: 10),
-                Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      TextButton(
-                          onPressed: () => setState(() => _isEditing = false),
-                          child: Text(AppLocalizations.of(context)!.cancel)),
-                      ElevatedButton(
-                          onPressed: () async {
-                            try {
-                              if (_usernameCtrl.text.isNotEmpty)
-                                await SupabaseService.updateUsername(
-                                    _usernameCtrl.text);
-                              if (_emailCtrl.text.isNotEmpty &&
-                                  _emailCtrl.text != user.email)
-                                await SupabaseService.updateEmail(
-                                    _emailCtrl.text);
-                              if (_newPasswordCtrl.text.isNotEmpty)
-                                await SupabaseService.updatePassword(
-                                    _newPasswordCtrl.text);
-                              setState(() => _isEditing = false);
-                              _loadProfile();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(
-                                            AppLocalizations.of(context)!
-                                                .profileUpdated)));
-                              }
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text("Error: $e")));
-                              }
-                            }
-                          },
-                          child: Text(AppLocalizations.of(context)!.save))
-                    ])
-              ],
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  _profile?['username'] ??
+                      AppLocalizations.of(context)!.noUsername,
+                  style: TextStyle(fontSize: 18, color: colors.textPrimary),
+                ),
+                subtitle: Text(user.email ?? "",
+                    style: TextStyle(color: colors.textSecondary)),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.person_outline),
+                title: Text(AppLocalizations.of(context)!.changeUsername,
+                    style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text(
+                  _profile?['username'] ??
+                      AppLocalizations.of(context)!.noUsername,
+                  style: TextStyle(color: colors.textSecondary),
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _showUsernameDialog,
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.alternate_email),
+                title: Text(AppLocalizations.of(context)!.changeEmail,
+                    style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text(user.email ?? "",
+                    style: TextStyle(color: colors.textSecondary)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => _showEmailDialog((user.email ?? '').toString()),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.lock_outline),
+                title: Text(AppLocalizations.of(context)!.changePassword,
+                    style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text(AppLocalizations.of(context)!.passwordChangeHint,
+                    style: TextStyle(color: colors.textSecondary)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: _showChangePasswordDialog,
+              ),
               Divider(color: colors.divider),
               ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1122,67 +1401,71 @@ class _SettingsTabState extends State<SettingsTab> {
       decoration: BoxDecoration(
           color: colors.authFormBg, borderRadius: BorderRadius.circular(16)),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(AppLocalizations.of(context)!.loginSignUp,
+          Text(
+              _isLoginMode
+                  ? AppLocalizations.of(context)!.login
+                  : AppLocalizations.of(context)!.signUp,
               style: TextStyle(
                   color: colors.textPrimary, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
+          SegmentedButton<bool>(
+            segments: [
+              ButtonSegment<bool>(
+                value: true,
+                label: Text(AppLocalizations.of(context)!.login),
+              ),
+              ButtonSegment<bool>(
+                value: false,
+                label: Text(AppLocalizations.of(context)!.signUp),
+              ),
+            ],
+            selected: {_isLoginMode},
+            onSelectionChanged: (selection) {
+              setState(() => _isLoginMode = selection.first);
+            },
+          ),
+          const SizedBox(height: 14),
           TextField(
               controller: _emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction:
+                  _isLoginMode ? TextInputAction.next : TextInputAction.next,
               decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.emailSettings)),
-          const SizedBox(height: 10),
-          TextField(
-              controller: _usernameCtrl,
-              decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.usernameSignUp)),
+          if (!_isLoginMode) ...[
+            const SizedBox(height: 10),
+            TextField(
+                controller: _usernameCtrl,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                    hintText: AppLocalizations.of(context)!.usernameSignUp)),
+          ],
           const SizedBox(height: 10),
           TextField(
               controller: _passwordCtrl,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submitAuth(),
               obscureText: true,
               decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.password)),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => _showForgotPasswordDialog(context),
-              child: Text(AppLocalizations.of(context)!.forgotPassword,
-                  style: TextStyle(fontSize: 12)),
+          if (_isLoginMode)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => _showForgotPasswordDialog(context),
+                child: Text(AppLocalizations.of(context)!.forgotPassword,
+                    style: const TextStyle(fontSize: 12)),
+              ),
             ),
-          ),
           const SizedBox(height: 10),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signIn(
-                        _emailCtrl.text, _passwordCtrl.text);
-                    await _loadProfile();
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content: Text("$e")));
-                    }
-                  }
-                },
-                child: Text(AppLocalizations.of(context)!.login)),
-            TextButton(
-                onPressed: () async {
-                  try {
-                    await SupabaseService.signUp(_emailCtrl.text,
-                        _passwordCtrl.text, _usernameCtrl.text);
-                    await _loadProfile();
-                    if (mounted) setState(() {});
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content: Text("$e")));
-                    }
-                  }
-                },
-                child: Text(AppLocalizations.of(context)!.signUp))
-          ])
+          ElevatedButton(
+            onPressed: _submitAuth,
+            child: Text(_isLoginMode
+                ? AppLocalizations.of(context)!.login
+                : AppLocalizations.of(context)!.signUp),
+          ),
         ],
       ),
     );
@@ -1198,7 +1481,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   void _showForgotPasswordDialog(BuildContext context) {
-    final emailCtrl = TextEditingController();
+    final emailCtrl = TextEditingController(text: _emailCtrl.text.trim());
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1224,34 +1507,31 @@ class _SettingsTabState extends State<SettingsTab> {
           ElevatedButton(
             onPressed: () async {
               final email = emailCtrl.text.trim();
-              if (email.isEmpty) return;
+              if (!_looksLikeEmail(email)) {
+                _showMessage(AppLocalizations.of(context)!.enterValidEmail);
+                return;
+              }
               try {
+                _emailCtrl.text = email;
                 await SupabaseService.resetPassword(email);
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text(AppLocalizations.of(context)!
-                            .passwordResetEmailSent)),
-                  );
+                  _showMessage(
+                      AppLocalizations.of(context)!.passwordResetEmailSent);
                 }
               } catch (e) {
-                if (ctx.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Error: $e")),
-                  );
-                }
+                if (ctx.mounted) _showMessage("Error: $e");
               }
             },
             child: Text(AppLocalizations.of(context)!.send),
           ),
         ],
       ),
-    );
+    ).then((_) => emailCtrl.dispose());
   }
 
   Widget _buildMyStatus(TransColors colors) {
-    String statusText = "Inactive";
+    String statusText = AppLocalizations.of(context)!.inactive;
     Color statusColor = colors.statusOffline;
     Widget? statusIcon;
 
@@ -1263,18 +1543,18 @@ class _SettingsTabState extends State<SettingsTab> {
       final currentLine = _myLocation!['current_line'];
 
       if (isActive) {
-        statusText = "Active recently";
+        statusText = AppLocalizations.of(context)!.activeRecently;
         statusColor = colors.statusActive;
 
         if (currentLine != null && currentLine.toString().isNotEmpty) {
           final diff = now.difference(updated);
           if (diff.inMinutes < 10) {
-            statusText = "On $currentLine";
+            statusText = AppLocalizations.of(context)!.onLine(currentLine);
             statusColor = colors.statusOnline;
             statusIcon = Icon(Icons.directions_bus,
                 size: 12, color: colors.statusOnline);
           } else {
-            statusText = "Last on $currentLine";
+            statusText = AppLocalizations.of(context)!.lastOnLine(currentLine);
             statusColor = colors.textSecondary;
             statusIcon =
                 Icon(Icons.history, size: 12, color: colors.textSecondary);
@@ -1284,7 +1564,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
       if (widget.isGhostMode) {
         if (isActive && currentLine == null) {
-          statusText = "Active recently (Ghost)";
+          statusText = AppLocalizations.of(context)!.activeRecentlyGhost;
           statusColor = colors.textSecondary;
         }
       }

@@ -536,6 +536,48 @@ abstract class AppLocalizations {
   /// **'Now'**
   String get now;
 
+  /// No description provided for @currentLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Current Location'**
+  String get currentLocation;
+
+  /// No description provided for @stationOrAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Station or Address...'**
+  String get stationOrAddress;
+
+  /// No description provided for @fromLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get fromLabel;
+
+  /// No description provided for @toLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get toLabel;
+
+  /// No description provided for @arriveBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Arrive by'**
+  String get arriveBy;
+
+  /// No description provided for @departAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Depart at'**
+  String get departAt;
+
+  /// No description provided for @refreshLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh location'**
+  String get refreshLocation;
+
   /// No description provided for @findRoutes.
   ///
   /// In en, this message translates to:
@@ -716,6 +758,12 @@ abstract class AppLocalizations {
   /// **'Crop Ticket'**
   String get cropTicket;
 
+  /// No description provided for @applyCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply Crop'**
+  String get applyCrop;
+
   /// No description provided for @secureChat.
   ///
   /// In en, this message translates to:
@@ -733,6 +781,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Use Image'**
   String get useImage;
+
+  /// No description provided for @saySomething.
+  ///
+  /// In en, this message translates to:
+  /// **'Say something...'**
+  String get saySomething;
+
+  /// No description provided for @qrCodeDetected.
+  ///
+  /// In en, this message translates to:
+  /// **'QR Code Detected'**
+  String get qrCodeDetected;
+
+  /// No description provided for @confirmTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Ticket'**
+  String get confirmTicket;
+
+  /// No description provided for @detectedQrUseCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'We detected a QR code. Use this crop?'**
+  String get detectedQrUseCrop;
+
+  /// No description provided for @noQrUseImage.
+  ///
+  /// In en, this message translates to:
+  /// **'No QR code detected. Use this image?'**
+  String get noQrUseImage;
+
+  /// No description provided for @editCrop.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Crop'**
+  String get editCrop;
+
+  /// No description provided for @cropEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Crop / Edit'**
+  String get cropEdit;
 
   /// No description provided for @renameTicket.
   ///
@@ -757,6 +847,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Rename'**
   String get rename;
+
+  /// No description provided for @enterLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter label'**
+  String get enterLabel;
 
   /// No description provided for @errorLoadingTicket.
   ///
@@ -805,6 +901,240 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Search history cleared.'**
   String get searchHistoryCleared;
+
+  /// No description provided for @myTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'My Ticket'**
+  String get myTicket;
+
+  /// No description provided for @generatingStyledQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating styled QR...'**
+  String get generatingStyledQr;
+
+  /// No description provided for @styledFromOriginalTicketQrPattern.
+  ///
+  /// In en, this message translates to:
+  /// **'Styled from original ticket QR pattern'**
+  String get styledFromOriginalTicketQrPattern;
+
+  /// No description provided for @tapForFullscreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap for fullscreen'**
+  String get tapForFullscreen;
+
+  /// No description provided for @tapForFullscreenHoldForHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap for fullscreen • Hold for history'**
+  String get tapForFullscreenHoldForHistory;
+
+  /// No description provided for @showOriginalTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Original Ticket'**
+  String get showOriginalTicket;
+
+  /// No description provided for @showStyledQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Styled QR'**
+  String get showStyledQr;
+
+  /// No description provided for @savedLocallyCloudUploadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved locally. Cloud upload failed.'**
+  String get savedLocallyCloudUploadFailed;
+
+  /// No description provided for @couldNotIsolateQrBounds.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not isolate QR bounds. Styling the full image instead.'**
+  String get couldNotIsolateQrBounds;
+
+  /// No description provided for @couldNotRecolorQrCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not recolor this QR code image.'**
+  String get couldNotRecolorQrCode;
+
+  /// No description provided for @transitBoardingPass.
+  ///
+  /// In en, this message translates to:
+  /// **'TRANSIT BOARDING PASS'**
+  String get transitBoardingPass;
+
+  /// No description provided for @endOfLine.
+  ///
+  /// In en, this message translates to:
+  /// **'End of Line'**
+  String get endOfLine;
+
+  /// No description provided for @wakeAlarmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Trans Wake Alarm'**
+  String get wakeAlarmTitle;
+
+  /// No description provided for @wakeAlarmTracking.
+  ///
+  /// In en, this message translates to:
+  /// **'Tracking your journey...'**
+  String get wakeAlarmTracking;
+
+  /// No description provided for @alternative.
+  ///
+  /// In en, this message translates to:
+  /// **'Alternative'**
+  String get alternative;
+
+  /// No description provided for @routeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Route'**
+  String get routeLabel;
+
+  /// No description provided for @destinationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination'**
+  String get destinationLabel;
+
+  /// No description provided for @details.
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get details;
+
+  /// No description provided for @startNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Start not found'**
+  String get startNotFound;
+
+  /// No description provided for @destinationNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination not found'**
+  String get destinationNotFound;
+
+  /// No description provided for @departsAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Departs {time}'**
+  String departsAt(String time);
+
+  /// No description provided for @lateByMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'(+{minutes} late)'**
+  String lateByMinutes(String minutes);
+
+  /// No description provided for @switchPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch from {fromPlatform} to {toPlatform}'**
+  String switchPlatform(String fromPlatform, String toPlatform);
+
+  /// No description provided for @waitAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait at {place}'**
+  String waitAt(String place);
+
+  /// No description provided for @transferTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer to {destination}'**
+  String transferTo(String destination);
+
+  /// No description provided for @waitForConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for connection'**
+  String get waitForConnection;
+
+  /// No description provided for @walkTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk to {destination}'**
+  String walkTo(String destination);
+
+  /// No description provided for @walkToDestination.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk to destination'**
+  String get walkToDestination;
+
+  /// No description provided for @walkLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Walk'**
+  String get walkLabel;
+
+  /// No description provided for @atPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'at {platform}'**
+  String atPlatform(String platform);
+
+  /// No description provided for @toPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'to {platform}'**
+  String toPlatform(String platform);
+
+  /// No description provided for @addFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Favorite'**
+  String get addFavorite;
+
+  /// No description provided for @editFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Favorite'**
+  String get editFavorite;
+
+  /// No description provided for @favoriteLabelHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Label (e.g. Home, Bestie)'**
+  String get favoriteLabelHint;
+
+  /// No description provided for @searchStationName.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Station Name'**
+  String get searchStationName;
+
+  /// No description provided for @searchFriendUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Friend Username'**
+  String get searchFriendUsername;
+
+  /// No description provided for @alarmOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Alarm ON'**
+  String get alarmOn;
+
+  /// No description provided for @wakeMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Wake Me'**
+  String get wakeMe;
+
+  /// No description provided for @altShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Alt'**
+  String get altShort;
 
   /// No description provided for @blockedUsers.
   ///
@@ -896,6 +1226,18 @@ abstract class AppLocalizations {
   /// **'System Sync Active. Long press to disable.'**
   String get systemSyncActive;
 
+  /// No description provided for @systemSyncEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'System Sync Enabled'**
+  String get systemSyncEnabled;
+
+  /// No description provided for @manualModeEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Manual Mode Enabled'**
+  String get manualModeEnabled;
+
   /// No description provided for @deutschlandTicketMode.
   ///
   /// In en, this message translates to:
@@ -944,6 +1286,42 @@ abstract class AppLocalizations {
   /// **'Alarm Trigger'**
   String get alarmTrigger;
 
+  /// No description provided for @alertAtDestination.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert at destination'**
+  String get alertAtDestination;
+
+  /// No description provided for @alertStopsBefore.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert {count} stops before'**
+  String alertStopsBefore(String count);
+
+  /// No description provided for @atDest.
+  ///
+  /// In en, this message translates to:
+  /// **'At Dest'**
+  String get atDest;
+
+  /// No description provided for @oneStop.
+  ///
+  /// In en, this message translates to:
+  /// **'1 Stop'**
+  String get oneStop;
+
+  /// No description provided for @twoStops.
+  ///
+  /// In en, this message translates to:
+  /// **'2 Stops'**
+  String get twoStops;
+
+  /// No description provided for @threeStops.
+  ///
+  /// In en, this message translates to:
+  /// **'3 Stops'**
+  String get threeStops;
+
   /// No description provided for @triggerThreshold.
   ///
   /// In en, this message translates to:
@@ -961,6 +1339,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Alarm Pattern'**
   String get alarmPattern;
+
+  /// No description provided for @ofLegCovered.
+  ///
+  /// In en, this message translates to:
+  /// **'of leg covered'**
+  String get ofLegCovered;
+
+  /// No description provided for @fromTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'from target'**
+  String get fromTarget;
+
+  /// No description provided for @fivePercentRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'5% Remaining'**
+  String get fivePercentRemaining;
+
+  /// No description provided for @tenPercentRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'10% Remaining'**
+  String get tenPercentRemaining;
+
+  /// No description provided for @fixed500m.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed 500m'**
+  String get fixed500m;
 
   /// No description provided for @vibrationIntensity.
   ///
@@ -1004,6 +1412,42 @@ abstract class AppLocalizations {
   /// **'Transport API'**
   String get transportApi;
 
+  /// No description provided for @selectedApiMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected: {mode}'**
+  String selectedApiMode(String mode);
+
+  /// No description provided for @autoRecommended.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto (Recommended)'**
+  String get autoRecommended;
+
+  /// No description provided for @transitousOpenSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Transitous (Open Source)'**
+  String get transitousOpenSource;
+
+  /// No description provided for @deutscheBahnLegacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Deutsche Bahn (Legacy)'**
+  String get deutscheBahnLegacy;
+
+  /// No description provided for @autoModeShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get autoModeShort;
+
+  /// No description provided for @dbV6.
+  ///
+  /// In en, this message translates to:
+  /// **'DB (v6)'**
+  String get dbV6;
+
   /// No description provided for @profileSettings.
   ///
   /// In en, this message translates to:
@@ -1031,7 +1475,7 @@ abstract class AppLocalizations {
   /// No description provided for @newPasswordOpt.
   ///
   /// In en, this message translates to:
-  /// **'New Password (Optional)'**
+  /// **'New Password'**
   String get newPasswordOpt;
 
   /// No description provided for @profileUpdated.
@@ -1039,6 +1483,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Profile updated! Check email for confirmation if changed.'**
   String get profileUpdated;
+
+  /// No description provided for @incorrectPasswordOrRpcMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Incorrect password or error (RPC missing?)'**
+  String get incorrectPasswordOrRpcMissing;
+
+  /// No description provided for @changeUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Username'**
+  String get changeUsername;
+
+  /// No description provided for @changeEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Email'**
+  String get changeEmail;
+
+  /// No description provided for @changePassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Password'**
+  String get changePassword;
+
+  /// No description provided for @emailChangeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Changing your email will send a confirmation link before the address updates.'**
+  String get emailChangeHint;
+
+  /// No description provided for @passwordChangeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a new password for your account.'**
+  String get passwordChangeHint;
+
+  /// No description provided for @confirmPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Password'**
+  String get confirmPassword;
+
+  /// No description provided for @passwordsDoNotMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Passwords do not match.'**
+  String get passwordsDoNotMatch;
+
+  /// No description provided for @enterValidEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid email address.'**
+  String get enterValidEmail;
+
+  /// No description provided for @fillRequiredFields.
+  ///
+  /// In en, this message translates to:
+  /// **'Fill in the required fields.'**
+  String get fillRequiredFields;
+
+  /// No description provided for @usernameUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Username updated.'**
+  String get usernameUpdated;
+
+  /// No description provided for @emailUpdateSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your email to confirm the address change.'**
+  String get emailUpdateSent;
+
+  /// No description provided for @passwordUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Password updated.'**
+  String get passwordUpdated;
+
+  /// No description provided for @update.
+  ///
+  /// In en, this message translates to:
+  /// **'Update'**
+  String get update;
 
   /// No description provided for @logOut.
   ///
@@ -1055,7 +1583,7 @@ abstract class AppLocalizations {
   /// No description provided for @usernameSignUp.
   ///
   /// In en, this message translates to:
-  /// **'Username (Sign Up)'**
+  /// **'Username'**
   String get usernameSignUp;
 
   /// No description provided for @password.

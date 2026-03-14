@@ -35,6 +35,26 @@ Click the button below to automatically add the app to Obtainium:
 
 ---
 
+## 🛒 Install via F-Droid Repo
+
+You can also install and update Trans from the custom F-Droid repository:
+
+`https://khonager.github.io/f-droid/repo`
+
+### Manual Setup
+
+1. **Install an F-Droid client** (F-Droid, Neo Store, or Droid-ify)
+2. **Open your client** and add a new repository
+3. **Paste this repo URL:**
+   ```
+   https://khonager.github.io/f-droid/repo
+   ```
+4. **Refresh repositories**, then install:
+   - **Trans** (stable)
+   - **Trans Dev** (separate dev app)
+
+---
+
 ## 🧪 Bleeding Edge / Dev Builds
 
 For those who want the absolute latest features (and bugs!), you can install the **Dev Build**. This version is updated automatically with every change to the source code.

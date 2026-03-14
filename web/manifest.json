@@ -10,7 +10,7 @@
     "prefer_related_applications": false,
     "icons": [
         {
-            "src": "trans-icon.svg",
+            "src": "trans-dark.svg",
             "sizes": "any",
             "type": "image/svg+xml",
             "purpose": "any"
@@ -46,7 +46,7 @@
             "url": "/",
             "icons": [
                 {
-                    "src": "trans-icon.svg",
+                    "src": "trans-dark.svg",
                     "sizes": "any",
                     "type": "image/svg+xml"
                 }
@@ -59,7 +59,7 @@
             "url": "/settings",
             "icons": [
                 {
-                    "src": "trans-icon.svg",
+                    "src": "trans-dark.svg",
                     "sizes": "any",
                     "type": "image/svg+xml"
                 }

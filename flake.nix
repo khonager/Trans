@@ -60,6 +60,8 @@
             androidSdk
             flutter
             jdk17
+            cmake
+            ninja
 
             # Common libraries needed by unpatched binaries (like aapt2)
             glibc
@@ -99,6 +101,8 @@
             androidSdk
             flutter
             jdk17
+            cmake
+            ninja
             cocoapods # Required for iOS development on macOS
           ];
 

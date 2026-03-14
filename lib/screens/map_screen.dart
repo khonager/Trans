@@ -286,16 +286,18 @@ class _MapScreenState extends State<MapScreen> {
         }
         // 3. Fallback for stopovers
         else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
-          if (step.startLat != null)
+          if (step.startLat != null) {
             stepPoints.add(LatLng(step.startLat!, step.startLng!));
+          }
           for (var stop in step.stopovers!) {
             if (stop['stop'] != null && stop['stop']['location'] != null) {
               stepPoints.add(LatLng(stop['stop']['location']['latitude'],
                   stop['stop']['location']['longitude']));
             }
           }
-          if (step.endLat != null)
+          if (step.endLat != null) {
             stepPoints.add(LatLng(step.endLat!, step.endLng!));
+          }
         }
         // 4. Simple straight line fallback
         else if (step.startLat != null && step.endLat != null) {

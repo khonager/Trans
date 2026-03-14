@@ -63,8 +63,8 @@ class RouteShareTicket extends StatelessWidget {
                                   color: accentColor)),
                         ),
                         const SizedBox(width: 10),
-                        const Text(
-                          "TRANSIT BOARDING PASS",
+                        Text(
+                          AppLocalizations.of(context)!.transitBoardingPass,
                           style: TextStyle(
                               color: accentColor,
                               fontWeight: FontWeight.w900,
@@ -323,8 +323,9 @@ class RouteShareTicket extends StatelessWidget {
     String lineName = step.line.trim();
     if (!showTrainNumbers) {
       lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
-      if (step.tripId != null)
+      if (step.tripId != null) {
         lineName = lineName.replaceAll(step.tripId!, "").trim();
+      }
     }
 
     final dest =
@@ -334,7 +335,7 @@ class RouteShareTicket extends StatelessWidget {
         head.isNotEmpty &&
         (head.toLowerCase().contains(dest.toLowerCase()) ||
             dest.toLowerCase().contains(head.toLowerCase()));
-    final displayDest = isEnd ? "End of Line" : dest;
+    final displayDest = isEnd ? AppLocalizations.of(context)!.endOfLine : dest;
 
     return Row(
       children: [
