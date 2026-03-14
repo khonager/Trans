@@ -5,6 +5,11 @@ class Station {
   final double? distance;
   final double? latitude;
   final double? longitude;
+  final String? city;
+  final String? region;
+  final String? country;
+  final String? postalCode;
+  final String? category;
 
   Station({
     required this.id,
@@ -13,6 +18,11 @@ class Station {
     this.distance,
     this.latitude,
     this.longitude,
+    this.city,
+    this.region,
+    this.country,
+    this.postalCode,
+    this.category,
   });
 
   Map<String, dynamic> toJson() => {
@@ -22,17 +32,53 @@ class Station {
         'distance': distance,
         'latitude': latitude,
         'longitude': longitude,
+        'city': city,
+        'region': region,
+        'country': country,
+        'postalCode': postalCode,
+        'category': category,
       };
 
   factory Station.fromJson(Map<String, dynamic> json) {
     String name = json['name'] ?? 'Unknown';
     String id = json['id']?.toString() ?? '';
     String type = json['type'] ?? 'station';
+    String? city = _stringOrNull(json['city']);
+    String? region =
+        _stringOrNull(json['region']) ?? _stringOrNull(json['state']);
+    String? country = _stringOrNull(json['country']);
+    String? postalCode =
+        _stringOrNull(json['postalCode']) ?? _stringOrNull(json['zip']);
+    String? category = _stringOrNull(json['category']);
 
     // Address handling
     if (json['address'] != null) {
-      name = json['address'];
-      type = 'address';
+      final address = json['address'];
+      if (address is String) {
+        name = address;
+        type = 'address';
+      } else if (address is Map<String, dynamic>) {
+        name = _firstNonEmptyString([
+              address['name'],
+              address['street'],
+              address['label'],
+              name,
+            ]) ??
+            name;
+        type = 'address';
+        city ??= _firstNonEmptyString([
+          address['city'],
+          address['town'],
+          address['village'],
+          address['municipality'],
+          address['county'],
+        ]);
+        region ??= _firstNonEmptyString([address['state'], address['region']]);
+        country ??=
+            _firstNonEmptyString([address['countryCode'], address['country']]);
+        postalCode ??=
+            _firstNonEmptyString([address['postcode'], address['zip']]);
+      }
     }
 
     double? lat;
@@ -54,6 +100,8 @@ class Station {
       id = "$lat,$lng";
     }
 
+    city ??= _cityFromName(name);
+
     return Station(
       id: id,
       name: name,
@@ -63,6 +111,11 @@ class Station {
           : null,
       latitude: lat,
       longitude: lng,
+      city: city,
+      region: region,
+      country: country,
+      postalCode: postalCode,
+      category: category,
     );
   }
 
@@ -84,12 +137,96 @@ class Station {
       id = '$lat,$lon';
     }
 
+    final areas =
+        (json['areas'] as List?)?.whereType<Map<String, dynamic>>().toList() ??
+            const <Map<String, dynamic>>[];
+    final defaultArea = areas.cast<Map<String, dynamic>?>().firstWhere(
+          (area) => area?['default'] == true,
+          orElse: () => null,
+        );
+    final cityArea = areas.cast<Map<String, dynamic>?>().firstWhere(
+          (area) =>
+              area != null &&
+              area['name'] != null &&
+              ((area['adminLevel'] as num?)?.toInt() ?? 0) >= 8,
+          orElse: () => null,
+        );
+    final regionArea = areas.cast<Map<String, dynamic>?>().firstWhere(
+      (area) {
+        final level = (area?['adminLevel'] as num?)?.toInt() ?? 0;
+        return area != null && area['name'] != null && level >= 4 && level <= 6;
+      },
+      orElse: () => null,
+    );
+
+    final city = _firstNonEmptyString([
+      defaultArea?['name'],
+      cityArea?['name'],
+      _cityFromName(json['name']),
+    ]);
+
     return Station(
       id: id,
       name: json['name'] ?? 'Unknown',
       type: type,
       latitude: lat,
       longitude: lon,
+      city: city,
+      region: _firstNonEmptyString([regionArea?['name']]),
+      country: _stringOrNull(json['country']),
+      postalCode: _stringOrNull(json['zip']),
+      category: _stringOrNull(json['category']),
     );
   }
+
+  String get cityGroupLabel =>
+      _firstNonEmptyString([city, _cityFromName(name), country, 'Other'])!;
+
+  String? get locationSummary {
+    final parts = <String>[];
+    if (city != null && city!.trim().isNotEmpty) parts.add(city!.trim());
+    if (region != null &&
+        region!.trim().isNotEmpty &&
+        !parts.contains(region!.trim())) {
+      parts.add(region!.trim());
+    }
+    if (country != null &&
+        country!.trim().isNotEmpty &&
+        !parts.contains(country!.trim())) {
+      parts.add(country!.trim());
+    }
+    if (postalCode != null &&
+        postalCode!.trim().isNotEmpty &&
+        !parts.contains(postalCode!.trim())) {
+      parts.add(postalCode!.trim());
+    }
+    if (parts.isEmpty) return null;
+    return parts.join(' • ');
+  }
+}
+
+String? _stringOrNull(dynamic value) {
+  if (value == null) return null;
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
+String? _firstNonEmptyString(List<dynamic> values) {
+  for (final value in values) {
+    final text = _stringOrNull(value);
+    if (text != null) return text;
+  }
+  return null;
+}
+
+String? _cityFromName(String? name) {
+  final text = _stringOrNull(name);
+  if (text == null || !text.contains(',')) return null;
+  final parts = text
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.length < 2) return null;
+  return parts.last;
 }

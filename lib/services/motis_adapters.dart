@@ -9,18 +9,7 @@ import '../models/station.dart';
 /// Converts MOTIS geocode Match → Station
 /// MOTIS format: { type: "STOP"|"ADDRESS"|"PLACE", name, id, lat, lon, areas }
 Station stationFromMotisMatch(Map<String, dynamic> match) {
-  String type = 'station';
-  final motisType = match['type'] as String?;
-  if (motisType == 'ADDRESS') type = 'address';
-  if (motisType == 'PLACE') type = 'location';
-
-  return Station(
-    id: match['id']?.toString() ?? '',
-    name: match['name'] ?? 'Unknown',
-    type: type,
-    latitude: (match['lat'] as num?)?.toDouble(),
-    longitude: (match['lon'] as num?)?.toDouble(),
-  );
+  return Station.fromMotis(match);
 }
 
 /// Converts MOTIS Place → location map for journey legs

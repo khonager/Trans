@@ -41,6 +41,13 @@ const List<IconData> kAvailableIcons = [
 
 enum RouteHistoryView { frequent, recent }
 
+class _SuggestionSection {
+  final String? title;
+  final List<dynamic> items;
+
+  const _SuggestionSection({this.title, required this.items});
+}
+
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -652,6 +659,104 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _isSuggestionsLoading = false;
       });
     }
+  }
+
+  ({double? lat, double? lng}) _suggestionReferencePoint() {
+    double? refLat;
+    double? refLng;
+
+    if (_activeSearchField == 'from') {
+      if (_toStation != null &&
+          _toStation!.latitude != null &&
+          _toStation!.longitude != null) {
+        refLat = _toStation!.latitude;
+        refLng = _toStation!.longitude;
+      } else if (_effectiveCurrentPosition != null) {
+        refLat = _effectiveCurrentPosition!.latitude;
+        refLng = _effectiveCurrentPosition!.longitude;
+      }
+    } else if (_activeSearchField == 'to') {
+      if (_fromStation != null &&
+          _fromStation!.latitude != null &&
+          _fromStation!.longitude != null) {
+        refLat = _fromStation!.latitude;
+        refLng = _fromStation!.longitude;
+      } else if (_effectiveCurrentPosition != null) {
+        refLat = _effectiveCurrentPosition!.latitude;
+        refLng = _effectiveCurrentPosition!.longitude;
+      }
+    }
+
+    return (lat: refLat, lng: refLng);
+  }
+
+  String? _distanceTextForStation(Station station) {
+    final ref = _suggestionReferencePoint();
+    if (ref.lat == null ||
+        ref.lng == null ||
+        station.latitude == null ||
+        station.longitude == null) {
+      return null;
+    }
+
+    final distInMeters = Geolocator.distanceBetween(
+        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
+    final distInKm = distInMeters / 1000.0;
+    return "${distInKm.toStringAsFixed(1)} km";
+  }
+
+  List<_SuggestionSection> _buildSuggestionSections() {
+    final favorites = <Favorite>[];
+    final stations = <Station>[];
+
+    for (final item in _suggestions) {
+      if (item is Favorite) {
+        favorites.add(item);
+      } else if (item is Station) {
+        stations.add(item);
+      }
+    }
+
+    final sections = <_SuggestionSection>[];
+    if (favorites.isNotEmpty) {
+      sections.add(_SuggestionSection(items: favorites));
+    }
+
+    final groupedStations = <String, List<Station>>{};
+    final cityOrder = <String>[];
+    for (final station in stations) {
+      final city = station.cityGroupLabel;
+      if (!groupedStations.containsKey(city)) {
+        groupedStations[city] = <Station>[];
+        cityOrder.add(city);
+      }
+      groupedStations[city]!.add(station);
+    }
+
+    final ref = _suggestionReferencePoint();
+    for (final city in cityOrder) {
+      final cityStations = groupedStations[city]!;
+      cityStations.sort((a, b) {
+        final sameName = a.name.toLowerCase() == b.name.toLowerCase();
+        if (sameName &&
+            ref.lat != null &&
+            ref.lng != null &&
+            a.latitude != null &&
+            a.longitude != null &&
+            b.latitude != null &&
+            b.longitude != null) {
+          final distA = Geolocator.distanceBetween(
+              ref.lat!, ref.lng!, a.latitude!, a.longitude!);
+          final distB = Geolocator.distanceBetween(
+              ref.lat!, ref.lng!, b.latitude!, b.longitude!);
+          return distA.compareTo(distB);
+        }
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      sections.add(_SuggestionSection(title: city, items: cityStations));
+    }
+
+    return sections;
   }
 
   void _onSearchChanged(String query, String field) {
@@ -2504,6 +2609,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return const SizedBox.shrink();
     }
     final colors = TransColors.of(context);
+    final sections = _buildSuggestionSections();
     return GestureDetector(
       onTap: () {
         // Capture taps on the list container (including scrolling area)
@@ -2527,118 +2633,107 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 const Padding(
                     padding: EdgeInsets.all(12),
                     child: LinearProgressIndicator(minHeight: 2)),
-              // Removed Flexible, rely on constraints + shrinkWrap
               Flexible(
-                  // Actually Flexible/Expanded is needed if content exceeds 250px inside Column??
-                  // Usually inside a Column with min size, if we want it to scroll, we need constraints.
-                  // We have max-height 250 on Container.
-                  // If we put ListView directly in Column(min), and list is huge:
-                  // ListView(shrinkWrap: true) tries to be infinite? No, it tries to be as big as content.
-                  // If content > 250, Container clips? Or errors?
-                  // The original code had Flexible.
-                  // Let's use Flexible but inside Material?
-                  // Wait, Material is around the Column now.
-                  // Let's put Material inside the Container, and Column inside Material.
-                  // And keep Flexible for safety with scrolling?
-                  // User reported "no hover". That implies hit test failure.
-                  // Often caused by "invisible" widgets blocking or weird z-index if no Material.
-                  // Let's stick to the plan: Remove Flexible IF it was the cause (zero height?), OR ensure it works.
-                  // Actually, ListView(shrinkWrap: true) inside Flexible inside Column(min) is tricky.
-                  // Better: Container(height: constraint) -> ClipR -> Material -> ListView.
-                  // But we want header (Progress) + List.
-                  // Let's go with: Container -> Column -> (Progress, Flexible(ListView)).
-                  // AND ensure Material is wrapping the ListView items individually or the whole list.
-                  // Best practice: Material > ListView.
-                  child: ListView.separated(
+                  child: ListView.builder(
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
-                      itemCount: _suggestions.length,
-                      separatorBuilder: (ctx, idx) =>
-                          const Divider(height: 1, color: Colors.white10),
+                      itemCount: sections.length,
                       itemBuilder: (ctx, idx) {
-                        final item = _suggestions[idx];
-                        if (item is Favorite) {
-                          return ListTile(
-                            leading: const Icon(Icons.star,
-                                size: 16, color: Colors.orange),
-                            title: Text(item.label,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold)),
-                            onTap: () => _selectItem(item),
-                            hoverColor: Colors
-                                .white10, // Explicit hover color if theme missing
-                          );
-                        }
-                        final station = item as Station;
-                        IconData leadingIcon = Icons.place;
-                        if (station.type == 'address') {
-                          leadingIcon = Icons.home_work;
-                        }
+                        final section = sections[idx];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (section.title != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(14, 12, 14, 6),
+                                child: Text(
+                                  section.title!,
+                                  style: TextStyle(
+                                    color: colors.searchHintText,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ...section.items.asMap().entries.map((entry) {
+                              final item = entry.value;
+                              final isLastItem = idx == sections.length - 1 &&
+                                  entry.key == section.items.length - 1;
 
-                        double? refLat;
-                        double? refLng;
-                        if (_activeSearchField == 'from') {
-                          if (_toStation != null &&
-                              _toStation!.latitude != null &&
-                              _toStation!.longitude != null) {
-                            refLat = _toStation!.latitude;
-                            refLng = _toStation!.longitude;
-                          } else if (_effectiveCurrentPosition != null) {
-                            refLat = _effectiveCurrentPosition!.latitude;
-                            refLng = _effectiveCurrentPosition!.longitude;
-                          }
-                        } else if (_activeSearchField == 'to') {
-                          if (_fromStation != null &&
-                              _fromStation!.latitude != null &&
-                              _fromStation!.longitude != null) {
-                            refLat = _fromStation!.latitude;
-                            refLng = _fromStation!.longitude;
-                          } else if (_effectiveCurrentPosition != null) {
-                            refLat = _effectiveCurrentPosition!.latitude;
-                            refLng = _effectiveCurrentPosition!.longitude;
-                          }
-                        }
+                              Widget tile;
+                              if (item is Favorite) {
+                                tile = ListTile(
+                                  leading: const Icon(Icons.star,
+                                      size: 16, color: Colors.orange),
+                                  title: Text(item.label,
+                                      style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
+                                  onTap: () => _selectItem(item),
+                                  hoverColor: Colors.white10,
+                                );
+                              } else {
+                                final station = item as Station;
+                                IconData leadingIcon = Icons.place;
+                                if (station.type == 'address') {
+                                  leadingIcon = Icons.home_work;
+                                } else if (station.type == 'stop') {
+                                  leadingIcon = Icons.train;
+                                }
 
-                        String? distanceText;
-                        if (refLat != null &&
-                            refLng != null &&
-                            station.latitude != null &&
-                            station.longitude != null) {
-                          double distInMeters = Geolocator.distanceBetween(
-                              refLat,
-                              refLng,
-                              station.latitude!,
-                              station.longitude!);
-                          double distInKm = distInMeters / 1000.0;
-                          distanceText = "${distInKm.toStringAsFixed(1)} km";
-                        }
+                                final distanceText =
+                                    _distanceTextForStation(station);
 
-                        return ListTile(
-                            leading:
-                                Icon(leadingIcon, size: 16, color: Colors.grey),
-                            title: Text(station.name,
-                                style: TextStyle(
-                                    color: colors.textPrimary, fontSize: 14)),
-                            trailing: distanceText != null
-                                ? Text(distanceText,
-                                    style: TextStyle(
-                                        color: colors.searchHintText,
-                                        fontSize: 12))
-                                : null,
-                            onTap: () => _selectItem(station),
-                            hoverColor: Colors.white10,
-                            onLongPress: () {
-                              final newFav = Favorite(
-                                  id: DateTime.now()
-                                      .millisecondsSinceEpoch
-                                      .toString(),
-                                  label: station.name,
-                                  type: 'station',
-                                  station: station);
-                              _showEditFavoriteDialog(newFav);
-                            });
+                                tile = ListTile(
+                                  leading: Icon(leadingIcon,
+                                      size: 16, color: Colors.grey),
+                                  title: Text(station.name,
+                                      style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontSize: 14)),
+                                  subtitle: station.locationSummary != null
+                                      ? Text(station.locationSummary!,
+                                          style: TextStyle(
+                                              color: colors.searchHintText,
+                                              fontSize: 11))
+                                      : null,
+                                  trailing: distanceText != null
+                                      ? Text(distanceText,
+                                          style: TextStyle(
+                                              color: colors.searchHintText,
+                                              fontSize: 12))
+                                      : null,
+                                  onTap: () => _selectItem(station),
+                                  hoverColor: Colors.white10,
+                                  onLongPress: () {
+                                    final newFav = Favorite(
+                                        id: DateTime.now()
+                                            .millisecondsSinceEpoch
+                                            .toString(),
+                                        label: station.name,
+                                        type: 'station',
+                                        station: station);
+                                    _showEditFavoriteDialog(newFav);
+                                  },
+                                );
+                              }
+
+                              if (isLastItem) return tile;
+
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  tile,
+                                  const Divider(
+                                      height: 1, color: Colors.white10),
+                                ],
+                              );
+                            }),
+                          ],
+                        );
                       }))
             ]),
           )),
