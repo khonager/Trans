@@ -85,6 +85,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _debounce;
   Timer? _focusDebounce; // Delayed focus handling for Web clicks
   bool _isLoadingRoute = false;
+  int _nextRouteSearchToken = 0;
+  int? _activeRouteSearchToken;
+  final Set<int> _cancelledRouteSearchTokens = <int>{};
   bool _isSuggestionsLoading = false;
 
   DateTime? _selectedDate;
@@ -364,6 +367,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadFavorites() async {
     final favs = await FavoritesManager.getFavorites();
     if (mounted) setState(() => _favorites = favs);
+  }
+
+  bool _isRouteSearchCancelled(int token) =>
+      _cancelledRouteSearchTokens.contains(token);
+
+  void _finishRouteSearchLoading(int token) {
+    if (!mounted || _activeRouteSearchToken != token || !_isLoadingRoute) {
+      return;
+    }
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
+  }
+
+  void _disposeRouteSearch(int token) {
+    _cancelledRouteSearchTokens.remove(token);
+    if (!mounted || _activeRouteSearchToken != token) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
+  }
+
+  void _cancelRouteSearch() {
+    final token = _activeRouteSearchToken;
+    if (token == null) return;
+    _cancelledRouteSearchTokens.add(token);
+    if (!mounted) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
   }
 
   // --- WAKE ALARM LOGIC ---
@@ -1632,6 +1668,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _findRoutes() async {
     if (_isLoadingRoute) return;
     final l10n = AppLocalizations.of(context)!;
+    final searchToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = searchToken;
+      _isLoadingRoute = true;
+    });
+
     Station? from = _fromStation;
     if (from == null) {
       if (_fromUsesCurrentLocation ||
@@ -1643,6 +1685,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 .timeout(const Duration(seconds: 3));
           } catch (e) {/* ignore */}
         }
+        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
         if (pos != null) {
           // Use GPS directly
           from = Station(
@@ -1659,10 +1702,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           return;
         }
       } else {
-        setState(() => _isLoadingRoute = true);
         try {
           final results =
               await TransportApi.searchStations(_fromController.text);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             from = results.first;
             _fromStation = from;
@@ -1670,8 +1713,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             throw l10n.startNotFound;
           }
         } catch (e) {
-          if (mounted) {
-            setState(() => _isLoadingRoute = false);
+          if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
@@ -1682,17 +1724,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     if (_toStation == null) {
       if (_toController.text.isNotEmpty) {
-        setState(() => _isLoadingRoute = true);
         try {
           final results = await TransportApi.searchStations(_toController.text);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             _toStation = results.first;
           } else {
             throw l10n.destinationNotFound;
           }
         } catch (e) {
-          if (mounted) {
-            setState(() => _isLoadingRoute = false);
+          if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
@@ -1703,7 +1744,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         return;
       }
     }
-    setState(() => _isLoadingRoute = true);
     try {
       DateTime when;
       if (_selectedDate != null) {
@@ -1723,41 +1763,48 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival, onPartialResults: (partial) {
-        if (mounted && currentTabId == null) {
-          setState(() => _isLoadingRoute = false);
-          currentTabId = _addJourneyTab(
-              candidatesData: partial, origin: from, destination: _toStation);
+        if (!mounted ||
+            currentTabId != null ||
+            _isRouteSearchCancelled(searchToken)) {
+          return;
         }
+        currentTabId = _addJourneyTab(
+            candidatesData: partial, origin: from, destination: _toStation);
+        _finishRouteSearchLoading(searchToken);
       }).timeout(const Duration(seconds: 20));
 
-      if (mounted) {
-        if (res.isNotEmpty) {
-          if (currentTabId != null) {
-            _updateTabCandidates(currentTabId!, res);
-          } else {
-            _addJourneyTab(
-                candidatesData: res, origin: from, destination: _toStation);
-          }
-          await SearchHistoryManager.saveJourney(from, _toStation!);
-          await SearchHistoryManager.saveRecentJourney(from, _toStation!);
-          await _loadHistoryData(); // Refresh UI
-        } else if (currentTabId == null) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
+      if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+
+      if (res.isNotEmpty) {
+        if (currentTabId != null) {
+          _updateTabCandidates(currentTabId!, res);
+        } else {
+          currentTabId = _addJourneyTab(
+              candidatesData: res, origin: from, destination: _toStation);
+          _finishRouteSearchLoading(searchToken);
         }
+        if (_isRouteSearchCancelled(searchToken)) return;
+        await SearchHistoryManager.saveJourney(from, _toStation!);
+        if (_isRouteSearchCancelled(searchToken)) return;
+        await SearchHistoryManager.saveRecentJourney(from, _toStation!);
+        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+        await _loadHistoryData(); // Refresh UI
+      } else if (currentTabId == null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
       }
     } on TimeoutException catch (_) {
-      if (mounted) {
+      if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
-      if (mounted) {
+      if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.serviceBusyMoment)));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(searchToken);
     }
   }
 
@@ -1938,8 +1985,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final bool canSearch =
         (_fromStation != null || _effectiveCurrentPosition != null) &&
-            _toStation != null &&
-            !_isLoadingRoute;
+            _toStation != null;
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -2346,18 +2392,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         width: double.infinity,
                         height: 56,
                         child: ElevatedButton(
-                            onPressed: canSearch ? _findRoutes : null,
+                            onPressed: _isLoadingRoute
+                                ? _cancelRouteSearch
+                                : (canSearch ? _findRoutes : null),
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: colors.searchBtnBg,
                                 foregroundColor: colors.searchBtnText,
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16))),
                             child: _isLoadingRoute
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.white))
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white)),
+                                      const SizedBox(width: 12),
+                                      Text(AppLocalizations.of(context)!.cancel,
+                                          style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold))
+                                    ],
+                                  )
                                 : Text(AppLocalizations.of(context)!.findRoutes,
                                     style: TextStyle(
                                         fontSize: 16,
