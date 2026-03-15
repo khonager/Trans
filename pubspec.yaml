@@ -1,11 +1,11 @@
 name: trans
 description: "A new Flutter project."
-publish_to: 'none'
+publish_to: "none"
 
-version: 2.4.2+4
+version: 2.4.3+1
 
 environment:
-  sdk: '>=3.2.0 <4.0.0'
+  sdk: ">=3.2.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -14,7 +14,7 @@ dependencies:
     sdk: flutter
   flutter_web_plugins:
     sdk: flutter
-  
+
   intl: ^0.20.2
   http: ^1.1.0
   flutter_markdown_plus: ^1.0.7
@@ -23,8 +23,8 @@ dependencies:
   flutter_compass: ^0.8.0
   cupertino_icons: ^1.0.2
 
-  vibration: ^3.1.0 
-  super_clipboard: ^0.9.1 
+  vibration: ^3.1.0
+  super_clipboard: ^0.9.1
   flutter_local_notifications: ^20.1.0
   timezone: ^0.10.1
 
@@ -34,13 +34,13 @@ dependencies:
   supabase_flutter: ^2.0.0
   image_picker: ^1.0.7
   flutter_dotenv: ^6.0.0
-  
+
   # UPDATED VERSION
   dynamic_color: ^1.6.0
   emoji_picker_flutter: ^4.0.0
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
- # NEW: For Private Chat Encryption
+  # NEW: For Private Chat Encryption
   encrypt: ^5.0.3
   crypto: ^3.0.7
   flutter_image_compress: ^2.4.0
