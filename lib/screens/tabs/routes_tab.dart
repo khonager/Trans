@@ -2287,11 +2287,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         hint: (_fromStation == null &&
                                 _effectiveCurrentPosition != null)
                             ? AppLocalizations.of(context)!.currentLocation
-                            : AppLocalizations.of(context)!.stationOrAddress),
+                            : AppLocalizations.of(context)!
+                                .fromStationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     const SizedBox(height: 12),
-                    _buildTextField(AppLocalizations.of(context)!.toLabel,
-                        _toController, _toFocusNode, _toStation != null, 'to'),
+                    _buildTextField(
+                        AppLocalizations.of(context)!.toLabel,
+                        _toController,
+                        _toFocusNode,
+                        _toStation != null,
+                        'to',
+                        hint:
+                            AppLocalizations.of(context)!.toStationOrAddress),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -2852,7 +2859,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         ((_fromStation?.id == 'gps') ||
             (isLocationHint &&
                 effectiveHint !=
-                    AppLocalizations.of(context)!.stationOrAddress))) {
+                    AppLocalizations.of(context)!.fromStationOrAddress))) {
       iconColor = Colors.blue;
     }
 

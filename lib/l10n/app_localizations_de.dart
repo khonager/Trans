@@ -270,6 +270,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get currentLocation => 'Aktueller Standort';
 
   @override
+  String get fromStationOrAddress => 'Startstation oder Adresse...';
+
+  @override
+  String get toStationOrAddress => 'Zielstation oder Adresse...';
+
+  @override
   String get stationOrAddress => 'Station oder Adresse...';
 
   @override

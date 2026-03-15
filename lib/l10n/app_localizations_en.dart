@@ -269,6 +269,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get currentLocation => 'Current Location';
 
   @override
+  String get fromStationOrAddress => 'Start station or address...';
+
+  @override
+  String get toStationOrAddress => 'Destination station or address...';
+
+  @override
   String get stationOrAddress => 'Station or Address...';
 
   @override
