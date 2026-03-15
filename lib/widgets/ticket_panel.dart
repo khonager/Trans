@@ -820,7 +820,7 @@ class _TicketPanelState extends State<TicketPanel> {
   Widget _buildStyledQr(TransColors colors) {
     final styled = _styledQrBytes;
     if (styled == null) return const SizedBox.shrink();
-    final qrBg = colors.isDark ? const Color(0xFF0F1115) : Colors.white;
+    final qrBg = colors.ticketSheetBg;
 
     return Container(
       width: double.infinity,

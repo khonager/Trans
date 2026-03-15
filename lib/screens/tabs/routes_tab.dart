@@ -2291,14 +2291,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                 .fromStationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     const SizedBox(height: 12),
-                    _buildTextField(
-                        AppLocalizations.of(context)!.toLabel,
-                        _toController,
-                        _toFocusNode,
-                        _toStation != null,
-                        'to',
-                        hint:
-                            AppLocalizations.of(context)!.toStationOrAddress),
+                    _buildTextField(AppLocalizations.of(context)!.toLabel,
+                        _toController, _toFocusNode, _toStation != null, 'to',
+                        hint: AppLocalizations.of(context)!.toStationOrAddress),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -2551,9 +2546,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
-                    color: colors.chipBg,
+                    color: colors.cardBg,
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Colors.white10)),
+                    border: Border.all(color: colors.divider)),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -2642,11 +2637,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-            color: selected ? colors.navBarSelected : Colors.transparent,
+            color: selected ? colors.chipActiveBg : Colors.transparent,
             borderRadius: BorderRadius.circular(999)),
         child: Text(label,
             style: TextStyle(
-                color: selected ? Colors.white : colors.textSecondary,
+                color: selected ? colors.chipActiveFg : colors.chipFg,
                 fontWeight: selected ? FontWeight.bold : FontWeight.w500,
                 fontSize: 12)),
       ),

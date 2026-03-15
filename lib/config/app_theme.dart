@@ -64,8 +64,7 @@ class TransColors extends ThemeExtension<TransColors> {
   Color get searchBtnText =>
       (effectiveSeed.computeLuminance() > 0.5) ? Colors.black : Colors.white;
 
-  Color get timeContainerBg =>
-      isDark ? const Color(0xFF1F2937) : Colors.grey.shade100;
+  Color get timeContainerBg => isDark ? searchInputFill : Colors.grey.shade100;
   Color get timeToggleBg => effectiveSeed.withValues(alpha: 0.15);
   Color get timeToggleText => effectiveSeed;
   Color get sectionHeader => isDark ? Colors.white60 : Colors.grey.shade600;
