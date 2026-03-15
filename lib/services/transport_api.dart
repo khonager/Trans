@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -374,30 +375,24 @@ class TransportApi {
       return cached.data;
     }
 
-    try {
-      // Try MOTIS/Transitous first
-      final result = await _searchStationsMotis(query, lat: lat, lng: lng);
-      if (result.length >= 8) {
-        _stationCache[cacheKey] = _CacheEntry(result, const Duration(hours: 1));
-        return result;
-      }
+    final motisFuture =
+        _searchStationsMotis(query, lat: lat, lng: lng).catchError((error) {
+      debugPrint('Transitous searchStations failed: $error');
+      return <Station>[];
+    });
 
-      final fallback = await _searchStationsV6(query, lat: lat, lng: lng);
-      final merged = _mergeStations(result, fallback);
-      _stationCache[cacheKey] = _CacheEntry(merged, const Duration(hours: 1));
-      return merged;
-    } catch (e) {
-      debugPrint('Transitous searchStations failed: $e, trying v6.db...');
-      try {
-        // Fallback to v6.db
-        final result = await _searchStationsV6(query, lat: lat, lng: lng);
-        _stationCache[cacheKey] = _CacheEntry(result, const Duration(hours: 1));
-        return result;
-      } catch (e2) {
-        debugPrint('v6.db searchStations also failed: $e2');
-        return [];
-      }
-    }
+    final v6Future =
+        _searchStationsV6(query, lat: lat, lng: lng).catchError((error) {
+      debugPrint('v6.db searchStations failed: $error');
+      return <Station>[];
+    });
+
+    final results = await Future.wait([motisFuture, v6Future]);
+    final merged = _mergeStations(results[0], results[1]);
+    final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
+
+    _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
+    return ranked;
   }
 
   static List<Station> _mergeStations(
@@ -430,6 +425,249 @@ class TransportApi {
     final lng = station.longitude?.toStringAsFixed(5) ?? '';
     return '${station.name.trim().toLowerCase()}|$lat|$lng';
   }
+
+  @visibleForTesting
+  static List<Station> rankStationsForQuery(
+      List<Station> stations, String query,
+      {double? lat, double? lng}) {
+    if (stations.length < 2) return stations;
+
+    final normalizedQuery = _normalizeSearchText(query);
+    final queryTokens = _searchTokens(query);
+    if (normalizedQuery.isEmpty || queryTokens.isEmpty) return stations;
+
+    final indexedStations = stations.asMap().entries.toList();
+    indexedStations.sort((a, b) {
+      final scoreA = _stationSearchScore(a.value, normalizedQuery, queryTokens,
+          lat: lat, lng: lng);
+      final scoreB = _stationSearchScore(b.value, normalizedQuery, queryTokens,
+          lat: lat, lng: lng);
+      final scoreCompare = scoreB.compareTo(scoreA);
+      if (scoreCompare != 0) return scoreCompare;
+      return a.key.compareTo(b.key);
+    });
+
+    return indexedStations.map((entry) => entry.value).toList();
+  }
+
+  static int _stationSearchScore(
+      Station station, String normalizedQuery, List<String> queryTokens,
+      {double? lat, double? lng}) {
+    final normalizedName = _normalizeSearchText(station.name);
+    final nameTokens = _splitSearchTokens(normalizedName);
+    final metadataTokens = _splitSearchTokens(_normalizeSearchText([
+      station.city,
+      station.region,
+      station.country,
+      station.category,
+      station.type,
+    ].whereType<String>().join(' ')));
+    final isTransitStop = station.type == 'station' || station.type == 'stop';
+    final isAirportQuery = _isAirportLikeQuery(queryTokens);
+
+    var score = 0;
+
+    if (normalizedName == normalizedQuery) {
+      score += 300;
+    } else if (normalizedName.startsWith('$normalizedQuery ')) {
+      score += 240;
+    } else if (normalizedName.contains(normalizedQuery)) {
+      score += 170;
+    }
+
+    var matchedQueryTokens = 0;
+    for (final token in queryTokens) {
+      final exactNameMatch = nameTokens.contains(token);
+      final prefixNameMatch = nameTokens.any(
+        (nameToken) =>
+            nameToken.startsWith(token) || token.startsWith(nameToken),
+      );
+      final metadataMatch = metadataTokens.contains(token);
+
+      if (exactNameMatch) {
+        matchedQueryTokens++;
+        score += 55;
+      } else if (prefixNameMatch) {
+        matchedQueryTokens++;
+        score += 24;
+      } else if (metadataMatch) {
+        matchedQueryTokens++;
+        score += 10;
+      }
+    }
+
+    if (matchedQueryTokens == queryTokens.length) {
+      score += 75;
+    }
+
+    if (isTransitStop) score += 35;
+    if (station.type == 'address') score -= 20;
+
+    if (isAirportQuery) {
+      if (_looksLikeAirport(nameTokens, metadataTokens)) {
+        score += 180;
+      }
+      if (isTransitStop) score += 120;
+      if (station.type == 'address') score -= 140;
+      if (_isGenericAirportLabel(normalizedName)) score -= 110;
+      if (_looksLikeRoadOrNeighborhood(nameTokens)) score -= 95;
+      if (normalizedName.contains('bahnhof') ||
+          normalizedName.contains('regionalbf') ||
+          normalizedName.contains('fernbf') ||
+          normalizedName.contains('terminal')) {
+        score += 45;
+      }
+    }
+
+    if (lat != null &&
+        lng != null &&
+        station.latitude != null &&
+        station.longitude != null) {
+      final distanceKm =
+          _distanceKm(lat, lng, station.latitude!, station.longitude!);
+      score += math.max(0, 120 - distanceKm.round());
+    }
+
+    return score;
+  }
+
+  static bool _looksLikeAirport(
+      List<String> nameTokens, List<String> metadataTokens) {
+    const airportTokens = {
+      'airport',
+      'flughafen',
+      'aerodrome',
+      'aerodrom',
+      'airfield',
+      'terminal',
+    };
+
+    final allTokens = [...nameTokens, ...metadataTokens];
+    return allTokens.any((token) =>
+        airportTokens.contains(token) ||
+        token.startsWith('flughaf') ||
+        token.startsWith('airport'));
+  }
+
+  static bool _isGenericAirportLabel(String normalizedName) =>
+      normalizedName == 'airport' || normalizedName == 'flughafen';
+
+  static bool _looksLikeRoadOrNeighborhood(List<String> tokens) {
+    const roadSuffixes = [
+      'allee',
+      'gasse',
+      'ring',
+      'schneise',
+      'strasse',
+      'street',
+      'weg',
+    ];
+    return tokens.any((token) => roadSuffixes
+        .any((suffix) => token.endsWith(suffix) && token != suffix));
+  }
+
+  static bool _isAirportLikeQuery(List<String> queryTokens) => queryTokens.any(
+        (token) =>
+            token.startsWith('flughaf') ||
+            token.startsWith('airport') ||
+            token.startsWith('airpor') ||
+            token.startsWith('aerodrom'),
+      );
+
+  static List<String> _searchTokens(String text) =>
+      _splitSearchTokens(_normalizeSearchText(text))
+          .where(_isMeaningfulSearchToken)
+          .toList();
+
+  static List<String> _splitSearchTokens(String text) => text
+      .split(RegExp(r'\s+'))
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList();
+
+  static bool _isMeaningfulSearchToken(String token) {
+    const ignoredTokens = {
+      'am',
+      'an',
+      'bei',
+      'closest',
+      'der',
+      'die',
+      'ein',
+      'eine',
+      'im',
+      'in',
+      'nahe',
+      'naher',
+      'near',
+      'nearby',
+      'nearest',
+      'the',
+      'zum',
+      'zur',
+    };
+    return token.isNotEmpty && !ignoredTokens.contains(token);
+  }
+
+  static String _normalizeSearchText(String text) {
+    const replacements = {
+      'ä': 'a',
+      'ö': 'o',
+      'ü': 'u',
+      'ß': 'ss',
+      'à': 'a',
+      'á': 'a',
+      'â': 'a',
+      'ã': 'a',
+      'å': 'a',
+      'ç': 'c',
+      'è': 'e',
+      'é': 'e',
+      'ê': 'e',
+      'ë': 'e',
+      'ì': 'i',
+      'í': 'i',
+      'î': 'i',
+      'ï': 'i',
+      'ñ': 'n',
+      'ò': 'o',
+      'ó': 'o',
+      'ô': 'o',
+      'õ': 'o',
+      'ù': 'u',
+      'ú': 'u',
+      'û': 'u',
+      'ý': 'y',
+      'ÿ': 'y',
+    };
+
+    final buffer = StringBuffer();
+    for (final rune in text.toLowerCase().runes) {
+      final char = String.fromCharCode(rune);
+      buffer.write(replacements[char] ?? char);
+    }
+
+    return buffer.toString().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+  }
+
+  static double _distanceKm(
+      double lat1, double lng1, double lat2, double lng2) {
+    const earthRadiusKm = 6371.0;
+    final lat1Rad = _degreesToRadians(lat1);
+    final lat2Rad = _degreesToRadians(lat2);
+    final latDelta = _degreesToRadians(lat2 - lat1);
+    final lngDelta = _degreesToRadians(lng2 - lng1);
+
+    final a = math.sin(latDelta / 2) * math.sin(latDelta / 2) +
+        math.cos(lat1Rad) *
+            math.cos(lat2Rad) *
+            math.sin(lngDelta / 2) *
+            math.sin(lngDelta / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  static double _degreesToRadians(double degrees) => degrees * math.pi / 180;
 
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
