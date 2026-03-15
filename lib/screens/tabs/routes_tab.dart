@@ -39,6 +39,15 @@ const List<IconData> kAvailableIcons = [
   Icons.local_airport
 ];
 
+enum RouteHistoryView { frequent, recent }
+
+class _SuggestionSection {
+  final String? title;
+  final List<dynamic> items;
+
+  const _SuggestionSection({this.title, required this.items});
+}
+
 class RoutesTab extends StatefulWidget {
   final Position? currentPosition;
   final bool onlyNahverkehr;
@@ -76,6 +85,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _debounce;
   Timer? _focusDebounce; // Delayed focus handling for Web clicks
   bool _isLoadingRoute = false;
+  int _nextRouteSearchToken = 0;
+  int? _activeRouteSearchToken;
+  final Set<int> _cancelledRouteSearchTokens = <int>{};
   bool _isSuggestionsLoading = false;
 
   DateTime? _selectedDate;
@@ -94,6 +106,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isRefreshingLocation = false;
   Position? _manualCurrentPosition;
   List<Map<String, dynamic>> _frequentJourneys = [];
+  List<Map<String, dynamic>> _recentJourneys = [];
+  List<Map<String, dynamic>> _savedJourneys = [];
+  RouteHistoryView _historyView = RouteHistoryView.frequent;
 
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
@@ -114,11 +129,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadHistoryData() async {
     final history = await SearchHistoryManager.getHistory();
     final frequent = await SearchHistoryManager.getFrequentJourneys();
+    final recent = await SearchHistoryManager.getRecentJourneys();
+    final saved = await SearchHistoryManager.getSavedJourneys();
     debugPrint(
-        "Loaded history: ${history.length} items, frequent: ${frequent.length} items");
+        "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
       setState(() {
         _frequentJourneys = frequent;
+        _recentJourneys = recent;
+        _savedJourneys = saved;
       });
     }
   }
@@ -348,6 +367,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadFavorites() async {
     final favs = await FavoritesManager.getFavorites();
     if (mounted) setState(() => _favorites = favs);
+  }
+
+  bool _isRouteSearchCancelled(int token) =>
+      _cancelledRouteSearchTokens.contains(token);
+
+  void _finishRouteSearchLoading(int token) {
+    if (!mounted || _activeRouteSearchToken != token || !_isLoadingRoute) {
+      return;
+    }
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
+  }
+
+  void _disposeRouteSearch(int token) {
+    _cancelledRouteSearchTokens.remove(token);
+    if (!mounted || _activeRouteSearchToken != token) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
+  }
+
+  void _cancelRouteSearch() {
+    final token = _activeRouteSearchToken;
+    if (token == null) return;
+    _cancelledRouteSearchTokens.add(token);
+    if (!mounted) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _isLoadingRoute = false;
+    });
   }
 
   // --- WAKE ALARM LOGIC ---
@@ -645,6 +697,134 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  ({double? lat, double? lng}) _suggestionReferencePoint() {
+    double? refLat;
+    double? refLng;
+
+    if (_activeSearchField == 'from') {
+      if (_toStation != null &&
+          _toStation!.latitude != null &&
+          _toStation!.longitude != null) {
+        refLat = _toStation!.latitude;
+        refLng = _toStation!.longitude;
+      } else if (_effectiveCurrentPosition != null) {
+        refLat = _effectiveCurrentPosition!.latitude;
+        refLng = _effectiveCurrentPosition!.longitude;
+      }
+    } else if (_activeSearchField == 'to') {
+      if (_fromStation != null &&
+          _fromStation!.latitude != null &&
+          _fromStation!.longitude != null) {
+        refLat = _fromStation!.latitude;
+        refLng = _fromStation!.longitude;
+      } else if (_effectiveCurrentPosition != null) {
+        refLat = _effectiveCurrentPosition!.latitude;
+        refLng = _effectiveCurrentPosition!.longitude;
+      }
+    }
+
+    return (lat: refLat, lng: refLng);
+  }
+
+  String? _distanceTextForStation(Station station) {
+    final ref = _suggestionReferencePoint();
+    if (ref.lat == null ||
+        ref.lng == null ||
+        station.latitude == null ||
+        station.longitude == null) {
+      return null;
+    }
+
+    final distInMeters = Geolocator.distanceBetween(
+        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
+    final distInKm = distInMeters / 1000.0;
+    return "${distInKm.toStringAsFixed(1)} km";
+  }
+
+  double? _distanceFromReference(Station station) {
+    final ref = _suggestionReferencePoint();
+    if (ref.lat == null ||
+        ref.lng == null ||
+        station.latitude == null ||
+        station.longitude == null) {
+      return null;
+    }
+
+    return Geolocator.distanceBetween(
+        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
+  }
+
+  List<_SuggestionSection> _buildSuggestionSections() {
+    final favorites = <Favorite>[];
+    final stations = <Station>[];
+
+    for (final item in _suggestions) {
+      if (item is Favorite) {
+        favorites.add(item);
+      } else if (item is Station) {
+        stations.add(item);
+      }
+    }
+
+    final sections = <_SuggestionSection>[];
+    if (favorites.isNotEmpty) {
+      sections.add(_SuggestionSection(items: favorites));
+    }
+
+    final groupedStations = <String, List<Station>>{};
+    final cityOrder = <String>[];
+    for (final station in stations) {
+      final city = station.cityGroupLabel;
+      if (!groupedStations.containsKey(city)) {
+        groupedStations[city] = <Station>[];
+        cityOrder.add(city);
+      }
+      groupedStations[city]!.add(station);
+    }
+
+    cityOrder.sort((a, b) {
+      final aBest = groupedStations[a]!
+          .map(_distanceFromReference)
+          .whereType<double>()
+          .fold<double?>(null,
+              (best, value) => best == null || value < best ? value : best);
+      final bBest = groupedStations[b]!
+          .map(_distanceFromReference)
+          .whereType<double>()
+          .fold<double?>(null,
+              (best, value) => best == null || value < best ? value : best);
+
+      if (aBest != null && bBest != null) {
+        return aBest.compareTo(bBest);
+      }
+      if (aBest != null) return -1;
+      if (bBest != null) return 1;
+      return a.toLowerCase().compareTo(b.toLowerCase());
+    });
+
+    for (final city in cityOrder) {
+      final cityStations = groupedStations[city]!;
+      cityStations.sort((a, b) {
+        final distA = _distanceFromReference(a);
+        final distB = _distanceFromReference(b);
+
+        if (distA != null && distB != null) {
+          final distanceComparison = distA.compareTo(distB);
+          if (distanceComparison != 0) return distanceComparison;
+        } else if (distA != null) {
+          return -1;
+        } else if (distB != null) {
+          return 1;
+        }
+
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      sections.add(_SuggestionSection(title: city, items: cityStations));
+    }
+
+    return sections;
+  }
+
   void _onSearchChanged(String query, String field) {
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
@@ -876,6 +1056,43 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     });
     _stopWakeAlarm();
+  }
+
+  bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
+    return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  bool _isRouteSaved(RouteTab route) {
+    final from = route.origin;
+    if (from == null) return false;
+    return _savedJourneys
+        .any((item) => _journeyMatches(item, from, route.destination));
+  }
+
+  Future<void> _toggleSavedRoute(RouteTab route) async {
+    final from = route.origin;
+    if (from == null) return;
+
+    final saved =
+        await SearchHistoryManager.toggleSavedJourney(from, route.destination);
+    await _loadHistoryData();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(saved ? 'Route saved' : 'Route removed from saved')));
+  }
+
+  void _applyRouteHistorySelection(Map<String, dynamic> item) {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+    setState(() {
+      _fromStation = from;
+      _fromUsesCurrentLocation = false;
+      _fromController.text = from.name;
+      _toStation = to;
+      _toController.text = to.name;
+    });
+    _findRoutes();
   }
 
   void _showChat(BuildContext context, String lineName) {
@@ -1451,6 +1668,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _findRoutes() async {
     if (_isLoadingRoute) return;
     final l10n = AppLocalizations.of(context)!;
+    final searchToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = searchToken;
+      _isLoadingRoute = true;
+    });
+
     Station? from = _fromStation;
     if (from == null) {
       if (_fromUsesCurrentLocation ||
@@ -1462,6 +1685,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 .timeout(const Duration(seconds: 3));
           } catch (e) {/* ignore */}
         }
+        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
         if (pos != null) {
           // Use GPS directly
           from = Station(
@@ -1478,10 +1702,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           return;
         }
       } else {
-        setState(() => _isLoadingRoute = true);
         try {
           final results =
               await TransportApi.searchStations(_fromController.text);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             from = results.first;
             _fromStation = from;
@@ -1489,8 +1713,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             throw l10n.startNotFound;
           }
         } catch (e) {
-          if (mounted) {
-            setState(() => _isLoadingRoute = false);
+          if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
@@ -1501,17 +1724,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     if (_toStation == null) {
       if (_toController.text.isNotEmpty) {
-        setState(() => _isLoadingRoute = true);
         try {
           final results = await TransportApi.searchStations(_toController.text);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             _toStation = results.first;
           } else {
             throw l10n.destinationNotFound;
           }
         } catch (e) {
-          if (mounted) {
-            setState(() => _isLoadingRoute = false);
+          if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
@@ -1522,7 +1744,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         return;
       }
     }
-    setState(() => _isLoadingRoute = true);
     try {
       DateTime when;
       if (_selectedDate != null) {
@@ -1542,40 +1763,48 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival, onPartialResults: (partial) {
-        if (mounted && currentTabId == null) {
-          setState(() => _isLoadingRoute = false);
-          currentTabId = _addJourneyTab(
-              candidatesData: partial, origin: from, destination: _toStation);
+        if (!mounted ||
+            currentTabId != null ||
+            _isRouteSearchCancelled(searchToken)) {
+          return;
         }
+        currentTabId = _addJourneyTab(
+            candidatesData: partial, origin: from, destination: _toStation);
+        _finishRouteSearchLoading(searchToken);
       }).timeout(const Duration(seconds: 20));
 
-      if (mounted) {
-        if (res.isNotEmpty) {
-          if (currentTabId != null) {
-            _updateTabCandidates(currentTabId!, res);
-          } else {
-            _addJourneyTab(
-                candidatesData: res, origin: from, destination: _toStation);
-          }
-          SearchHistoryManager.saveJourney(from, _toStation!);
-          _loadHistoryData(); // Refresh UI
-        } else if (currentTabId == null) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
+      if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+
+      if (res.isNotEmpty) {
+        if (currentTabId != null) {
+          _updateTabCandidates(currentTabId!, res);
+        } else {
+          currentTabId = _addJourneyTab(
+              candidatesData: res, origin: from, destination: _toStation);
+          _finishRouteSearchLoading(searchToken);
         }
+        if (_isRouteSearchCancelled(searchToken)) return;
+        await SearchHistoryManager.saveJourney(from, _toStation!);
+        if (_isRouteSearchCancelled(searchToken)) return;
+        await SearchHistoryManager.saveRecentJourney(from, _toStation!);
+        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+        await _loadHistoryData(); // Refresh UI
+      } else if (currentTabId == null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
       }
     } on TimeoutException catch (_) {
-      if (mounted) {
+      if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
-      if (mounted) {
+      if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.serviceBusyMoment)));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(searchToken);
     }
   }
 
@@ -1756,8 +1985,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final bool canSearch =
         (_fromStation != null || _effectiveCurrentPosition != null) &&
-            _toStation != null &&
-            !_isLoadingRoute;
+            _toStation != null;
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -2059,11 +2287,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         hint: (_fromStation == null &&
                                 _effectiveCurrentPosition != null)
                             ? AppLocalizations.of(context)!.currentLocation
-                            : AppLocalizations.of(context)!.stationOrAddress),
+                            : AppLocalizations.of(context)!
+                                .fromStationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     const SizedBox(height: 12),
                     _buildTextField(AppLocalizations.of(context)!.toLabel,
-                        _toController, _toFocusNode, _toStation != null, 'to'),
+                        _toController, _toFocusNode, _toStation != null, 'to',
+                        hint: AppLocalizations.of(context)!.toStationOrAddress),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -2164,18 +2394,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         width: double.infinity,
                         height: 56,
                         child: ElevatedButton(
-                            onPressed: canSearch ? _findRoutes : null,
+                            onPressed: _isLoadingRoute
+                                ? _cancelRouteSearch
+                                : (canSearch ? _findRoutes : null),
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: colors.searchBtnBg,
                                 foregroundColor: colors.searchBtnText,
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16))),
                             child: _isLoadingRoute
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.white))
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white)),
+                                      const SizedBox(width: 12),
+                                      Text(AppLocalizations.of(context)!.cancel,
+                                          style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold))
+                                    ],
+                                  )
                                 : Text(AppLocalizations.of(context)!.findRoutes,
                                     style: TextStyle(
                                         fontSize: 16,
@@ -2259,7 +2502,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                                 color: colors.favText))
                                       ]));
                             })),
-                    _buildFrequentJourneys(colors),
+                    _buildRouteHistorySection(colors),
+                    _buildSavedJourneys(colors),
                   ],
                 ),
               ),
@@ -2270,8 +2514,91 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildFrequentJourneys(TransColors colors) {
-    if (_frequentJourneys.isEmpty) return const SizedBox.shrink();
+  Widget _buildRouteHistorySection(TransColors colors) {
+    if (_frequentJourneys.isEmpty && _recentJourneys.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final showingFrequent = _historyView == RouteHistoryView.frequent;
+    final journeys = showingFrequent ? _frequentJourneys : _recentJourneys;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Text(
+                      showingFrequent
+                          ? AppLocalizations.of(context)!.frequentJourneys
+                          : 'Recent routes',
+                      style: TextStyle(
+                          color: colors.sectionHeader,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                    color: colors.cardBg,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: colors.divider)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildHistoryToggleChip(
+                        colors: colors,
+                        label: 'Frequent',
+                        selected: showingFrequent,
+                        onTap: () => setState(
+                            () => _historyView = RouteHistoryView.frequent)),
+                    _buildHistoryToggleChip(
+                        colors: colors,
+                        label: 'Recent',
+                        selected: !showingFrequent,
+                        onTap: () => setState(
+                            () => _historyView = RouteHistoryView.recent)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (journeys.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                  color: colors.cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white10)),
+              child: Text('No recent routes yet',
+                  style: TextStyle(color: colors.searchHintText)),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: journeys.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
+                  colors: colors,
+                  item: journeys[idx],
+                  icon: showingFrequent ? Icons.bolt : Icons.history),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSavedJourneys(TransColors colors) {
+    if (_savedJourneys.isEmpty) return const SizedBox.shrink();
+
     return Container(
       margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
       child: Column(
@@ -2279,7 +2606,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text(AppLocalizations.of(context)!.frequentJourneys,
+            child: Text('Saved routes',
                 style: TextStyle(
                     color: colors.sectionHeader,
                     fontWeight: FontWeight.bold,
@@ -2288,68 +2615,82 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _frequentJourneys.length,
+            itemCount: _savedJourneys.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (ctx, idx) {
-              final item = _frequentJourneys[idx];
-              final from = Station.fromJson(item['from']);
-              final to = Station.fromJson(item['to']);
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _fromStation = from;
-                    _fromUsesCurrentLocation = false;
-                    _fromController.text = from.name;
-                    _toStation = to;
-                    _toController.text = to.name;
-                  });
-                  _findRoutes();
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                      color: colors.cardBg,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white10)),
-                  child: Row(
-                    children: [
-                      Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color:
-                                  colors.navBarSelected.withValues(alpha: 0.2),
-                              shape: BoxShape.circle),
-                          child: Icon(Icons.bookmark,
-                              color: colors.navBarSelected, size: 18)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(to.name,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14)),
-                            const SizedBox(height: 2),
-                            Text(
-                                AppLocalizations.of(context)!
-                                    .fromStation(from.name),
-                                style: TextStyle(
-                                    color: colors.searchHintText,
-                                    fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right,
-                          color: colors.searchHintText, size: 20)
-                    ],
-                  ),
-                ),
-              );
-            },
+            itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
+                colors: colors,
+                item: _savedJourneys[idx],
+                icon: Icons.bookmark),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryToggleChip(
+      {required TransColors colors,
+      required String label,
+      required bool selected,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+            color: selected ? colors.chipActiveBg : Colors.transparent,
+            borderRadius: BorderRadius.circular(999)),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? colors.chipActiveFg : colors.chipFg,
+                fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                fontSize: 12)),
+      ),
+    );
+  }
+
+  Widget _buildRouteHistoryCard(
+      {required TransColors colors,
+      required Map<String, dynamic> item,
+      required IconData icon}) {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+
+    return GestureDetector(
+      onTap: () => _applyRouteHistorySelection(item),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: colors.cardBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white10)),
+        child: Row(
+          children: [
+            Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                    color: colors.navBarSelected.withValues(alpha: 0.2),
+                    shape: BoxShape.circle),
+                child: Icon(icon, color: colors.navBarSelected, size: 18)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(to.name,
+                      style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text(AppLocalizations.of(context)!.fromStation(from.name),
+                      style: TextStyle(
+                          color: colors.searchHintText, fontSize: 12)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: colors.searchHintText, size: 20)
+          ],
+        ),
       ),
     );
   }
@@ -2359,6 +2700,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return const SizedBox.shrink();
     }
     final colors = TransColors.of(context);
+    final sections = _buildSuggestionSections();
     return GestureDetector(
       onTap: () {
         // Capture taps on the list container (including scrolling area)
@@ -2382,118 +2724,107 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 const Padding(
                     padding: EdgeInsets.all(12),
                     child: LinearProgressIndicator(minHeight: 2)),
-              // Removed Flexible, rely on constraints + shrinkWrap
               Flexible(
-                  // Actually Flexible/Expanded is needed if content exceeds 250px inside Column??
-                  // Usually inside a Column with min size, if we want it to scroll, we need constraints.
-                  // We have max-height 250 on Container.
-                  // If we put ListView directly in Column(min), and list is huge:
-                  // ListView(shrinkWrap: true) tries to be infinite? No, it tries to be as big as content.
-                  // If content > 250, Container clips? Or errors?
-                  // The original code had Flexible.
-                  // Let's use Flexible but inside Material?
-                  // Wait, Material is around the Column now.
-                  // Let's put Material inside the Container, and Column inside Material.
-                  // And keep Flexible for safety with scrolling?
-                  // User reported "no hover". That implies hit test failure.
-                  // Often caused by "invisible" widgets blocking or weird z-index if no Material.
-                  // Let's stick to the plan: Remove Flexible IF it was the cause (zero height?), OR ensure it works.
-                  // Actually, ListView(shrinkWrap: true) inside Flexible inside Column(min) is tricky.
-                  // Better: Container(height: constraint) -> ClipR -> Material -> ListView.
-                  // But we want header (Progress) + List.
-                  // Let's go with: Container -> Column -> (Progress, Flexible(ListView)).
-                  // AND ensure Material is wrapping the ListView items individually or the whole list.
-                  // Best practice: Material > ListView.
-                  child: ListView.separated(
+                  child: ListView.builder(
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
-                      itemCount: _suggestions.length,
-                      separatorBuilder: (ctx, idx) =>
-                          const Divider(height: 1, color: Colors.white10),
+                      itemCount: sections.length,
                       itemBuilder: (ctx, idx) {
-                        final item = _suggestions[idx];
-                        if (item is Favorite) {
-                          return ListTile(
-                            leading: const Icon(Icons.star,
-                                size: 16, color: Colors.orange),
-                            title: Text(item.label,
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold)),
-                            onTap: () => _selectItem(item),
-                            hoverColor: Colors
-                                .white10, // Explicit hover color if theme missing
-                          );
-                        }
-                        final station = item as Station;
-                        IconData leadingIcon = Icons.place;
-                        if (station.type == 'address') {
-                          leadingIcon = Icons.home_work;
-                        }
+                        final section = sections[idx];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (section.title != null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(14, 12, 14, 6),
+                                child: Text(
+                                  section.title!,
+                                  style: TextStyle(
+                                    color: colors.searchHintText,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ...section.items.asMap().entries.map((entry) {
+                              final item = entry.value;
+                              final isLastItem = idx == sections.length - 1 &&
+                                  entry.key == section.items.length - 1;
 
-                        double? refLat;
-                        double? refLng;
-                        if (_activeSearchField == 'from') {
-                          if (_toStation != null &&
-                              _toStation!.latitude != null &&
-                              _toStation!.longitude != null) {
-                            refLat = _toStation!.latitude;
-                            refLng = _toStation!.longitude;
-                          } else if (_effectiveCurrentPosition != null) {
-                            refLat = _effectiveCurrentPosition!.latitude;
-                            refLng = _effectiveCurrentPosition!.longitude;
-                          }
-                        } else if (_activeSearchField == 'to') {
-                          if (_fromStation != null &&
-                              _fromStation!.latitude != null &&
-                              _fromStation!.longitude != null) {
-                            refLat = _fromStation!.latitude;
-                            refLng = _fromStation!.longitude;
-                          } else if (_effectiveCurrentPosition != null) {
-                            refLat = _effectiveCurrentPosition!.latitude;
-                            refLng = _effectiveCurrentPosition!.longitude;
-                          }
-                        }
+                              Widget tile;
+                              if (item is Favorite) {
+                                tile = ListTile(
+                                  leading: const Icon(Icons.star,
+                                      size: 16, color: Colors.orange),
+                                  title: Text(item.label,
+                                      style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
+                                  onTap: () => _selectItem(item),
+                                  hoverColor: Colors.white10,
+                                );
+                              } else {
+                                final station = item as Station;
+                                IconData leadingIcon = Icons.place;
+                                if (station.type == 'address') {
+                                  leadingIcon = Icons.home_work;
+                                } else if (station.type == 'stop') {
+                                  leadingIcon = Icons.train;
+                                }
 
-                        String? distanceText;
-                        if (refLat != null &&
-                            refLng != null &&
-                            station.latitude != null &&
-                            station.longitude != null) {
-                          double distInMeters = Geolocator.distanceBetween(
-                              refLat,
-                              refLng,
-                              station.latitude!,
-                              station.longitude!);
-                          double distInKm = distInMeters / 1000.0;
-                          distanceText = "${distInKm.toStringAsFixed(1)} km";
-                        }
+                                final distanceText =
+                                    _distanceTextForStation(station);
 
-                        return ListTile(
-                            leading:
-                                Icon(leadingIcon, size: 16, color: Colors.grey),
-                            title: Text(station.name,
-                                style: TextStyle(
-                                    color: colors.textPrimary, fontSize: 14)),
-                            trailing: distanceText != null
-                                ? Text(distanceText,
-                                    style: TextStyle(
-                                        color: colors.searchHintText,
-                                        fontSize: 12))
-                                : null,
-                            onTap: () => _selectItem(station),
-                            hoverColor: Colors.white10,
-                            onLongPress: () {
-                              final newFav = Favorite(
-                                  id: DateTime.now()
-                                      .millisecondsSinceEpoch
-                                      .toString(),
-                                  label: station.name,
-                                  type: 'station',
-                                  station: station);
-                              _showEditFavoriteDialog(newFav);
-                            });
+                                tile = ListTile(
+                                  leading: Icon(leadingIcon,
+                                      size: 16, color: Colors.grey),
+                                  title: Text(station.name,
+                                      style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontSize: 14)),
+                                  subtitle: station.locationSummary != null
+                                      ? Text(station.locationSummary!,
+                                          style: TextStyle(
+                                              color: colors.searchHintText,
+                                              fontSize: 11))
+                                      : null,
+                                  trailing: distanceText != null
+                                      ? Text(distanceText,
+                                          style: TextStyle(
+                                              color: colors.searchHintText,
+                                              fontSize: 12))
+                                      : null,
+                                  onTap: () => _selectItem(station),
+                                  hoverColor: Colors.white10,
+                                  onLongPress: () {
+                                    final newFav = Favorite(
+                                        id: DateTime.now()
+                                            .millisecondsSinceEpoch
+                                            .toString(),
+                                        label: station.name,
+                                        type: 'station',
+                                        station: station);
+                                    _showEditFavoriteDialog(newFav);
+                                  },
+                                );
+                              }
+
+                              if (isLastItem) return tile;
+
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  tile,
+                                  const Divider(
+                                      height: 1, color: Colors.white10),
+                                ],
+                              );
+                            }),
+                          ],
+                        );
                       }))
             ]),
           )),
@@ -2523,7 +2854,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         ((_fromStation?.id == 'gps') ||
             (isLocationHint &&
                 effectiveHint !=
-                    AppLocalizations.of(context)!.stationOrAddress))) {
+                    AppLocalizations.of(context)!.fromStationOrAddress))) {
       iconColor = Colors.blue;
     }
 
@@ -3052,6 +3383,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               ]
                             ])
                           ])),
+                      IconButton(
+                          icon: Icon(
+                              _isRouteSaved(route)
+                                  ? Icons.bookmark
+                                  : Icons.bookmark_border,
+                              color: colors.navBarSelected),
+                          onPressed: route.origin == null
+                              ? null
+                              : () => _toggleSavedRoute(route)),
                       IconButton(
                           icon: const Icon(Icons.map, color: Colors.blue),
                           onPressed: () => _openMap(route)),

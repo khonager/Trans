@@ -542,6 +542,18 @@ abstract class AppLocalizations {
   /// **'Current Location'**
   String get currentLocation;
 
+  /// No description provided for @fromStationOrAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Start station or address...'**
+  String get fromStationOrAddress;
+
+  /// No description provided for @toStationOrAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination station or address...'**
+  String get toStationOrAddress;
+
   /// No description provided for @stationOrAddress.
   ///
   /// In en, this message translates to:

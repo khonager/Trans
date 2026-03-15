@@ -227,6 +227,14 @@ class SupabaseService {
     await updateSettings({'frequent_journeys': journeys});
   }
 
+  static Future<void> updateRecentJourneys(List<dynamic> journeys) async {
+    await updateSettings({'recent_journeys': journeys});
+  }
+
+  static Future<void> updateSavedJourneys(List<dynamic> journeys) async {
+    await updateSettings({'saved_journeys': journeys});
+  }
+
   static Future<void> loadAndSyncSettings() async {
     final user = currentUser;
     if (user == null) return;
@@ -284,6 +292,20 @@ class SupabaseService {
             .toList()
             .cast<String>();
         await prefs.setStringList('frequent_journeys', list);
+      }
+      if (settings.containsKey('recent_journeys')) {
+        final List<String> list = (settings['recent_journeys'] as List)
+            .map((e) => json.encode(e))
+            .toList()
+            .cast<String>();
+        await prefs.setStringList('recent_journeys', list);
+      }
+      if (settings.containsKey('saved_journeys')) {
+        final List<String> list = (settings['saved_journeys'] as List)
+            .map((e) => json.encode(e))
+            .toList()
+            .cast<String>();
+        await prefs.setStringList('saved_journeys', list);
       }
       if (settings.containsKey('locale_code')) {
         await prefs.setString('locale_code', settings['locale_code']);

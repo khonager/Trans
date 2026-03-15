@@ -175,6 +175,8 @@
   "tripTime": "Trip Time",
   "now": "Now",
   "currentLocation": "Current Location",
+  "fromStationOrAddress": "Start station or address...",
+  "toStationOrAddress": "Destination station or address...",
   "stationOrAddress": "Station or Address...",
   "fromLabel": "From",
   "toLabel": "To",

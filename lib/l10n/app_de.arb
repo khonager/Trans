@@ -74,6 +74,8 @@
   "tripTime": "Reisezeit",
   "now": "Jetzt",
   "currentLocation": "Aktueller Standort",
+  "fromStationOrAddress": "Startstation oder Adresse...",
+  "toStationOrAddress": "Zielstation oder Adresse...",
   "stationOrAddress": "Station oder Adresse...",
   "fromLabel": "Von",
   "toLabel": "Nach",

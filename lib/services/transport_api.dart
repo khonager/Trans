@@ -108,7 +108,7 @@ class TransportApi {
       {double? lat, double? lng}) async {
     final Map<String, dynamic> params = {
       'query': query,
-      'results': 10,
+      'results': 20,
       'poi': 'true',
       'addresses': 'true',
     };
@@ -116,7 +116,6 @@ class TransportApi {
     if (lat != null && lng != null) {
       params['latitude'] = lat;
       params['longitude'] = lng;
-      params['distance'] = 2000;
     }
 
     final response = await _fetch(_getV6Uri('/locations', params));
@@ -268,15 +267,11 @@ class TransportApi {
       'text': query,
     };
 
-    // Add location bias if coordinates provided
-    // User requested to REMOVE bias for typed queries, so we comment this out.
-    // The query 'text' should be the primary filter.
-    /*
     if (lat != null && lng != null) {
       params['place'] = '$lat,$lng';
-      params['placeBias'] = '2'; // Higher bias towards user location
+      // Bias ranking toward nearby matches without restricting the search area.
+      params['placeBias'] = '2';
     }
-    */
 
     final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
     final List<dynamic> data = json.decode(response.body);
@@ -382,8 +377,15 @@ class TransportApi {
     try {
       // Try MOTIS/Transitous first
       final result = await _searchStationsMotis(query, lat: lat, lng: lng);
-      _stationCache[cacheKey] = _CacheEntry(result, const Duration(hours: 1));
-      return result;
+      if (result.length >= 8) {
+        _stationCache[cacheKey] = _CacheEntry(result, const Duration(hours: 1));
+        return result;
+      }
+
+      final fallback = await _searchStationsV6(query, lat: lat, lng: lng);
+      final merged = _mergeStations(result, fallback);
+      _stationCache[cacheKey] = _CacheEntry(merged, const Duration(hours: 1));
+      return merged;
     } catch (e) {
       debugPrint('Transitous searchStations failed: $e, trying v6.db...');
       try {
@@ -396,6 +398,37 @@ class TransportApi {
         return [];
       }
     }
+  }
+
+  static List<Station> _mergeStations(
+      List<Station> primary, List<Station> secondary) {
+    final merged = <Station>[];
+    final seen = <String>{};
+
+    void addStation(Station station) {
+      final key = _stationDedupKey(station);
+      if (seen.add(key)) {
+        merged.add(station);
+      }
+    }
+
+    for (final station in primary) {
+      addStation(station);
+    }
+    for (final station in secondary) {
+      addStation(station);
+    }
+
+    return merged;
+  }
+
+  static String _stationDedupKey(Station station) {
+    final id = station.id.trim();
+    if (id.isNotEmpty) return id;
+
+    final lat = station.latitude?.toStringAsFixed(5) ?? '';
+    final lng = station.longitude?.toStringAsFixed(5) ?? '';
+    return '${station.name.trim().toLowerCase()}|$lat|$lng';
   }
 
   /// Get nearby stops by coordinates

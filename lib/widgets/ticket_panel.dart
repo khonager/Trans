@@ -37,6 +37,7 @@ class _TicketPanelState extends State<TicketPanel> {
   Uint8List? _styledQrBytes;
   int? _styledQrColorArgb;
   bool _isGeneratingStyledQr = false;
+  int? _pendingThemeSyncArgb;
   Rect? _detectedQrBox;
 
   List<dynamic> _history = [];
@@ -587,6 +588,11 @@ class _TicketPanelState extends State<TicketPanel> {
     final bool showGeneratedQr =
         imageToShow != null && _showGeneratedQr && _styledQrBytes != null;
 
+    _maybeRefreshStyledQrForTheme(
+      themeColor: colors.effectiveSeed,
+      hasSourceImage: imageToShow != null,
+    );
+
     return DraggableScrollableSheet(
       controller: _sheetController,
       initialChildSize: 0.1,
@@ -820,7 +826,7 @@ class _TicketPanelState extends State<TicketPanel> {
   Widget _buildStyledQr(TransColors colors) {
     final styled = _styledQrBytes;
     if (styled == null) return const SizedBox.shrink();
-    final qrBg = colors.isDark ? const Color(0xFF0F1115) : Colors.white;
+    final qrBg = colors.ticketSheetBg;
 
     return Container(
       width: double.infinity,
@@ -842,6 +848,48 @@ class _TicketPanelState extends State<TicketPanel> {
         ),
       ),
     );
+  }
+
+  void _maybeRefreshStyledQrForTheme({
+    required Color themeColor,
+    required bool hasSourceImage,
+  }) {
+    final themeArgb = themeColor.toARGB32();
+    final shouldRefresh = hasSourceImage &&
+        _showGeneratedQr &&
+        _styledQrBytes != null &&
+        _styledQrColorArgb != themeArgb &&
+        !_isGeneratingStyledQr;
+
+    if (!shouldRefresh) {
+      if (_pendingThemeSyncArgb == themeArgb) {
+        _pendingThemeSyncArgb = null;
+      }
+      return;
+    }
+
+    if (_pendingThemeSyncArgb == themeArgb) return;
+    _pendingThemeSyncArgb = themeArgb;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _pendingThemeSyncArgb != themeArgb) return;
+
+      setState(() => _isGeneratingStyledQr = true);
+      try {
+        await _ensureStyledQrForCurrentTicket(themeColor);
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isGeneratingStyledQr = false;
+            if (_pendingThemeSyncArgb == themeArgb) {
+              _pendingThemeSyncArgb = null;
+            }
+          });
+        } else if (_pendingThemeSyncArgb == themeArgb) {
+          _pendingThemeSyncArgb = null;
+        }
+      }
+    });
   }
 
   Future<bool> _ensureStyledQrForCurrentTicket(Color themeColor) async {
