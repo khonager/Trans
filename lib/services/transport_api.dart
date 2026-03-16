@@ -28,9 +28,11 @@ class TransportApi {
   // In-memory caches with TTL
   static final Map<String, _CacheEntry<List<Station>>> _stationCache = {};
   static final Map<String, _CacheEntry<List<Station>>> _nearbyCache = {};
+  static final Map<String, Future<List<Station>>> _stationSearchInFlight = {};
 
   // Cache the User-Agent
   static String? _userAgent;
+  static DateTime? _v6StationsCooldownUntil;
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -365,32 +367,70 @@ class TransportApi {
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> searchStations(String query,
       {double? lat, double? lng}) async {
-    if (query.isEmpty) return [];
+    final sanitizedQuery = _sanitizeStationQuery(query);
+    if (sanitizedQuery.isEmpty) return [];
 
     // Check cache first
-    final cacheKey = 'stations:$query:$lat:$lng';
+    final cacheKey = 'stations:$sanitizedQuery:$lat:$lng';
     final cached = _stationCache[cacheKey];
     if (cached != null && !cached.isExpired) {
-      debugPrint('Cache hit for stations: $query');
+      debugPrint('Cache hit for stations: $sanitizedQuery');
       return cached.data;
     }
 
-    final motisFuture =
-        _searchStationsMotis(query, lat: lat, lng: lng).catchError((error) {
+    final inFlight = _stationSearchInFlight[cacheKey];
+    if (inFlight != null) return inFlight;
+
+    final future =
+        _searchStationsInternal(sanitizedQuery, cacheKey, lat: lat, lng: lng);
+    _stationSearchInFlight[cacheKey] = future;
+    future.whenComplete(() => _stationSearchInFlight.remove(cacheKey));
+    return future;
+  }
+
+  static Future<List<Station>> _searchStationsInternal(
+      String query, String cacheKey,
+      {double? lat, double? lng}) async {
+    if (apiMode == 'v6') {
+      final result = await _searchStationsV6(query, lat: lat, lng: lng);
+      final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
+      _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
+      return ranked;
+    }
+
+    List<Station> motisResults = [];
+    try {
+      motisResults = await _searchStationsMotis(query, lat: lat, lng: lng);
+    } catch (error) {
       debugPrint('Transitous searchStations failed: $error');
-      return <Station>[];
-    });
+    }
 
-    final v6Future =
-        _searchStationsV6(query, lat: lat, lng: lng).catchError((error) {
-      debugPrint('v6.db searchStations failed: $error');
-      return <Station>[];
-    });
+    final rankedMotis =
+        rankStationsForQuery(motisResults, query, lat: lat, lng: lng);
 
-    final results = await Future.wait([motisFuture, v6Future]);
-    final merged = _mergeStations(results[0], results[1]);
+    if (apiMode == 'motis') {
+      _stationCache[cacheKey] =
+          _CacheEntry(rankedMotis, const Duration(hours: 1));
+      return rankedMotis;
+    }
+
+    if (!_shouldAugmentStationResultsWithV6(rankedMotis, query,
+        lat: lat, lng: lng)) {
+      _stationCache[cacheKey] =
+          _CacheEntry(rankedMotis, const Duration(hours: 1));
+      return rankedMotis;
+    }
+
+    final v6Results =
+        await _searchStationsV6WithCooldown(query, lat: lat, lng: lng);
+    if (v6Results.isEmpty) {
+      _stationCache[cacheKey] =
+          _CacheEntry(rankedMotis, const Duration(hours: 1));
+      return rankedMotis;
+    }
+
+    final merged = _mergeStations(rankedMotis, v6Results);
     final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
-
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
   }
@@ -424,6 +464,57 @@ class TransportApi {
     final lat = station.latitude?.toStringAsFixed(5) ?? '';
     final lng = station.longitude?.toStringAsFixed(5) ?? '';
     return '${station.name.trim().toLowerCase()}|$lat|$lng';
+  }
+
+  static Future<List<Station>> _searchStationsV6WithCooldown(String query,
+      {double? lat, double? lng}) async {
+    final cooldownUntil = _v6StationsCooldownUntil;
+    if (cooldownUntil != null && DateTime.now().isBefore(cooldownUntil)) {
+      debugPrint(
+          'Skipping v6 station search during cooldown for query: $query');
+      return const <Station>[];
+    }
+
+    try {
+      return await _searchStationsV6(query, lat: lat, lng: lng);
+    } catch (error) {
+      debugPrint('v6.db searchStations failed: $error');
+      _v6StationsCooldownUntil = DateTime.now().add(
+        _looksLikeServiceUnavailable(error)
+            ? const Duration(minutes: 3)
+            : const Duration(minutes: 1),
+      );
+      return const <Station>[];
+    }
+  }
+
+  static bool _shouldAugmentStationResultsWithV6(
+      List<Station> motisResults, String query,
+      {double? lat, double? lng}) {
+    if (motisResults.isEmpty) return true;
+
+    final queryTokens = _searchTokens(query);
+    final topResults = motisResults.take(5).toList();
+    final transitResults =
+        topResults.where((station) => _isTransitStation(station)).toList();
+
+    if (_isAirportLikeQuery(queryTokens)) {
+      return transitResults.isEmpty ||
+          !topResults.any((station) => _looksLikeAirportStation(station));
+    }
+
+    if (transitResults.isEmpty) return true;
+    if (motisResults.length < 5) return true;
+
+    final hasLocationBias = lat != null && lng != null;
+    final isSingleTokenQuery = queryTokens.length == 1;
+    if (!hasLocationBias &&
+        isSingleTokenQuery &&
+        !_looksLikeTransitHubStation(topResults.first)) {
+      return true;
+    }
+
+    return false;
   }
 
   @visibleForTesting
@@ -564,6 +655,19 @@ class TransportApi {
         token.startsWith('airport'));
   }
 
+  static bool _looksLikeAirportStation(Station station) {
+    final normalizedName = _normalizeSearchText(station.name);
+    final nameTokens = _splitSearchTokens(normalizedName);
+    final metadataTokens = _splitSearchTokens(_normalizeSearchText([
+      station.city,
+      station.region,
+      station.country,
+      station.category,
+      station.type,
+    ].whereType<String>().join(' ')));
+    return _looksLikeAirport(nameTokens, metadataTokens);
+  }
+
   static bool _looksLikeTransitHub(
       String normalizedName, List<String> nameTokens) {
     if (normalizedName.contains('hauptbahnhof') ||
@@ -588,6 +692,13 @@ class TransportApi {
 
     return nameTokens.any(hubTokens.contains);
   }
+
+  static bool _looksLikeTransitHubStation(Station station) =>
+      _looksLikeTransitHub(_normalizeSearchText(station.name),
+          _splitSearchTokens(_normalizeSearchText(station.name)));
+
+  static bool _isTransitStation(Station station) =>
+      station.type == 'station' || station.type == 'stop';
 
   static bool _isGenericAirportLabel(String normalizedName) =>
       normalizedName == 'airport' || normalizedName == 'flughafen';
@@ -649,6 +760,9 @@ class TransportApi {
     return token.isNotEmpty && !ignoredTokens.contains(token);
   }
 
+  static String _sanitizeStationQuery(String query) =>
+      query.trim().replaceAll(RegExp(r'\s+'), ' ');
+
   static String _normalizeSearchText(String text) {
     const replacements = {
       'ä': 'a',
@@ -708,6 +822,9 @@ class TransportApi {
   }
 
   static double _degreesToRadians(double degrees) => degrees * math.pi / 180;
+
+  static bool _looksLikeServiceUnavailable(Object error) =>
+      error.toString().contains('503');
 
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
