@@ -4,6 +4,39 @@ import 'package:trans/services/transport_api.dart';
 
 void main() {
   group('TransportApi.rankStationsForQuery', () {
+    test('prefers a main transit hub over an exact city place without location',
+        () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'city-place',
+            name: 'Wiesbaden',
+            type: 'location',
+            city: 'Wiesbaden',
+            country: 'DE',
+          ),
+          Station(
+            id: 'main-station',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+          ),
+          Station(
+            id: 'foreign-place',
+            name: 'WIESBADEN',
+            type: 'location',
+            city: 'Amahlathi Local Municipality',
+            country: 'ZA',
+          ),
+        ],
+        'wiesbaden',
+      );
+
+      expect(ranked.first.id, 'main-station');
+      expect(ranked[1].id, 'city-place');
+    });
+
     test(
         'prioritizes nearby airport stops over generic airport POIs and streets',
         () {

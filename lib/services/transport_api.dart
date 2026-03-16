@@ -464,6 +464,8 @@ class TransportApi {
     ].whereType<String>().join(' ')));
     final isTransitStop = station.type == 'station' || station.type == 'stop';
     final isAirportQuery = _isAirportLikeQuery(queryTokens);
+    final hasLocationBias = lat != null && lng != null;
+    final isSingleTokenQuery = queryTokens.length == 1;
 
     var score = 0;
 
@@ -500,8 +502,21 @@ class TransportApi {
       score += 75;
     }
 
-    if (isTransitStop) score += 35;
+    if (isTransitStop) score += 65;
     if (station.type == 'address') score -= 20;
+
+    if (_looksLikeTransitHub(normalizedName, nameTokens)) {
+      score += 95;
+    }
+
+    if (!hasLocationBias &&
+        isSingleTokenQuery &&
+        station.type == 'location' &&
+        normalizedName == normalizedQuery) {
+      // In route planning, exact city/place names are useful, but the main
+      // station is usually the more actionable result when we have no location.
+      score -= 90;
+    }
 
     if (isAirportQuery) {
       if (_looksLikeAirport(nameTokens, metadataTokens)) {
@@ -547,6 +562,31 @@ class TransportApi {
         airportTokens.contains(token) ||
         token.startsWith('flughaf') ||
         token.startsWith('airport'));
+  }
+
+  static bool _looksLikeTransitHub(
+      String normalizedName, List<String> nameTokens) {
+    if (normalizedName.contains('hauptbahnhof') ||
+        normalizedName.contains('main station') ||
+        normalizedName.contains('central station') ||
+        normalizedName.contains('regionalbf') ||
+        normalizedName.contains('fernbf')) {
+      return true;
+    }
+
+    const hubTokens = {
+      'bahnhof',
+      'busbahnhof',
+      'central',
+      'centrum',
+      'centre',
+      'hbf',
+      'terminal',
+      'zob',
+      'zentrum',
+    };
+
+    return nameTokens.any(hubTokens.contains);
   }
 
   static bool _isGenericAirportLabel(String normalizedName) =>
