@@ -3161,6 +3161,68 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  bool _sameRideIdentity(JourneyStep current, JourneyStep candidate) {
+    final currentTripId = current.tripId?.trim();
+    final candidateTripId = candidate.tripId?.trim();
+    if ((currentTripId?.isNotEmpty ?? false) &&
+        (candidateTripId?.isNotEmpty ?? false)) {
+      return currentTripId == candidateTripId;
+    }
+
+    if (current.plannedDeparture != null &&
+        current.plannedArrival != null &&
+        candidate.plannedDeparture != null &&
+        candidate.plannedArrival != null) {
+      return current.plannedDeparture == candidate.plannedDeparture &&
+          current.plannedArrival == candidate.plannedArrival &&
+          current.startStationName == candidate.startStationName &&
+          current.destinationName == candidate.destinationName;
+    }
+
+    return current.line.trim().toLowerCase() ==
+            candidate.line.trim().toLowerCase() &&
+        current.startStationName == candidate.startStationName &&
+        current.destinationName == candidate.destinationName &&
+        current.headsign == candidate.headsign;
+  }
+
+  Journey? _findStrictJourneyMatch(
+      Journey currentJourney, List<Journey> candidates) {
+    final currentRideSteps =
+        currentJourney.steps.where((step) => step.type == 'ride').toList();
+
+    for (final candidate in candidates) {
+      final candidateRideSteps =
+          candidate.steps.where((step) => step.type == 'ride').toList();
+
+      if (candidateRideSteps.length != currentRideSteps.length) continue;
+
+      if (currentJourney.plannedDeparture != null &&
+          candidate.plannedDeparture != null &&
+          candidate.plannedDeparture != currentJourney.plannedDeparture) {
+        continue;
+      }
+
+      if (currentJourney.plannedArrival != null &&
+          candidate.plannedArrival != null &&
+          candidate.plannedArrival != currentJourney.plannedArrival) {
+        continue;
+      }
+
+      bool allRideStepsMatch = true;
+      for (int i = 0; i < currentRideSteps.length; i++) {
+        if (!_sameRideIdentity(currentRideSteps[i], candidateRideSteps[i])) {
+          allRideStepsMatch = false;
+          break;
+        }
+      }
+
+      if (allRideStepsMatch) return candidate;
+    }
+
+    return null;
+  }
+
   Future<void> _refreshActiveJourney(RouteTab route) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
@@ -3189,55 +3251,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         // Find the best match
-        Journey? matched;
-
-        // 1. Try Trip ID match of first ride
-        final oldFirstRide = currentRoute.activeJourney!.steps.firstWhere(
-            (s) => s.type == 'ride',
-            orElse: () => currentRoute.activeJourney!.steps.first);
-        if (oldFirstRide.tripId != null) {
-          matched = newJourneys.cast<Journey?>().firstWhere(
-              (j) => j!.steps.any(
-                  (s) => s.type == 'ride' && s.tripId == oldFirstRide.tripId),
-              orElse: () => null);
-        }
-
-        // 2. Try exact planned departure/arrival match
-        matched ??= newJourneys.cast<Journey?>().firstWhere(
-            (j) =>
-                j!.plannedDeparture ==
-                    currentRoute.activeJourney!.plannedDeparture &&
-                j.plannedArrival == currentRoute.activeJourney!.plannedArrival,
-            orElse: () => null);
-
-        // 3. Fallback: closest departure time among same first ride line
-        if (matched == null && newJourneys.isNotEmpty) {
-          final oldJourney = currentRoute.activeJourney!;
-          final oldRide = oldJourney.steps.firstWhere((s) => s.type == 'ride',
-              orElse: () => oldJourney.steps.first);
-          final oldLine = oldRide.line.trim().toLowerCase();
-
-          final withSameLine = newJourneys.where((j) {
-            final firstRide = j.steps.firstWhere((s) => s.type == 'ride',
-                orElse: () => j.steps.first);
-            return oldLine.isNotEmpty &&
-                firstRide.line.trim().toLowerCase() == oldLine;
-          }).toList();
-
-          final pool = withSameLine.isNotEmpty ? withSameLine : newJourneys;
-          pool.sort((a, b) {
-            final da = (a.plannedDeparture ?? a.departure)
-                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
-                .inSeconds
-                .abs();
-            final db = (b.plannedDeparture ?? b.departure)
-                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
-                .inSeconds
-                .abs();
-            return da.compareTo(db);
-          });
-          matched = pool.first;
-        }
+        final matched =
+            _findStrictJourneyMatch(currentRoute.activeJourney!, newJourneys);
 
         if (matched != null) {
           final upd =
