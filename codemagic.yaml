@@ -1,0 +1,6 @@
+workflows:
+  android:
+  ios-method-1:
+    name: iOS signing method-1 workflowsenvironment:
+      distribution_type: app_store
+      bundle_identifier: de.khonager.trans.ios
