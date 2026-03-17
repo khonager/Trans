@@ -1,9 +1,32 @@
 workflows:
   android:
   ios-method-1:
-    name: iOS signing method-1 workflowsenvironment:
-      distribution_type: app_store
-      bundle_identifier: de.khonager.trans.ios
+    name: iOS signing method-1 workflow
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: de.khonager.trans.ios
+    scripts:
+      - script: keychain initialize
+      - script: keychain add-certificates
+
+      - script: xcode-project use-profiles
+      - script: flutter packages pub get
+      - name: Flutter build ipa and automatic versioning
+        script: /
+          flutter build ipa --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipiants:
+          - khonager@gmail.com
+  ios-method-2:
+    name: iOS signing method-1 workflow
+    environment:
+      ios_signing:
+        provisioning_profiles:
+          - codemagic_
     scripts:
       - script: keychain initialize
       - script: keychain add-certificates
