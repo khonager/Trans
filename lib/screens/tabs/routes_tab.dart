@@ -83,6 +83,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<dynamic> _suggestions = [];
   String _activeSearchField = '';
   Timer? _debounce;
+  int _suggestionRequestToken = 0;
   Timer? _focusDebounce; // Delayed focus handling for Web clicks
   bool _isLoadingRoute = false;
   int _nextRouteSearchToken = 0;
@@ -671,9 +672,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     setState(() => _isSuggestionsLoading = true);
     List<dynamic> results = [];
-    final query = _activeSearchField == 'from'
-        ? _fromController.text
-        : _toController.text;
+    final query = (_activeSearchField == 'from'
+            ? _fromController.text
+            : _toController.text)
+        .trim();
     if (query.isNotEmpty) {
       final matchingFavs = _favorites
           .where((f) => f.label.toLowerCase().contains(query.toLowerCase()))
@@ -757,12 +759,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<_SuggestionSection> _buildSuggestionSections() {
     final favorites = <Favorite>[];
     final stations = <Station>[];
+    final stationOrder = <String, int>{};
+    final cityOrderIndex = <String, int>{};
 
-    for (final item in _suggestions) {
+    for (final (index, item) in _suggestions.indexed) {
       if (item is Favorite) {
         favorites.add(item);
       } else if (item is Station) {
         stations.add(item);
+        stationOrder[_stationOrderKey(item)] = index;
+        cityOrderIndex.putIfAbsent(item.cityGroupLabel, () => index);
       }
     }
 
@@ -799,7 +805,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       if (aBest != null) return -1;
       if (bBest != null) return 1;
-      return a.toLowerCase().compareTo(b.toLowerCase());
+      return (cityOrderIndex[a] ?? 1 << 20)
+          .compareTo(cityOrderIndex[b] ?? 1 << 20);
     });
 
     for (final city in cityOrder) {
@@ -817,7 +824,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           return 1;
         }
 
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        return (stationOrder[_stationOrderKey(a)] ?? 1 << 20)
+            .compareTo(stationOrder[_stationOrderKey(b)] ?? 1 << 20);
       });
       sections.add(_SuggestionSection(title: city, items: cityStations));
     }
@@ -825,10 +833,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return sections;
   }
 
+  String _stationOrderKey(Station station) =>
+      '${station.id}|${station.name}|${station.latitude}|${station.longitude}';
+
   void _onSearchChanged(String query, String field) {
+    final sanitizedQuery = query.trim();
     setState(() => _activeSearchField = field);
     _fetchSuggestions();
-    if (query.isEmpty) {
+    if (sanitizedQuery.isEmpty) {
+      _suggestionRequestToken++;
       if (field == 'from') {
         setState(() {
           _fromStation = null;
@@ -850,13 +863,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (field == 'from') {
       setState(() {
         _fromStation = null;
-        _fromUsesCurrentLocation = _isCurrentLocationText(query);
+        _fromUsesCurrentLocation = _isCurrentLocationText(sanitizedQuery);
       });
     }
     setState(() => _isSuggestionsLoading = true);
     if (_debounce?.isActive ?? false) _debounce!.cancel();
+    final requestToken = ++_suggestionRequestToken;
     _debounce = Timer(const Duration(milliseconds: 600), () async {
-      if (query.length > 2) {
+      if (sanitizedQuery.length > 2) {
         double? refLat;
         double? refLng;
 
@@ -883,8 +897,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         try {
-          final apiResults = await TransportApi.searchStations(query,
+          final apiResults = await TransportApi.searchStations(sanitizedQuery,
               lat: refLat, lng: refLng);
+          if (!mounted || requestToken != _suggestionRequestToken) return;
           if (mounted) {
             setState(() {
               if (apiResults.isEmpty && _suggestions.isEmpty) {
@@ -894,18 +909,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
                     duration: const Duration(seconds: 2)));
               }
+              final mergedSuggestions = List<dynamic>.from(_suggestions);
               for (var s in apiResults) {
-                bool exists = _suggestions.any((existing) {
+                bool exists = mergedSuggestions.any((existing) {
                   if (existing is Station) return existing.id == s.id;
                   if (existing is Favorite) return existing.station?.id == s.id;
                   return false;
                 });
-                if (!exists) _suggestions.add(s);
+                if (!exists) mergedSuggestions.add(s);
               }
 
               // Sort suggestions. First by whether it matches the query (already handled by API returning good matches),
               // then by distance if the names are identical.
-              _suggestions.sort((a, b) {
+              mergedSuggestions.sort((a, b) {
                 if (a is Station && b is Station) {
                   if (a.name == b.name &&
                       refLat != null &&
@@ -924,10 +940,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 return 0; // Keep original order otherwise
               });
 
+              _suggestions = mergedSuggestions;
               _isSuggestionsLoading = false;
             });
           }
         } catch (e) {
+          if (!mounted || requestToken != _suggestionRequestToken) return;
           if (mounted) {
             setState(() => _isSuggestionsLoading = false);
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -3143,6 +3161,68 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  bool _sameRideIdentity(JourneyStep current, JourneyStep candidate) {
+    final currentTripId = current.tripId?.trim();
+    final candidateTripId = candidate.tripId?.trim();
+    if ((currentTripId?.isNotEmpty ?? false) &&
+        (candidateTripId?.isNotEmpty ?? false)) {
+      return currentTripId == candidateTripId;
+    }
+
+    if (current.plannedDeparture != null &&
+        current.plannedArrival != null &&
+        candidate.plannedDeparture != null &&
+        candidate.plannedArrival != null) {
+      return current.plannedDeparture == candidate.plannedDeparture &&
+          current.plannedArrival == candidate.plannedArrival &&
+          current.startStationName == candidate.startStationName &&
+          current.destinationName == candidate.destinationName;
+    }
+
+    return current.line.trim().toLowerCase() ==
+            candidate.line.trim().toLowerCase() &&
+        current.startStationName == candidate.startStationName &&
+        current.destinationName == candidate.destinationName &&
+        current.headsign == candidate.headsign;
+  }
+
+  Journey? _findStrictJourneyMatch(
+      Journey currentJourney, List<Journey> candidates) {
+    final currentRideSteps =
+        currentJourney.steps.where((step) => step.type == 'ride').toList();
+
+    for (final candidate in candidates) {
+      final candidateRideSteps =
+          candidate.steps.where((step) => step.type == 'ride').toList();
+
+      if (candidateRideSteps.length != currentRideSteps.length) continue;
+
+      if (currentJourney.plannedDeparture != null &&
+          candidate.plannedDeparture != null &&
+          candidate.plannedDeparture != currentJourney.plannedDeparture) {
+        continue;
+      }
+
+      if (currentJourney.plannedArrival != null &&
+          candidate.plannedArrival != null &&
+          candidate.plannedArrival != currentJourney.plannedArrival) {
+        continue;
+      }
+
+      bool allRideStepsMatch = true;
+      for (int i = 0; i < currentRideSteps.length; i++) {
+        if (!_sameRideIdentity(currentRideSteps[i], candidateRideSteps[i])) {
+          allRideStepsMatch = false;
+          break;
+        }
+      }
+
+      if (allRideStepsMatch) return candidate;
+    }
+
+    return null;
+  }
+
   Future<void> _refreshActiveJourney(RouteTab route) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
@@ -3171,55 +3251,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         // Find the best match
-        Journey? matched;
-
-        // 1. Try Trip ID match of first ride
-        final oldFirstRide = currentRoute.activeJourney!.steps.firstWhere(
-            (s) => s.type == 'ride',
-            orElse: () => currentRoute.activeJourney!.steps.first);
-        if (oldFirstRide.tripId != null) {
-          matched = newJourneys.cast<Journey?>().firstWhere(
-              (j) => j!.steps.any(
-                  (s) => s.type == 'ride' && s.tripId == oldFirstRide.tripId),
-              orElse: () => null);
-        }
-
-        // 2. Try exact planned departure/arrival match
-        matched ??= newJourneys.cast<Journey?>().firstWhere(
-            (j) =>
-                j!.plannedDeparture ==
-                    currentRoute.activeJourney!.plannedDeparture &&
-                j.plannedArrival == currentRoute.activeJourney!.plannedArrival,
-            orElse: () => null);
-
-        // 3. Fallback: closest departure time among same first ride line
-        if (matched == null && newJourneys.isNotEmpty) {
-          final oldJourney = currentRoute.activeJourney!;
-          final oldRide = oldJourney.steps.firstWhere((s) => s.type == 'ride',
-              orElse: () => oldJourney.steps.first);
-          final oldLine = oldRide.line.trim().toLowerCase();
-
-          final withSameLine = newJourneys.where((j) {
-            final firstRide = j.steps.firstWhere((s) => s.type == 'ride',
-                orElse: () => j.steps.first);
-            return oldLine.isNotEmpty &&
-                firstRide.line.trim().toLowerCase() == oldLine;
-          }).toList();
-
-          final pool = withSameLine.isNotEmpty ? withSameLine : newJourneys;
-          pool.sort((a, b) {
-            final da = (a.plannedDeparture ?? a.departure)
-                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
-                .inSeconds
-                .abs();
-            final db = (b.plannedDeparture ?? b.departure)
-                .difference(oldJourney.plannedDeparture ?? oldJourney.departure)
-                .inSeconds
-                .abs();
-            return da.compareTo(db);
-          });
-          matched = pool.first;
-        }
+        final matched =
+            _findStrictJourneyMatch(currentRoute.activeJourney!, newJourneys);
 
         if (matched != null) {
           final upd =
@@ -3895,6 +3928,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   List<Station> _suggestions = [];
   Timer? _debounce;
   bool _isLoading = false;
+  int _searchRequestToken = 0;
 
   @override
   void initState() {
@@ -4018,18 +4052,23 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     strokeWidth: 2)
                                 : null)),
                     onChanged: (val) {
+                      final sanitizedQuery = val.trim();
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (val.trim().isEmpty) {
+                      if (sanitizedQuery.isEmpty) {
+                        _searchRequestToken++;
                         if (mounted) setState(() => _suggestions = []);
                         return;
                       }
+                      final requestToken = ++_searchRequestToken;
                       _debounce =
                           Timer(const Duration(milliseconds: 400), () async {
                         if (!mounted) return;
                         setState(() => _isLoading = true);
                         try {
-                          final res = await TransportApi.searchStations(val)
-                              .timeout(const Duration(seconds: 10));
+                          final res =
+                              await TransportApi.searchStations(sanitizedQuery)
+                                  .timeout(const Duration(seconds: 10));
+                          if (requestToken != _searchRequestToken) return;
                           if (mounted) {
                             setState(() {
                               _suggestions = res;
@@ -4037,6 +4076,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                             });
                           }
                         } catch (e) {
+                          if (requestToken != _searchRequestToken) return;
                           if (mounted) setState(() => _isLoading = false);
                         }
                       });
