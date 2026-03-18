@@ -84,6 +84,7 @@ dependency_overrides:
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
+  remove_alpha_ios: true
   web:
     generate: true
     image_path: "assets/icon.png"
