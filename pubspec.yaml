@@ -111,5 +111,5 @@ flutter:
   assets:
     - assets/
     - lib/assets/
-    # - .env
+    - .env
     - lib/assets/logo.png
