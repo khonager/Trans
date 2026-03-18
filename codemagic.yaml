@@ -1,0 +1,111 @@
+workflows:
+  ios-testflight:
+    name: iOS TestFlight Release
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+
+    environment:
+      groups:
+        # You'll create this group in Codemagic UI with your secrets
+        - app_store_credentials
+
+      vars:
+        # Replace with your actual values
+        BUNDLE_ID: "de.khonager.trans.ios"
+        APP_STORE_APP_ID: "YOUR_APP_ID" # Get from App Store Connect (numeric ID)
+
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Set up code signing settings on Xcode project
+        script: |
+          xcode-project use-profiles
+
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Create .env file
+        script: |
+          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+
+      - name: Install pods
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+
+      - name: Flutter build ipa
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      email:
+        recipients:
+          - YOUR_EMAIL@example.com
+        notify:
+          success: true
+          failure: true
+
+      app_store_connect:
+        # Uses credentials from app_store_credentials group
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+
+        # Submit to TestFlight only (not App Store review)
+        submit_to_testflight: true
+        submit_to_app_store: false
+
+  ios-development:
+    name: iOS Development Build
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'develop'
+          include: true
+
+    environment:
+      groups:
+        - app_store_credentials
+      vars:
+        BUNDLE_ID: "de.khonager.trans.ios"
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Create .env file
+        script: |
+          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+
+      - name: Install pods
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+
+      - name: Build iOS without signing (for testing)
+        script: |
+          flutter build ios --release --no-codesign
+
+    artifacts:
+      - build/ios/iphoneos/*.app
