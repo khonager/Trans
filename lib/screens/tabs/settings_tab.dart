@@ -10,6 +10,7 @@ import '../../config/app_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
 import '../../l10n/app_localizations.dart';
+import '../../utils/app_error.dart';
 import '../changelog_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -604,9 +605,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         await _loadProfile();
                         _showMessage(l10n.usernameUpdated);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update username',
+                        );
                       }
                     },
               child: isSaving
@@ -685,9 +692,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         _showMessage(
                             AppLocalizations.of(context)!.emailUpdateSent);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update email',
+                        );
                       }
                     },
               child: isSaving
@@ -776,9 +789,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         _showMessage(
                             AppLocalizations.of(context)!.passwordUpdated);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update password',
+                        );
                       }
                     },
               child: isSaving
@@ -819,8 +838,14 @@ class _SettingsTabState extends State<SettingsTab> {
       _passwordCtrl.clear();
       await _loadProfile();
       if (mounted) setState(() {});
-    } catch (e) {
-      _showMessage("$e");
+    } catch (e, st) {
+      if (!mounted) return;
+      AppError.showSnackBar(
+        context,
+        error: e,
+        stackTrace: st,
+        source: _isLoginMode ? 'sign in' : 'sign up',
+      );
     }
   }
 
@@ -1519,8 +1544,14 @@ class _SettingsTabState extends State<SettingsTab> {
                   _showMessage(
                       AppLocalizations.of(context)!.passwordResetEmailSent);
                 }
-              } catch (e) {
-                if (ctx.mounted) _showMessage("Error: $e");
+              } catch (e, st) {
+                if (!ctx.mounted) return;
+                AppError.showSnackBar(
+                  ctx,
+                  error: e,
+                  stackTrace: st,
+                  source: 'request password reset email',
+                );
               }
             },
             child: Text(AppLocalizations.of(context)!.send),

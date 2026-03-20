@@ -11,6 +11,7 @@ import 'tabs/settings_tab.dart';
 import '../widgets/ticket_panel.dart';
 import '../config/app_theme.dart';
 import '../l10n/app_localizations.dart';
+import '../utils/app_error.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -190,10 +191,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   .passwordUpdated),
                             ),
                           );
-                        } catch (e) {
+                        } catch (e, st) {
                           if (!dialogContext.mounted) return;
-                          messenger.showSnackBar(
-                              SnackBar(content: Text("Error: $e")));
+                          AppError.showSnackBar(
+                            context,
+                            error: e,
+                            stackTrace: st,
+                            source: 'password recovery update',
+                          );
                           setState(() => isSaving = false);
                         }
                       },

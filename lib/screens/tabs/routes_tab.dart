@@ -19,6 +19,7 @@ import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/utils/app_error.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
@@ -1021,11 +1022,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               data['latitude'], data['longitude']);
           if (mounted && stops.isNotEmpty) target = stops.first;
         }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text("Error: $e")));
-        }
+      } catch (e, st) {
+        if (!mounted) return;
+        AppError.showSnackBar(
+          context,
+          error: e,
+          stackTrace: st,
+          source: 'resolve friend favorite location',
+        );
       } finally {
         if (mounted) setState(() => _isLoadingRoute = false);
       }

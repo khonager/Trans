@@ -20,4 +20,12 @@ class AppConfig {
     print("WARNING: SUPABASE_ANON_KEY is missing from .env");
     return '';
   }
+
+  static String get supportEmail {
+    final email = dotenv.env['SUPPORT_EMAIL'];
+    if (email != null && email.isNotEmpty) {
+      return email;
+    }
+    return 'khonager.trans@gmail.com';
+  }
 }

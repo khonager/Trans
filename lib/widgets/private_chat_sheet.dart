@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/supabase_service.dart';
 import '../config/app_theme.dart';
+import '../utils/app_error.dart';
 
 class PrivateChatSheet extends StatefulWidget {
   final String friendId;
@@ -214,16 +215,22 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
     );
   }
 
-  void _send() {
+  Future<void> _send() async {
     if (_msgCtrl.text.trim().isEmpty) return;
     try {
-      SupabaseService.sendPrivateMessage(widget.friendId, _msgCtrl.text.trim());
+      await SupabaseService.sendPrivateMessage(
+          widget.friendId, _msgCtrl.text.trim());
       _msgCtrl.clear();
       // Wait slightly for the stream to update then scroll
       Future.delayed(const Duration(milliseconds: 300), _scrollToBottom);
-    } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Error: $e")));
+    } catch (e, st) {
+      if (!mounted) return;
+      AppError.showSnackBar(
+        context,
+        error: e,
+        stackTrace: st,
+        source: 'send private message',
+      );
     }
   }
 }
