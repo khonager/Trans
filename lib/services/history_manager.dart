@@ -356,6 +356,47 @@ class SearchHistoryManager {
     return _loadSavedJourneysPruned();
   }
 
+  static Future<bool> setSavedJourneyLeaveReminder({
+    required Map<String, dynamic> item,
+    required int? minutesBeforeDeparture,
+  }) async {
+    var journeys = await _loadSavedJourneysPruned();
+    final connectionKey = item['connectionKey'];
+
+    int index = -1;
+    if (connectionKey is String && connectionKey.isNotEmpty) {
+      index = journeys
+          .indexWhere((entry) => entry['connectionKey'] == connectionKey);
+    }
+
+    if (index == -1) {
+      final fromJson = item['from'];
+      final toJson = item['to'];
+      if (fromJson is Map && toJson is Map) {
+        final from = Station.fromJson(Map<String, dynamic>.from(fromJson));
+        final to = Station.fromJson(Map<String, dynamic>.from(toJson));
+        final departureTime = item['departureTime'];
+        final arrivalTime = item['arrivalTime'];
+        index = journeys.indexWhere((entry) {
+          return _sameJourney(entry, from, to) &&
+              entry['departureTime'] == departureTime &&
+              entry['arrivalTime'] == arrivalTime;
+        });
+      }
+    }
+
+    if (index == -1) return false;
+
+    if (minutesBeforeDeparture == null) {
+      journeys[index].remove('leaveReminderMinutes');
+    } else {
+      journeys[index]['leaveReminderMinutes'] = minutesBeforeDeparture;
+    }
+
+    await _persistSavedJourneys(journeys);
+    return true;
+  }
+
   static Future<void> _syncSavedJourneysToCloud(
       List<String> journeysJson) async {
     final list = journeysJson.map((s) => json.decode(s)).toList();
