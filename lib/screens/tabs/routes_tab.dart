@@ -2781,8 +2781,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           fontWeight: FontWeight.bold,
                           fontSize: 14)),
                   const SizedBox(height: 2),
-                  Text(subtitleOverride ??
-                      AppLocalizations.of(context)!.fromStation(from.name),
+                  Text(
+                      subtitleOverride ??
+                          AppLocalizations.of(context)!.fromStation(from.name),
                       style: TextStyle(
                           color: colors.searchHintText, fontSize: 12)),
                 ],

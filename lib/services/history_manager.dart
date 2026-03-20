@@ -281,8 +281,9 @@ class SearchHistoryManager {
         journeysStr.map((e) => json.decode(e) as Map<String, dynamic>).toList();
 
     final nowUtc = DateTime.now().toUtc();
-    final pruned =
-        journeys.where((entry) => !_isSavedJourneyExpired(entry, nowUtc)).toList();
+    final pruned = journeys
+        .where((entry) => !_isSavedJourneyExpired(entry, nowUtc))
+        .toList();
 
     if (pruned.length != journeys.length) {
       await _persistSavedJourneys(pruned);
@@ -334,8 +335,9 @@ class SearchHistoryManager {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
         'departureTime': departure.toUtc().toIso8601String(),
         'arrivalTime': arrivalUtc.toIso8601String(),
-        'expiresAt':
-            arrivalUtc.add(_savedJourneyRetentionAfterArrival).toIso8601String(),
+        'expiresAt': arrivalUtc
+            .add(_savedJourneyRetentionAfterArrival)
+            .toIso8601String(),
         'connectionKey': connectionKey,
         'journey': journeyData,
       });
