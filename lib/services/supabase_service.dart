@@ -97,7 +97,7 @@ class SupabaseService {
   }
 
   // --- AUTH ---
-  static Future<void> signUp(
+  static Future<bool> signUp(
       String email, String password, String username) async {
     String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
     final response = await client.auth.signUp(
@@ -106,20 +106,54 @@ class SupabaseService {
       data: {'username': username},
       emailRedirectTo: redirectUrl,
     );
-    if (response.user != null) {
-      await client
-          .from('profiles')
-          .upsert({'id': response.user!.id, 'username': username});
+    final user = response.user;
+    final bool likelyExistingAccount =
+        user != null && (user.identities?.isEmpty ?? false);
+    if (likelyExistingAccount) {
+      return false;
+    }
+
+    if (user != null) {
+      // In some Supabase setups (email confirmation required), signup does not
+      // immediately establish a writable authenticated session. Attempting a
+      // profile upsert then can fail with RLS 42501.
+      if (currentUser?.id == user.id) {
+        await _ensureProfileRow(user.id, username: username);
+      } else {
+        debugPrint(
+            'Skipping profile upsert after sign up (no active session yet).');
+      }
+    }
+
+    if (currentUser != null) {
       _startMessageListener();
       _startFriendRequestListener();
     }
+    return true;
   }
 
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
+    final user = currentUser;
+    if (user != null) {
+      final username = user.userMetadata?['username']?.toString();
+      await _ensureProfileRow(user.id, username: username);
+    }
     _startMessageListener();
     _startFriendRequestListener();
     await loadAndSyncSettings();
+  }
+
+  static Future<void> _ensureProfileRow(String userId,
+      {String? username}) async {
+    try {
+      await client.from('profiles').upsert({
+        'id': userId,
+        if (username != null && username.isNotEmpty) 'username': username,
+      });
+    } catch (e) {
+      debugPrint('Profile upsert skipped/failed: $e');
+    }
   }
 
   static Future<void> signOut() async {

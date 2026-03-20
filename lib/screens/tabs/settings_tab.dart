@@ -845,7 +845,31 @@ class _SettingsTabState extends State<SettingsTab> {
       if (_isLoginMode) {
         await SupabaseService.signIn(email, password);
       } else {
-        await SupabaseService.signUp(email, password, username);
+        // If the email already exists and password is correct, just log in.
+        try {
+          await SupabaseService.signIn(email, password);
+          if (!mounted) return;
+          final isGerman = Localizations.localeOf(context).languageCode == 'de';
+          _showMessage(isGerman
+              ? 'Dieses Konto existiert bereits. Du wurdest angemeldet.'
+              : 'This account already exists. You are now logged in.');
+          setState(() => _isLoginMode = true);
+        } catch (signInError) {
+          if (!_isInvalidCredentialError(signInError)) rethrow;
+
+          final created =
+              await SupabaseService.signUp(email, password, username);
+          if (!created) {
+            if (!mounted) return;
+            await _showExistingAccountDialog(email);
+            return;
+          }
+          if (!mounted) return;
+          final isGerman = Localizations.localeOf(context).languageCode == 'de';
+          _showMessage(isGerman
+              ? 'Konto erstellt. Bitte bestätige deine E-Mail.'
+              : 'Account created. Please confirm your email.');
+        }
       }
       _passwordCtrl.clear();
       await _loadProfile();
@@ -870,6 +894,48 @@ class _SettingsTabState extends State<SettingsTab> {
     return isGerman
         ? '$fieldName ist erforderlich.'
         : '$fieldName is required.';
+  }
+
+  bool _isInvalidCredentialError(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('invalid login credentials') ||
+        msg.contains('invalid credentials');
+  }
+
+  Future<void> _showExistingAccountDialog(String email) async {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+            isGerman ? 'Konto existiert bereits' : 'Account already exists'),
+        content: Text(isGerman
+            ? 'Diese E-Mail wird bereits verwendet. Wenn das Passwort falsch ist, kannst du eine Zurücksetzen-E-Mail senden.'
+            : 'This email is already in use. If the password is wrong, you can send a reset email.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (mounted) setState(() => _isLoginMode = true);
+            },
+            child: Text(isGerman ? 'Zum Login' : 'Go to login'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await SupabaseService.resetPassword(email);
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              _showMessage(
+                  AppLocalizations.of(context)!.passwordResetEmailSent);
+              setState(() => _isLoginMode = true);
+            },
+            child: Text(isGerman ? 'Passwort zurücksetzen' : 'Reset password'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showMessage(String message) {

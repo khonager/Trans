@@ -27,7 +27,7 @@ class AppError {
     }
 
     if (error is PostgrestException) {
-      return _postgrestMessage(context, error.message, fallbackMessage);
+      return _postgrestMessage(context, error, fallbackMessage);
     }
 
     if (error is String) {
@@ -263,10 +263,18 @@ class AppError {
 
   static String _postgrestMessage(
     BuildContext context,
-    String raw,
+    PostgrestException error,
     String fallback,
   ) {
+    final raw = error.message;
     final lower = raw.toLowerCase();
+    if (error.code == '42501' &&
+        lower.contains('row-level security policy') &&
+        lower.contains('profiles')) {
+      return _isGerman(context)
+          ? 'Registrierung konnte nicht abgeschlossen werden. Möglicherweise existiert das Konto bereits oder die E-Mail muss noch bestätigt werden.'
+          : 'Sign-up could not be completed. The account may already exist or the email still needs confirmation.';
+    }
     if (lower.contains('duplicate key value') && lower.contains('username')) {
       return _isGerman(context)
           ? 'Dieser Benutzername ist bereits vergeben.'
