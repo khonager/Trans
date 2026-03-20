@@ -10,6 +10,7 @@ import '../../config/app_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
 import '../../l10n/app_localizations.dart';
+import '../../utils/app_error.dart';
 import '../changelog_screen.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -66,6 +67,8 @@ class _SettingsTabState extends State<SettingsTab> {
   StreamSubscription? _locationSub;
 
   String _version = "";
+  bool _obscureAuthPassword = true;
+  bool _isAuthSubmitting = false;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
@@ -604,9 +607,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         await _loadProfile();
                         _showMessage(l10n.usernameUpdated);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update username',
+                        );
                       }
                     },
               child: isSaving
@@ -685,9 +694,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         _showMessage(
                             AppLocalizations.of(context)!.emailUpdateSent);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update email',
+                        );
                       }
                     },
               child: isSaving
@@ -776,9 +791,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         Navigator.pop(ctx);
                         _showMessage(
                             AppLocalizations.of(context)!.passwordUpdated);
-                      } catch (e) {
+                      } catch (e, st) {
                         if (!ctx.mounted) return;
-                        _showMessage("Error: $e");
+                        setState(() => isSaving = false);
+                        AppError.showSnackBar(
+                          ctx,
+                          error: e,
+                          stackTrace: st,
+                          source: 'update password',
+                        );
                       }
                     },
               child: isSaving
@@ -799,33 +820,137 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _submitAuth() async {
+    if (_isAuthSubmitting) return;
+
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
     final username = _usernameCtrl.text.trim();
 
-    if (!_looksLikeEmail(email) ||
-        password.isEmpty ||
-        (!_isLoginMode && username.isEmpty)) {
-      _showMessage(AppLocalizations.of(context)!.fillRequiredFields);
+    if (email.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.emailSettings));
       return;
+    }
+    if (!_looksLikeEmail(email)) {
+      _showMessage(l10n.enterValidEmail);
+      return;
+    }
+    if (password.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.password));
+      return;
+    }
+    if (!_isLoginMode && username.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.usernameSignUp));
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _isAuthSubmitting = true);
+    } else {
+      _isAuthSubmitting = true;
     }
 
     try {
       if (_isLoginMode) {
         await SupabaseService.signIn(email, password);
       } else {
-        await SupabaseService.signUp(email, password, username);
+        // If the email already exists and password is correct, just log in.
+        try {
+          await SupabaseService.signIn(email, password);
+          if (!mounted) return;
+          final isGerman = Localizations.localeOf(context).languageCode == 'de';
+          _showMessage(isGerman
+              ? 'Dieses Konto existiert bereits. Du wurdest angemeldet.'
+              : 'This account already exists. You are now logged in.');
+          setState(() => _isLoginMode = true);
+        } catch (signInError) {
+          if (!_isInvalidCredentialError(signInError)) rethrow;
+
+          final created =
+              await SupabaseService.signUp(email, password, username);
+          if (!created) {
+            if (!mounted) return;
+            await _showExistingAccountDialog(email);
+            return;
+          }
+          if (!mounted) return;
+          final isGerman = Localizations.localeOf(context).languageCode == 'de';
+          _showMessage(isGerman
+              ? 'Konto erstellt. Bitte bestätige deine E-Mail.'
+              : 'Account created. Please confirm your email.');
+        }
       }
       _passwordCtrl.clear();
       await _loadProfile();
       if (mounted) setState(() {});
-    } catch (e) {
-      _showMessage("$e");
+    } catch (e, st) {
+      if (!mounted) return;
+      AppError.showSnackBar(
+        context,
+        error: e,
+        stackTrace: st,
+        source: _isLoginMode ? 'sign in' : 'sign up',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isAuthSubmitting = false);
+      } else {
+        _isAuthSubmitting = false;
+      }
     }
   }
 
   bool _looksLikeEmail(String value) {
     return value.contains('@') && value.contains('.');
+  }
+
+  String _requiredFieldMessage(String fieldName) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman
+        ? '$fieldName ist erforderlich.'
+        : '$fieldName is required.';
+  }
+
+  bool _isInvalidCredentialError(Object error) {
+    final msg = error.toString().toLowerCase();
+    return msg.contains('invalid login credentials') ||
+        msg.contains('invalid credentials');
+  }
+
+  Future<void> _showExistingAccountDialog(String email) async {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+            isGerman ? 'Konto existiert bereits' : 'Account already exists'),
+        content: Text(isGerman
+            ? 'Diese E-Mail wird bereits verwendet. Wenn das Passwort falsch ist, kannst du eine Zurücksetzen-E-Mail senden.'
+            : 'This email is already in use. If the password is wrong, you can send a reset email.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (mounted) setState(() => _isLoginMode = true);
+            },
+            child: Text(isGerman ? 'Zum Login' : 'Go to login'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await SupabaseService.resetPassword(email);
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              _showMessage(
+                  AppLocalizations.of(context)!.passwordResetEmailSent);
+              setState(() => _isLoginMode = true);
+            },
+            child: Text(isGerman ? 'Passwort zurücksetzen' : 'Reset password'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -1447,9 +1572,19 @@ class _SettingsTabState extends State<SettingsTab> {
               controller: _passwordCtrl,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submitAuth(),
-              obscureText: true,
+              obscureText: _obscureAuthPassword,
               decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.password)),
+                hintText: AppLocalizations.of(context)!.password,
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureAuthPassword
+                      ? Icons.visibility
+                      : Icons.visibility_off),
+                  onPressed: () {
+                    setState(
+                        () => _obscureAuthPassword = !_obscureAuthPassword);
+                  },
+                ),
+              )),
           if (_isLoginMode)
             Align(
               alignment: Alignment.centerRight,
@@ -1461,10 +1596,16 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           const SizedBox(height: 10),
           ElevatedButton(
-            onPressed: _submitAuth,
-            child: Text(_isLoginMode
-                ? AppLocalizations.of(context)!.login
-                : AppLocalizations.of(context)!.signUp),
+            onPressed: _isAuthSubmitting ? null : _submitAuth,
+            child: _isAuthSubmitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(_isLoginMode
+                    ? AppLocalizations.of(context)!.login
+                    : AppLocalizations.of(context)!.signUp),
           ),
         ],
       ),
@@ -1519,8 +1660,14 @@ class _SettingsTabState extends State<SettingsTab> {
                   _showMessage(
                       AppLocalizations.of(context)!.passwordResetEmailSent);
                 }
-              } catch (e) {
-                if (ctx.mounted) _showMessage("Error: $e");
+              } catch (e, st) {
+                if (!ctx.mounted) return;
+                AppError.showSnackBar(
+                  ctx,
+                  error: e,
+                  stackTrace: st,
+                  source: 'request password reset email',
+                );
               }
             },
             child: Text(AppLocalizations.of(context)!.send),

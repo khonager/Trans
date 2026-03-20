@@ -5,6 +5,7 @@ import '../../services/supabase_service.dart';
 import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart';
 import '../../l10n/app_localizations.dart';
+import '../../utils/app_error.dart';
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
@@ -155,13 +156,14 @@ class _FriendsTabState extends State<FriendsTab> {
                                                 context)!
                                             .requestSentTo(user['username']))));
                               }
-                            } catch (e) {
+                            } catch (e, st) {
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(
-                                            AppLocalizations.of(context)!
-                                                .errorString(e.toString()))));
+                                AppError.showSnackBar(
+                                  context,
+                                  error: e,
+                                  stackTrace: st,
+                                  source: 'send friend request',
+                                );
                               }
                             }
                           },
@@ -363,11 +365,14 @@ class _FriendsTabState extends State<FriendsTab> {
                     _requests.removeWhere((r) => r['id'] == req['id']);
                   });
                 }
-              } catch (e) {
+              } catch (e, st) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(AppLocalizations.of(context)!
-                          .errorString(e.toString()))));
+                  AppError.showSnackBar(
+                    context,
+                    error: e,
+                    stackTrace: st,
+                    source: 'accept friend request',
+                  );
                 }
               }
             },
@@ -385,11 +390,14 @@ class _FriendsTabState extends State<FriendsTab> {
                     _requests.removeWhere((r) => r['id'] == req['id']);
                   });
                 }
-              } catch (e) {
+              } catch (e, st) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(AppLocalizations.of(context)!
-                          .errorString(e.toString()))));
+                  AppError.showSnackBar(
+                    context,
+                    error: e,
+                    stackTrace: st,
+                    source: 'reject friend request',
+                  );
                 }
               }
             },

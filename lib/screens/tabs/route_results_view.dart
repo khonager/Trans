@@ -6,6 +6,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/services/supabase_service.dart';
+import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
 import '../../l10n/app_localizations.dart';
@@ -175,13 +176,14 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           );
         }
       }
-    } catch (e) {
-      debugPrint("Error copying ticket: $e");
+    } catch (e, st) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  AppLocalizations.of(context)!.failedToCopy(e.toString()))),
+        AppError.showSnackBar(
+          context,
+          error: e,
+          stackTrace: st,
+          source: 'copy route ticket',
+          fallback: AppLocalizations.of(context)!.serviceBusyPleaseTryAgain,
         );
       }
     } finally {

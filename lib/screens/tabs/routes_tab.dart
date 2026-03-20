@@ -19,6 +19,7 @@ import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/utils/app_error.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
@@ -109,6 +110,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<Map<String, dynamic>> _frequentJourneys = [];
   List<Map<String, dynamic>> _recentJourneys = [];
   List<Map<String, dynamic>> _savedJourneys = [];
+  final Set<String> _savedReminderPickerVisibleFor = <String>{};
+  final Set<String> _savedCompletedDeleteVisibleFor = <String>{};
+  final Map<String, Timer> _savedJourneyReminderTimers = <String, Timer>{};
+  Timer? _savedJourneyLiveCountdownTicker;
+  final Map<String, String> _savedJourneyLiveCountdownTexts =
+      <String, String>{};
+  Timer? _savedJourneyStatusPollTimer;
+  final Map<String, String> _savedJourneyLastStatusSignatures =
+      <String, String>{};
+  bool _isCheckingSavedJourneyStatuses = false;
+  DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
 
   Position? get _effectiveCurrentPosition =>
@@ -141,6 +153,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _savedJourneys = saved;
       });
     }
+    _syncSavedJourneyReminderTimers(saved);
+    _syncSavedJourneyStatusMonitoring(saved);
   }
 
   @override
@@ -288,7 +302,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _initNotifications() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings();
-    const initSettings = InitializationSettings(android: android, iOS: ios);
+    const linux = LinuxInitializationSettings(defaultActionName: 'Open');
+    const initSettings =
+        InitializationSettings(android: android, iOS: ios, linux: linux);
     await _notificationsPlugin.initialize(settings: initSettings);
   }
 
@@ -302,6 +318,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _debounce?.cancel();
     _focusDebounce?.cancel();
     _gpsStream?.cancel();
+    for (final timer in _savedJourneyReminderTimers.values) {
+      timer.cancel();
+    }
+    _savedJourneyReminderTimers.clear();
+    _savedJourneyLiveCountdownTicker?.cancel();
+    _savedJourneyLiveCountdownTicker = null;
+    _savedJourneyStatusPollTimer?.cancel();
+    _savedJourneyStatusPollTimer = null;
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -1021,11 +1045,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               data['latitude'], data['longitude']);
           if (mounted && stops.isNotEmpty) target = stops.first;
         }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text("Error: $e")));
-        }
+      } catch (e, st) {
+        if (!mounted) return;
+        AppError.showSnackBar(
+          context,
+          error: e,
+          stackTrace: st,
+          source: 'resolve friend favorite location',
+        );
       } finally {
         if (mounted) setState(() => _isLoadingRoute = false);
       }
@@ -1080,24 +1107,811 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
   }
 
-  bool _isRouteSaved(RouteTab route) {
+  String? _savedConnectionKeyForRoute(RouteTab route) {
     final from = route.origin;
-    if (from == null) return false;
-    return _savedJourneys
-        .any((item) => _journeyMatches(item, from, route.destination));
+    final active = route.activeJourney;
+    if (from == null || active == null) return null;
+    return SearchHistoryManager.buildSavedJourneyConnectionKey(
+      from: from,
+      to: route.destination,
+      departure: active.plannedDeparture ?? active.departure,
+      arrival: active.plannedArrival ?? active.arrival,
+      journeyData: active.rawSource,
+    );
+  }
+
+  bool _isRouteSaved(RouteTab route) {
+    final key = _savedConnectionKeyForRoute(route);
+    if (key != null) {
+      return _savedJourneys.any((item) => item['connectionKey'] == key);
+    }
+
+    final from = route.origin;
+    return from != null &&
+        _savedJourneys
+            .any((item) => _journeyMatches(item, from, route.destination));
   }
 
   Future<void> _toggleSavedRoute(RouteTab route) async {
     final from = route.origin;
-    if (from == null) return;
+    final activeJourney = route.activeJourney;
+    if (from == null || activeJourney == null) return;
 
-    final saved =
-        await SearchHistoryManager.toggleSavedJourney(from, route.destination);
+    final saved = await SearchHistoryManager.toggleSavedJourney(
+      from: from,
+      to: route.destination,
+      journeyData: activeJourney.rawSource,
+      departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+      arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+    );
     await _loadHistoryData();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(saved ? 'Route saved' : 'Route removed from saved')));
+        content: Text(
+            saved ? 'Connection saved' : 'Connection removed from saved')));
+  }
+
+  Future<void> _openSavedJourney(Map<String, dynamic> item) async {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+    final rawJourney = item['journey'];
+
+    if (rawJourney is! Map) {
+      _applyRouteHistorySelection(item);
+      return;
+    }
+
+    final journey = Map<String, dynamic>.from(rawJourney);
+    final tabId = _addJourneyTab(
+      singleJourneyData: journey,
+      origin: from,
+      destination: to,
+      title: to.name,
+      subtitle: AppLocalizations.of(context)!.details,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    final tab = _tabs.cast<RouteTab?>().firstWhere(
+          (t) => t?.id == tabId,
+          orElse: () => null,
+        );
+    if (tab != null && tab.activeJourney != null) {
+      unawaited(_refreshActiveJourney(tab));
+    }
+  }
+
+  String? _savedJourneyTimeLabel(Map<String, dynamic> item) {
+    final depStr = item['departureTime'];
+    final arrStr = item['arrivalTime'];
+    if (depStr is! String || arrStr is! String) return null;
+    final dep = DateTime.tryParse(depStr)?.toLocal();
+    final arr = DateTime.tryParse(arrStr)?.toLocal();
+    if (dep == null || arr == null) return null;
+    return "${DateFormat('EEE HH:mm').format(dep)} - ${DateFormat('HH:mm').format(arr)}";
+  }
+
+  String? _savedJourneyUiKey(Map<String, dynamic> item) {
+    final key = item['connectionKey'];
+    if (key is String && key.isNotEmpty) return key;
+
+    final from = item['from'];
+    final to = item['to'];
+    final dep = item['departureTime'];
+    final arr = item['arrivalTime'];
+    final fromId = from is Map ? from['id'] : null;
+    final toId = to is Map ? to['id'] : null;
+    if (fromId is String &&
+        fromId.isNotEmpty &&
+        toId is String &&
+        toId.isNotEmpty &&
+        dep is String &&
+        arr is String) {
+      return '$fromId::$toId::$dep::$arr';
+    }
+    return null;
+  }
+
+  int? _savedJourneyReminderMinutes(Map<String, dynamic> item) {
+    final value = item['leaveReminderMinutes'];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  DateTime? _savedJourneyDepartureLocal(Map<String, dynamic> item) {
+    final depStr = item['departureTime'];
+    if (depStr is! String) return null;
+    return DateTime.tryParse(depStr)?.toLocal();
+  }
+
+  DateTime? _savedJourneyArrivalLocal(Map<String, dynamic> item) {
+    final arrStr = item['arrivalTime'];
+    if (arrStr is! String) return null;
+    return DateTime.tryParse(arrStr)?.toLocal();
+  }
+
+  bool _isSavedJourneyCompleted(Map<String, dynamic> item) {
+    final now = DateTime.now();
+    final arrival = _savedJourneyArrivalLocal(item);
+    if (arrival != null) return now.isAfter(arrival);
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure != null) return now.isAfter(departure);
+    return false;
+  }
+
+  bool _isLegacySavedJourney(Map<String, dynamic> item) {
+    final hasConnectionKey = item['connectionKey'] is String &&
+        (item['connectionKey'] as String).isNotEmpty;
+    final hasDeparture = item['departureTime'] is String;
+    final hasArrival = item['arrivalTime'] is String;
+    final hasJourney = item['journey'] is Map;
+    return !(hasConnectionKey && hasDeparture && hasArrival && hasJourney);
+  }
+
+  bool _sameSavedJourneyEntry(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final keyA = _savedJourneyUiKey(a);
+    final keyB = _savedJourneyUiKey(b);
+    if (keyA != null && keyB != null) return keyA == keyB;
+    return a['from']?['id'] == b['from']?['id'] &&
+        a['to']?['id'] == b['to']?['id'] &&
+        a['departureTime'] == b['departureTime'] &&
+        a['arrivalTime'] == b['arrivalTime'];
+  }
+
+  int _savedJourneyReminderNotificationId(String key, int minutes) {
+    return (key.hashCode ^ (minutes * 97)) & 0x7fffffff;
+  }
+
+  String _formatCountdown(Duration duration) {
+    final totalSeconds = duration.inSeconds.clamp(0, 999999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final hh = hours.toString().padLeft(2, '0');
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    return '$hh:$mm:$ss';
+  }
+
+  DateTime? _savedJourneyReminderTriggerLocal(Map<String, dynamic> item) {
+    final minutes = _savedJourneyReminderMinutes(item);
+    final departure = _savedJourneyDepartureLocal(item);
+    if (minutes == null || departure == null) return null;
+    return departure.subtract(Duration(minutes: minutes));
+  }
+
+  List<({int leadMinutes, int waitMinutes})> _savedJourneyReminderOptions(
+      Map<String, dynamic> item) {
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure == null) {
+      return const [
+        (leadMinutes: 5, waitMinutes: 5),
+        (leadMinutes: 15, waitMinutes: 15),
+        (leadMinutes: 30, waitMinutes: 30),
+      ];
+    }
+
+    final now = DateTime.now();
+    final remainingMinutes = departure.difference(now).inMinutes;
+    if (remainingMinutes <= 0) return const [];
+
+    List<int> waits;
+    if (remainingMinutes >= 30) {
+      waits = const [30, 15, 5];
+    } else if (remainingMinutes >= 20) {
+      waits = const [20, 15, 5];
+    } else if (remainingMinutes >= 15) {
+      waits = const [15, 10, 5];
+    } else if (remainingMinutes >= 10) {
+      waits = const [10, 5, 3];
+    } else if (remainingMinutes >= 5) {
+      waits = const [5, 3, 2];
+    } else if (remainingMinutes >= 3) {
+      waits = const [3, 2, 1];
+    } else if (remainingMinutes == 2) {
+      waits = const [2, 1];
+    } else {
+      waits = const [1];
+    }
+
+    final options = <({int leadMinutes, int waitMinutes})>[];
+    for (final wait in waits) {
+      if (wait > remainingMinutes) continue;
+      final lead = max(0, remainingMinutes - wait);
+      options.add((leadMinutes: lead, waitMinutes: wait));
+    }
+    return options;
+  }
+
+  bool _hasActiveSavedJourneyLiveCountdowns() {
+    final now = DateTime.now();
+    for (final item in _savedJourneys) {
+      final triggerAt = _savedJourneyReminderTriggerLocal(item);
+      if (triggerAt != null && triggerAt.isAfter(now)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _cancelSavedJourneyReminderNotification(
+    String key, {
+    int? minutes,
+  }) async {
+    if (minutes != null) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyReminderNotificationId(key, minutes));
+      return;
+    }
+    for (final candidate in const [5, 15, 30]) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyReminderNotificationId(key, candidate));
+    }
+  }
+
+  Future<void> _showSavedJourneyLiveCountdownNotification(
+    Map<String, dynamic> item,
+    DateTime triggerAt,
+  ) async {
+    final key = _savedJourneyUiKey(item);
+    final minutes = _savedJourneyReminderMinutes(item);
+    if (key == null || minutes == null) return;
+
+    final now = DateTime.now();
+    if (!triggerAt.isAfter(now)) return;
+    final countdownText = _formatCountdown(triggerAt.difference(now));
+
+    final cached = _savedJourneyLiveCountdownTexts[key];
+    if (cached == countdownText) return;
+    _savedJourneyLiveCountdownTexts[key] = countdownText;
+
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName = fromMap is Map ? fromMap['name']?.toString() ?? '' : '';
+    final toName =
+        toMap is Map ? toMap['name']?.toString() ?? 'Route' : 'Route';
+    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
+
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      channelDescription: 'Live countdown reminders for saved routes',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      playSound: false,
+      enableVibration: false,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+
+    await _notificationsPlugin.show(
+      id: _savedJourneyReminderNotificationId(key, minutes),
+      title: 'Leave in $countdownText',
+      body: '$routeLabel (timer: ${minutes}min)',
+      notificationDetails: details,
+    );
+  }
+
+  Future<void> _refreshSavedJourneyLiveCountdowns() async {
+    final now = DateTime.now();
+    final activeKeys = <String>{};
+
+    for (final item in _savedJourneys) {
+      final key = _savedJourneyUiKey(item);
+      final triggerAt = _savedJourneyReminderTriggerLocal(item);
+      if (key == null || triggerAt == null) continue;
+
+      if (triggerAt.isAfter(now)) {
+        activeKeys.add(key);
+        await _showSavedJourneyLiveCountdownNotification(item, triggerAt);
+      } else {
+        _savedJourneyLiveCountdownTexts.remove(key);
+      }
+    }
+
+    final staleKeys = _savedJourneyLiveCountdownTexts.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in staleKeys) {
+      _savedJourneyLiveCountdownTexts.remove(key);
+      await _cancelSavedJourneyReminderNotification(key);
+    }
+  }
+
+  void _syncSavedJourneyLiveCountdownTicker() {
+    if (_hasActiveSavedJourneyLiveCountdowns()) {
+      _savedJourneyLiveCountdownTicker ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => unawaited(_refreshSavedJourneyLiveCountdowns()),
+      );
+      unawaited(_refreshSavedJourneyLiveCountdowns());
+      return;
+    }
+
+    _savedJourneyLiveCountdownTicker?.cancel();
+    _savedJourneyLiveCountdownTicker = null;
+    final keys = _savedJourneyLiveCountdownTexts.keys.toList();
+    _savedJourneyLiveCountdownTexts.clear();
+    for (final key in keys) {
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+    }
+  }
+
+  void _syncSavedJourneyReminderTimers(List<Map<String, dynamic>> journeys) {
+    final activeKeys = <String>{};
+    for (final journey in journeys) {
+      final key = _savedJourneyUiKey(journey);
+      if (key == null) continue;
+      activeKeys.add(key);
+      _scheduleSavedJourneyReminder(journey);
+    }
+
+    final staleKeys = _savedJourneyReminderTimers.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in staleKeys) {
+      _savedJourneyReminderTimers.remove(key)?.cancel();
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+      _savedJourneyLiveCountdownTexts.remove(key);
+    }
+
+    _savedReminderPickerVisibleFor.removeWhere((k) => !activeKeys.contains(k));
+    _savedCompletedDeleteVisibleFor.removeWhere((k) => !activeKeys.contains(k));
+    _syncSavedJourneyLiveCountdownTicker();
+  }
+
+  void _syncSavedJourneyStatusMonitoring(List<Map<String, dynamic>> journeys) {
+    final activeKeys =
+        journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    _savedJourneyLastStatusSignatures
+        .removeWhere((key, _) => !activeKeys.contains(key));
+
+    if (journeys.isEmpty) {
+      _savedJourneyStatusPollTimer?.cancel();
+      _savedJourneyStatusPollTimer = null;
+      return;
+    }
+
+    _savedJourneyStatusPollTimer ??= Timer.periodic(
+      const Duration(minutes: 4),
+      (_) => unawaited(_checkSavedJourneyStatuses()),
+    );
+
+    final now = DateTime.now();
+    final shouldCheckNow = _lastSavedJourneyStatusCheck == null ||
+        now.difference(_lastSavedJourneyStatusCheck!) >
+            const Duration(seconds: 45);
+    if (shouldCheckNow) {
+      unawaited(_checkSavedJourneyStatuses());
+    }
+  }
+
+  String _savedJourneyRealtimeSignature(Journey journey) {
+    final rides = journey.steps.where((step) => step.type == 'ride').map((s) {
+      return [
+        s.tripId?.trim() ?? '',
+        s.line.trim().toLowerCase(),
+        s.startStationName,
+        s.destinationName,
+        s.departureTime,
+        s.arrivalTime,
+        s.departureDelay?.toString() ?? '',
+        s.arrivalDelay?.toString() ?? '',
+        s.platform ?? '',
+        s.arrivalPlatform ?? '',
+        s.isCancelled ? '1' : '0',
+      ].join('|');
+    }).join('||');
+
+    return [
+      journey.departure.toUtc().toIso8601String(),
+      journey.arrival.toUtc().toIso8601String(),
+      rides,
+    ].join('::');
+  }
+
+  String _describeSavedJourneyChange({
+    required Journey savedJourney,
+    required Journey freshJourney,
+  }) {
+    final freshRideSteps =
+        freshJourney.steps.where((step) => step.type == 'ride').toList();
+    bool hasCancellation = false;
+    bool hasDelay = false;
+    bool hasPlatformChange = false;
+
+    for (final oldStep in savedJourney.steps.where((s) => s.type == 'ride')) {
+      final nowStep = _findRealtimeMatchForStep(oldStep, freshRideSteps);
+      if (nowStep == null) continue;
+
+      if (nowStep.isCancelled && !oldStep.isCancelled) {
+        hasCancellation = true;
+      }
+      final depDelayChanged =
+          (nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0);
+      final arrDelayChanged =
+          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0);
+      if (depDelayChanged || arrDelayChanged) {
+        hasDelay = true;
+      }
+      final platformChanged =
+          (nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
+              (nowStep.arrivalPlatform ?? '').trim() !=
+                  (oldStep.arrivalPlatform ?? '').trim();
+      if (platformChanged) {
+        hasPlatformChange = true;
+      }
+    }
+
+    if (hasCancellation) return 'Cancellation update';
+    if (hasDelay) return 'Delay update';
+    if (hasPlatformChange) return 'Platform update';
+    return 'Schedule update';
+  }
+
+  Future<({bool stillPossible, String signature, String detail})>
+      _computeSavedJourneyStatus(Map<String, dynamic> item) async {
+    final fromJson = item['from'];
+    final toJson = item['to'];
+    final rawJourney = item['journey'];
+    final departure = _savedJourneyDepartureLocal(item);
+    if (fromJson is! Map || toJson is! Map || rawJourney is! Map) {
+      return (
+        stillPossible: false,
+        signature: 'invalid',
+        detail: 'Connection no longer possible'
+      );
+    }
+    if (departure == null) {
+      return (
+        stillPossible: false,
+        signature: 'missing-departure',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final now = DateTime.now();
+    if (departure.isBefore(now.subtract(const Duration(hours: 2)))) {
+      return (
+        stillPossible: true,
+        signature: 'past-departure',
+        detail: 'No relevant updates'
+      );
+    }
+
+    final from = Station.fromJson(Map<String, dynamic>.from(fromJson));
+    final to = Station.fromJson(Map<String, dynamic>.from(toJson));
+    Journey savedJourney;
+    try {
+      savedJourney = _createJourney(Map<String, dynamic>.from(rawJourney));
+    } catch (_) {
+      return (
+        stillPossible: false,
+        signature: 'invalid-saved-journey',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final refWhen = departure.subtract(const Duration(minutes: 20));
+    final freshData = await TransportApi.searchJourneys(
+      from,
+      to,
+      nahverkehrOnly: widget.onlyNahverkehr,
+      when: refWhen,
+      isArrival: false,
+      results: 20,
+    );
+
+    final freshJourneys = <Journey>[];
+    for (final data in freshData) {
+      try {
+        freshJourneys.add(_createJourney(data));
+      } catch (_) {
+        // Skip invalid candidate
+      }
+    }
+
+    final matched = _findStrictJourneyMatch(savedJourney, freshJourneys);
+    if (matched == null) {
+      return (
+        stillPossible: false,
+        signature: 'unavailable',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final merged = _mergeRealtimeIntoJourney(savedJourney, matched);
+    final signature = _savedJourneyRealtimeSignature(merged);
+    final detail = _describeSavedJourneyChange(
+      savedJourney: savedJourney,
+      freshJourney: merged,
+    );
+    return (stillPossible: true, signature: signature, detail: detail);
+  }
+
+  Future<void> _notifySavedJourneyStatusChange({
+    required Map<String, dynamic> item,
+    required bool stillPossible,
+    required String detail,
+  }) async {
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName = fromMap is Map ? fromMap['name']?.toString() ?? '' : '';
+    final toName = toMap is Map ? toMap['name']?.toString() ?? '' : '';
+    if (toName.isEmpty) return;
+
+    await NotificationManager.requestPermissions();
+
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_status_channel',
+      'Saved Route Status',
+      channelDescription:
+          'Updates when saved routes change or become unavailable',
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+
+    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
+    final statusText =
+        stillPossible ? 'Trip still possible' : 'Trip no longer possible';
+    await _notificationsPlugin.show(
+      id: (routeLabel.hashCode ^ DateTime.now().millisecondsSinceEpoch) &
+          0x7fffffff,
+      title: 'Saved route changed',
+      body: '$routeLabel: $detail. $statusText.',
+      notificationDetails: details,
+    );
+  }
+
+  Future<void> _checkSavedJourneyStatuses() async {
+    if (_isCheckingSavedJourneyStatuses) return;
+    if (_savedJourneys.isEmpty) return;
+
+    _isCheckingSavedJourneyStatuses = true;
+    _lastSavedJourneyStatusCheck = DateTime.now();
+    try {
+      final journeys = List<Map<String, dynamic>>.from(_savedJourneys);
+      for (final item in journeys) {
+        final key = _savedJourneyUiKey(item);
+        if (key == null) continue;
+
+        try {
+          final status = await _computeSavedJourneyStatus(item);
+          final currentStatusSignature = status.stillPossible
+              ? 'possible:${status.signature}'
+              : 'unavailable';
+          final previousStatusSignature =
+              _savedJourneyLastStatusSignatures[key];
+          final isFirstObservation = previousStatusSignature == null;
+          _savedJourneyLastStatusSignatures[key] = currentStatusSignature;
+
+          if (status.stillPossible) {
+            final rawJourney = item['journey'];
+            if (rawJourney is! Map) continue;
+
+            Journey savedJourney;
+            try {
+              savedJourney =
+                  _createJourney(Map<String, dynamic>.from(rawJourney));
+            } catch (_) {
+              continue;
+            }
+            final savedSignature = _savedJourneyRealtimeSignature(savedJourney);
+            final changedFromSaved = status.signature != savedSignature;
+            final changedSinceLast =
+                previousStatusSignature != currentStatusSignature;
+            if (changedSinceLast &&
+                (changedFromSaved ||
+                    (previousStatusSignature != null &&
+                        previousStatusSignature.startsWith('unavailable')))) {
+              await _notifySavedJourneyStatusChange(
+                item: item,
+                stillPossible: true,
+                detail: status.detail,
+              );
+            } else if (isFirstObservation && !changedFromSaved) {
+              // Baseline set: no notification for unchanged route.
+            }
+          } else {
+            if (previousStatusSignature != 'unavailable') {
+              await _notifySavedJourneyStatusChange(
+                item: item,
+                stillPossible: false,
+                detail: status.detail,
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint('Saved journey status check failed for one route: $e');
+        }
+      }
+    } finally {
+      _isCheckingSavedJourneyStatuses = false;
+    }
+  }
+
+  void _scheduleSavedJourneyReminder(
+    Map<String, dynamic> item, {
+    bool fireImmediatelyIfDue = false,
+  }) {
+    final key = _savedJourneyUiKey(item);
+    if (key == null) return;
+
+    _savedJourneyReminderTimers.remove(key)?.cancel();
+
+    final minutes = _savedJourneyReminderMinutes(item);
+    if (minutes == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+    final now = DateTime.now();
+    if (departure.isBefore(now)) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    final triggerAt = departure.subtract(Duration(minutes: minutes));
+    if (!triggerAt.isAfter(now)) {
+      _savedJourneyLiveCountdownTexts.remove(key);
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      if (fireImmediatelyIfDue) {
+        unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
+      }
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    _savedJourneyReminderTimers[key] = Timer(triggerAt.difference(now), () {
+      _savedJourneyReminderTimers.remove(key);
+      unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
+    });
+    _syncSavedJourneyLiveCountdownTicker();
+  }
+
+  Future<void> _fireSavedJourneyReminder({
+    required Map<String, dynamic> item,
+    required int minutes,
+  }) async {
+    final key = _savedJourneyUiKey(item);
+    if (key == null) return;
+    _savedJourneyLiveCountdownTexts.remove(key);
+    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
+    _syncSavedJourneyLiveCountdownTicker();
+
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName =
+        fromMap is Map ? (fromMap['name']?.toString() ?? 'Start') : 'Start';
+    final toName = toMap is Map
+        ? (toMap['name']?.toString() ?? 'Destination')
+        : 'Destination';
+    final departure = _savedJourneyDepartureLocal(item);
+    final departureLabel =
+        departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
+
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      channelDescription: 'Reminders for saved-route departure times',
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+
+    await _notificationsPlugin.show(
+      id: _savedJourneyReminderNotificationId(key, minutes),
+      title: 'Leave soon',
+      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+      notificationDetails: details,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Leave in $minutes min for $toName')),
+    );
+  }
+
+  Future<void> _setSavedJourneyReminder(
+    Map<String, dynamic> item,
+    int? minutes,
+  ) async {
+    final previousMinutes = _savedJourneyReminderMinutes(item);
+    if (minutes != null) {
+      await NotificationManager.requestPermissions();
+    }
+
+    final updated = await SearchHistoryManager.setSavedJourneyLeaveReminder(
+      item: item,
+      minutesBeforeDeparture: minutes,
+    );
+
+    if (!updated) return;
+
+    final selectedKey = _savedJourneyUiKey(item);
+    final updatedItem = Map<String, dynamic>.from(item);
+    if (minutes == null) {
+      updatedItem.remove('leaveReminderMinutes');
+    } else {
+      updatedItem['leaveReminderMinutes'] = minutes;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _savedJourneys = _savedJourneys.map((entry) {
+        if (_sameSavedJourneyEntry(entry, item)) {
+          return updatedItem;
+        }
+        return entry;
+      }).toList();
+      if (selectedKey != null) {
+        _savedReminderPickerVisibleFor.remove(selectedKey);
+      }
+    });
+
+    _scheduleSavedJourneyReminder(
+      updatedItem,
+      fireImmediatelyIfDue: minutes != null,
+    );
+    if (selectedKey != null &&
+        previousMinutes != null &&
+        previousMinutes != minutes) {
+      unawaited(_cancelSavedJourneyReminderNotification(selectedKey,
+          minutes: previousMinutes));
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(minutes == null
+              ? 'Leave reminder removed'
+              : 'Leave reminder set: $minutes min before departure')),
+    );
+  }
+
+  Future<void> _deleteSavedJourney(Map<String, dynamic> item) async {
+    final removed =
+        await SearchHistoryManager.removeSavedJourneyByItem(item: item);
+    if (!removed) return;
+    await _loadHistoryData();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved route deleted')),
+    );
   }
 
   void _applyRouteHistorySelection(Map<String, dynamic> item) {
@@ -2616,6 +3430,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildSavedJourneys(TransColors colors) {
     if (_savedJourneys.isEmpty) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final savedToShow = List<Map<String, dynamic>>.from(_savedJourneys)
+      ..sort((a, b) {
+        final aDone = _isSavedJourneyCompleted(a);
+        final bDone = _isSavedJourneyCompleted(b);
+        if (aDone != bDone) return aDone ? 1 : -1;
+        final aDep = _savedJourneyDepartureLocal(a) ?? now;
+        final bDep = _savedJourneyDepartureLocal(b) ?? now;
+        return aDep.compareTo(bDep);
+      });
 
     return Container(
       margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
@@ -2624,23 +3448,277 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text('Saved routes',
-                style: TextStyle(
-                    color: colors.sectionHeader,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12)),
+            child: Row(
+              children: [
+                Text('Saved routes',
+                    style: TextStyle(
+                        color: colors.sectionHeader,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12)),
+                const SizedBox(width: 8),
+                Text('(auto-delete 24h after arrival)',
+                    style:
+                        TextStyle(color: colors.searchHintText, fontSize: 11)),
+              ],
+            ),
           ),
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _savedJourneys.length,
+            itemCount: savedToShow.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
+            itemBuilder: (ctx, idx) {
+              final item = savedToShow[idx];
+              final cardKey = _savedJourneyUiKey(item) ?? 'saved-$idx';
+              final isCompleted = _isSavedJourneyCompleted(item);
+              final isLegacy = _isLegacySavedJourney(item);
+              final showingReminderPicker =
+                  _savedReminderPickerVisibleFor.contains(cardKey);
+              final showingCompletedDelete =
+                  _savedCompletedDeleteVisibleFor.contains(cardKey);
+              final reminderOptions = _savedJourneyReminderOptions(item);
+              return _buildSavedJourneyCard(
                 colors: colors,
-                item: _savedJourneys[idx],
-                icon: Icons.bookmark),
+                item: item,
+                showingReminderPicker: showingReminderPicker,
+                showingCompletedDelete: showingCompletedDelete,
+                isCompleted: isCompleted,
+                selectedReminderMinutes: _savedJourneyReminderMinutes(item),
+                reminderOptions: reminderOptions,
+                onTap: () {
+                  if (showingCompletedDelete) {
+                    setState(() {
+                      _savedCompletedDeleteVisibleFor.remove(cardKey);
+                    });
+                    return;
+                  }
+                  if (showingReminderPicker) {
+                    setState(() {
+                      _savedReminderPickerVisibleFor.remove(cardKey);
+                    });
+                    return;
+                  }
+                  if (isCompleted) return;
+                  _openSavedJourney(item);
+                },
+                onLongPress: () {
+                  if (isCompleted || isLegacy) {
+                    setState(() {
+                      _savedReminderPickerVisibleFor.remove(cardKey);
+                      _savedCompletedDeleteVisibleFor
+                        ..clear()
+                        ..add(cardKey);
+                    });
+                    return;
+                  }
+                  setState(() {
+                    _savedCompletedDeleteVisibleFor.remove(cardKey);
+                    _savedReminderPickerVisibleFor
+                      ..clear()
+                      ..add(cardKey);
+                  });
+                },
+                onReminderSelected: (minutes) {
+                  _setSavedJourneyReminder(item, minutes);
+                },
+                onCloseReminderPicker: () {
+                  setState(() {
+                    _savedReminderPickerVisibleFor.remove(cardKey);
+                  });
+                },
+                onDeletePressed: () {
+                  _deleteSavedJourney(item);
+                },
+                onCloseCompletedDelete: () {
+                  setState(() {
+                    _savedCompletedDeleteVisibleFor.remove(cardKey);
+                  });
+                },
+              );
+            },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSavedJourneyCard({
+    required TransColors colors,
+    required Map<String, dynamic> item,
+    required bool showingReminderPicker,
+    required bool showingCompletedDelete,
+    required bool isCompleted,
+    required int? selectedReminderMinutes,
+    required List<({int leadMinutes, int waitMinutes})> reminderOptions,
+    required VoidCallback onTap,
+    required VoidCallback onLongPress,
+    required ValueChanged<int?> onReminderSelected,
+    required VoidCallback onCloseReminderPicker,
+    required VoidCallback onDeletePressed,
+    required VoidCallback onCloseCompletedDelete,
+  }) {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+
+    Widget buildReminderButton(({int leadMinutes, int waitMinutes}) option) {
+      final selected = selectedReminderMinutes == option.leadMinutes;
+      final accent = colors.navBarSelected;
+      final fg = selected
+          ? (accent.computeLuminance() > 0.5 ? Colors.black : Colors.white)
+          : accent;
+
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onReminderSelected(selected ? null : option.leadMinutes),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            alignment: Alignment.center,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected ? accent : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: accent,
+                width: 1.2,
+              ),
+            ),
+            child: Text(
+              '${option.waitMinutes}min',
+              style: TextStyle(
+                color: fg,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: isCompleted
+                ? colors.cardBg.withValues(alpha: 0.55)
+                : colors.cardBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white10)),
+        child: showingCompletedDelete
+            ? Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: onDeletePressed,
+                      child: Container(
+                        alignment: Alignment.center,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: colors.iconDelete,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'Delete',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: onCloseCompletedDelete,
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: colors.searchHintText),
+                      ),
+                      child: Icon(
+                        Icons.close,
+                        color: colors.searchHintText,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : showingReminderPicker
+                ? Row(
+                    children: [
+                      ...reminderOptions.expand((option) => [
+                            buildReminderButton(option),
+                            const SizedBox(width: 8),
+                          ]),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: onCloseReminderPicker,
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: colors.searchHintText),
+                          ),
+                          child: Icon(
+                            Icons.close,
+                            color: colors.searchHintText,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                              color: (isCompleted
+                                      ? colors.searchHintText
+                                      : colors.navBarSelected)
+                                  .withValues(alpha: 0.2),
+                              shape: BoxShape.circle),
+                          child: Icon(Icons.bookmark,
+                              color: isCompleted
+                                  ? colors.searchHintText
+                                  : colors.navBarSelected,
+                              size: 18)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(to.name,
+                                style: TextStyle(
+                                    color: isCompleted
+                                        ? colors.textSecondary
+                                        : colors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text(
+                                _savedJourneyTimeLabel(item) ??
+                                    AppLocalizations.of(context)!
+                                        .fromStation(from.name),
+                                style: TextStyle(
+                                    color: isCompleted
+                                        ? colors.textSecondary
+                                        : colors.searchHintText,
+                                    fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          color: colors.searchHintText, size: 20)
+                    ],
+                  ),
       ),
     );
   }
@@ -2669,12 +3747,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildRouteHistoryCard(
       {required TransColors colors,
       required Map<String, dynamic> item,
-      required IconData icon}) {
+      required IconData icon,
+      VoidCallback? onTap,
+      String? subtitleOverride}) {
     final from = Station.fromJson(item['from']);
     final to = Station.fromJson(item['to']);
 
     return GestureDetector(
-      onTap: () => _applyRouteHistorySelection(item),
+      onTap: onTap ?? () => _applyRouteHistorySelection(item),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -2700,7 +3780,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           fontWeight: FontWeight.bold,
                           fontSize: 14)),
                   const SizedBox(height: 2),
-                  Text(AppLocalizations.of(context)!.fromStation(from.name),
+                  Text(
+                      subtitleOverride ??
+                          AppLocalizations.of(context)!.fromStation(from.name),
                       style: TextStyle(
                           color: colors.searchHintText, fontSize: 12)),
                 ],
@@ -3422,7 +4504,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                   ? Icons.bookmark
                                   : Icons.bookmark_border,
                               color: colors.navBarSelected),
-                          onPressed: route.origin == null
+                          onPressed: route.origin == null ||
+                                  route.activeJourney == null
                               ? null
                               : () => _toggleSavedRoute(route)),
                       IconButton(

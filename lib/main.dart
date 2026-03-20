@@ -16,14 +16,23 @@ void main() async {
   usePathUrlStrategy();
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: ".env");
+  bool initFailed = false;
+  String? initError;
 
-  await Supabase.initialize(
-    url: AppConfig.supabaseUrl,
-    anonKey: AppConfig.supabaseAnonKey,
-  );
+  try {
+    await dotenv.load(fileName: ".env");
 
-  await SupabaseService.init();
+    await Supabase.initialize(
+      url: AppConfig.supabaseUrl,
+      anonKey: AppConfig.supabaseAnonKey,
+    );
+
+    await SupabaseService.init();
+  } catch (e) {
+    initFailed = true;
+    initError = e.toString();
+    debugPrint("Initialization Failed: $e");
+  }
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -32,7 +41,7 @@ void main() async {
     ),
   );
 
-  runApp(const TransApp());
+  runApp(TransApp(initFailed: initFailed, initError: initError));
 }
 
 // FIX: Enable Mouse Dragging for Web/Desktop
@@ -41,12 +50,16 @@ class CustomScrollBehavior extends MaterialScrollBehavior {
   Set<PointerDeviceKind> get dragDevices => {
         PointerDeviceKind.touch,
         PointerDeviceKind.mouse,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.invertedStylus,
         PointerDeviceKind.trackpad,
       };
 }
 
 class TransApp extends StatefulWidget {
-  const TransApp({super.key});
+  final bool initFailed;
+  final String? initError;
+  const TransApp({super.key, this.initFailed = false, this.initError});
 
   @override
   State<TransApp> createState() => _TransAppState();
@@ -211,19 +224,37 @@ class _TransAppState extends State<TransApp> {
       themeMode: _themeMode,
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),
-      home: HomeScreen(
-        isDarkMode: _themeMode == ThemeMode.dark,
-        onThemeChanged: _toggleTheme,
-        useSystemTheme: _useSystemTheme,
-        onSystemSyncChanged: _toggleSystemSync,
-        onlyNahverkehr: _onlyNahverkehr,
-        onNahverkehrChanged: _toggleNahverkehr,
-        isGhostMode: _isGhostMode,
-        onGhostModeChanged: _toggleGhostMode,
-        onColorChanged: _updateThemeColor,
-        currentColor: _themeColor,
-        locale: _locale,
-        onLocaleChanged: _changeLocale,
+      home: Scaffold(
+        body: Column(
+          children: [
+            if (widget.initFailed)
+              Container(
+                color: Colors.red,
+                padding: const EdgeInsets.all(8),
+                width: double.infinity,
+                child: Text(
+                  'Initialization Error: ${widget.initError}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            Expanded(
+              child: HomeScreen(
+                isDarkMode: _themeMode == ThemeMode.dark,
+                onThemeChanged: _toggleTheme,
+                useSystemTheme: _useSystemTheme,
+                onSystemSyncChanged: _toggleSystemSync,
+                onlyNahverkehr: _onlyNahverkehr,
+                onNahverkehrChanged: _toggleNahverkehr,
+                isGhostMode: _isGhostMode,
+                onGhostModeChanged: _toggleGhostMode,
+                onColorChanged: _updateThemeColor,
+                currentColor: _themeColor,
+                locale: _locale,
+                onLocaleChanged: _changeLocale,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

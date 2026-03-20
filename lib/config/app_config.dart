@@ -1,4 +1,5 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
 
 class AppConfig {
   static String get supabaseUrl {
@@ -7,9 +8,8 @@ class AppConfig {
     if (url != null && url.isNotEmpty) {
       return url;
     }
-    // 2. If this code is running in the CI/CD build, this file
-    //    will be overwritten, so we should return an empty string
-    //    here locally if .env is missing.
+    // 2. Fallback
+    debugPrint("WARNING: SUPABASE_URL is missing from .env");
     return '';
   }
 
@@ -18,6 +18,15 @@ class AppConfig {
     if (key != null && key.isNotEmpty) {
       return key;
     }
+    debugPrint("WARNING: SUPABASE_ANON_KEY is missing from .env");
     return '';
+  }
+
+  static String get supportEmail {
+    final email = dotenv.env['SUPPORT_EMAIL'];
+    if (email != null && email.isNotEmpty) {
+      return email;
+    }
+    return 'khonager.trans@gmail.com';
   }
 }
