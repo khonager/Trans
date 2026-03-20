@@ -67,6 +67,7 @@ class _SettingsTabState extends State<SettingsTab> {
   StreamSubscription? _locationSub;
 
   String _version = "";
+  bool _obscureAuthPassword = true;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
@@ -1490,9 +1491,19 @@ class _SettingsTabState extends State<SettingsTab> {
               controller: _passwordCtrl,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submitAuth(),
-              obscureText: true,
+              obscureText: _obscureAuthPassword,
               decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.password)),
+                hintText: AppLocalizations.of(context)!.password,
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureAuthPassword
+                      ? Icons.visibility
+                      : Icons.visibility_off),
+                  onPressed: () {
+                    setState(
+                        () => _obscureAuthPassword = !_obscureAuthPassword);
+                  },
+                ),
+              )),
           if (_isLoginMode)
             Align(
               alignment: Alignment.centerRight,
