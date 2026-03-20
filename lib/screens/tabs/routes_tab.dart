@@ -111,6 +111,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<Map<String, dynamic>> _recentJourneys = [];
   List<Map<String, dynamic>> _savedJourneys = [];
   final Set<String> _savedReminderPickerVisibleFor = <String>{};
+  final Set<String> _savedCompletedDeleteVisibleFor = <String>{};
   final Map<String, Timer> _savedJourneyReminderTimers = <String, Timer>{};
   Timer? _savedJourneyLiveCountdownTicker;
   final Map<String, String> _savedJourneyLiveCountdownTexts =
@@ -1226,6 +1227,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return DateTime.tryParse(depStr)?.toLocal();
   }
 
+  DateTime? _savedJourneyArrivalLocal(Map<String, dynamic> item) {
+    final arrStr = item['arrivalTime'];
+    if (arrStr is! String) return null;
+    return DateTime.tryParse(arrStr)?.toLocal();
+  }
+
+  bool _isSavedJourneyCompleted(Map<String, dynamic> item) {
+    final now = DateTime.now();
+    final arrival = _savedJourneyArrivalLocal(item);
+    if (arrival != null) return now.isAfter(arrival);
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure != null) return now.isAfter(departure);
+    return false;
+  }
+
+  bool _isLegacySavedJourney(Map<String, dynamic> item) {
+    final hasConnectionKey = item['connectionKey'] is String &&
+        (item['connectionKey'] as String).isNotEmpty;
+    final hasDeparture = item['departureTime'] is String;
+    final hasArrival = item['arrivalTime'] is String;
+    final hasJourney = item['journey'] is Map;
+    return !(hasConnectionKey && hasDeparture && hasArrival && hasJourney);
+  }
+
   bool _sameSavedJourneyEntry(
     Map<String, dynamic> a,
     Map<String, dynamic> b,
@@ -1443,6 +1468,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     _savedReminderPickerVisibleFor.removeWhere((k) => !activeKeys.contains(k));
+    _savedCompletedDeleteVisibleFor.removeWhere((k) => !activeKeys.contains(k));
     _syncSavedJourneyLiveCountdownTicker();
   }
 
@@ -1874,6 +1900,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           content: Text(minutes == null
               ? 'Leave reminder removed'
               : 'Leave reminder set: $minutes min before departure')),
+    );
+  }
+
+  Future<void> _deleteSavedJourney(Map<String, dynamic> item) async {
+    final removed =
+        await SearchHistoryManager.removeSavedJourneyByItem(item: item);
+    if (!removed) return;
+    await _loadHistoryData();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved route deleted')),
     );
   }
 
@@ -3393,6 +3430,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildSavedJourneys(TransColors colors) {
     if (_savedJourneys.isEmpty) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final savedToShow = List<Map<String, dynamic>>.from(_savedJourneys)
+      ..sort((a, b) {
+        final aDone = _isSavedJourneyCompleted(a);
+        final bDone = _isSavedJourneyCompleted(b);
+        if (aDone != bDone) return aDone ? 1 : -1;
+        final aDep = _savedJourneyDepartureLocal(a) ?? now;
+        final bDep = _savedJourneyDepartureLocal(b) ?? now;
+        return aDep.compareTo(bDep);
+      });
 
     return Container(
       margin: const EdgeInsets.only(top: 16, left: 16, right: 16),
@@ -3418,31 +3465,54 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _savedJourneys.length,
+            itemCount: savedToShow.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (ctx, idx) {
-              final item = _savedJourneys[idx];
+              final item = savedToShow[idx];
               final cardKey = _savedJourneyUiKey(item) ?? 'saved-$idx';
+              final isCompleted = _isSavedJourneyCompleted(item);
+              final isLegacy = _isLegacySavedJourney(item);
               final showingReminderPicker =
                   _savedReminderPickerVisibleFor.contains(cardKey);
+              final showingCompletedDelete =
+                  _savedCompletedDeleteVisibleFor.contains(cardKey);
               final reminderOptions = _savedJourneyReminderOptions(item);
               return _buildSavedJourneyCard(
                 colors: colors,
                 item: item,
                 showingReminderPicker: showingReminderPicker,
+                showingCompletedDelete: showingCompletedDelete,
+                isCompleted: isCompleted,
                 selectedReminderMinutes: _savedJourneyReminderMinutes(item),
                 reminderOptions: reminderOptions,
                 onTap: () {
+                  if (showingCompletedDelete) {
+                    setState(() {
+                      _savedCompletedDeleteVisibleFor.remove(cardKey);
+                    });
+                    return;
+                  }
                   if (showingReminderPicker) {
                     setState(() {
                       _savedReminderPickerVisibleFor.remove(cardKey);
                     });
                     return;
                   }
+                  if (isCompleted) return;
                   _openSavedJourney(item);
                 },
                 onLongPress: () {
+                  if (isCompleted || isLegacy) {
+                    setState(() {
+                      _savedReminderPickerVisibleFor.remove(cardKey);
+                      _savedCompletedDeleteVisibleFor
+                        ..clear()
+                        ..add(cardKey);
+                    });
+                    return;
+                  }
                   setState(() {
+                    _savedCompletedDeleteVisibleFor.remove(cardKey);
                     _savedReminderPickerVisibleFor
                       ..clear()
                       ..add(cardKey);
@@ -3454,6 +3524,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 onCloseReminderPicker: () {
                   setState(() {
                     _savedReminderPickerVisibleFor.remove(cardKey);
+                  });
+                },
+                onDeletePressed: () {
+                  _deleteSavedJourney(item);
+                },
+                onCloseCompletedDelete: () {
+                  setState(() {
+                    _savedCompletedDeleteVisibleFor.remove(cardKey);
                   });
                 },
               );
@@ -3468,12 +3546,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     required TransColors colors,
     required Map<String, dynamic> item,
     required bool showingReminderPicker,
+    required bool showingCompletedDelete,
+    required bool isCompleted,
     required int? selectedReminderMinutes,
     required List<({int leadMinutes, int waitMinutes})> reminderOptions,
     required VoidCallback onTap,
     required VoidCallback onLongPress,
     required ValueChanged<int?> onReminderSelected,
     required VoidCallback onCloseReminderPicker,
+    required VoidCallback onDeletePressed,
+    required VoidCallback onCloseCompletedDelete,
   }) {
     final from = Station.fromJson(item['from']);
     final to = Station.fromJson(item['to']);
@@ -3519,19 +3601,38 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-            color: colors.cardBg,
+            color: isCompleted
+                ? colors.cardBg.withValues(alpha: 0.55)
+                : colors.cardBg,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: Colors.white10)),
-        child: showingReminderPicker
+        child: showingCompletedDelete
             ? Row(
                 children: [
-                  ...reminderOptions.expand((option) => [
-                        buildReminderButton(option),
-                        const SizedBox(width: 8),
-                      ]),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: onDeletePressed,
+                      child: Container(
+                        alignment: Alignment.center,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: colors.iconDelete,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'Delete',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   GestureDetector(
-                    onTap: onCloseReminderPicker,
+                    onTap: onCloseCompletedDelete,
                     child: Container(
                       width: 36,
                       height: 36,
@@ -3548,39 +3649,76 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   ),
                 ],
               )
-            : Row(
-                children: [
-                  Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                          color: colors.navBarSelected.withValues(alpha: 0.2),
-                          shape: BoxShape.circle),
-                      child: Icon(Icons.bookmark,
-                          color: colors.navBarSelected, size: 18)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(to.name,
-                            style: TextStyle(
-                                color: colors.textPrimary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14)),
-                        const SizedBox(height: 2),
-                        Text(
-                            _savedJourneyTimeLabel(item) ??
-                                AppLocalizations.of(context)!
-                                    .fromStation(from.name),
-                            style: TextStyle(
-                                color: colors.searchHintText, fontSize: 12)),
-                      ],
-                    ),
+            : showingReminderPicker
+                ? Row(
+                    children: [
+                      ...reminderOptions.expand((option) => [
+                            buildReminderButton(option),
+                            const SizedBox(width: 8),
+                          ]),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: onCloseReminderPicker,
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: colors.searchHintText),
+                          ),
+                          child: Icon(
+                            Icons.close,
+                            color: colors.searchHintText,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                              color: (isCompleted
+                                      ? colors.searchHintText
+                                      : colors.navBarSelected)
+                                  .withValues(alpha: 0.2),
+                              shape: BoxShape.circle),
+                          child: Icon(Icons.bookmark,
+                              color: isCompleted
+                                  ? colors.searchHintText
+                                  : colors.navBarSelected,
+                              size: 18)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(to.name,
+                                style: TextStyle(
+                                    color: isCompleted
+                                        ? colors.textSecondary
+                                        : colors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text(
+                                _savedJourneyTimeLabel(item) ??
+                                    AppLocalizations.of(context)!
+                                        .fromStation(from.name),
+                                style: TextStyle(
+                                    color: isCompleted
+                                        ? colors.textSecondary
+                                        : colors.searchHintText,
+                                    fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          color: colors.searchHintText, size: 20)
+                    ],
                   ),
-                  Icon(Icons.chevron_right,
-                      color: colors.searchHintText, size: 20)
-                ],
-              ),
       ),
     );
   }
