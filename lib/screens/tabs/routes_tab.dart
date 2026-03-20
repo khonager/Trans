@@ -1261,6 +1261,57 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return departure.subtract(Duration(minutes: minutes));
   }
 
+  List<({int leadMinutes, int waitMinutes})> _savedJourneyReminderOptions(
+      Map<String, dynamic> item) {
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure == null) {
+      return const [
+        (leadMinutes: 5, waitMinutes: 5),
+        (leadMinutes: 15, waitMinutes: 15),
+        (leadMinutes: 30, waitMinutes: 30),
+      ];
+    }
+
+    final now = DateTime.now();
+    final untilDeparture = departure.difference(now);
+    if (untilDeparture.inSeconds <= 0) {
+      return const [
+        (leadMinutes: 5, waitMinutes: 5),
+        (leadMinutes: 15, waitMinutes: 15),
+        (leadMinutes: 30, waitMinutes: 30),
+      ];
+    }
+
+    final options = <({int leadMinutes, int waitMinutes})>[];
+    final usedWaits = <int>{};
+    final baseLeads = [5, 15, 30];
+
+    for (final lead in baseLeads) {
+      final triggerAt = departure.subtract(Duration(minutes: lead));
+      final waitSeconds = triggerAt.difference(now).inSeconds;
+      if (waitSeconds <= 0) continue;
+      final waitMinutes = max(1, (waitSeconds / 60).ceil());
+      if (usedWaits.add(waitMinutes)) {
+        options.add((leadMinutes: lead, waitMinutes: waitMinutes));
+      }
+    }
+
+    final maxWaitMinutes = max(1, (untilDeparture.inSeconds / 60).floor());
+    for (int wait = 1; options.length < 3 && wait < maxWaitMinutes; wait++) {
+      if (!usedWaits.add(wait)) continue;
+      final lead = max(0, ((untilDeparture.inSeconds / 60).ceil()) - wait);
+      options.add((leadMinutes: lead, waitMinutes: wait));
+    }
+
+    if (options.isEmpty) {
+      options.add((leadMinutes: 0, waitMinutes: 1));
+    }
+
+    options.sort((a, b) => a.waitMinutes.compareTo(b.waitMinutes));
+    if (options.length > 3) return options.sublist(0, 3);
+    return options;
+  }
+
   bool _hasActiveSavedJourneyLiveCountdowns() {
     final now = DateTime.now();
     for (final item in _savedJourneys) {
@@ -3382,11 +3433,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               final cardKey = _savedJourneyUiKey(item) ?? 'saved-$idx';
               final showingReminderPicker =
                   _savedReminderPickerVisibleFor.contains(cardKey);
+              final reminderOptions = _savedJourneyReminderOptions(item);
               return _buildSavedJourneyCard(
                 colors: colors,
                 item: item,
                 showingReminderPicker: showingReminderPicker,
                 selectedReminderMinutes: _savedJourneyReminderMinutes(item),
+                reminderOptions: reminderOptions,
                 onTap: () {
                   if (showingReminderPicker) {
                     setState(() {
@@ -3424,6 +3477,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     required Map<String, dynamic> item,
     required bool showingReminderPicker,
     required int? selectedReminderMinutes,
+    required List<({int leadMinutes, int waitMinutes})> reminderOptions,
     required VoidCallback onTap,
     required VoidCallback onLongPress,
     required ValueChanged<int?> onReminderSelected,
@@ -3432,8 +3486,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final from = Station.fromJson(item['from']);
     final to = Station.fromJson(item['to']);
 
-    Widget buildReminderButton(int minutes) {
-      final selected = selectedReminderMinutes == minutes;
+    Widget buildReminderButton(({int leadMinutes, int waitMinutes}) option) {
+      final selected = selectedReminderMinutes == option.leadMinutes;
       final accent = colors.navBarSelected;
       final fg = selected
           ? (accent.computeLuminance() > 0.5 ? Colors.black : Colors.white)
@@ -3441,7 +3495,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       return Expanded(
         child: GestureDetector(
-          onTap: () => onReminderSelected(selected ? null : minutes),
+          onTap: () => onReminderSelected(selected ? null : option.leadMinutes),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             alignment: Alignment.center,
@@ -3455,7 +3509,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               ),
             ),
             child: Text(
-              '${minutes}min',
+              '${option.waitMinutes}min',
               style: TextStyle(
                 color: fg,
                 fontSize: 12,
@@ -3479,11 +3533,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         child: showingReminderPicker
             ? Row(
                 children: [
-                  buildReminderButton(5),
-                  const SizedBox(width: 8),
-                  buildReminderButton(15),
-                  const SizedBox(width: 8),
-                  buildReminderButton(30),
+                  ...reminderOptions.expand((option) => [
+                        buildReminderButton(option),
+                        const SizedBox(width: 8),
+                      ]),
                   const SizedBox(width: 8),
                   GestureDetector(
                     onTap: onCloseReminderPicker,
