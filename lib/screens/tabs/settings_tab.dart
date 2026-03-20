@@ -68,6 +68,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _version = "";
   bool _obscureAuthPassword = true;
+  bool _isAuthSubmitting = false;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
@@ -819,6 +820,8 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _submitAuth() async {
+    if (_isAuthSubmitting) return;
+
     final l10n = AppLocalizations.of(context)!;
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
@@ -839,6 +842,12 @@ class _SettingsTabState extends State<SettingsTab> {
     if (!_isLoginMode && username.isEmpty) {
       _showMessage(_requiredFieldMessage(l10n.usernameSignUp));
       return;
+    }
+
+    if (mounted) {
+      setState(() => _isAuthSubmitting = true);
+    } else {
+      _isAuthSubmitting = true;
     }
 
     try {
@@ -882,6 +891,12 @@ class _SettingsTabState extends State<SettingsTab> {
         stackTrace: st,
         source: _isLoginMode ? 'sign in' : 'sign up',
       );
+    } finally {
+      if (mounted) {
+        setState(() => _isAuthSubmitting = false);
+      } else {
+        _isAuthSubmitting = false;
+      }
     }
   }
 
@@ -1581,10 +1596,16 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           const SizedBox(height: 10),
           ElevatedButton(
-            onPressed: _submitAuth,
-            child: Text(_isLoginMode
-                ? AppLocalizations.of(context)!.login
-                : AppLocalizations.of(context)!.signUp),
+            onPressed: _isAuthSubmitting ? null : _submitAuth,
+            child: _isAuthSubmitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(_isLoginMode
+                    ? AppLocalizations.of(context)!.login
+                    : AppLocalizations.of(context)!.signUp),
           ),
         ],
       ),

@@ -234,6 +234,21 @@ class AppError {
     String fallback,
   ) {
     final lower = raw.toLowerCase();
+    if (lower.contains('over_email_send_rate_limit') ||
+        (lower.contains('for security purposes') &&
+            lower.contains('after') &&
+            lower.contains('seconds'))) {
+      final seconds = _extractRetrySeconds(raw);
+      final isGerman = _isGerman(context);
+      if (seconds != null) {
+        return isGerman
+            ? 'Zu viele E-Mails in kurzer Zeit. Bitte in $seconds Sekunden erneut versuchen.'
+            : 'Too many email requests in a short time. Please try again in $seconds seconds.';
+      }
+      return isGerman
+          ? 'Zu viele E-Mails in kurzer Zeit. Bitte kurz warten und erneut versuchen.'
+          : 'Too many email requests in a short time. Please wait a moment and try again.';
+    }
     if (lower.contains('invalid login credentials') ||
         lower.contains('invalid credentials')) {
       return _isGerman(context)
@@ -330,5 +345,12 @@ class AppError {
 
   static bool _isGerman(BuildContext context) {
     return Localizations.localeOf(context).languageCode == 'de';
+  }
+
+  static int? _extractRetrySeconds(String raw) {
+    final match = RegExp(r'after\s+(\d+)\s+seconds?', caseSensitive: false)
+        .firstMatch(raw);
+    if (match == null) return null;
+    return int.tryParse(match.group(1)!);
   }
 }
