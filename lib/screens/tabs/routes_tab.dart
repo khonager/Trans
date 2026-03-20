@@ -112,6 +112,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   List<Map<String, dynamic>> _savedJourneys = [];
   final Set<String> _savedReminderPickerVisibleFor = <String>{};
   final Map<String, Timer> _savedJourneyReminderTimers = <String, Timer>{};
+  Timer? _savedJourneyLiveCountdownTicker;
+  final Map<String, String> _savedJourneyLiveCountdownTexts =
+      <String, String>{};
+  Timer? _savedJourneyStatusPollTimer;
+  final Map<String, String> _savedJourneyLastStatusSignatures =
+      <String, String>{};
+  bool _isCheckingSavedJourneyStatuses = false;
+  DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
 
   Position? get _effectiveCurrentPosition =>
@@ -145,6 +153,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       });
     }
     _syncSavedJourneyReminderTimers(saved);
+    _syncSavedJourneyStatusMonitoring(saved);
   }
 
   @override
@@ -292,7 +301,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _initNotifications() async {
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings();
-    const initSettings = InitializationSettings(android: android, iOS: ios);
+    const linux = LinuxInitializationSettings(defaultActionName: 'Open');
+    const initSettings =
+        InitializationSettings(android: android, iOS: ios, linux: linux);
     await _notificationsPlugin.initialize(settings: initSettings);
   }
 
@@ -310,6 +321,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       timer.cancel();
     }
     _savedJourneyReminderTimers.clear();
+    _savedJourneyLiveCountdownTicker?.cancel();
+    _savedJourneyLiveCountdownTicker = null;
+    _savedJourneyStatusPollTimer?.cancel();
+    _savedJourneyStatusPollTimer = null;
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -1228,6 +1243,144 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return (key.hashCode ^ (minutes * 97)) & 0x7fffffff;
   }
 
+  String _formatCountdown(Duration duration) {
+    final totalSeconds = duration.inSeconds.clamp(0, 999999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final hh = hours.toString().padLeft(2, '0');
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    return '$hh:$mm:$ss';
+  }
+
+  DateTime? _savedJourneyReminderTriggerLocal(Map<String, dynamic> item) {
+    final minutes = _savedJourneyReminderMinutes(item);
+    final departure = _savedJourneyDepartureLocal(item);
+    if (minutes == null || departure == null) return null;
+    return departure.subtract(Duration(minutes: minutes));
+  }
+
+  bool _hasActiveSavedJourneyLiveCountdowns() {
+    final now = DateTime.now();
+    for (final item in _savedJourneys) {
+      final triggerAt = _savedJourneyReminderTriggerLocal(item);
+      if (triggerAt != null && triggerAt.isAfter(now)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _cancelSavedJourneyReminderNotification(
+    String key, {
+    int? minutes,
+  }) async {
+    if (minutes != null) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyReminderNotificationId(key, minutes));
+      return;
+    }
+    for (final candidate in const [5, 15, 30]) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyReminderNotificationId(key, candidate));
+    }
+  }
+
+  Future<void> _showSavedJourneyLiveCountdownNotification(
+    Map<String, dynamic> item,
+    DateTime triggerAt,
+  ) async {
+    final key = _savedJourneyUiKey(item);
+    final minutes = _savedJourneyReminderMinutes(item);
+    if (key == null || minutes == null) return;
+
+    final now = DateTime.now();
+    if (!triggerAt.isAfter(now)) return;
+    final countdownText = _formatCountdown(triggerAt.difference(now));
+
+    final cached = _savedJourneyLiveCountdownTexts[key];
+    if (cached == countdownText) return;
+    _savedJourneyLiveCountdownTexts[key] = countdownText;
+
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName = fromMap is Map ? fromMap['name']?.toString() ?? '' : '';
+    final toName =
+        toMap is Map ? toMap['name']?.toString() ?? 'Route' : 'Route';
+    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
+
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      channelDescription: 'Live countdown reminders for saved routes',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      playSound: false,
+      enableVibration: false,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+
+    await _notificationsPlugin.show(
+      id: _savedJourneyReminderNotificationId(key, minutes),
+      title: 'Leave in $countdownText',
+      body: '$routeLabel (timer: ${minutes}min)',
+      notificationDetails: details,
+    );
+  }
+
+  Future<void> _refreshSavedJourneyLiveCountdowns() async {
+    final now = DateTime.now();
+    final activeKeys = <String>{};
+
+    for (final item in _savedJourneys) {
+      final key = _savedJourneyUiKey(item);
+      final triggerAt = _savedJourneyReminderTriggerLocal(item);
+      if (key == null || triggerAt == null) continue;
+
+      if (triggerAt.isAfter(now)) {
+        activeKeys.add(key);
+        await _showSavedJourneyLiveCountdownNotification(item, triggerAt);
+      } else {
+        _savedJourneyLiveCountdownTexts.remove(key);
+      }
+    }
+
+    final staleKeys = _savedJourneyLiveCountdownTexts.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in staleKeys) {
+      _savedJourneyLiveCountdownTexts.remove(key);
+      await _cancelSavedJourneyReminderNotification(key);
+    }
+  }
+
+  void _syncSavedJourneyLiveCountdownTicker() {
+    if (_hasActiveSavedJourneyLiveCountdowns()) {
+      _savedJourneyLiveCountdownTicker ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => unawaited(_refreshSavedJourneyLiveCountdowns()),
+      );
+      unawaited(_refreshSavedJourneyLiveCountdowns());
+      return;
+    }
+
+    _savedJourneyLiveCountdownTicker?.cancel();
+    _savedJourneyLiveCountdownTicker = null;
+    final keys = _savedJourneyLiveCountdownTexts.keys.toList();
+    _savedJourneyLiveCountdownTexts.clear();
+    for (final key in keys) {
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+    }
+  }
+
   void _syncSavedJourneyReminderTimers(List<Map<String, dynamic>> journeys) {
     final activeKeys = <String>{};
     for (final journey in journeys) {
@@ -1242,9 +1395,288 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .toList();
     for (final key in staleKeys) {
       _savedJourneyReminderTimers.remove(key)?.cancel();
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+      _savedJourneyLiveCountdownTexts.remove(key);
     }
 
     _savedReminderPickerVisibleFor.removeWhere((k) => !activeKeys.contains(k));
+    _syncSavedJourneyLiveCountdownTicker();
+  }
+
+  void _syncSavedJourneyStatusMonitoring(List<Map<String, dynamic>> journeys) {
+    final activeKeys =
+        journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    _savedJourneyLastStatusSignatures
+        .removeWhere((key, _) => !activeKeys.contains(key));
+
+    if (journeys.isEmpty) {
+      _savedJourneyStatusPollTimer?.cancel();
+      _savedJourneyStatusPollTimer = null;
+      return;
+    }
+
+    _savedJourneyStatusPollTimer ??= Timer.periodic(
+      const Duration(minutes: 4),
+      (_) => unawaited(_checkSavedJourneyStatuses()),
+    );
+
+    final now = DateTime.now();
+    final shouldCheckNow = _lastSavedJourneyStatusCheck == null ||
+        now.difference(_lastSavedJourneyStatusCheck!) >
+            const Duration(seconds: 45);
+    if (shouldCheckNow) {
+      unawaited(_checkSavedJourneyStatuses());
+    }
+  }
+
+  String _savedJourneyRealtimeSignature(Journey journey) {
+    final rides = journey.steps.where((step) => step.type == 'ride').map((s) {
+      return [
+        s.tripId?.trim() ?? '',
+        s.line.trim().toLowerCase(),
+        s.startStationName,
+        s.destinationName,
+        s.departureTime,
+        s.arrivalTime,
+        s.departureDelay?.toString() ?? '',
+        s.arrivalDelay?.toString() ?? '',
+        s.platform ?? '',
+        s.arrivalPlatform ?? '',
+        s.isCancelled ? '1' : '0',
+      ].join('|');
+    }).join('||');
+
+    return [
+      journey.departure.toUtc().toIso8601String(),
+      journey.arrival.toUtc().toIso8601String(),
+      rides,
+    ].join('::');
+  }
+
+  String _describeSavedJourneyChange({
+    required Journey savedJourney,
+    required Journey freshJourney,
+  }) {
+    final freshRideSteps =
+        freshJourney.steps.where((step) => step.type == 'ride').toList();
+    bool hasCancellation = false;
+    bool hasDelay = false;
+    bool hasPlatformChange = false;
+
+    for (final oldStep in savedJourney.steps.where((s) => s.type == 'ride')) {
+      final nowStep = _findRealtimeMatchForStep(oldStep, freshRideSteps);
+      if (nowStep == null) continue;
+
+      if (nowStep.isCancelled && !oldStep.isCancelled) {
+        hasCancellation = true;
+      }
+      final depDelayChanged =
+          (nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0);
+      final arrDelayChanged =
+          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0);
+      if (depDelayChanged || arrDelayChanged) {
+        hasDelay = true;
+      }
+      final platformChanged =
+          (nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
+              (nowStep.arrivalPlatform ?? '').trim() !=
+                  (oldStep.arrivalPlatform ?? '').trim();
+      if (platformChanged) {
+        hasPlatformChange = true;
+      }
+    }
+
+    if (hasCancellation) return 'Cancellation update';
+    if (hasDelay) return 'Delay update';
+    if (hasPlatformChange) return 'Platform update';
+    return 'Schedule update';
+  }
+
+  Future<({bool stillPossible, String signature, String detail})>
+      _computeSavedJourneyStatus(Map<String, dynamic> item) async {
+    final fromJson = item['from'];
+    final toJson = item['to'];
+    final rawJourney = item['journey'];
+    final departure = _savedJourneyDepartureLocal(item);
+    if (fromJson is! Map || toJson is! Map || rawJourney is! Map) {
+      return (
+        stillPossible: false,
+        signature: 'invalid',
+        detail: 'Connection no longer possible'
+      );
+    }
+    if (departure == null) {
+      return (
+        stillPossible: false,
+        signature: 'missing-departure',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final now = DateTime.now();
+    if (departure.isBefore(now.subtract(const Duration(hours: 2)))) {
+      return (
+        stillPossible: true,
+        signature: 'past-departure',
+        detail: 'No relevant updates'
+      );
+    }
+
+    final from = Station.fromJson(Map<String, dynamic>.from(fromJson));
+    final to = Station.fromJson(Map<String, dynamic>.from(toJson));
+    Journey savedJourney;
+    try {
+      savedJourney = _createJourney(Map<String, dynamic>.from(rawJourney));
+    } catch (_) {
+      return (
+        stillPossible: false,
+        signature: 'invalid-saved-journey',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final refWhen = departure.subtract(const Duration(minutes: 20));
+    final freshData = await TransportApi.searchJourneys(
+      from,
+      to,
+      nahverkehrOnly: widget.onlyNahverkehr,
+      when: refWhen,
+      isArrival: false,
+      results: 20,
+    );
+
+    final freshJourneys = <Journey>[];
+    for (final data in freshData) {
+      try {
+        freshJourneys.add(_createJourney(data));
+      } catch (_) {
+        // Skip invalid candidate
+      }
+    }
+
+    final matched = _findStrictJourneyMatch(savedJourney, freshJourneys);
+    if (matched == null) {
+      return (
+        stillPossible: false,
+        signature: 'unavailable',
+        detail: 'Connection no longer possible'
+      );
+    }
+
+    final merged = _mergeRealtimeIntoJourney(savedJourney, matched);
+    final signature = _savedJourneyRealtimeSignature(merged);
+    final detail = _describeSavedJourneyChange(
+      savedJourney: savedJourney,
+      freshJourney: merged,
+    );
+    return (stillPossible: true, signature: signature, detail: detail);
+  }
+
+  Future<void> _notifySavedJourneyStatusChange({
+    required Map<String, dynamic> item,
+    required bool stillPossible,
+    required String detail,
+  }) async {
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName = fromMap is Map ? fromMap['name']?.toString() ?? '' : '';
+    final toName = toMap is Map ? toMap['name']?.toString() ?? '' : '';
+    if (toName.isEmpty) return;
+
+    await NotificationManager.requestPermissions();
+
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_status_channel',
+      'Saved Route Status',
+      channelDescription:
+          'Updates when saved routes change or become unavailable',
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+
+    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
+    final statusText =
+        stillPossible ? 'Trip still possible' : 'Trip no longer possible';
+    await _notificationsPlugin.show(
+      id: (routeLabel.hashCode ^ DateTime.now().millisecondsSinceEpoch) &
+          0x7fffffff,
+      title: 'Saved route changed',
+      body: '$routeLabel: $detail. $statusText.',
+      notificationDetails: details,
+    );
+  }
+
+  Future<void> _checkSavedJourneyStatuses() async {
+    if (_isCheckingSavedJourneyStatuses) return;
+    if (_savedJourneys.isEmpty) return;
+
+    _isCheckingSavedJourneyStatuses = true;
+    _lastSavedJourneyStatusCheck = DateTime.now();
+    try {
+      final journeys = List<Map<String, dynamic>>.from(_savedJourneys);
+      for (final item in journeys) {
+        final key = _savedJourneyUiKey(item);
+        if (key == null) continue;
+
+        try {
+          final status = await _computeSavedJourneyStatus(item);
+          final currentStatusSignature = status.stillPossible
+              ? 'possible:${status.signature}'
+              : 'unavailable';
+          final previousStatusSignature =
+              _savedJourneyLastStatusSignatures[key];
+          final isFirstObservation = previousStatusSignature == null;
+          _savedJourneyLastStatusSignatures[key] = currentStatusSignature;
+
+          if (status.stillPossible) {
+            final rawJourney = item['journey'];
+            if (rawJourney is! Map) continue;
+
+            Journey savedJourney;
+            try {
+              savedJourney =
+                  _createJourney(Map<String, dynamic>.from(rawJourney));
+            } catch (_) {
+              continue;
+            }
+            final savedSignature = _savedJourneyRealtimeSignature(savedJourney);
+            final changedFromSaved = status.signature != savedSignature;
+            final changedSinceLast =
+                previousStatusSignature != currentStatusSignature;
+            if (changedSinceLast &&
+                (changedFromSaved ||
+                    (previousStatusSignature != null &&
+                        previousStatusSignature.startsWith('unavailable')))) {
+              await _notifySavedJourneyStatusChange(
+                item: item,
+                stillPossible: true,
+                detail: status.detail,
+              );
+            } else if (isFirstObservation && !changedFromSaved) {
+              // Baseline set: no notification for unchanged route.
+            }
+          } else {
+            if (previousStatusSignature != 'unavailable') {
+              await _notifySavedJourneyStatusChange(
+                item: item,
+                stillPossible: false,
+                detail: status.detail,
+              );
+            }
+          }
+        } catch (e) {
+          debugPrint('Saved journey status check failed for one route: $e');
+        }
+      }
+    } finally {
+      _isCheckingSavedJourneyStatuses = false;
+    }
   }
 
   void _scheduleSavedJourneyReminder(
@@ -1257,18 +1689,36 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _savedJourneyReminderTimers.remove(key)?.cancel();
 
     final minutes = _savedJourneyReminderMinutes(item);
-    if (minutes == null) return;
+    if (minutes == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
 
     final departure = _savedJourneyDepartureLocal(item);
-    if (departure == null) return;
+    if (departure == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
     final now = DateTime.now();
-    if (departure.isBefore(now)) return;
+    if (departure.isBefore(now)) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
 
     final triggerAt = departure.subtract(Duration(minutes: minutes));
     if (!triggerAt.isAfter(now)) {
+      _savedJourneyLiveCountdownTexts.remove(key);
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
       if (fireImmediatelyIfDue) {
         unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
       }
+      _syncSavedJourneyLiveCountdownTicker();
       return;
     }
 
@@ -1276,6 +1726,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _savedJourneyReminderTimers.remove(key);
       unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
     });
+    _syncSavedJourneyLiveCountdownTicker();
   }
 
   Future<void> _fireSavedJourneyReminder({
@@ -1284,6 +1735,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }) async {
     final key = _savedJourneyUiKey(item);
     if (key == null) return;
+    _savedJourneyLiveCountdownTexts.remove(key);
+    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
+    _syncSavedJourneyLiveCountdownTicker();
 
     final fromMap = item['from'];
     final toMap = item['to'];
@@ -1307,6 +1761,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final details = NotificationDetails(
       android: androidDetails,
       iOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
     );
 
     await _notificationsPlugin.show(
@@ -1326,6 +1781,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     Map<String, dynamic> item,
     int? minutes,
   ) async {
+    final previousMinutes = _savedJourneyReminderMinutes(item);
     if (minutes != null) {
       await NotificationManager.requestPermissions();
     }
@@ -1362,6 +1818,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       updatedItem,
       fireImmediatelyIfDue: minutes != null,
     );
+    if (selectedKey != null &&
+        previousMinutes != null &&
+        previousMinutes != minutes) {
+      unawaited(_cancelSavedJourneyReminderNotification(selectedKey,
+          minutes: previousMinutes));
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -2944,6 +3406,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 onReminderSelected: (minutes) {
                   _setSavedJourneyReminder(item, minutes);
                 },
+                onCloseReminderPicker: () {
+                  setState(() {
+                    _savedReminderPickerVisibleFor.remove(cardKey);
+                  });
+                },
               );
             },
           ),
@@ -2960,6 +3427,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     required VoidCallback onTap,
     required VoidCallback onLongPress,
     required ValueChanged<int?> onReminderSelected,
+    required VoidCallback onCloseReminderPicker,
   }) {
     final from = Station.fromJson(item['from']);
     final to = Station.fromJson(item['to']);
@@ -3016,6 +3484,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   buildReminderButton(15),
                   const SizedBox(width: 8),
                   buildReminderButton(30),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: onCloseReminderPicker,
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: colors.searchHintText),
+                      ),
+                      child: Icon(
+                        Icons.close,
+                        color: colors.searchHintText,
+                        size: 18,
+                      ),
+                    ),
+                  ),
                 ],
               )
             : Row(
