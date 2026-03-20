@@ -818,14 +818,25 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _submitAuth() async {
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
     final username = _usernameCtrl.text.trim();
 
-    if (!_looksLikeEmail(email) ||
-        password.isEmpty ||
-        (!_isLoginMode && username.isEmpty)) {
-      _showMessage(AppLocalizations.of(context)!.fillRequiredFields);
+    if (email.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.emailSettings));
+      return;
+    }
+    if (!_looksLikeEmail(email)) {
+      _showMessage(l10n.enterValidEmail);
+      return;
+    }
+    if (password.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.password));
+      return;
+    }
+    if (!_isLoginMode && username.isEmpty) {
+      _showMessage(_requiredFieldMessage(l10n.usernameSignUp));
       return;
     }
 
@@ -851,6 +862,13 @@ class _SettingsTabState extends State<SettingsTab> {
 
   bool _looksLikeEmail(String value) {
     return value.contains('@') && value.contains('.');
+  }
+
+  String _requiredFieldMessage(String fieldName) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman
+        ? '$fieldName ist erforderlich.'
+        : '$fieldName is required.';
   }
 
   void _showMessage(String message) {
