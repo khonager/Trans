@@ -1273,42 +1273,34 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     final now = DateTime.now();
-    final untilDeparture = departure.difference(now);
-    if (untilDeparture.inSeconds <= 0) {
-      return const [
-        (leadMinutes: 5, waitMinutes: 5),
-        (leadMinutes: 15, waitMinutes: 15),
-        (leadMinutes: 30, waitMinutes: 30),
-      ];
+    final remainingMinutes = departure.difference(now).inMinutes;
+    if (remainingMinutes <= 0) return const [];
+
+    List<int> waits;
+    if (remainingMinutes >= 30) {
+      waits = const [30, 15, 5];
+    } else if (remainingMinutes >= 20) {
+      waits = const [20, 15, 5];
+    } else if (remainingMinutes >= 15) {
+      waits = const [15, 10, 5];
+    } else if (remainingMinutes >= 10) {
+      waits = const [10, 5, 3];
+    } else if (remainingMinutes >= 5) {
+      waits = const [5, 3, 2];
+    } else if (remainingMinutes >= 3) {
+      waits = const [3, 2, 1];
+    } else if (remainingMinutes == 2) {
+      waits = const [2, 1];
+    } else {
+      waits = const [1];
     }
 
     final options = <({int leadMinutes, int waitMinutes})>[];
-    final usedWaits = <int>{};
-    final baseLeads = [5, 15, 30];
-
-    for (final lead in baseLeads) {
-      final triggerAt = departure.subtract(Duration(minutes: lead));
-      final waitSeconds = triggerAt.difference(now).inSeconds;
-      if (waitSeconds <= 0) continue;
-      final waitMinutes = max(1, (waitSeconds / 60).ceil());
-      if (usedWaits.add(waitMinutes)) {
-        options.add((leadMinutes: lead, waitMinutes: waitMinutes));
-      }
-    }
-
-    final maxWaitMinutes = max(1, (untilDeparture.inSeconds / 60).floor());
-    for (int wait = 1; options.length < 3 && wait < maxWaitMinutes; wait++) {
-      if (!usedWaits.add(wait)) continue;
-      final lead = max(0, ((untilDeparture.inSeconds / 60).ceil()) - wait);
+    for (final wait in waits) {
+      if (wait > remainingMinutes) continue;
+      final lead = max(0, remainingMinutes - wait);
       options.add((leadMinutes: lead, waitMinutes: wait));
     }
-
-    if (options.isEmpty) {
-      options.add((leadMinutes: 0, waitMinutes: 1));
-    }
-
-    options.sort((a, b) => a.waitMinutes.compareTo(b.waitMinutes));
-    if (options.length > 3) return options.sublist(0, 3);
     return options;
   }
 
