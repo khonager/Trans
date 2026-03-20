@@ -1084,24 +1084,89 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
   }
 
-  bool _isRouteSaved(RouteTab route) {
+  String? _savedConnectionKeyForRoute(RouteTab route) {
     final from = route.origin;
-    if (from == null) return false;
-    return _savedJourneys
-        .any((item) => _journeyMatches(item, from, route.destination));
+    final active = route.activeJourney;
+    if (from == null || active == null) return null;
+    return SearchHistoryManager.buildSavedJourneyConnectionKey(
+      from: from,
+      to: route.destination,
+      departure: active.plannedDeparture ?? active.departure,
+      arrival: active.plannedArrival ?? active.arrival,
+      journeyData: active.rawSource,
+    );
+  }
+
+  bool _isRouteSaved(RouteTab route) {
+    final key = _savedConnectionKeyForRoute(route);
+    if (key != null) {
+      return _savedJourneys.any((item) => item['connectionKey'] == key);
+    }
+
+    final from = route.origin;
+    return from != null &&
+        _savedJourneys
+            .any((item) => _journeyMatches(item, from, route.destination));
   }
 
   Future<void> _toggleSavedRoute(RouteTab route) async {
     final from = route.origin;
-    if (from == null) return;
+    final activeJourney = route.activeJourney;
+    if (from == null || activeJourney == null) return;
 
-    final saved =
-        await SearchHistoryManager.toggleSavedJourney(from, route.destination);
+    final saved = await SearchHistoryManager.toggleSavedJourney(
+      from: from,
+      to: route.destination,
+      journeyData: activeJourney.rawSource,
+      departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+      arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+    );
     await _loadHistoryData();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(saved ? 'Route saved' : 'Route removed from saved')));
+        content: Text(
+            saved ? 'Connection saved' : 'Connection removed from saved')));
+  }
+
+  Future<void> _openSavedJourney(Map<String, dynamic> item) async {
+    final from = Station.fromJson(item['from']);
+    final to = Station.fromJson(item['to']);
+    final rawJourney = item['journey'];
+
+    if (rawJourney is! Map) {
+      _applyRouteHistorySelection(item);
+      return;
+    }
+
+    final journey = Map<String, dynamic>.from(rawJourney);
+    final tabId = _addJourneyTab(
+      singleJourneyData: journey,
+      origin: from,
+      destination: to,
+      title: to.name,
+      subtitle: AppLocalizations.of(context)!.details,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    final tab = _tabs.cast<RouteTab?>().firstWhere(
+          (t) => t?.id == tabId,
+          orElse: () => null,
+        );
+    if (tab != null && tab.activeJourney != null) {
+      unawaited(_refreshActiveJourney(tab));
+    }
+  }
+
+  String? _savedJourneyTimeLabel(Map<String, dynamic> item) {
+    final depStr = item['departureTime'];
+    final arrStr = item['arrivalTime'];
+    if (depStr is! String || arrStr is! String) return null;
+    final dep = DateTime.tryParse(depStr)?.toLocal();
+    final arr = DateTime.tryParse(arrStr)?.toLocal();
+    if (dep == null || arr == null) return null;
+    return "${DateFormat('EEE HH:mm').format(dep)} - ${DateFormat('HH:mm').format(arr)}";
   }
 
   void _applyRouteHistorySelection(Map<String, dynamic> item) {
@@ -2628,11 +2693,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
-            child: Text('Saved routes',
-                style: TextStyle(
-                    color: colors.sectionHeader,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12)),
+            child: Row(
+              children: [
+                Text('Saved routes',
+                    style: TextStyle(
+                        color: colors.sectionHeader,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12)),
+                const SizedBox(width: 8),
+                Text('(auto-delete 24h after arrival)',
+                    style:
+                        TextStyle(color: colors.searchHintText, fontSize: 11)),
+              ],
+            ),
           ),
           ListView.separated(
             shrinkWrap: true,
@@ -2642,7 +2715,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             itemBuilder: (ctx, idx) => _buildRouteHistoryCard(
                 colors: colors,
                 item: _savedJourneys[idx],
-                icon: Icons.bookmark),
+                icon: Icons.bookmark,
+                subtitleOverride: _savedJourneyTimeLabel(_savedJourneys[idx]),
+                onTap: () => _openSavedJourney(_savedJourneys[idx])),
           ),
         ],
       ),
@@ -2673,12 +2748,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildRouteHistoryCard(
       {required TransColors colors,
       required Map<String, dynamic> item,
-      required IconData icon}) {
+      required IconData icon,
+      VoidCallback? onTap,
+      String? subtitleOverride}) {
     final from = Station.fromJson(item['from']);
     final to = Station.fromJson(item['to']);
 
     return GestureDetector(
-      onTap: () => _applyRouteHistorySelection(item),
+      onTap: onTap ?? () => _applyRouteHistorySelection(item),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -2704,7 +2781,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           fontWeight: FontWeight.bold,
                           fontSize: 14)),
                   const SizedBox(height: 2),
-                  Text(AppLocalizations.of(context)!.fromStation(from.name),
+                  Text(subtitleOverride ??
+                      AppLocalizations.of(context)!.fromStation(from.name),
                       style: TextStyle(
                           color: colors.searchHintText, fontSize: 12)),
                 ],
@@ -3426,7 +3504,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                   ? Icons.bookmark
                                   : Icons.bookmark_border,
                               color: colors.navBarSelected),
-                          onPressed: route.origin == null
+                          onPressed: route.origin == null ||
+                                  route.activeJourney == null
                               ? null
                               : () => _toggleSavedRoute(route)),
                       IconButton(
