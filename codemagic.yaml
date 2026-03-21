@@ -33,6 +33,10 @@ workflows:
         script: |
           find . -name "Podfile" -execdir pod install \;
 
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+
       - name: Preflight signing + env diagnostics
         script: |
           set -euo pipefail
@@ -64,12 +68,12 @@ workflows:
 
           echo "== Checking signing identities in keychain =="
           security find-identity -v -p codesigning || true
-          if ! security find-identity -v -p codesigning | grep -q "Apple Distribution"; then
-            echo "❌ No Apple Distribution signing identity installed."
+          if ! security find-identity -v -p codesigning | grep -Eq "Apple Distribution|iPhone Distribution"; then
+            echo "❌ No distribution signing identity installed."
             echo "FATAL: Upload .p12 certificate + password in Codemagic code signing settings."
             exit 1
           fi
-          echo "✅ Apple Distribution identity found"
+          echo "✅ Distribution identity found"
 
           echo "== Checking installed provisioning profiles =="
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
@@ -98,10 +102,6 @@ workflows:
           fi
 
           echo "✅ Preflight checks passed"
-
-      - name: Set up code signing
-        script: |
-          xcode-project use-profiles
 
       - name: Flutter build ipa
         script: |
