@@ -19,10 +19,6 @@ workflows:
       cocoapods: default
 
     scripts:
-      - name: Set up code signing settings on Xcode project
-        script: |
-          xcode-project use-profiles
-
       - name: Create .env file
         script: |
           echo "SUPABASE_URL=$SUPABASE_URL" > .env
@@ -40,7 +36,12 @@ workflows:
       - name: Flutter build ipa
         script: |
           flutter build ipa --release \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define=FLUTTER_BUILD_MODE=release \
+            -- \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY=Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_SPECIFIER"
 
     artifacts:
       - build/ios/ipa/*.ipa
