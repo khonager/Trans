@@ -33,6 +33,72 @@ workflows:
         script: |
           find . -name "Podfile" -execdir pod install \;
 
+      - name: Preflight signing + env diagnostics
+        script: |
+          set -euo pipefail
+
+          echo "== Checking required environment variables =="
+          required_vars=(
+            APP_STORE_CONNECT_PRIVATE_KEY
+            APP_STORE_CONNECT_KEY_IDENTIFIER
+            APP_STORE_CONNECT_ISSUER_ID
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            SUPPORT_EMAIL
+          )
+
+          missing=0
+          for v in "${required_vars[@]}"; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "❌ Missing env var: $v"
+              missing=1
+            else
+              echo "✅ $v is set"
+            fi
+          done
+
+          if [[ "$missing" -ne 0 ]]; then
+            echo "FATAL: One or more required env vars are missing."
+            exit 1
+          fi
+
+          echo "== Checking signing identities in keychain =="
+          security find-identity -v -p codesigning || true
+          if ! security find-identity -v -p codesigning | grep -q "Apple Distribution"; then
+            echo "❌ No Apple Distribution signing identity installed."
+            echo "FATAL: Upload .p12 certificate + password in Codemagic code signing settings."
+            exit 1
+          fi
+          echo "✅ Apple Distribution identity found"
+
+          echo "== Checking installed provisioning profiles =="
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          ls -la "$PROFILE_DIR" || true
+
+          if [[ ! -d "$PROFILE_DIR" ]] || [[ -z "$(ls -A "$PROFILE_DIR" 2>/dev/null)" ]]; then
+            echo "❌ No provisioning profiles installed."
+            echo "FATAL: Upload App Store .mobileprovision in Codemagic provisioning profiles."
+            exit 1
+          fi
+
+          echo "== Looking for bundle id in installed profiles =="
+          found_bundle=0
+          for f in "$PROFILE_DIR"/*.mobileprovision; do
+            [[ -e "$f" ]] || continue
+            if security cms -D -i "$f" | grep -q "de.khonager.trans.ios"; then
+              echo "✅ Matching profile contains bundle id in: $(basename "$f")"
+              found_bundle=1
+            fi
+          done
+
+          if [[ "$found_bundle" -eq 0 ]]; then
+            echo "❌ No installed profile appears to match bundle id de.khonager.trans.ios"
+            echo "FATAL: Wrong provisioning profile uploaded (or wrong app id)."
+            exit 1
+          fi
+
+          echo "✅ Preflight checks passed"
+
       - name: Set up code signing
         script: |
           xcode-project use-profiles
