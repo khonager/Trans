@@ -10,9 +10,8 @@ workflows:
         - app_store_credentials
 
       vars:
-        # Replace with your actual values
         BUNDLE_ID: "de.khonager.trans.ios"
-        APP_STORE_APP_ID: "YOUR_APP_ID" # Get from App Store Connect (numeric ID)
+        APP_STORE_APP_ID: "6760699168"
 
       flutter: stable
       xcode: latest
