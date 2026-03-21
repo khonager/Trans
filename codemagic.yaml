@@ -44,6 +44,7 @@ workflows:
       - name: Flutter build ipa
         script: |
           flutter build ipa --release \
+            --no-tree-shake-icons \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
