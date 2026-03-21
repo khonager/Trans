@@ -23,14 +23,14 @@ workflows:
         script: |
           xcode-project use-profiles
 
+      - name: Create .env file
+        script: |
+          echo "SUPABASE_URL=$SUPABASE_URL" > .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+
       - name: Get Flutter packages
         script: |
           flutter pub get
-
-      - name: Create .env file
-        script: |
-          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
-          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
 
       - name: Install pods
         script: |
@@ -90,14 +90,14 @@ workflows:
         script: |
           xcode-project use-profiles
 
+      - name: Create .env file
+        script: |
+          echo "SUPABASE_URL=$SUPABASE_URL" > .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+
       - name: Get Flutter packages
         script: |
           flutter pub get
-
-      - name: Create .env file
-        script: |
-          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
-          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
 
       - name: Install pods
         script: |
