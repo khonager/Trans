@@ -34,7 +34,7 @@ workflows:
 
       - name: Set up code signing
         script: |
-          xcode-project use-profiles
+          xcode-project use-profiles --verbose
 
       - name: Preflight signing + env diagnostics
         script: |
