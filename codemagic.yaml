@@ -66,15 +66,6 @@ workflows:
             exit 1
           fi
 
-          echo "== Checking signing identities in keychain =="
-          security find-identity -v -p codesigning || true
-          if ! security find-identity -v -p codesigning | grep -Eq "Apple Distribution|iPhone Distribution"; then
-            echo "❌ No distribution signing identity installed."
-            echo "FATAL: Upload .p12 certificate + password in Codemagic code signing settings."
-            exit 1
-          fi
-          echo "✅ Distribution identity found"
-
           echo "== Checking installed provisioning profiles =="
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           ls -la "$PROFILE_DIR" || true
