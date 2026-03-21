@@ -46797,7 +46797,7 @@ B.cr().$1("WARNING: SUPABASE_ANON_KEY is missing from .env")
 return""},
 bSS(){var s=$.auq().ga_O().h(0,"SUPPORT_EMAIL")
 if(s!=null&&s.length!==0)return s
-return"khonager.trans@gmail.com"},
+return"support@khonager.de"},
 aOw(){var s=0,r=B.x(t.H),q
 var $async$aOw=B.t(function(a,b){if(a===1)return B.u(b,r)
 for(;;)switch(s){case 0:q=$.btp()
