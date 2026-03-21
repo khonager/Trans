@@ -27,6 +27,7 @@ workflows:
         script: |
           echo "SUPABASE_URL=$SUPABASE_URL" > .env
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+          echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
 
       - name: Get Flutter packages
         script: |
@@ -73,7 +74,7 @@ workflows:
       events:
         - push
       branch_patterns:
-        - pattern: 'develop'
+        - pattern: "develop"
           include: true
 
     environment:
@@ -94,6 +95,7 @@ workflows:
         script: |
           echo "SUPABASE_URL=$SUPABASE_URL" > .env
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+          echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
 
       - name: Get Flutter packages
         script: |
