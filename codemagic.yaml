@@ -12,6 +12,7 @@ workflows:
       vars:
         BUNDLE_ID: "de.khonager.trans.ios"
         APP_STORE_APP_ID: "6760699168"
+        CM_PROVISIONING_PROFILE_SPECIFIER: "Joseph Licht"
 
       flutter: stable
       xcode: latest
@@ -45,6 +46,7 @@ workflows:
         script: |
           flutter build ipa --release \
             --no-tree-shake-icons \
+            --build-name=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//') \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
