@@ -70,6 +70,49 @@ String formatRideLineWithPlatform(String line, String? platform) {
   return '$normalizedLine ($formattedPlatform)';
 }
 
+@visibleForTesting
+String formatRideDisplayLine({
+  required String line,
+  String? platform,
+  String? arrivalPlatform,
+  String? tripId,
+  required bool showTrainNumbers,
+}) {
+  String baseLine = line.trim();
+  final normalizedTripId = tripId?.trim();
+  if (!showTrainNumbers && normalizedTripId != null && normalizedTripId.isNotEmpty) {
+    final escapedTripId = RegExp.escape(normalizedTripId);
+    baseLine = baseLine
+        .replaceAll(RegExp(r'\s*\(\s*' + escapedTripId + r'\s*\)'), '')
+        .replaceAll(RegExp(r'\b' + escapedTripId + r'\b'), '')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+  }
+
+  final effectivePlatform = platform?.trim().isNotEmpty == true
+      ? platform
+      : arrivalPlatform;
+  final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
+
+  if (showTrainNumbers &&
+      normalizedTripId != null &&
+      normalizedTripId.isNotEmpty &&
+      !displayLine.contains(normalizedTripId)) {
+    return '$displayLine ($normalizedTripId)';
+  }
+
+  return displayLine;
+}
+
+@visibleForTesting
+bool savedJourneyLongPressShowsDelete({
+  required bool isCompleted,
+  required bool isLegacy,
+  required bool hasStarted,
+}) {
+  return isCompleted || isLegacy || hasStarted;
+}
+
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
   return journeys
       .map((j) =>
@@ -3510,6 +3553,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               final cardKey = _savedJourneyUiKey(item) ?? 'saved-$idx';
               final isCompleted = _isSavedJourneyCompleted(item);
               final isLegacy = _isLegacySavedJourney(item);
+              final departure = _savedJourneyDepartureLocal(item);
+              final hasStarted =
+                  departure != null && !DateTime.now().isBefore(departure);
               final showingReminderPicker =
                   _savedReminderPickerVisibleFor.contains(cardKey);
               final showingCompletedDelete =
@@ -3540,7 +3586,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   _openSavedJourney(item);
                 },
                 onLongPress: () {
-                  if (isCompleted || isLegacy) {
+                  if (savedJourneyLongPressShowsDelete(
+                    isCompleted: isCompleted,
+                    isLegacy: isLegacy,
+                    hasStarted: hasStarted,
+                  )) {
                     setState(() {
                       _savedReminderPickerVisibleFor.remove(cardKey);
                       _savedCompletedDeleteVisibleFor
@@ -4771,31 +4821,15 @@ class _StepCardState extends State<_StepCard> {
                           child: Row(
                         children: [
                           Builder(builder: (context) {
-                            String displayLine =
-                                formatRideLineWithPlatform(step.line, step.platform);
+                            final displayLine = formatRideDisplayLine(
+                              line: step.line,
+                              platform: step.platform,
+                              arrivalPlatform: step.arrivalPlatform,
+                              tripId: step.tripId,
+                              showTrainNumbers: widget.showTrainNumbers,
+                            );
 
-                            if (!widget.showTrainNumbers) {
-                              final regexParens = RegExp(r'\s*\(\d+\)$');
-                              displayLine = displayLine
-                                  .replaceAll(regexParens, '')
-                                  .trim();
-
-                              if (step.tripId != null) {
-                                displayLine = displayLine
-                                    .replaceAll(step.tripId!, "")
-                                    .trim();
-                              }
-                            }
-
-                            String suffix = "";
-                            if (widget.showTrainNumbers &&
-                                step.tripId != null) {
-                              if (!displayLine.contains(step.tripId!)) {
-                                suffix = " (${step.tripId})";
-                              }
-                            }
-
-                            return Text("$displayLine$suffix",
+                            return Text(displayLine,
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: colors.textPrimary));
