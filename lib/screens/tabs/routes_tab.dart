@@ -39,6 +39,7 @@ const List<IconData> kAvailableIcons = [
   Icons.local_cafe,
   Icons.local_airport
 ];
+const int _activeJourneyRefreshWindowSize = 8;
 
 enum RouteHistoryView { frequent, recent }
 
@@ -63,9 +64,17 @@ String formatRideLineWithPlatform(String line, String? platform) {
     return normalizedLine;
   }
 
+  final isNumericPlatform = int.tryParse(normalizedPlatform) != null;
   final formattedPlatform =
-      int.tryParse(normalizedPlatform) != null ? 'Pl. $normalizedPlatform' : normalizedPlatform;
+      isNumericPlatform ? 'Pl. $normalizedPlatform' : normalizedPlatform;
   return '$normalizedLine ($formattedPlatform)';
+}
+
+String _journeyRefreshSignature(Iterable<Journey> journeys) {
+  return journeys
+      .map((j) =>
+          "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
+      .join("||");
 }
 
 class _SuggestionSection {
@@ -4161,10 +4170,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
       final previousCandidates = route.candidates ?? const <Journey>[];
-      final previousSignature = previousCandidates
-          .map((j) =>
-              "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
-          .join("||");
+      final previousSignature = _journeyRefreshSignature(previousCandidates);
       bool hasRefreshResults = false;
       bool hasChanged = false;
 
@@ -4193,14 +4199,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           } catch (e) {/* ignore */}
         }
 
-        final newSignature = newJourneys
-            .map((j) =>
-                "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
-            .join("||");
+        // handleResults may run multiple times (partial + final). We keep the
+        // latest comparison so the completion toast reflects the final visible
+        // candidate list after refresh settles.
+        final newSignature = _journeyRefreshSignature(newJourneys);
         hasChanged = previousSignature != newSignature;
         hasRefreshResults = true;
 
         setState(() {
+          _isLoadingRoute = false;
+          _activeRouteSearchToken = null;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4379,7 +4387,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (originStation == null) throw Exception("Origin station lost");
       final previousJourney = route.activeJourney!;
       final previousSignature = _savedJourneyRealtimeSignature(previousJourney);
-      bool hasShownRefreshToast = false;
       bool hasMatchedUpdate = false;
       String? completionMessage;
 
@@ -4415,6 +4422,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final updatedSignature = _savedJourneyRealtimeSignature(upd);
           final hasChanged = updatedSignature != previousSignature;
           setState(() {
+            _isLoadingRoute = false;
+            _activeRouteSearchToken = null;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
             if (freshIdx != -1) {
               final latest = _tabs[freshIdx];
@@ -4449,22 +4458,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate.subtract(const Duration(minutes: 20)),
         isArrival: false,
-        results: 8,
+        // We only need a compact window around the active trip to merge live updates.
+        results: _activeJourneyRefreshWindowSize,
         onPartialResults: handleResults,
       );
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
-      if (!hasShownRefreshToast &&
-          mounted &&
-          !_isRouteSearchCancelled(refreshToken)) {
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
         _showRouteRefreshToast(
           completionMessage ??
               (hasMatchedUpdate
                   ? "Route refresh finished."
                   : "Route refresh finished: no matching update found."),
         );
-        hasShownRefreshToast = true;
       }
     } catch (e) {
       if (mounted && !_isRouteSearchCancelled(refreshToken)) {
