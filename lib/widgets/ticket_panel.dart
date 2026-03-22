@@ -834,18 +834,15 @@ class _TicketPanelState extends State<TicketPanel> {
     final styled = _styledQrBytes;
     if (styled == null) return const SizedBox.shrink();
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        width: double.infinity,
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: Image.memory(
-            styled,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.none,
-            gaplessPlayback: true,
-          ),
+    return SizedBox(
+      width: double.infinity,
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Image.memory(
+          styled,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.none,
+          gaplessPlayback: true,
         ),
       ),
     );
