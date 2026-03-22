@@ -99,5 +99,36 @@ void main() {
       expect(map['alice'], isFalse);
       expect(map.length, 1);
     });
+
+    test('mergeFriendRelations combines directional rows and deduplicates pairs', () {
+      final merged = SupabaseService.mergeFriendRelations(
+        friendsAsUser: const [
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},
+          {'user_id': 'me', 'friend_id': 'bob', 'is_auto_added': false},
+        ],
+        friendsAsFriend: const [
+          {'user_id': 'alice', 'friend_id': 'me', 'is_auto_added': true},
+          {'user_id': 'carol', 'friend_id': 'me', 'is_auto_added': false},
+        ],
+      );
+
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: merged,
+      );
+
+      expect(map['alice'], isTrue);
+      expect(map['bob'], isFalse);
+      expect(map['carol'], isFalse);
+      expect(map.length, 3);
+      expect(
+        merged
+            .where((row) =>
+                (row['user_id'] == 'me' && row['friend_id'] == 'alice') ||
+                (row['user_id'] == 'alice' && row['friend_id'] == 'me'))
+            .length,
+        1,
+      );
+    });
   });
 }
