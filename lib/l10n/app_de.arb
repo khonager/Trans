@@ -306,7 +306,7 @@
   "emailSettings": "E-Mail",
   "newPasswordOpt": "Neues Passwort",
   "profileUpdated": "Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).",
-  "incorrectPasswordOrRpcMissing": "Falsches Passwort oder Fehler (RPC fehlt?)",
+  "incorrectPasswordOrRpcMissing": "Falsches Passwort.",
   "changeUsername": "Benutzernamen ändern",
   "changeEmail": "E-Mail ändern",
   "changePassword": "Passwort ändern",

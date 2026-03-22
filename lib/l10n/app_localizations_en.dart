@@ -800,7 +800,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get incorrectPasswordOrRpcMissing =>
-      'Incorrect password or error (RPC missing?)';
+      'Incorrect password.';
 
   @override
   String get changeUsername => 'Change Username';

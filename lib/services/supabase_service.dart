@@ -201,8 +201,8 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
 
-    // Call the RPC function to delete the user
-    // This requires a postgres function 'delete_account' to be defined in Supabase
+    // Call the backend RPC defined in supabase/migrations to delete the current
+    // auth user plus app-owned rows that reference that user.
     await client.rpc('delete_account');
 
     // Sign out to clear local session
