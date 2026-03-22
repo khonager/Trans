@@ -39,6 +39,7 @@ const List<IconData> kAvailableIcons = [
   Icons.local_cafe,
   Icons.local_airport
 ];
+const int _activeJourneyRefreshWindowSize = 8;
 
 enum RouteHistoryView { frequent, recent }
 
@@ -47,6 +48,33 @@ enum RouteHistoryView { frequent, recent }
   int reminderMinutes,
 ) {
   return (leadMinutes: reminderMinutes, waitMinutes: reminderMinutes);
+}
+
+@visibleForTesting
+String formatRideLineWithPlatform(String line, String? platform) {
+  final normalizedLine = line.trim();
+  final normalizedPlatform = platform?.trim();
+  if (normalizedLine.isEmpty ||
+      normalizedPlatform == null ||
+      normalizedPlatform.isEmpty) {
+    return normalizedLine;
+  }
+
+  if (normalizedLine.contains('(Pl.') || normalizedLine.contains('(Gl.')) {
+    return normalizedLine;
+  }
+
+  final isNumericPlatform = int.tryParse(normalizedPlatform) != null;
+  final formattedPlatform =
+      isNumericPlatform ? 'Pl. $normalizedPlatform' : normalizedPlatform;
+  return '$normalizedLine ($formattedPlatform)';
+}
+
+String _journeyRefreshSignature(Iterable<Journey> journeys) {
+  return journeys
+      .map((j) =>
+          "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
+      .join("||");
 }
 
 class _SuggestionSection {
@@ -432,6 +460,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
     });
+  }
+
+  void _showRouteRefreshToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // --- WAKE ALARM LOGIC ---
@@ -4122,11 +4160,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute) return;
 
     // We want to reset pagination and reload the initial search window.
-    setState(() => _isLoadingRoute = true);
+    final refreshToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = refreshToken;
+      _isLoadingRoute = true;
+    });
 
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final previousCandidates = route.candidates ?? const <Journey>[];
+      final previousSignature = _journeyRefreshSignature(previousCandidates);
+      bool hasRefreshResults = false;
+      bool hasChanged = false;
 
       // Keep a small buffer in the past so recently due/late services are still refreshable.
       DateTime refDate = DateTime.now().subtract(const Duration(minutes: 10));
@@ -4141,7 +4187,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       void handleResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty || !mounted) return;
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(refreshToken)) {
+          return;
+        }
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -4149,8 +4199,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           } catch (e) {/* ignore */}
         }
 
+        // handleResults may run multiple times (partial + final). We keep the
+        // latest comparison so the completion toast reflects the final visible
+        // candidate list after refresh settles.
+        final newSignature = _journeyRefreshSignature(newJourneys);
+        hasChanged = previousSignature != newSignature;
+        hasRefreshResults = true;
+
         setState(() {
           _isLoadingRoute = false;
+          _activeRouteSearchToken = null;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4168,16 +4226,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         results: 5,
         onPartialResults: handleResults,
       );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
+      if (!_isRouteSearchCancelled(refreshToken) && mounted) {
+        _showRouteRefreshToast(
+          hasRefreshResults
+              ? (hasChanged
+                  ? "Route refresh finished: alternatives updated."
+                  : "Route refresh finished: no changes.")
+              : "Route refresh finished.",
+        );
+      }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotRefreshRoutes(e.toString()))));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(refreshToken);
     }
   }
 
@@ -4308,18 +4376,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _refreshActiveJourney(RouteTab route) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
-    setState(() => _isLoadingRoute = true);
+    final refreshToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = refreshToken;
+      _isLoadingRoute = true;
+    });
 
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final previousJourney = route.activeJourney!;
+      final previousSignature = _savedJourneyRealtimeSignature(previousJourney);
+      bool hasMatchedUpdate = false;
+      String? completionMessage;
 
       // Use planned departure time as the anchor for refresh
-      final DateTime refDate = route.activeJourney!.plannedDeparture ??
-          route.activeJourney!.departure;
+      final DateTime refDate =
+          previousJourney.plannedDeparture ?? previousJourney.departure;
 
       void handleResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty || !mounted) return;
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(refreshToken)) {
+          return;
+        }
         final idx = _tabs.indexWhere((t) => t.id == route.id);
         if (idx == -1) return;
         final currentRoute = _tabs[idx];
@@ -4339,8 +4419,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (matched != null) {
           final upd =
               _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
+          final updatedSignature = _savedJourneyRealtimeSignature(upd);
+          final hasChanged = updatedSignature != previousSignature;
           setState(() {
             _isLoadingRoute = false;
+            _activeRouteSearchToken = null;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
             if (freshIdx != -1) {
               final latest = _tabs[freshIdx];
@@ -4362,6 +4445,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       FormatUtils.formatDuration(upd.duration.inMinutes));
             }
           });
+          hasMatchedUpdate = true;
+          completionMessage = hasChanged
+              ? "Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: matched)}."
+              : "Route refresh finished: no changes.";
         }
       }
 
@@ -4371,19 +4458,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate.subtract(const Duration(minutes: 20)),
         isArrival: false,
-        results: 20,
+        // We only need a compact window around the active trip to merge live updates.
+        results: _activeJourneyRefreshWindowSize,
         onPartialResults: handleResults,
       );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
+        _showRouteRefreshToast(
+          completionMessage ??
+              (hasMatchedUpdate
+                  ? "Route refresh finished."
+                  : "Route refresh finished: no matching update found."),
+        );
+      }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
                 AppLocalizations.of(context)!.refreshFailed(e.toString()))));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(refreshToken);
     }
   }
 
@@ -4674,7 +4771,8 @@ class _StepCardState extends State<_StepCard> {
                           child: Row(
                         children: [
                           Builder(builder: (context) {
-                            String displayLine = step.line.trim();
+                            String displayLine =
+                                formatRideLineWithPlatform(step.line, step.platform);
 
                             if (!widget.showTrainNumbers) {
                               final regexParens = RegExp(r'\s*\(\d+\)$');
