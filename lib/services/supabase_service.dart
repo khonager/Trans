@@ -578,6 +578,7 @@ class SupabaseService {
     late StreamController<List<Map<String, dynamic>>> controller;
     StreamSubscription? sub1;
     StreamSubscription? sub2;
+    StreamSubscription? sub3;
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
@@ -600,7 +601,12 @@ class SupabaseService {
         sub2 = client
             .from('friends')
             .stream(primaryKey: ['user_id', 'friend_id'])
-            .or('user_id.eq.${user.id},friend_id.eq.${user.id}')
+            .eq('user_id', user.id)
+            .listen(update);
+        sub3 = client
+            .from('friends')
+            .stream(primaryKey: ['user_id', 'friend_id'])
+            .eq('friend_id', user.id)
             .listen(update);
 
         // Initial fetch
@@ -609,6 +615,7 @@ class SupabaseService {
       onCancel: () async {
         await sub1?.cancel();
         await sub2?.cancel();
+        await sub3?.cancel();
       },
     );
 
