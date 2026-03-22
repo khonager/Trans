@@ -14,7 +14,9 @@ bool isRecentlyJoinedFriend(Map<String, dynamic> friend, {DateTime? nowUtc}) {
   final createdAt = DateTime.tryParse(friend['created_at']?.toString() ?? '');
   if (createdAt == null) return false;
   final now = nowUtc ?? DateTime.now().toUtc();
-  return now.difference(createdAt.toUtc()).inDays < 7;
+  final createdUtc = createdAt.toUtc();
+  if (createdUtc.isAfter(now)) return false;
+  return now.difference(createdUtc).inDays < 7;
 }
 
 String newFriendBadgeLabel(Locale locale) =>
@@ -22,6 +24,9 @@ String newFriendBadgeLabel(Locale locale) =>
 
 String autoAddedSectionLabel(Locale locale) =>
     locale.languageCode == 'de' ? 'Automatisch hinzugefügt' : 'Auto Added';
+
+int _usernameComparator(Map<String, dynamic> a, Map<String, dynamic> b) =>
+    (a['username'] as String).compareTo(b['username'] as String);
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
@@ -232,14 +237,11 @@ class _FriendsTabState extends State<FriendsTab> {
       inactiveFriends.add(f);
     }
 
-    activeFriends.sort(
-        (a, b) => (a['username'] as String).compareTo(b['username'] as String));
+    activeFriends.sort(_usernameComparator);
     _requests.sort((a, b) =>
         (b['created_at'] as String).compareTo(a['created_at'] as String));
-    inactiveFriends.sort(
-        (a, b) => (a['username'] as String).compareTo(b['username'] as String));
-    autoAddedFriends.sort(
-        (a, b) => (a['username'] as String).compareTo(b['username'] as String));
+    inactiveFriends.sort(_usernameComparator);
+    autoAddedFriends.sort(_usernameComparator);
 
     return Column(
       children: [

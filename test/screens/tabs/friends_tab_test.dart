@@ -14,9 +14,11 @@ void main() {
       final now = DateTime.utc(2026, 3, 22, 12);
       final recent = {'created_at': now.subtract(const Duration(days: 6)).toIso8601String()};
       final old = {'created_at': now.subtract(const Duration(days: 8)).toIso8601String()};
+      final future = {'created_at': now.add(const Duration(days: 1)).toIso8601String()};
 
       expect(isRecentlyJoinedFriend(recent, nowUtc: now), isTrue);
       expect(isRecentlyJoinedFriend(old, nowUtc: now), isFalse);
+      expect(isRecentlyJoinedFriend(future, nowUtc: now), isFalse);
       expect(isRecentlyJoinedFriend({'created_at': 'invalid'}, nowUtc: now), isFalse);
       expect(isRecentlyJoinedFriend({}, nowUtc: now), isFalse);
     });
