@@ -457,7 +457,9 @@ class SupabaseService {
       debugPrint('profiles.ghost_mode unavailable, defaulting to visible: $e');
     }
 
-    dynamic friendsRelation;
+    // Fetch friend relations bidirectionally.  Try with specific columns first;
+    // fall back to a full select if the optional auto-added fields are missing.
+    List<Map<String, dynamic>> friendRelations = [];
     try {
       final friendsAsUser = await client
           .from('friends')
@@ -469,47 +471,75 @@ class SupabaseService {
           .select(
               'user_id, friend_id, auto_added, is_auto_added, added_automatically')
           .eq('friend_id', user.id);
-      friendsRelation = mergeFriendRelations(
+      friendRelations = mergeFriendRelations(
         friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
         friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
       );
     } catch (e) {
       debugPrint(
           'friends table auto-added fields unavailable, falling back to full select: $e');
-      final friendsAsUser = await client
-          .from('friends')
-          .select()
-          .eq('user_id', user.id);
-      final friendsAsFriend = await client
-          .from('friends')
-          .select()
-          .eq('friend_id', user.id);
-      friendsRelation = mergeFriendRelations(
-        friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
-        friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
-      );
+      try {
+        final friendsAsUser = await client
+            .from('friends')
+            .select()
+            .eq('user_id', user.id);
+        final friendsAsFriend = await client
+            .from('friends')
+            .select()
+            .eq('friend_id', user.id);
+        friendRelations = mergeFriendRelations(
+          friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
+          friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
+        );
+      } catch (e2) {
+        debugPrint('friends table fallback select also failed: $e2');
+        return [];
+      }
     }
-    if (friendsRelation.isEmpty) return [];
+    if (friendRelations.isEmpty) return [];
 
-    final List<Map<String, dynamic>> friendRelations =
-        List<Map<String, dynamic>>.from(friendsRelation);
     final autoAddedMap =
         friendAutoAddedMapForUser(user.id, friendRelations: friendRelations);
     final friendIds = autoAddedMap.keys.toList();
     if (friendIds.isEmpty) return [];
 
-    final profiles = await client
-        .from('profiles')
-        .select(
-            'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, created_at')
-        .filter('id', 'in', friendIds);
-    final profileMap = {for (var p in profiles) p['id']: p};
+    // Fetch friend profiles.  Try with extended fields (ghost_mode, created_at)
+    // and fall back gracefully when those columns are absent in older schemas.
+    List profileRows = [];
+    try {
+      profileRows = await client
+          .from('profiles')
+          .select(
+              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, created_at')
+          .filter('id', 'in', friendIds);
+    } catch (e) {
+      debugPrint(
+          'profiles extended fields unavailable, falling back to basic select: $e');
+      try {
+        profileRows = await client
+            .from('profiles')
+            .select('id, username, avatar_url, avatar_emoji, theme_color')
+            .filter('id', 'in', friendIds);
+      } catch (e2) {
+        debugPrint('profiles basic select also failed: $e2');
+        return [];
+      }
+    }
+    final profileMap = {for (var p in profileRows) p['id']: p};
 
-    final locations = await client
-        .from('user_locations')
-        .select()
-        .filter('user_id', 'in', friendIds);
-    final locationMap = {for (var l in locations) l['user_id']: l};
+    // Fetch friend locations.  Missing or inaccessible table just means no
+    // real-time position is shown – friends are still listed.
+    List locationRows = [];
+    try {
+      locationRows = await client
+          .from('user_locations')
+          .select()
+          .filter('user_id', 'in', friendIds);
+    } catch (e) {
+      debugPrint(
+          'user_locations unavailable, friends will show without location: $e');
+    }
+    final locationMap = {for (var l in locationRows) l['user_id']: l};
 
     List<Map<String, dynamic>> result = [];
     for (var id in friendIds) {
@@ -660,7 +690,11 @@ class SupabaseService {
         // 1. Listen for location updates
         sub1 = client
             .from('user_locations')
-            .stream(primaryKey: ['user_id']).listen(update);
+            .stream(primaryKey: ['user_id']).listen(
+              update,
+              onError: (e) =>
+                  debugPrint('user_locations stream error (non-fatal): $e'),
+            );
 
         // 2. Listen for friend list changes (add/remove)
         // Assuming primary key is composite (user_id, friend_id)
@@ -668,12 +702,20 @@ class SupabaseService {
             .from('friends')
             .stream(primaryKey: ['user_id', 'friend_id'])
             .eq('user_id', user.id)
-            .listen(update);
+            .listen(
+              update,
+              onError: (e) =>
+                  debugPrint('friends stream (user_id) error (non-fatal): $e'),
+            );
         sub3 = client
             .from('friends')
             .stream(primaryKey: ['user_id', 'friend_id'])
             .eq('friend_id', user.id)
-            .listen(update);
+            .listen(
+              update,
+              onError: (e) =>
+                  debugPrint('friends stream (friend_id) error (non-fatal): $e'),
+            );
 
         // Initial fetch
         update();
