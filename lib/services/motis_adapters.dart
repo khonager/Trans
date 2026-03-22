@@ -14,6 +14,7 @@ Station stationFromMotisMatch(Map<String, dynamic> match) {
 
 /// Converts MOTIS Place → location map for journey legs
 Map<String, dynamic> _placeToLocation(Map<String, dynamic> place) {
+  final platform = place['track'] ?? place['scheduledTrack'];
   return {
     'id': place['stopId'] ?? '',
     'name': place['name'] ?? '',
@@ -23,7 +24,7 @@ Map<String, dynamic> _placeToLocation(Map<String, dynamic> place) {
       'longitude': place['lon'],
     },
     // Pass through track/platform info if present
-    if (place['track'] != null) 'platform': place['track'],
+    if (platform != null) 'platform': platform,
     if (place['scheduledTrack'] != null)
       'scheduledPlatform': place['scheduledTrack'],
   };
@@ -87,6 +88,7 @@ List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
 
   return stops.map((stop) {
     final s = stop as Map<String, dynamic>;
+    final platform = s['track'] ?? s['scheduledTrack'];
     return {
       'stop': _placeToLocation(s),
       'arrival': s['arrival'],
@@ -97,7 +99,7 @@ List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
       'departureDelay':
           _calculateDelay(s['scheduledDeparture'], s['departure']),
       if (s['cancelled'] == true) 'cancelled': true,
-      if (s['track'] != null) 'platform': s['track'],
+      if (platform != null) 'platform': platform,
     };
   }).toList();
 }

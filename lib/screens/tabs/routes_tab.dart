@@ -2276,13 +2276,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
           startStationId: leg['origin']?['id']?.toString(),
-          platform: leg['origin']?['platform']
-              ?.toString(), // Ensure origin platform is used here too if I missed it before?
-          // Wait, leg['platform'] was used before. I should check if I changed it in previous steps.
-          // In step 283 I changed the flushTransferBuffer call, but not the JourneyStep creation for 'ride'.
-          // Let's verify line 865 in previous view.
-          // It was: platform: leg['platform']?.toString(),
-          // I should change it to leg['origin']?['platform']?.toString() AND add arrivalPlatform.
+          platform: leg['origin']?['platform']?.toString(),
           arrivalPlatform: leg['destination']?['platform']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']),
