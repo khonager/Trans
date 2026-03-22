@@ -44,9 +44,9 @@ enum RouteHistoryView { frequent, recent }
 
 @visibleForTesting
 ({int leadMinutes, int waitMinutes}) savedJourneyReminderOptionFromWait(
-  int waitMinutes,
+  int reminderMinutes,
 ) {
-  return (leadMinutes: waitMinutes, waitMinutes: waitMinutes);
+  return (leadMinutes: reminderMinutes, waitMinutes: reminderMinutes);
 }
 
 class _SuggestionSection {

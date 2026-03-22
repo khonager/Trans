@@ -33,6 +33,16 @@ class TransportApi {
   // Cache the User-Agent
   static String? _userAgent;
   static DateTime? _v6StationsCooldownUntil;
+  static const List<String> _nonDeutschlandticketServiceTokens = [
+    'ICE',
+    'IC',
+    'EC',
+    'ECE',
+    'TGV',
+    'RJ',
+    'RJX',
+    'WESTBAHN',
+  ];
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -142,6 +152,8 @@ class TransportApi {
   @visibleForTesting
   static String normalizeServiceText(Object? value) {
     if (value == null) return '';
+    // Keep separators as spaces so patterns like "IC-BUS" and "IC/BUS"
+    // still become tokenizable as "IC BUS".
     return value
         .toString()
         .toUpperCase()
@@ -152,6 +164,19 @@ class TransportApi {
   @visibleForTesting
   static bool containsServiceToken(String text, String token) {
     return RegExp('(^| )${RegExp.escape(token)}( |\$)').hasMatch(text);
+  }
+
+  static bool _containsAnyServiceToken(String text, List<String> tokens) {
+    for (final token in tokens) {
+      if (containsServiceToken(text, token)) return true;
+    }
+    return false;
+  }
+
+  static String _lineNumberText(Map<String, dynamic> line) {
+    // Some providers expose line numbers as `fahrtNr` (v6-style) while others
+    // return `fahrtnr`; normalize both for robust filtering.
+    return normalizeServiceText(line['fahrtNr'] ?? line['fahrtnr']);
   }
 
   @visibleForTesting
@@ -176,40 +201,22 @@ class TransportApi {
     if (productName == 'IC BUS' || productName == 'ICB') {
       return true;
     }
-    if (containsServiceToken(productName, 'ICE') ||
-        containsServiceToken(productName, 'IC') ||
-        containsServiceToken(productName, 'EC') ||
-        containsServiceToken(productName, 'ECE') ||
-        containsServiceToken(productName, 'TGV') ||
-        containsServiceToken(productName, 'RJ') ||
-        containsServiceToken(productName, 'RJX') ||
-        containsServiceToken(productName, 'WESTBAHN')) {
+    if (_containsAnyServiceToken(
+        productName, _nonDeutschlandticketServiceTokens)) {
       return true;
     }
 
     // Check line name for Flix patterns
     final lineName = normalizeServiceText(line['name']);
     if (lineName.contains('FLX') || lineName.contains('FLIX')) return true;
-    if (containsServiceToken(lineName, 'ICE') ||
-        containsServiceToken(lineName, 'IC') ||
-        containsServiceToken(lineName, 'EC') ||
-        containsServiceToken(lineName, 'ECE') ||
-        containsServiceToken(lineName, 'TGV') ||
-        containsServiceToken(lineName, 'RJ') ||
-        containsServiceToken(lineName, 'RJX') ||
-        containsServiceToken(lineName, 'WESTBAHN')) {
+    if (_containsAnyServiceToken(
+        lineName, _nonDeutschlandticketServiceTokens)) {
       return true;
     }
 
-    final lineNumber = normalizeServiceText(line['fahrtNr'] ?? line['fahrtnr']);
-    if (containsServiceToken(lineNumber, 'ICE') ||
-        containsServiceToken(lineNumber, 'IC') ||
-        containsServiceToken(lineNumber, 'EC') ||
-        containsServiceToken(lineNumber, 'ECE') ||
-        containsServiceToken(lineNumber, 'TGV') ||
-        containsServiceToken(lineNumber, 'RJ') ||
-        containsServiceToken(lineNumber, 'RJX') ||
-        containsServiceToken(lineNumber, 'WESTBAHN')) {
+    final lineNumber = _lineNumberText(line);
+    if (_containsAnyServiceToken(
+        lineNumber, _nonDeutschlandticketServiceTokens)) {
       return true;
     }
 
