@@ -42,15 +42,21 @@ void main() {
         friendRelations: const [
           {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': true},
           {'user_id': 'bob', 'friend_id': 'me', 'is_auto_added': false},
+          // Legacy auto-added flag variants should stay supported.
           {'user_id': 'carol', 'friend_id': 'me', 'auto_added': true},
+          {'user_id': 'me', 'friend_id': 'dave', 'added_automatically': true},
           {'friend_id': 'legacy-only'},
+          {'user_id': 'x', 'friend_id': 'y', 'is_auto_added': true},
         ],
       );
 
       expect(map['alice'], isTrue);
       expect(map['bob'], isFalse);
       expect(map['carol'], isTrue);
+      expect(map['dave'], isTrue);
       expect(map['legacy-only'], isFalse);
+      expect(map.containsKey('x'), isFalse);
+      expect(map.containsKey('y'), isFalse);
     });
   });
 }

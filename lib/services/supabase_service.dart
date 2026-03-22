@@ -553,13 +553,19 @@ class SupabaseService {
         friendId = relationFriendId;
       } else if (relationFriendId == userId) {
         friendId = relationUserId;
-      } else {
+      } else if (relationUserId == null &&
+          relationFriendId != null &&
+          relationFriendId != userId) {
         // Legacy/incomplete rows that only carry friend_id for this user.
         friendId = relationFriendId;
+      } else {
+        continue;
       }
 
       if (friendId == null || friendId == userId) continue;
       final isAutoAdded = _isAutoAddedFriendRelation(relation);
+      // Merge duplicate directional rows conservatively: if either side marks a
+      // friendship as auto-added, keep that signal for the combined friend entry.
       autoAddedMap[friendId] = (autoAddedMap[friendId] ?? false) || isAutoAdded;
     }
     return autoAddedMap;
@@ -572,7 +578,6 @@ class SupabaseService {
     late StreamController<List<Map<String, dynamic>>> controller;
     StreamSubscription? sub1;
     StreamSubscription? sub2;
-    StreamSubscription? sub3;
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
@@ -595,13 +600,7 @@ class SupabaseService {
         sub2 = client
             .from('friends')
             .stream(primaryKey: ['user_id', 'friend_id'])
-            .eq('user_id', user.id)
-            .listen(update);
-
-        sub3 = client
-            .from('friends')
-            .stream(primaryKey: ['user_id', 'friend_id'])
-            .eq('friend_id', user.id)
+            .or('user_id.eq.${user.id},friend_id.eq.${user.id}')
             .listen(update);
 
         // Initial fetch
@@ -610,7 +609,6 @@ class SupabaseService {
       onCancel: () async {
         await sub1?.cancel();
         await sub2?.cancel();
-        await sub3?.cancel();
       },
     );
 
