@@ -70,6 +70,8 @@ String formatRideLineWithPlatform(String line, String? platform) {
   return '$normalizedLine ($formattedPlatform)';
 }
 
+final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
+
 @visibleForTesting
 String formatRideDisplayLine({
   required String line,
@@ -80,13 +82,18 @@ String formatRideDisplayLine({
 }) {
   String baseLine = line.trim();
   final normalizedTripId = tripId?.trim();
-  if (!showTrainNumbers && normalizedTripId != null && normalizedTripId.isNotEmpty) {
-    final escapedTripId = RegExp.escape(normalizedTripId);
-    baseLine = baseLine
-        .replaceAll(RegExp(r'\s*\(\s*' + escapedTripId + r'\s*\)'), '')
-        .replaceAll(RegExp(r'\b' + escapedTripId + r'\b'), '')
-        .replaceAll(RegExp(r'\s{2,}'), ' ')
-        .trim();
+  if (!showTrainNumbers) {
+    baseLine =
+        baseLine.replaceAll(_embeddedNumericParenthesesPattern, '').trim();
+
+    if (normalizedTripId != null && normalizedTripId.isNotEmpty) {
+      final escapedTripId = RegExp.escape(normalizedTripId);
+      baseLine = baseLine
+          .replaceAll(RegExp(r'\s*\(\s*' + escapedTripId + r'\s*\)'), '')
+          .replaceAll(RegExp(r'\b' + escapedTripId + r'\b'), '')
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+    }
   }
 
   final effectivePlatform = platform?.trim().isNotEmpty == true

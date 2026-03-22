@@ -39,6 +39,28 @@ void main() {
     expect(formatted, 'RE54 (Pl. 2)');
   });
 
+  test('hides parenthesized train number even when tripId is missing', () {
+    final formatted = formatRideDisplayLine(
+      line: 'IC (2055)',
+      platform: '7',
+      arrivalPlatform: null,
+      tripId: null,
+      showTrainNumbers: false,
+    );
+    expect(formatted, 'IC (Pl. 7)');
+  });
+
+  test('hides parenthesized numeric segment from middle of line', () {
+    final formatted = formatRideDisplayLine(
+      line: 'IC (2055) Express',
+      platform: null,
+      arrivalPlatform: null,
+      tripId: null,
+      showTrainNumbers: false,
+    );
+    expect(formatted, 'IC Express');
+  });
+
   test('long press logic shows delete for started routes', () {
     final shouldShow = savedJourneyLongPressShowsDelete(
       isCompleted: false,
