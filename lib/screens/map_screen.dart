@@ -101,6 +101,7 @@ class _MapScreenState extends State<MapScreen> {
   List<Marker> _markers = [];
   LatLngBounds? _bounds;
   bool _isLoadingPath = true;
+  Position? _liveCurrentPosition;
 
   // Compass Mode State
   bool _isCompassMode = false;
@@ -110,7 +111,18 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    _liveCurrentPosition = widget.currentPosition;
+    _startLiveLocationUpdates();
     _loadRoute();
+  }
+
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentPosition != null &&
+        widget.currentPosition != oldWidget.currentPosition) {
+      setState(() => _liveCurrentPosition = widget.currentPosition);
+    }
   }
 
   @override
@@ -118,6 +130,32 @@ class _MapScreenState extends State<MapScreen> {
     _positionStream?.cancel();
     _compassStream?.cancel();
     super.dispose();
+  }
+
+  Future<void> _startLiveLocationUpdates() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    final settings = const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 0,
+    );
+    _positionStream?.cancel();
+    _positionStream =
+        Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
+      if (!mounted) return;
+      setState(() => _liveCurrentPosition = pos);
+      if (_isCompassMode) {
+        _mapController.move(
+            LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
+      }
+    });
   }
 
   void _toggleCompassMode() {
@@ -148,18 +186,9 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    // Start listening to Position (for centering)
-    final settings = const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
-    _positionStream?.cancel();
-    _positionStream =
-        Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
-      if (_isCompassMode) {
-        // Only Move Center here.
-        _mapController.move(
-            LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
-      }
-    });
+    if (_positionStream == null) {
+      await _startLiveLocationUpdates();
+    }
 
     // Start listening to Compass (for rotation)
     _compassStream?.cancel();
@@ -177,18 +206,16 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     // Initial Move if we have current position
-    if (widget.currentPosition != null) {
+    if (_liveCurrentPosition != null) {
       _mapController.move(
-          LatLng(widget.currentPosition!.latitude,
-              widget.currentPosition!.longitude),
+          LatLng(
+              _liveCurrentPosition!.latitude, _liveCurrentPosition!.longitude),
           16); // Zoom in for navigation
     }
   }
 
   void _disableCompassMode() {
     setState(() => _isCompassMode = false);
-    _positionStream?.cancel();
-    _positionStream = null;
     _compassStream?.cancel();
     _compassStream = null;
   }
@@ -424,22 +451,6 @@ class _MapScreenState extends State<MapScreen> {
         ));
       }
 
-      // User Position
-      if (widget.currentPosition != null) {
-        markers.add(Marker(
-          point: LatLng(widget.currentPosition!.latitude,
-              widget.currentPosition!.longitude),
-          width: 32,
-          height: 32,
-          child: Container(
-              decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.3),
-                  shape: BoxShape.circle),
-              child:
-                  const Icon(Icons.my_location, color: Colors.blue, size: 16)),
-        ));
-      }
-
       // Calculate Bounds
       LatLngBounds? bounds;
       try {
@@ -453,9 +464,9 @@ class _MapScreenState extends State<MapScreen> {
               LatLng(center.latitude + 0.002, center.longitude + 0.002),
             );
           }
-        } else if (widget.currentPosition != null) {
-          final p = LatLng(widget.currentPosition!.latitude,
-              widget.currentPosition!.longitude);
+        } else if (_liveCurrentPosition != null) {
+          final p = LatLng(
+              _liveCurrentPosition!.latitude, _liveCurrentPosition!.longitude);
           bounds = LatLngBounds(LatLng(p.latitude - 0.01, p.longitude - 0.01),
               LatLng(p.latitude + 0.01, p.longitude + 0.01));
         }
@@ -496,6 +507,23 @@ class _MapScreenState extends State<MapScreen> {
 
     final initialCenter = _bounds?.center ?? const LatLng(51.1657, 10.4515);
 
+    final displayedMarkers = <Marker>[
+      ..._markers,
+      if (_liveCurrentPosition != null)
+        Marker(
+          point: LatLng(
+              _liveCurrentPosition!.latitude, _liveCurrentPosition!.longitude),
+          width: 32,
+          height: 32,
+          child: Container(
+              decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.3),
+                  shape: BoxShape.circle),
+              child:
+                  const Icon(Icons.my_location, color: Colors.blue, size: 16)),
+        ),
+    ];
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.focusStep?.instruction ?? "Route Map"),
@@ -531,7 +559,7 @@ class _MapScreenState extends State<MapScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Compass Button
-                if (widget.currentPosition != null)
+                if (_liveCurrentPosition != null)
                   FloatingActionButton(
                     heroTag: "compass",
                     mini: true,
@@ -547,7 +575,7 @@ class _MapScreenState extends State<MapScreen> {
                           color: _isCompassMode ? Colors.white : Colors.black),
                     ),
                   ),
-                if (widget.currentPosition != null) const SizedBox(height: 12),
+                if (_liveCurrentPosition != null) const SizedBox(height: 12),
                 const SizedBox(height: 12),
 
                 // Recenter Button
@@ -603,7 +631,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ],
             ),
-          MarkerLayer(markers: _markers),
+          MarkerLayer(markers: displayedMarkers),
         ],
       ),
     );

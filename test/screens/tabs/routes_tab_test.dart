@@ -69,4 +69,20 @@ void main() {
     );
     expect(shouldShow, isTrue);
   });
+
+  test('saved route label is compact and keeps both stations', () {
+    final label = compactSavedRouteLabel(
+      'München Hauptbahnhof',
+      'Frankfurt am Main Süd',
+    );
+    expect(label, 'München Hauptba… → Frankfurt am Ma…');
+  });
+
+  test('saved route notification id is stable per route key', () {
+    const key = 'route-1';
+    final first = savedRouteStatusNotificationIdForKey(key);
+    final second = savedRouteStatusNotificationIdForKey(key);
+    expect(first, second);
+    expect(first, greaterThanOrEqualTo(0));
+  });
 }
