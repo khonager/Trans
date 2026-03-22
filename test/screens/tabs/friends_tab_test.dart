@@ -36,6 +36,14 @@ void main() {
       expect(autoAddedSectionLabel(const Locale('fr')), 'Auto Added');
     });
 
+    test('triggerFriendsListRefresh increments the shared friends reload notifier', () {
+      final before = SupabaseService.friendsListRefresh.value;
+
+      SupabaseService.triggerFriendsListRefresh();
+
+      expect(SupabaseService.friendsListRefresh.value, before + 1);
+    });
+
     test('friendAutoAddedMapForUser handles both relation directions', () {
       final map = SupabaseService.friendAutoAddedMapForUser(
         'me',

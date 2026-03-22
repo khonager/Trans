@@ -96,6 +96,11 @@ class SupabaseService {
         });
   }
 
+  @visibleForTesting
+  static void triggerFriendsListRefresh() {
+    friendsListRefresh.value++;
+  }
+
   // --- AUTH ---
   static Future<bool> signUp(
       String email, String password, String username) async {
@@ -128,6 +133,7 @@ class SupabaseService {
     if (currentUser != null) {
       _startMessageListener();
       _startFriendRequestListener();
+      triggerFriendsListRefresh();
     }
     return true;
   }
@@ -142,6 +148,7 @@ class SupabaseService {
     _startMessageListener();
     _startFriendRequestListener();
     await loadAndSyncSettings();
+    triggerFriendsListRefresh();
   }
 
   static Future<void> _ensureProfileRow(String userId,
@@ -160,6 +167,7 @@ class SupabaseService {
     _msgSubscription?.cancel();
     _friendReqSubscription?.cancel();
     await client.auth.signOut();
+    triggerFriendsListRefresh();
   }
 
   static Future<void> updatePassword(String newPassword) async {
@@ -377,7 +385,7 @@ class SupabaseService {
       }).eq('user_id', user.id);
     }
 
-    friendsListRefresh.value++;
+    triggerFriendsListRefresh();
   }
 
   // --- PROFILES ---
@@ -766,7 +774,7 @@ class SupabaseService {
   static Future<void> acceptFriendRequest(String senderId) async {
     await client
         .rpc('accept_friend_request', params: {'request_sender_id': senderId});
-    friendsListRefresh.value++;
+    triggerFriendsListRefresh();
   }
 
   static Future<void> rejectFriendRequest(String senderId) async {
@@ -797,7 +805,7 @@ class SupabaseService {
     if (user == null) return;
     try {
       await client.rpc('remove_friend', params: {'target_friend_id': friendId});
-      friendsListRefresh.value++;
+      triggerFriendsListRefresh();
     } catch (e) {
       debugPrint("Error removing friend: $e");
     }
