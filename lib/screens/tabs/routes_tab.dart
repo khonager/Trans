@@ -78,20 +78,21 @@ String formatRideDisplayLine({
   String? tripId,
   required bool showTrainNumbers,
 }) {
-  final effectivePlatform = platform?.trim().isNotEmpty == true
-      ? platform
-      : arrivalPlatform;
-  String displayLine = formatRideLineWithPlatform(line, effectivePlatform);
-
+  String baseLine = line.trim();
   final normalizedTripId = tripId?.trim();
   if (!showTrainNumbers && normalizedTripId != null && normalizedTripId.isNotEmpty) {
     final escapedTripId = RegExp.escape(normalizedTripId);
-    displayLine = displayLine
+    baseLine = baseLine
         .replaceAll(RegExp(r'\s*\(\s*' + escapedTripId + r'\s*\)'), '')
         .replaceAll(RegExp(r'\b' + escapedTripId + r'\b'), '')
         .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
   }
+
+  final effectivePlatform = platform?.trim().isNotEmpty == true
+      ? platform
+      : arrivalPlatform;
+  final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
       normalizedTripId != null &&
