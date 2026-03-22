@@ -120,6 +120,32 @@ bool savedJourneyLongPressShowsDelete({
   return isCompleted || isLegacy || hasStarted;
 }
 
+String _ellipsize(String value, int maxLength) {
+  final normalized = value.trim();
+  if (normalized.length <= maxLength) return normalized;
+  if (maxLength <= 1) return '…';
+  return '${normalized.substring(0, maxLength - 1)}…';
+}
+
+@visibleForTesting
+String compactSavedRouteLabel(String fromName, String toName) {
+  final from = fromName.trim();
+  final to = toName.trim();
+  if (to.isEmpty) return '';
+  if (from.isEmpty) return _ellipsize(to, 34);
+  return '${_ellipsize(from, 16)} → ${_ellipsize(to, 16)}';
+}
+
+const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
+const int _savedRouteStatusDetailMaxLength = 38;
+
+@visibleForTesting
+int savedRouteStatusNotificationIdForKey(String routeKey) {
+  // Salt separates saved-route IDs from other notification families.
+  return ((routeKey.hashCode * 31) ^ _savedRouteStatusNotificationIdSalt) &
+      0x7fffffff;
+}
+
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
   return journeys
       .map((j) =>
@@ -1736,6 +1762,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _notifySavedJourneyStatusChange({
+    required String routeKey,
     required Map<String, dynamic> item,
     required bool stillPossible,
     required String detail,
@@ -1763,14 +1790,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       linux: const LinuxNotificationDetails(),
     );
 
-    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
-    final statusText =
-        stillPossible ? 'Trip still possible' : 'Trip no longer possible';
+    final routeLabel = compactSavedRouteLabel(fromName, toName);
+    final statusText = stillPossible ? 'Still possible' : 'No longer possible';
+    // Keep body concise on Android while still showing the key status reason.
+    final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
+    final message = routeLabel.isEmpty
+        ? '$compactDetail · $statusText'
+        : '$routeLabel · $compactDetail · $statusText';
     await _notificationsPlugin.show(
-      id: (routeLabel.hashCode ^ DateTime.now().millisecondsSinceEpoch) &
-          0x7fffffff,
+      id: savedRouteStatusNotificationIdForKey(routeKey),
       title: 'Saved route changed',
-      body: '$routeLabel: $detail. $statusText.',
+      body: message,
       notificationDetails: details,
     );
   }
@@ -1817,6 +1847,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     (previousStatusSignature != null &&
                         previousStatusSignature.startsWith('unavailable')))) {
               await _notifySavedJourneyStatusChange(
+                routeKey: key,
                 item: item,
                 stillPossible: true,
                 detail: status.detail,
@@ -1827,6 +1858,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           } else {
             if (previousStatusSignature != 'unavailable') {
               await _notifySavedJourneyStatusChange(
+                routeKey: key,
                 item: item,
                 stillPossible: false,
                 detail: status.detail,
