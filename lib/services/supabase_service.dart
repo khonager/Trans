@@ -456,23 +456,25 @@ class SupabaseService {
     try {
       friendsRelation = await client
           .from('friends')
-          .select('friend_id, auto_added, is_auto_added, added_automatically')
-          .eq('user_id', user.id);
+          .select(
+              'user_id, friend_id, auto_added, is_auto_added, added_automatically')
+          .or('user_id.eq.${user.id},friend_id.eq.${user.id}');
     } catch (e) {
       debugPrint(
           'friends table auto-added fields unavailable, falling back to full select: $e');
-      friendsRelation =
-          await client.from('friends').select().eq('user_id', user.id);
+      friendsRelation = await client
+          .from('friends')
+          .select()
+          .or('user_id.eq.${user.id},friend_id.eq.${user.id}');
     }
     if (friendsRelation.isEmpty) return [];
 
     final List<Map<String, dynamic>> friendRelations =
         List<Map<String, dynamic>>.from(friendsRelation);
-    final friendIds = friendRelations.map((e) => e['friend_id']).toList();
-    final autoAddedMap = <dynamic, bool>{
-      for (final relation in friendRelations)
-        relation['friend_id']: _isAutoAddedFriendRelation(relation),
-    };
+    final autoAddedMap =
+        friendAutoAddedMapForUser(user.id, friendRelations: friendRelations);
+    final friendIds = autoAddedMap.keys.toList();
+    if (friendIds.isEmpty) return [];
 
     final profiles = await client
         .from('profiles')
@@ -536,6 +538,33 @@ class SupabaseService {
     return false;
   }
 
+  @visibleForTesting
+  static Map<dynamic, bool> friendAutoAddedMapForUser(
+    String userId, {
+    required List<Map<String, dynamic>> friendRelations,
+  }) {
+    final autoAddedMap = <dynamic, bool>{};
+    for (final relation in friendRelations) {
+      final relationUserId = relation['user_id'];
+      final relationFriendId = relation['friend_id'];
+
+      dynamic friendId;
+      if (relationUserId == userId) {
+        friendId = relationFriendId;
+      } else if (relationFriendId == userId) {
+        friendId = relationUserId;
+      } else {
+        // Legacy/incomplete rows that only carry friend_id for this user.
+        friendId = relationFriendId;
+      }
+
+      if (friendId == null || friendId == userId) continue;
+      final isAutoAdded = _isAutoAddedFriendRelation(relation);
+      autoAddedMap[friendId] = (autoAddedMap[friendId] ?? false) || isAutoAdded;
+    }
+    return autoAddedMap;
+  }
+
   static Stream<List<Map<String, dynamic>>> streamFriends() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
@@ -543,6 +572,7 @@ class SupabaseService {
     late StreamController<List<Map<String, dynamic>>> controller;
     StreamSubscription? sub1;
     StreamSubscription? sub2;
+    StreamSubscription? sub3;
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
@@ -568,12 +598,19 @@ class SupabaseService {
             .eq('user_id', user.id)
             .listen(update);
 
+        sub3 = client
+            .from('friends')
+            .stream(primaryKey: ['user_id', 'friend_id'])
+            .eq('friend_id', user.id)
+            .listen(update);
+
         // Initial fetch
         update();
       },
       onCancel: () async {
         await sub1?.cancel();
         await sub2?.cancel();
+        await sub3?.cancel();
       },
     );
 

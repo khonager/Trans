@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trans/screens/tabs/friends_tab.dart';
+import 'package:trans/services/supabase_service.dart';
 
 void main() {
   group('friends tab helpers', () {
@@ -33,6 +34,23 @@ void main() {
       expect(autoAddedSectionLabel(const Locale('de')), 'Automatisch hinzugefügt');
       expect(autoAddedSectionLabel(const Locale('en')), 'Auto Added');
       expect(autoAddedSectionLabel(const Locale('fr')), 'Auto Added');
+    });
+
+    test('friendAutoAddedMapForUser handles both relation directions', () {
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: const [
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': true},
+          {'user_id': 'bob', 'friend_id': 'me', 'is_auto_added': false},
+          {'user_id': 'carol', 'friend_id': 'me', 'auto_added': true},
+          {'friend_id': 'legacy-only'},
+        ],
+      );
+
+      expect(map['alice'], isTrue);
+      expect(map['bob'], isFalse);
+      expect(map['carol'], isTrue);
+      expect(map['legacy-only'], isFalse);
     });
   });
 }
