@@ -462,10 +462,46 @@ class SupabaseService {
     } catch (e) {
       debugPrint(
           'friends table auto-added fields unavailable, falling back to full select: $e');
-      friendsRelation = await client
+      final friendsAsUser = await client
           .from('friends')
           .select()
-          .or('user_id.eq.${user.id},friend_id.eq.${user.id}');
+          .eq('user_id', user.id);
+      final friendsAsFriend = await client
+          .from('friends')
+          .select()
+          .eq('friend_id', user.id);
+      final mergedFriends = <Map<String, dynamic>>[
+        ...List<Map<String, dynamic>>.from(friendsAsUser),
+        ...List<Map<String, dynamic>>.from(friendsAsFriend),
+      ];
+      final dedupedByPair =
+          <String, Map<String, Map<String, dynamic>>>{};
+      for (final relation in mergedFriends) {
+        final a = relation['user_id']?.toString();
+        final b = relation['friend_id']?.toString();
+        if (a == null || b == null) {
+          continue;
+        }
+        final normalizedPair = [a, b]..sort();
+        final pairA = normalizedPair[0];
+        final pairB = normalizedPair[1];
+        final secondLevel = dedupedByPair.putIfAbsent(pairA, () => {});
+        final existing = secondLevel[pairB];
+        if (existing == null) {
+          secondLevel[pairB] = relation;
+          continue;
+        }
+        final relationAutoAdded = _isAutoAddedFriendRelation(relation);
+        final existingAutoAdded = _isAutoAddedFriendRelation(existing);
+        final mergedAutoAdded = relationAutoAdded || existingAutoAdded;
+        final mergedRelation = <String, dynamic>{...existing};
+        if (mergedAutoAdded) {
+          mergedRelation['is_auto_added'] = true;
+        }
+        secondLevel[pairB] = mergedRelation;
+      }
+      friendsRelation =
+          dedupedByPair.values.expand((relations) => relations.values).toList();
     }
     if (friendsRelation.isEmpty) return [];
 

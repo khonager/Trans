@@ -58,5 +58,46 @@ void main() {
       expect(map.containsKey('x'), isFalse);
       expect(map.containsKey('y'), isFalse);
     });
+
+    test('friendAutoAddedMapForUser handles duplicate directional rows safely', () {
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: const [
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},
+          {'user_id': 'alice', 'friend_id': 'me', 'is_auto_added': true},
+        ],
+      );
+
+      expect(map['alice'], isTrue);
+      expect(map.length, 1);
+    });
+
+    test(
+        'friendAutoAddedMapForUser keeps duplicate directional rows order-independent',
+        () {
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: const [
+          {'user_id': 'alice', 'friend_id': 'me', 'is_auto_added': true},
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},
+        ],
+      );
+
+      expect(map['alice'], isTrue);
+      expect(map.length, 1);
+    });
+
+    test('friendAutoAddedMapForUser keeps false when duplicates are both false', () {
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: const [
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},
+          {'user_id': 'alice', 'friend_id': 'me', 'is_auto_added': false},
+        ],
+      );
+
+      expect(map['alice'], isFalse);
+      expect(map.length, 1);
+    });
   });
 }
