@@ -102,6 +102,7 @@ class _MapScreenState extends State<MapScreen> {
   LatLngBounds? _bounds;
   bool _isLoadingPath = true;
   Position? _liveCurrentPosition;
+  bool _isStartingLiveLocationUpdates = false;
 
   // Compass Mode State
   bool _isCompassMode = false;
@@ -133,29 +134,44 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _startLiveLocationUpdates() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      return;
-    }
-
-    final settings = const LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0,
-    );
-    _positionStream?.cancel();
-    _positionStream =
-        Geolocator.getPositionStream(locationSettings: settings).listen((pos) {
-      if (!mounted) return;
-      setState(() => _liveCurrentPosition = pos);
-      if (_isCompassMode) {
-        _mapController.move(
-            LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
+    if (_isStartingLiveLocationUpdates) return;
+    _isStartingLiveLocationUpdates = true;
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
       }
-    });
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('MapScreen live location unavailable: permission denied');
+        return;
+      }
+
+      final settings = const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+      );
+      _positionStream?.cancel();
+      _positionStream = Geolocator.getPositionStream(locationSettings: settings)
+          .listen((pos) {
+        if (!mounted) return;
+        setState(() {
+          _liveCurrentPosition = pos;
+          if (_routePoints.isEmpty) {
+            _bounds = LatLngBounds(
+              LatLng(pos.latitude - 0.01, pos.longitude - 0.01),
+              LatLng(pos.latitude + 0.01, pos.longitude + 0.01),
+            );
+          }
+        });
+        if (_isCompassMode) {
+          _mapController.move(
+              LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
+        }
+      });
+    } finally {
+      _isStartingLiveLocationUpdates = false;
+    }
   }
 
   void _toggleCompassMode() {

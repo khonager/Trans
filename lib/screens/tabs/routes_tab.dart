@@ -136,9 +136,14 @@ String compactSavedRouteLabel(String fromName, String toName) {
   return '${_ellipsize(from, 16)} → ${_ellipsize(to, 16)}';
 }
 
+const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
+const int _savedRouteStatusDetailMaxLength = 38;
+
 @visibleForTesting
 int savedRouteStatusNotificationIdForKey(String routeKey) {
-  return ((routeKey.hashCode * 31) ^ 0x5a5a5a5a) & 0x7fffffff;
+  // Salt separates saved-route IDs from other notification families.
+  return ((routeKey.hashCode * 31) ^ _savedRouteStatusNotificationIdSalt) &
+      0x7fffffff;
 }
 
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
@@ -1787,7 +1792,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     final routeLabel = compactSavedRouteLabel(fromName, toName);
     final statusText = stillPossible ? 'Still possible' : 'No longer possible';
-    final compactDetail = _ellipsize(detail, 38);
+    // Keep body concise on Android while still showing the key status reason.
+    final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
     final message = routeLabel.isEmpty
         ? '$compactDetail · $statusText'
         : '$routeLabel · $compactDetail · $statusText';
