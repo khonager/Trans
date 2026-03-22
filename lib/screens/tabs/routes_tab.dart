@@ -211,8 +211,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   StreamSubscription<Position>? _gpsStream;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
-  final FlutterLocalNotificationsPlugin _notificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+  // Use the shared, already-initialised plugin from NotificationManager.
+  FlutterLocalNotificationsPlugin get _notificationsPlugin =>
+      NotificationManager.plugin;
   bool _wasKeyboardVisible = false;
   String? _currentAddress; // Store the reverse-geocoded address
   bool _fromUsesCurrentLocation = true;
@@ -242,7 +243,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     super.initState();
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
-    _initNotifications();
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
@@ -408,15 +408,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       // We no longer clear suggestions on focus loss so users can interact with them after dismissing the keyboard.
       _focusDebounce?.cancel();
     }
-  }
-
-  void _initNotifications() async {
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
-    const linux = LinuxInitializationSettings(defaultActionName: 'Open');
-    const initSettings =
-        InitializationSettings(android: android, iOS: ios, linux: linux);
-    await _notificationsPlugin.initialize(settings: initSettings);
   }
 
   @override
@@ -667,6 +658,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       SupabaseService.updateLocation(_effectiveCurrentPosition!);
     }
 
+    // Read alarm settings once before the GPS loop instead of on every event.
+    // Note: if the user changes these preferences while the alarm is running,
+    // they take effect only after the alarm is stopped and restarted.
+    final prefs = await SharedPreferences.getInstance();
+    final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
+    final String thresholdSetting =
+        prefs.getString('alarm_trigger_threshold') ?? '5%';
+
     _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
         .listen((Position pos) async {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
@@ -691,12 +690,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _stopWakeAlarm();
         return;
       }
-
-      final prefs = await SharedPreferences.getInstance();
-      final int stopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
-
-      final String thresholdSetting =
-          prefs.getString('alarm_trigger_threshold') ?? '5%';
 
       bool triggered = false;
       List<JourneyStep> remainingSteps =

@@ -4,6 +4,10 @@ class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
+  /// Shared plugin instance so other widgets can reuse the already-initialized
+  /// plugin without calling [FlutterLocalNotificationsPlugin.initialize] again.
+  static FlutterLocalNotificationsPlugin get plugin => _notifications;
+
   static Future<void> init() async {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
