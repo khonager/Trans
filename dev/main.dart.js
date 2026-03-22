@@ -41586,15 +41586,20 @@ _.b=b
 _.c=c
 _.d=d},
 aYW:function aYW(){},
-by7(a){var s="location",r="scheduledTrack",q=t.N,p=t.z,o=B.A(q,p),n=a.h(0,"stopId")
-o.l(0,"id",n==null?"":n)
-n=a.h(0,"name")
-o.l(0,"name",n==null?"":n)
-o.l(0,"type",J.f(a.h(0,"vertexType"),"TRANSIT")?"stop":s)
-o.l(0,s,B.a7(["latitude",a.h(0,"lat"),"longitude",a.h(0,"lon")],q,p))
-if(a.h(0,"track")!=null)o.l(0,"platform",a.h(0,"track"))
-if(a.h(0,r)!=null)o.l(0,"scheduledPlatform",a.h(0,r))
-return o},
+by7(a){var s,r,q,p,o="scheduledTrack",n="location",m=a.h(0,"track")
+if(m==null)m=a.h(0,o)
+s=t.N
+r=t.z
+q=B.A(s,r)
+p=a.h(0,"stopId")
+q.l(0,"id",p==null?"":p)
+p=a.h(0,"name")
+q.l(0,"name",p==null?"":p)
+q.l(0,"type",J.f(a.h(0,"vertexType"),"TRANSIT")?"stop":n)
+q.l(0,n,B.a7(["latitude",a.h(0,"lat"),"longitude",a.h(0,"lon")],s,r))
+if(m!=null)q.l(0,"platform",m)
+if(a.h(0,o)!=null)q.l(0,"scheduledPlatform",a.h(0,o))
+return q},
 bIY(a){switch(a){case"HIGHSPEED_RAIL":return"nationalExpress"
 case"LONG_DISTANCE":case"NIGHT_RAIL":return"national"
 case"REGIONAL_FAST_RAIL":case"REGIONAL_RAIL":return"regional"
@@ -167120,19 +167125,21 @@ B.aYW.prototype={
 $1(a){return A.X.bA(a)},
 $S:84}
 B.bqG.prototype={
-$1(a){var s,r="arrival",q="departure",p="scheduledArrival",o="scheduledDeparture",n="cancelled"
+$1(a){var s,r,q="arrival",p="departure",o="scheduledArrival",n="scheduledDeparture",m="cancelled"
 t.P.a(a)
-s=B.A(t.N,t.z)
-s.l(0,"stop",B.by7(a))
-s.l(0,r,a.h(0,r))
-s.l(0,q,a.h(0,q))
-s.l(0,"plannedArrival",a.h(0,p))
-s.l(0,"plannedDeparture",a.h(0,o))
-s.l(0,"arrivalDelay",B.bqv(a.h(0,p),a.h(0,r)))
-s.l(0,"departureDelay",B.bqv(a.h(0,o),a.h(0,q)))
-if(J.f(a.h(0,n),!0))s.l(0,n,!0)
-if(a.h(0,"track")!=null)s.l(0,"platform",a.h(0,"track"))
-return s},
+s=a.h(0,"track")
+if(s==null)s=a.h(0,"scheduledTrack")
+r=B.A(t.N,t.z)
+r.l(0,"stop",B.by7(a))
+r.l(0,q,a.h(0,q))
+r.l(0,p,a.h(0,p))
+r.l(0,"plannedArrival",a.h(0,o))
+r.l(0,"plannedDeparture",a.h(0,n))
+r.l(0,"arrivalDelay",B.bqv(a.h(0,o),a.h(0,q)))
+r.l(0,"departureDelay",B.bqv(a.h(0,n),a.h(0,p)))
+if(J.f(a.h(0,m),!0))r.l(0,m,!0)
+if(s!=null)r.l(0,"platform",s)
+return r},
 $S:171}
 B.bsC.prototype={
 $1(a7){var s,r,q,p,o,n,m,l,k,j,i,h="mode",g="startTime",f="scheduledStartTime",e="scheduledEndTime",d="cancelled",c="distance",b="routeShortName",a="routeColor",a0="routeTextColor",a1="tripId",a2="agencyName",a3="intermediateStops",a4="legGeometry",a5="points",a6="precision"
