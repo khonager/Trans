@@ -582,13 +582,20 @@ class SupabaseService {
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
+        Future<void>? inFlightRefresh;
         Future<void> update([dynamic _]) async {
-          try {
-            final friends = await getFriends();
-            if (!controller.isClosed) controller.add(friends);
-          } catch (e) {
-            debugPrint("Error streaming friends: $e");
-          }
+          if (inFlightRefresh != null) return inFlightRefresh;
+          inFlightRefresh = () async {
+            try {
+              final friends = await getFriends();
+              if (!controller.isClosed) controller.add(friends);
+            } catch (e) {
+              debugPrint("Error streaming friends: $e");
+            } finally {
+              inFlightRefresh = null;
+            }
+          }();
+          return inFlightRefresh;
         }
 
         // 1. Listen for location updates
