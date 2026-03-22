@@ -4611,38 +4611,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       : route.subtitle,
                                   style:
                                       TextStyle(color: colors.textSecondary)),
-                              if (route.source != null) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                        color: route.source == 'motis'
-                                            ? Colors.blue.withValues(alpha: 0.2)
-                                            : Colors.red.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(4)),
-                                    child: Row(children: [
-                                      Icon(
-                                          route.source == 'motis'
-                                              ? Icons.public
-                                              : Icons.dns,
-                                          size: 10,
-                                          color: route.source == 'motis'
-                                              ? Colors.blue
-                                              : Colors.red),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                          route.source == 'motis'
-                                              ? 'Transitous'
-                                              : 'DB',
-                                          style: TextStyle(
-                                              color: route.source == 'motis'
-                                                  ? Colors.blue
-                                                  : Colors.red,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold))
-                                    ]))
-                              ]
                             ])
                           ])),
                       IconButton(

@@ -453,16 +453,23 @@ class SupabaseService {
     final bool amIGhost = myProfile['ghost_mode'] ?? false;
 
     final friendsRelation =
-        await client.from('friends').select('friend_id').eq('user_id', user.id);
+        await client.from('friends').select().eq('user_id', user.id);
     if (friendsRelation.isEmpty) return [];
 
-    final friendIds =
-        (friendsRelation as List).map((e) => e['friend_id']).toList();
+    final List<Map<String, dynamic>> friendRelations =
+        List<Map<String, dynamic>>.from(friendsRelation);
+    final friendIds = friendRelations.map((e) => e['friend_id']).toList();
+    final autoAddedMap = <dynamic, bool>{
+      for (final relation in friendRelations)
+        relation['friend_id']: (relation['auto_added'] == true) ||
+            (relation['is_auto_added'] == true) ||
+            (relation['added_automatically'] == true),
+    };
 
     final profiles = await client
         .from('profiles')
         .select(
-            'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode')
+            'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, created_at')
         .filter('id', 'in', friendIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
@@ -498,6 +505,8 @@ class SupabaseService {
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
         'ghost_mode': isFriendGhost,
+        'created_at': profile['created_at'],
+        'is_auto_added': autoAddedMap[id] == true,
         'updated_at': updatedAt,
         'latitude': lat,
         'longitude': lng,

@@ -7,6 +7,22 @@ import '../../widgets/private_chat_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
 
+bool isAutoAddedFriend(Map<String, dynamic> friend) =>
+    friend['is_auto_added'] == true;
+
+bool isRecentlyJoinedFriend(Map<String, dynamic> friend, {DateTime? nowUtc}) {
+  final createdAt = DateTime.tryParse(friend['created_at']?.toString() ?? '');
+  if (createdAt == null) return false;
+  final now = nowUtc ?? DateTime.now().toUtc();
+  return now.difference(createdAt.toUtc()).inDays < 7;
+}
+
+String newFriendBadgeLabel(Locale locale) =>
+    locale.languageCode == 'de' ? 'Neu' : 'New';
+
+String autoAddedSectionLabel(Locale locale) =>
+    locale.languageCode == 'de' ? 'Automatisch hinzugefügt' : 'Auto Added';
+
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
 
@@ -197,8 +213,13 @@ class _FriendsTabState extends State<FriendsTab> {
     final now = DateTime.now().toUtc();
     final activeFriends = <Map<String, dynamic>>[];
     final inactiveFriends = <Map<String, dynamic>>[];
+    final autoAddedFriends = <Map<String, dynamic>>[];
 
     for (var f in _friends) {
+      if (isAutoAddedFriend(f)) {
+        autoAddedFriends.add(f);
+        continue;
+      }
       if (f['updated_at'] != null) {
         final updated = DateTime.tryParse(f['updated_at'])?.toUtc() ??
             DateTime(2000).toUtc();
@@ -216,6 +237,8 @@ class _FriendsTabState extends State<FriendsTab> {
     _requests.sort((a, b) =>
         (b['created_at'] as String).compareTo(a['created_at'] as String));
     inactiveFriends.sort(
+        (a, b) => (a['username'] as String).compareTo(b['username'] as String));
+    autoAddedFriends.sort(
         (a, b) => (a['username'] as String).compareTo(b['username'] as String));
 
     return Column(
@@ -264,9 +287,19 @@ class _FriendsTabState extends State<FriendsTab> {
                       ...inactiveFriends
                           .map((f) => _buildFriendCard(context, f, false)),
                     ],
+                    if (autoAddedFriends.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Divider(color: colors.divider),
+                      _buildSectionHeader(
+                          autoAddedSectionLabel(Localizations.localeOf(context)),
+                          colors),
+                      ...autoAddedFriends
+                          .map((f) => _buildFriendCard(context, f, false)),
+                    ],
                     if (activeFriends.isEmpty &&
                         _requests.isEmpty &&
-                        inactiveFriends.isEmpty)
+                        inactiveFriends.isEmpty &&
+                        autoAddedFriends.isEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 50),
                         child: Center(
@@ -410,6 +443,8 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget _buildFriendCard(
       BuildContext context, Map<String, dynamic> friend, bool isActive) {
     final colors = TransColors.of(context);
+    final locale = Localizations.localeOf(context);
+    final isNewUser = isRecentlyJoinedFriend(friend);
     final String? currentLine = friend['current_line'];
     final String friendId = friend['id'];
     final bool isExpanded = _expandedFriendId == friendId;
@@ -498,6 +533,16 @@ class _FriendsTabState extends State<FriendsTab> {
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
                                 color: colors.textPrimary)),
+                        if (isNewUser) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            newFriendBadgeLabel(locale),
+                            style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green),
+                          ),
+                        ],
                         const SizedBox(height: 2),
                         Row(
                           children: [
