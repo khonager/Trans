@@ -799,8 +799,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Profile updated! Check email for confirmation if changed.';
 
   @override
-  String get incorrectPasswordOrRpcMissing =>
-      'Incorrect password.';
+  String get incorrectPasswordOrRpcMissing => 'Incorrect password.';
 
   @override
   String get changeUsername => 'Change Username';

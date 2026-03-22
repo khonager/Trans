@@ -42,12 +42,16 @@ post_install do |installer|
     target.build_configurations.each do |config|
       config.build_settings['DEVELOPMENT_TEAM'] = 'BC9ZAMTAAW'
       config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'
-      if config.name == 'Release' || config.name == 'Profile'
-        config.build_settings['CODE_SIGN_IDENTITY'] = 'Apple Distribution'
-      else
-        config.build_settings['CODE_SIGN_IDENTITY'] = 'Apple Development'
-      end
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
     end
+  end
+
+  support_files_dir = File.join(installer.sandbox.root, 'Target Support Files')
+  Dir.glob(File.join(support_files_dir, '**', '*.{xcconfig,sh}')).each do |file_path|
+    file_content = File.read(file_path)
+    updated_content = file_content.gsub('DT_TOOLCHAIN_DIR', 'TOOLCHAIN_DIR')
+    next if updated_content == file_content
+
+    File.open(file_path, 'w') { |file| file.write(updated_content) }
   end
 end
