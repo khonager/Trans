@@ -470,10 +470,18 @@ class SupabaseService {
           .from('friends')
           .select()
           .eq('friend_id', user.id);
-      friendsRelation = [
-        ...friendsAsUser,
-        ...friendsAsFriend,
+      final mergedFriends = <Map<String, dynamic>>[
+        ...List<Map<String, dynamic>>.from(friendsAsUser),
+        ...List<Map<String, dynamic>>.from(friendsAsFriend),
       ];
+      final dedupedByPair = <String, Map<String, dynamic>>{};
+      for (final relation in mergedFriends) {
+        final a = relation['user_id']?.toString();
+        final b = relation['friend_id']?.toString();
+        final pairKey = ([a, b]..sort()).join('|');
+        dedupedByPair[pairKey] = relation;
+      }
+      friendsRelation = dedupedByPair.values.toList();
     }
     if (friendsRelation.isEmpty) return [];
 

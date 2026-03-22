@@ -70,5 +70,17 @@ void main() {
 
       expect(map['alice'], isTrue);
     });
+
+    test('friendAutoAddedMapForUser keeps false when duplicates are both false', () {
+      final map = SupabaseService.friendAutoAddedMapForUser(
+        'me',
+        friendRelations: const [
+          {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},
+          {'user_id': 'alice', 'friend_id': 'me', 'is_auto_added': false},
+        ],
+      );
+
+      expect(map['alice'], isFalse);
+    });
   });
 }
