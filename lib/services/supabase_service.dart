@@ -462,10 +462,18 @@ class SupabaseService {
     } catch (e) {
       debugPrint(
           'friends table auto-added fields unavailable, falling back to full select: $e');
-      friendsRelation = await client
+      final friendsAsUser = await client
           .from('friends')
           .select()
-          .or('user_id.eq.${user.id},friend_id.eq.${user.id}');
+          .eq('user_id', user.id);
+      final friendsAsFriend = await client
+          .from('friends')
+          .select()
+          .eq('friend_id', user.id);
+      friendsRelation = [
+        ...friendsAsUser,
+        ...friendsAsFriend,
+      ];
     }
     if (friendsRelation.isEmpty) return [];
 
