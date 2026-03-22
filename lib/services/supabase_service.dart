@@ -474,14 +474,34 @@ class SupabaseService {
         ...List<Map<String, dynamic>>.from(friendsAsUser),
         ...List<Map<String, dynamic>>.from(friendsAsFriend),
       ];
-      final dedupedByPair = <String, Map<String, dynamic>>{};
+      final dedupedByPair =
+          <String, Map<String, Map<String, dynamic>>>{};
       for (final relation in mergedFriends) {
         final a = relation['user_id']?.toString();
         final b = relation['friend_id']?.toString();
-        final pairKey = ([a, b]..sort()).join('|');
-        dedupedByPair[pairKey] = relation;
+        if (a == null || b == null) {
+          continue;
+        }
+        final normalizedPair = [a, b]..sort();
+        final pairA = normalizedPair[0];
+        final pairB = normalizedPair[1];
+        final secondLevel = dedupedByPair.putIfAbsent(pairA, () => {});
+        final existing = secondLevel[pairB];
+        if (existing == null) {
+          secondLevel[pairB] = relation;
+          continue;
+        }
+        final relationAutoAdded = _isAutoAddedFriendRelation(relation);
+        final existingAutoAdded = _isAutoAddedFriendRelation(existing);
+        final mergedAutoAdded = relationAutoAdded || existingAutoAdded;
+        final mergedRelation = <String, dynamic>{...existing};
+        if (mergedAutoAdded) {
+          mergedRelation['is_auto_added'] = true;
+        }
+        secondLevel[pairB] = mergedRelation;
       }
-      friendsRelation = dedupedByPair.values.toList();
+      friendsRelation =
+          dedupedByPair.values.expand((relations) => relations.values).toList();
     }
     if (friendsRelation.isEmpty) return [];
 
