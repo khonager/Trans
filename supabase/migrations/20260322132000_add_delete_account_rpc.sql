@@ -44,7 +44,10 @@ begin
   end if;
 
   if to_regclass('public.user_locations') is not null then
-    execute 'delete from public.user_locations where user_id = $1'
+    execute $sql$
+      delete from public.user_locations
+      where user_id = $1
+    $sql$
     using target_user_id;
   end if;
 
@@ -58,7 +61,10 @@ begin
   end if;
 
   if to_regclass('public.profiles') is not null then
-    execute 'delete from public.profiles where id = $1'
+    execute $sql$
+      delete from public.profiles
+      where id = $1
+    $sql$
     using target_user_id;
   end if;
 
