@@ -42,6 +42,13 @@ const List<IconData> kAvailableIcons = [
 
 enum RouteHistoryView { frequent, recent }
 
+@visibleForTesting
+({int leadMinutes, int waitMinutes}) savedJourneyReminderOptionFromWait(
+  int reminderMinutes,
+) {
+  return (leadMinutes: reminderMinutes, waitMinutes: reminderMinutes);
+}
+
 class _SuggestionSection {
   final String? title;
   final List<dynamic> items;
@@ -1323,8 +1330,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final options = <({int leadMinutes, int waitMinutes})>[];
     for (final wait in waits) {
       if (wait > remainingMinutes) continue;
-      final lead = max(0, remainingMinutes - wait);
-      options.add((leadMinutes: lead, waitMinutes: wait));
+      options.add(savedJourneyReminderOptionFromWait(wait));
     }
     return options;
   }

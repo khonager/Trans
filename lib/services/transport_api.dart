@@ -33,6 +33,16 @@ class TransportApi {
   // Cache the User-Agent
   static String? _userAgent;
   static DateTime? _v6StationsCooldownUntil;
+  static const List<String> _nonDeutschlandticketServiceTokens = [
+    'ICE',
+    'IC',
+    'EC',
+    'ECE',
+    'TGV',
+    'RJ',
+    'RJX',
+    'WESTBAHN',
+  ];
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -139,6 +149,40 @@ class TransportApi {
 
   /// Checks if a v6 journey leg is a non-Deutschlandticket service
   /// (e.g. FlixBus, FlixTrain, IC Bus, or other long-distance coaches)
+  @visibleForTesting
+  static String normalizeServiceText(Object? value) {
+    if (value == null) return '';
+    // Keep separators as spaces so patterns like "IC-BUS" and "IC/BUS"
+    // still become tokenizable as "IC BUS".
+    return value
+        .toString()
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), ' ')
+        .trim();
+  }
+
+  @visibleForTesting
+  static bool containsServiceToken(String text, String token) {
+    return RegExp('(^| )${RegExp.escape(token)}( |\$)').hasMatch(text);
+  }
+
+  static bool _containsAnyServiceToken(String text, List<String> tokens) {
+    for (final token in tokens) {
+      if (containsServiceToken(text, token)) return true;
+    }
+    return false;
+  }
+
+  static String _lineNumberText(Map<String, dynamic> line) {
+    // Some providers expose line numbers as `fahrtNr` (v6-style) while others
+    // return `fahrtnr`; normalize both for robust filtering.
+    return normalizeServiceText(line['fahrtNr'] ?? line['fahrtnr']);
+  }
+
+  @visibleForTesting
+  static bool isNonDeutschlandticketLegForTesting(Map<String, dynamic> leg) =>
+      _isNonDeutschlandticketLeg(leg);
+
   static bool _isNonDeutschlandticketLeg(Map<String, dynamic> leg) {
     final line = leg['line'] as Map<String, dynamic>?;
     if (line == null) return false;
@@ -148,7 +192,7 @@ class TransportApi {
     if (product == 'nationalexpress' || product == 'national') return true;
 
     // Check productName for FlixBus/FlixTrain/IC Bus patterns
-    final productName = (line['productName'] as String?)?.toUpperCase() ?? '';
+    final productName = normalizeServiceText(line['productName']);
     if (productName == 'FLX' ||
         productName == 'FLIXBUS' ||
         productName == 'FLIXTRAIN') {
@@ -157,15 +201,29 @@ class TransportApi {
     if (productName == 'IC BUS' || productName == 'ICB') {
       return true;
     }
+    if (_containsAnyServiceToken(
+        productName, _nonDeutschlandticketServiceTokens)) {
+      return true;
+    }
 
     // Check line name for Flix patterns
-    final lineName = (line['name'] as String?)?.toUpperCase() ?? '';
+    final lineName = normalizeServiceText(line['name']);
     if (lineName.contains('FLX') || lineName.contains('FLIX')) return true;
+    if (_containsAnyServiceToken(
+        lineName, _nonDeutschlandticketServiceTokens)) {
+      return true;
+    }
+
+    final lineNumber = _lineNumberText(line);
+    if (_containsAnyServiceToken(
+        lineNumber, _nonDeutschlandticketServiceTokens)) {
+      return true;
+    }
 
     // Check operator name
     final operator = line['operator'] as Map<String, dynamic>?;
     if (operator != null) {
-      final opName = (operator['name'] as String?)?.toUpperCase() ?? '';
+      final opName = normalizeServiceText(operator['name']);
       if (opName.contains('FLIX') || opName.contains('FLIXMOBILITY')) {
         return true;
       }
