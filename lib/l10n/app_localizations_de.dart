@@ -805,7 +805,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get incorrectPasswordOrRpcMissing =>
-      'Falsches Passwort oder Fehler (RPC fehlt?)';
+      'Falsches Passwort.';
 
   @override
   String get changeUsername => 'Benutzernamen ändern';

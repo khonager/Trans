@@ -13,6 +13,20 @@ import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
 import '../changelog_screen.dart';
 
+@visibleForTesting
+String deleteAccountErrorMessage(
+  Object error, {
+  required String invalidPasswordMessage,
+  required String fallbackMessage,
+}) {
+  final lower = error.toString().toLowerCase();
+  if (lower.contains('invalid login credentials') ||
+      lower.contains('invalid credentials')) {
+    return invalidPasswordMessage;
+  }
+  return fallbackMessage;
+}
+
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
@@ -528,6 +542,20 @@ class _SettingsTabState extends State<SettingsTab> {
               onPressed: isLoading
                   ? null
                   : () async {
+                      final l10n = AppLocalizations.of(context)!;
+                      if (passwordCtrl.text.isEmpty) {
+                        setState(() {
+                          errorMsg = l10n.fillRequiredFields;
+                        });
+                        unawaited(
+                          AppError.showReportableSnackBar(
+                            context,
+                            message: l10n.fillRequiredFields,
+                            source: 'delete account validation',
+                          ),
+                        );
+                        return;
+                      }
                       setState(() {
                         isLoading = true;
                         errorMsg = null;
@@ -539,12 +567,27 @@ class _SettingsTabState extends State<SettingsTab> {
                           Navigator.pop(ctx);
                           if (mounted) setState(() {});
                         }
-                      } catch (e) {
+                      } catch (e, st) {
+                        final userMessage = deleteAccountErrorMessage(
+                          e,
+                          invalidPasswordMessage: AppLocalizations.of(context)!
+                              .incorrectPasswordOrRpcMissing,
+                          fallbackMessage: AppLocalizations.of(context)!
+                              .serviceBusyPleaseTryAgain,
+                        );
                         setState(() {
-                          errorMsg = AppLocalizations.of(context)!
-                              .incorrectPasswordOrRpcMissing;
+                          errorMsg = userMessage;
                           isLoading = false;
                         });
+                        unawaited(
+                          AppError.showReportableSnackBar(
+                            ctx,
+                            message: userMessage,
+                            source: 'delete account',
+                            error: e,
+                            stackTrace: st,
+                          ),
+                        );
                       }
                     },
               child: isLoading
@@ -596,7 +639,11 @@ class _SettingsTabState extends State<SettingsTab> {
                   : () async {
                       final username = ctrl.text.trim();
                       if (username.isEmpty) {
-                        _showMessage(l10n.fillRequiredFields);
+                        _showMessage(
+                          l10n.fillRequiredFields,
+                          reportable: true,
+                          source: 'update username validation',
+                        );
                         return;
                       }
 
@@ -679,7 +726,10 @@ class _SettingsTabState extends State<SettingsTab> {
                       final email = ctrl.text.trim();
                       if (!_looksLikeEmail(email)) {
                         _showMessage(
-                            AppLocalizations.of(context)!.enterValidEmail);
+                          AppLocalizations.of(context)!.enterValidEmail,
+                          reportable: true,
+                          source: 'update email validation',
+                        );
                         return;
                       }
                       if (email == currentEmail) {
@@ -775,12 +825,18 @@ class _SettingsTabState extends State<SettingsTab> {
                       final confirm = confirmPasswordCtrl.text.trim();
                       if (password.isEmpty || confirm.isEmpty) {
                         _showMessage(
-                            AppLocalizations.of(context)!.fillRequiredFields);
+                          AppLocalizations.of(context)!.fillRequiredFields,
+                          reportable: true,
+                          source: 'update password validation',
+                        );
                         return;
                       }
                       if (password != confirm) {
                         _showMessage(
-                            AppLocalizations.of(context)!.passwordsDoNotMatch);
+                          AppLocalizations.of(context)!.passwordsDoNotMatch,
+                          reportable: true,
+                          source: 'update password validation',
+                        );
                         return;
                       }
 
@@ -828,19 +884,35 @@ class _SettingsTabState extends State<SettingsTab> {
     final username = _usernameCtrl.text.trim();
 
     if (email.isEmpty) {
-      _showMessage(_requiredFieldMessage(l10n.emailSettings));
+      _showMessage(
+        _requiredFieldMessage(l10n.emailSettings),
+        reportable: true,
+        source: 'auth validation',
+      );
       return;
     }
     if (!_looksLikeEmail(email)) {
-      _showMessage(l10n.enterValidEmail);
+      _showMessage(
+        l10n.enterValidEmail,
+        reportable: true,
+        source: 'auth validation',
+      );
       return;
     }
     if (password.isEmpty) {
-      _showMessage(_requiredFieldMessage(l10n.password));
+      _showMessage(
+        _requiredFieldMessage(l10n.password),
+        reportable: true,
+        source: 'auth validation',
+      );
       return;
     }
     if (!_isLoginMode && username.isEmpty) {
-      _showMessage(_requiredFieldMessage(l10n.usernameSignUp));
+      _showMessage(
+        _requiredFieldMessage(l10n.usernameSignUp),
+        reportable: true,
+        source: 'auth validation',
+      );
       return;
     }
 
@@ -953,8 +1025,22 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    bool reportable = false,
+    String source = 'settings',
+  }) {
     if (!mounted) return;
+    if (reportable) {
+      unawaited(
+        AppError.showReportableSnackBar(
+          context,
+          message: message,
+          source: source,
+        ),
+      );
+      return;
+    }
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
@@ -1649,7 +1735,11 @@ class _SettingsTabState extends State<SettingsTab> {
             onPressed: () async {
               final email = emailCtrl.text.trim();
               if (!_looksLikeEmail(email)) {
-                _showMessage(AppLocalizations.of(context)!.enterValidEmail);
+                _showMessage(
+                  AppLocalizations.of(context)!.enterValidEmail,
+                  reportable: true,
+                  source: 'request password reset validation',
+                );
                 return;
               }
               try {
