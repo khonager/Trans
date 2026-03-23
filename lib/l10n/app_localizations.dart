@@ -1499,7 +1499,7 @@ abstract class AppLocalizations {
   /// No description provided for @incorrectPasswordOrRpcMissing.
   ///
   /// In en, this message translates to:
-  /// **'Incorrect password or error (RPC missing?)'**
+  /// **'Incorrect password.'**
   String get incorrectPasswordOrRpcMissing;
 
   /// No description provided for @changeUsername.

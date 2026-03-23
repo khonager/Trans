@@ -1,0 +1,76 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/services/motis_adapters.dart';
+
+void main() {
+  group('motis adapters platform mapping', () {
+    test('uses scheduledTrack as fallback platform when track is missing', () {
+      final leg = legFromMotisLeg({
+        'mode': 'REGIONAL_RAIL',
+        'displayName': 'RE 1',
+        'from': {
+          'stopId': 'from-stop',
+          'name': 'From',
+          'vertexType': 'TRANSIT',
+          'lat': 50.0,
+          'lon': 8.0,
+          'scheduledTrack': '7',
+        },
+        'to': {
+          'stopId': 'to-stop',
+          'name': 'To',
+          'vertexType': 'TRANSIT',
+          'lat': 51.0,
+          'lon': 9.0,
+          'scheduledTrack': '9',
+        },
+        'startTime': '2026-03-22T08:00:00Z',
+        'endTime': '2026-03-22T09:00:00Z',
+      });
+
+      expect(leg['origin']?['platform'], '7');
+      expect(leg['destination']?['platform'], '9');
+    });
+
+    test(
+        'uses scheduledTrack for intermediate stops when realtime track is missing',
+        () {
+      final leg = legFromMotisLeg({
+        'mode': 'REGIONAL_RAIL',
+        'displayName': 'RE 1',
+        'from': {
+          'stopId': 'from-stop',
+          'name': 'From',
+          'vertexType': 'TRANSIT',
+          'lat': 50.0,
+          'lon': 8.0,
+        },
+        'to': {
+          'stopId': 'to-stop',
+          'name': 'To',
+          'vertexType': 'TRANSIT',
+          'lat': 51.0,
+          'lon': 9.0,
+        },
+        'startTime': '2026-03-22T08:00:00Z',
+        'endTime': '2026-03-22T09:00:00Z',
+        'intermediateStops': [
+          {
+            'stopId': 'mid-stop',
+            'name': 'Mid',
+            'vertexType': 'TRANSIT',
+            'lat': 50.5,
+            'lon': 8.5,
+            'scheduledTrack': '4',
+            'scheduledArrival': '2026-03-22T08:30:00Z',
+            'arrival': '2026-03-22T08:31:00Z',
+          }
+        ],
+      });
+
+      final stopovers = leg['stopovers'] as List<dynamic>;
+      final stop = stopovers.first as Map<String, dynamic>;
+      expect(stop['platform'], '4');
+      expect(stop['stop']?['platform'], '4');
+    });
+  });
+}

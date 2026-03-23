@@ -27,6 +27,6 @@ class AppConfig {
     if (email != null && email.isNotEmpty) {
       return email;
     }
-    return 'khonager.trans@gmail.com';
+    return 'support@khonager.de';
   }
 }

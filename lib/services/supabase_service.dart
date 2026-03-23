@@ -96,6 +96,11 @@ class SupabaseService {
         });
   }
 
+  @visibleForTesting
+  static void triggerFriendsListRefresh() {
+    friendsListRefresh.value++;
+  }
+
   // --- AUTH ---
   static Future<bool> signUp(
       String email, String password, String username) async {
@@ -128,6 +133,7 @@ class SupabaseService {
     if (currentUser != null) {
       _startMessageListener();
       _startFriendRequestListener();
+      triggerFriendsListRefresh();
     }
     return true;
   }
@@ -142,6 +148,7 @@ class SupabaseService {
     _startMessageListener();
     _startFriendRequestListener();
     await loadAndSyncSettings();
+    triggerFriendsListRefresh();
   }
 
   static Future<void> _ensureProfileRow(String userId,
@@ -160,6 +167,7 @@ class SupabaseService {
     _msgSubscription?.cancel();
     _friendReqSubscription?.cancel();
     await client.auth.signOut();
+    triggerFriendsListRefresh();
   }
 
   static Future<void> updatePassword(String newPassword) async {
@@ -193,8 +201,8 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
 
-    // Call the RPC function to delete the user
-    // This requires a postgres function 'delete_account' to be defined in Supabase
+    // Call the backend RPC defined in supabase/migrations to delete the current
+    // auth user plus app-owned rows that reference that user.
     await client.rpc('delete_account');
 
     // Sign out to clear local session
@@ -377,7 +385,7 @@ class SupabaseService {
       }).eq('user_id', user.id);
     }
 
-    friendsListRefresh.value++;
+    triggerFriendsListRefresh();
   }
 
   // --- PROFILES ---
@@ -445,32 +453,101 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
-    final myProfile = await client
-        .from('profiles')
-        .select('ghost_mode')
-        .eq('id', user.id)
-        .single();
-    final bool amIGhost = myProfile['ghost_mode'] ?? false;
+    bool amIGhost = false;
+    try {
+      final myProfile = await client
+          .from('profiles')
+          .select('ghost_mode')
+          .eq('id', user.id)
+          .single();
+      amIGhost = myProfile['ghost_mode'] == true;
+    } catch (e) {
+      debugPrint('profiles.ghost_mode unavailable, defaulting to visible: $e');
+    }
 
-    final friendsRelation =
-        await client.from('friends').select('friend_id').eq('user_id', user.id);
-    if (friendsRelation.isEmpty) return [];
+    // Fetch friend relations bidirectionally.  Try with specific columns first;
+    // fall back to a full select if the optional auto-added fields are missing.
+    List<Map<String, dynamic>> friendRelations = [];
+    try {
+      final friendsAsUser = await client
+          .from('friends')
+          .select(
+              'user_id, friend_id, auto_added, is_auto_added, added_automatically')
+          .eq('user_id', user.id);
+      final friendsAsFriend = await client
+          .from('friends')
+          .select(
+              'user_id, friend_id, auto_added, is_auto_added, added_automatically')
+          .eq('friend_id', user.id);
+      friendRelations = mergeFriendRelations(
+        friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
+        friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
+      );
+    } catch (e) {
+      debugPrint(
+          'friends table auto-added fields unavailable, falling back to full select: $e');
+      try {
+        final friendsAsUser = await client
+            .from('friends')
+            .select()
+            .eq('user_id', user.id);
+        final friendsAsFriend = await client
+            .from('friends')
+            .select()
+            .eq('friend_id', user.id);
+        friendRelations = mergeFriendRelations(
+          friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
+          friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
+        );
+      } catch (e2) {
+        debugPrint('friends table fallback select also failed: $e2');
+        return [];
+      }
+    }
+    if (friendRelations.isEmpty) return [];
 
-    final friendIds =
-        (friendsRelation as List).map((e) => e['friend_id']).toList();
+    final autoAddedMap =
+        friendAutoAddedMapForUser(user.id, friendRelations: friendRelations);
+    final friendIds = autoAddedMap.keys.toList();
+    if (friendIds.isEmpty) return [];
 
-    final profiles = await client
-        .from('profiles')
-        .select(
-            'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode')
-        .filter('id', 'in', friendIds);
-    final profileMap = {for (var p in profiles) p['id']: p};
+    // Fetch friend profiles.  Try with extended fields (ghost_mode, created_at)
+    // and fall back gracefully when those columns are absent in older schemas.
+    List profileRows = [];
+    try {
+      profileRows = await client
+          .from('profiles')
+          .select(
+              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, created_at')
+          .filter('id', 'in', friendIds);
+    } catch (e) {
+      debugPrint(
+          'profiles extended fields unavailable, falling back to basic select: $e');
+      try {
+        profileRows = await client
+            .from('profiles')
+            .select('id, username, avatar_url, avatar_emoji, theme_color')
+            .filter('id', 'in', friendIds);
+      } catch (e2) {
+        debugPrint('profiles basic select also failed: $e2');
+        return [];
+      }
+    }
+    final profileMap = {for (var p in profileRows) p['id']: p};
 
-    final locations = await client
-        .from('user_locations')
-        .select()
-        .filter('user_id', 'in', friendIds);
-    final locationMap = {for (var l in locations) l['user_id']: l};
+    // Fetch friend locations.  Missing or inaccessible table just means no
+    // real-time position is shown – friends are still listed.
+    List locationRows = [];
+    try {
+      locationRows = await client
+          .from('user_locations')
+          .select()
+          .filter('user_id', 'in', friendIds);
+    } catch (e) {
+      debugPrint(
+          'user_locations unavailable, friends will show without location: $e');
+    }
+    final locationMap = {for (var l in locationRows) l['user_id']: l};
 
     List<Map<String, dynamic>> result = [];
     for (var id in friendIds) {
@@ -498,6 +575,8 @@ class SupabaseService {
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
         'ghost_mode': isFriendGhost,
+        'created_at': profile['created_at'],
+        'is_auto_added': autoAddedMap[id] == true,
         'updated_at': updatedAt,
         'latitude': lat,
         'longitude': lng,
@@ -507,6 +586,88 @@ class SupabaseService {
     return result;
   }
 
+  @visibleForTesting
+  static List<Map<String, dynamic>> mergeFriendRelations({
+    required List<Map<String, dynamic>> friendsAsUser,
+    required List<Map<String, dynamic>> friendsAsFriend,
+  }) {
+    final mergedFriends = <Map<String, dynamic>>[
+      ...friendsAsUser,
+      ...friendsAsFriend,
+    ];
+    final dedupedByPair = <String, Map<String, Map<String, dynamic>>>{};
+    for (final relation in mergedFriends) {
+      final a = relation['user_id']?.toString();
+      final b = relation['friend_id']?.toString();
+      if (a == null || b == null) continue;
+
+      final normalizedPair = [a, b]..sort();
+      final pairA = normalizedPair[0];
+      final pairB = normalizedPair[1];
+      final secondLevel = dedupedByPair.putIfAbsent(pairA, () => {});
+      final existing = secondLevel[pairB];
+      if (existing == null) {
+        secondLevel[pairB] = relation;
+        continue;
+      }
+
+      final relationAutoAdded = _isAutoAddedFriendRelation(relation);
+      final existingAutoAdded = _isAutoAddedFriendRelation(existing);
+      final mergedAutoAdded = relationAutoAdded || existingAutoAdded;
+      final mergedRelation = <String, dynamic>{...existing};
+      if (mergedAutoAdded) {
+        mergedRelation['is_auto_added'] = true;
+      }
+      secondLevel[pairB] = mergedRelation;
+    }
+    return dedupedByPair.values.expand((relations) => relations.values).toList();
+  }
+
+  static bool _isAutoAddedFriendRelation(Map<String, dynamic> relation) {
+    const autoAddedKeys = [
+      'auto_added',
+      'is_auto_added',
+      'added_automatically',
+    ];
+    for (final key in autoAddedKeys) {
+      if (relation[key] == true) return true;
+    }
+    return false;
+  }
+
+  @visibleForTesting
+  static Map<dynamic, bool> friendAutoAddedMapForUser(
+    String userId, {
+    required List<Map<String, dynamic>> friendRelations,
+  }) {
+    final autoAddedMap = <dynamic, bool>{};
+    for (final relation in friendRelations) {
+      final relationUserId = relation['user_id'];
+      final relationFriendId = relation['friend_id'];
+
+      dynamic friendId;
+      if (relationUserId == userId) {
+        friendId = relationFriendId;
+      } else if (relationFriendId == userId) {
+        friendId = relationUserId;
+      } else if (relationUserId == null &&
+          relationFriendId != null &&
+          relationFriendId != userId) {
+        // Legacy/incomplete rows that only carry friend_id for this user.
+        friendId = relationFriendId;
+      } else {
+        continue;
+      }
+
+      if (friendId == null || friendId == userId) continue;
+      final isAutoAdded = _isAutoAddedFriendRelation(relation);
+      // Merge duplicate directional rows conservatively: if either side marks a
+      // friendship as auto-added, keep that signal for the combined friend entry.
+      autoAddedMap[friendId] = (autoAddedMap[friendId] ?? false) || isAutoAdded;
+    }
+    return autoAddedMap;
+  }
+
   static Stream<List<Map<String, dynamic>>> streamFriends() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
@@ -514,22 +675,34 @@ class SupabaseService {
     late StreamController<List<Map<String, dynamic>>> controller;
     StreamSubscription? sub1;
     StreamSubscription? sub2;
+    StreamSubscription? sub3;
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
+        Future<void>? inFlightRefresh;
         Future<void> update([dynamic _]) async {
-          try {
-            final friends = await getFriends();
-            if (!controller.isClosed) controller.add(friends);
-          } catch (e) {
-            debugPrint("Error streaming friends: $e");
-          }
+          if (inFlightRefresh != null) return inFlightRefresh;
+          inFlightRefresh = () async {
+            try {
+              final friends = await getFriends();
+              if (!controller.isClosed) controller.add(friends);
+            } catch (e) {
+              debugPrint("Error streaming friends: $e");
+            } finally {
+              inFlightRefresh = null;
+            }
+          }();
+          return inFlightRefresh;
         }
 
         // 1. Listen for location updates
         sub1 = client
             .from('user_locations')
-            .stream(primaryKey: ['user_id']).listen(update);
+            .stream(primaryKey: ['user_id']).listen(
+              update,
+              onError: (e) =>
+                  debugPrint('user_locations stream error (non-fatal): $e'),
+            );
 
         // 2. Listen for friend list changes (add/remove)
         // Assuming primary key is composite (user_id, friend_id)
@@ -537,7 +710,20 @@ class SupabaseService {
             .from('friends')
             .stream(primaryKey: ['user_id', 'friend_id'])
             .eq('user_id', user.id)
-            .listen(update);
+            .listen(
+              update,
+              onError: (e) =>
+                  debugPrint('friends stream (user_id) error (non-fatal): $e'),
+            );
+        sub3 = client
+            .from('friends')
+            .stream(primaryKey: ['user_id', 'friend_id'])
+            .eq('friend_id', user.id)
+            .listen(
+              update,
+              onError: (e) =>
+                  debugPrint('friends stream (friend_id) error (non-fatal): $e'),
+            );
 
         // Initial fetch
         update();
@@ -545,6 +731,7 @@ class SupabaseService {
       onCancel: () async {
         await sub1?.cancel();
         await sub2?.cancel();
+        await sub3?.cancel();
       },
     );
 
@@ -587,7 +774,7 @@ class SupabaseService {
   static Future<void> acceptFriendRequest(String senderId) async {
     await client
         .rpc('accept_friend_request', params: {'request_sender_id': senderId});
-    friendsListRefresh.value++;
+    triggerFriendsListRefresh();
   }
 
   static Future<void> rejectFriendRequest(String senderId) async {
@@ -618,7 +805,7 @@ class SupabaseService {
     if (user == null) return;
     try {
       await client.rpc('remove_friend', params: {'target_friend_id': friendId});
-      friendsListRefresh.value++;
+      triggerFriendsListRefresh();
     } catch (e) {
       debugPrint("Error removing friend: $e");
     }

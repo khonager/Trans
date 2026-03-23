@@ -60,13 +60,34 @@ class AppError {
     required String source,
     String? fallback,
   }) async {
-    log(error, stackTrace: stackTrace, source: source);
     if (!context.mounted) return;
 
     final messenger = ScaffoldMessenger.of(context);
     final message = userMessage(context, error, fallback: fallback);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
+    await showReportableSnackBar(
+      context,
+      message: message,
+      source: source,
+      error: error,
+      stackTrace: stackTrace,
+      messenger: messenger,
+    );
+  }
+
+  static Future<void> showReportableSnackBar(
+    BuildContext context, {
+    required String message,
+    required String source,
+    Object? error,
+    StackTrace? stackTrace,
+    ScaffoldMessengerState? messenger,
+  }) async {
+    log(error ?? message, stackTrace: stackTrace, source: source);
+    if (!context.mounted) return;
+
+    final scaffoldMessenger = messenger ?? ScaffoldMessenger.of(context);
+    scaffoldMessenger.hideCurrentSnackBar();
+    scaffoldMessenger.showSnackBar(
       SnackBar(
         content: Text(message),
         action: SnackBarAction(
@@ -75,7 +96,7 @@ class AppError {
             unawaited(
               _showReportDialog(
                 context,
-                error: error,
+                error: error ?? message,
                 stackTrace: stackTrace,
                 source: source,
                 userMessage: message,

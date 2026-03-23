@@ -10,35 +10,42 @@ workflows:
         - app_store_credentials
 
       vars:
-        # Replace with your actual values
         BUNDLE_ID: "de.khonager.trans.ios"
-        APP_STORE_APP_ID: "YOUR_APP_ID" # Get from App Store Connect (numeric ID)
+        APP_STORE_APP_ID: "6760699168"
 
       flutter: stable
       xcode: latest
       cocoapods: default
 
     scripts:
-      - name: Set up code signing settings on Xcode project
+      - name: Create .env file
         script: |
-          xcode-project use-profiles
+          echo "SUPABASE_URL=$SUPABASE_URL" > .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+          echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
 
       - name: Get Flutter packages
         script: |
           flutter pub get
 
-      - name: Create .env file
-        script: |
-          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
-          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
-
       - name: Install pods
         script: |
           find . -name "Podfile" -execdir pod install \;
 
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+
       - name: Flutter build ipa
         script: |
           flutter build ipa --release \
+            --no-tree-shake-icons \
+            --build-name=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//') \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
@@ -73,7 +80,7 @@ workflows:
       events:
         - push
       branch_patterns:
-        - pattern: 'develop'
+        - pattern: "develop"
           include: true
 
     environment:
@@ -90,14 +97,15 @@ workflows:
         script: |
           xcode-project use-profiles
 
+      - name: Create .env file
+        script: |
+          echo "SUPABASE_URL=$SUPABASE_URL" > .env
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
+          echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
+
       - name: Get Flutter packages
         script: |
           flutter pub get
-
-      - name: Create .env file
-        script: |
-          echo "SUPABASE_URL=$SUPABASE_URL" >> .env
-          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
 
       - name: Install pods
         script: |

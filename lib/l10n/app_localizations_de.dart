@@ -804,8 +804,7 @@ class AppLocalizationsDe extends AppLocalizations {
       'Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).';
 
   @override
-  String get incorrectPasswordOrRpcMissing =>
-      'Falsches Passwort oder Fehler (RPC fehlt?)';
+  String get incorrectPasswordOrRpcMissing => 'Falsches Passwort.';
 
   @override
   String get changeUsername => 'Benutzernamen ändern';

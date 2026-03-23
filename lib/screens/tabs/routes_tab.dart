@@ -39,8 +39,119 @@ const List<IconData> kAvailableIcons = [
   Icons.local_cafe,
   Icons.local_airport
 ];
+const int _activeJourneyRefreshWindowSize = 8;
 
 enum RouteHistoryView { frequent, recent }
+
+@visibleForTesting
+({int leadMinutes, int waitMinutes}) savedJourneyReminderOptionFromWait(
+  int reminderMinutes,
+) {
+  return (leadMinutes: reminderMinutes, waitMinutes: reminderMinutes);
+}
+
+@visibleForTesting
+String formatRideLineWithPlatform(String line, String? platform) {
+  final normalizedLine = line.trim();
+  final normalizedPlatform = platform?.trim();
+  if (normalizedLine.isEmpty ||
+      normalizedPlatform == null ||
+      normalizedPlatform.isEmpty) {
+    return normalizedLine;
+  }
+
+  if (normalizedLine.contains('(Pl.') || normalizedLine.contains('(Gl.')) {
+    return normalizedLine;
+  }
+
+  final isNumericPlatform = int.tryParse(normalizedPlatform) != null;
+  final formattedPlatform =
+      isNumericPlatform ? 'Pl. $normalizedPlatform' : normalizedPlatform;
+  return '$normalizedLine ($formattedPlatform)';
+}
+
+final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
+
+@visibleForTesting
+String formatRideDisplayLine({
+  required String line,
+  String? platform,
+  String? arrivalPlatform,
+  String? tripId,
+  required bool showTrainNumbers,
+}) {
+  String baseLine = line.trim();
+  final normalizedTripId = tripId?.trim();
+  if (!showTrainNumbers) {
+    baseLine =
+        baseLine.replaceAll(_embeddedNumericParenthesesPattern, '').trim();
+
+    if (normalizedTripId != null && normalizedTripId.isNotEmpty) {
+      final escapedTripId = RegExp.escape(normalizedTripId);
+      baseLine = baseLine
+          .replaceAll(RegExp(r'\s*\(\s*' + escapedTripId + r'\s*\)'), '')
+          .replaceAll(RegExp(r'\b' + escapedTripId + r'\b'), '')
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+    }
+  }
+
+  final effectivePlatform = platform?.trim().isNotEmpty == true
+      ? platform
+      : arrivalPlatform;
+  final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
+
+  if (showTrainNumbers &&
+      normalizedTripId != null &&
+      normalizedTripId.isNotEmpty &&
+      !displayLine.contains(normalizedTripId)) {
+    return '$displayLine ($normalizedTripId)';
+  }
+
+  return displayLine;
+}
+
+@visibleForTesting
+bool savedJourneyLongPressShowsDelete({
+  required bool isCompleted,
+  required bool isLegacy,
+  required bool hasStarted,
+}) {
+  return isCompleted || isLegacy || hasStarted;
+}
+
+String _ellipsize(String value, int maxLength) {
+  final normalized = value.trim();
+  if (normalized.length <= maxLength) return normalized;
+  if (maxLength <= 1) return '…';
+  return '${normalized.substring(0, maxLength - 1)}…';
+}
+
+@visibleForTesting
+String compactSavedRouteLabel(String fromName, String toName) {
+  final from = fromName.trim();
+  final to = toName.trim();
+  if (to.isEmpty) return '';
+  if (from.isEmpty) return _ellipsize(to, 34);
+  return '${_ellipsize(from, 16)} → ${_ellipsize(to, 16)}';
+}
+
+const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
+const int _savedRouteStatusDetailMaxLength = 38;
+
+@visibleForTesting
+int savedRouteStatusNotificationIdForKey(String routeKey) {
+  // Salt separates saved-route IDs from other notification families.
+  return ((routeKey.hashCode * 31) ^ _savedRouteStatusNotificationIdSalt) &
+      0x7fffffff;
+}
+
+String _journeyRefreshSignature(Iterable<Journey> journeys) {
+  return journeys
+      .map((j) =>
+          "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
+      .join("||");
+}
 
 class _SuggestionSection {
   final String? title;
@@ -425,6 +536,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
     });
+  }
+
+  void _showRouteRefreshToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // --- WAKE ALARM LOGIC ---
@@ -1323,8 +1444,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final options = <({int leadMinutes, int waitMinutes})>[];
     for (final wait in waits) {
       if (wait > remainingMinutes) continue;
-      final lead = max(0, remainingMinutes - wait);
-      options.add((leadMinutes: lead, waitMinutes: wait));
+      options.add(savedJourneyReminderOptionFromWait(wait));
     }
     return options;
   }
@@ -1642,6 +1762,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _notifySavedJourneyStatusChange({
+    required String routeKey,
     required Map<String, dynamic> item,
     required bool stillPossible,
     required String detail,
@@ -1669,14 +1790,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       linux: const LinuxNotificationDetails(),
     );
 
-    final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
-    final statusText =
-        stillPossible ? 'Trip still possible' : 'Trip no longer possible';
+    final routeLabel = compactSavedRouteLabel(fromName, toName);
+    final statusText = stillPossible ? 'Still possible' : 'No longer possible';
+    // Keep body concise on Android while still showing the key status reason.
+    final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
+    final message = routeLabel.isEmpty
+        ? '$compactDetail · $statusText'
+        : '$routeLabel · $compactDetail · $statusText';
     await _notificationsPlugin.show(
-      id: (routeLabel.hashCode ^ DateTime.now().millisecondsSinceEpoch) &
-          0x7fffffff,
+      id: savedRouteStatusNotificationIdForKey(routeKey),
       title: 'Saved route changed',
-      body: '$routeLabel: $detail. $statusText.',
+      body: message,
       notificationDetails: details,
     );
   }
@@ -1723,6 +1847,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     (previousStatusSignature != null &&
                         previousStatusSignature.startsWith('unavailable')))) {
               await _notifySavedJourneyStatusChange(
+                routeKey: key,
                 item: item,
                 stillPossible: true,
                 detail: status.detail,
@@ -1733,6 +1858,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           } else {
             if (previousStatusSignature != 'unavailable') {
               await _notifySavedJourneyStatusChange(
+                routeKey: key,
                 item: item,
                 stillPossible: false,
                 detail: status.detail,
@@ -2276,13 +2402,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
           startStationId: leg['origin']?['id']?.toString(),
-          platform: leg['origin']?['platform']
-              ?.toString(), // Ensure origin platform is used here too if I missed it before?
-          // Wait, leg['platform'] was used before. I should check if I changed it in previous steps.
-          // In step 283 I changed the flushTransferBuffer call, but not the JourneyStep creation for 'ride'.
-          // Let's verify line 865 in previous view.
-          // It was: platform: leg['platform']?.toString(),
-          // I should change it to leg['origin']?['platform']?.toString() AND add arrivalPlatform.
+          platform: leg['origin']?['platform']?.toString(),
           arrivalPlatform: leg['destination']?['platform']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']),
@@ -3472,6 +3592,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               final cardKey = _savedJourneyUiKey(item) ?? 'saved-$idx';
               final isCompleted = _isSavedJourneyCompleted(item);
               final isLegacy = _isLegacySavedJourney(item);
+              final departure = _savedJourneyDepartureLocal(item);
+              final hasStarted =
+                  departure != null && !DateTime.now().isBefore(departure);
               final showingReminderPicker =
                   _savedReminderPickerVisibleFor.contains(cardKey);
               final showingCompletedDelete =
@@ -3502,7 +3625,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   _openSavedJourney(item);
                 },
                 onLongPress: () {
-                  if (isCompleted || isLegacy) {
+                  if (savedJourneyLongPressShowsDelete(
+                    isCompleted: isCompleted,
+                    isLegacy: isLegacy,
+                    hasStarted: hasStarted,
+                  )) {
                     setState(() {
                       _savedReminderPickerVisibleFor.remove(cardKey);
                       _savedCompletedDeleteVisibleFor
@@ -4122,11 +4249,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute) return;
 
     // We want to reset pagination and reload the initial search window.
-    setState(() => _isLoadingRoute = true);
+    final refreshToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = refreshToken;
+      _isLoadingRoute = true;
+    });
 
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final previousCandidates = route.candidates ?? const <Journey>[];
+      final previousSignature = _journeyRefreshSignature(previousCandidates);
+      bool hasRefreshResults = false;
+      bool hasChanged = false;
 
       // Keep a small buffer in the past so recently due/late services are still refreshable.
       DateTime refDate = DateTime.now().subtract(const Duration(minutes: 10));
@@ -4141,7 +4276,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       void handleResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty || !mounted) return;
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(refreshToken)) {
+          return;
+        }
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -4149,8 +4288,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           } catch (e) {/* ignore */}
         }
 
+        // handleResults may run multiple times (partial + final). We keep the
+        // latest comparison so the completion toast reflects the final visible
+        // candidate list after refresh settles.
+        final newSignature = _journeyRefreshSignature(newJourneys);
+        hasChanged = previousSignature != newSignature;
+        hasRefreshResults = true;
+
         setState(() {
           _isLoadingRoute = false;
+          _activeRouteSearchToken = null;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4168,16 +4315,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         results: 5,
         onPartialResults: handleResults,
       );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
+      if (!_isRouteSearchCancelled(refreshToken) && mounted) {
+        _showRouteRefreshToast(
+          hasRefreshResults
+              ? (hasChanged
+                  ? "Route refresh finished: alternatives updated."
+                  : "Route refresh finished: no changes.")
+              : "Route refresh finished.",
+        );
+      }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotRefreshRoutes(e.toString()))));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(refreshToken);
     }
   }
 
@@ -4308,18 +4465,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _refreshActiveJourney(RouteTab route) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
-    setState(() => _isLoadingRoute = true);
+    final refreshToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = refreshToken;
+      _isLoadingRoute = true;
+    });
 
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final previousJourney = route.activeJourney!;
+      final previousSignature = _savedJourneyRealtimeSignature(previousJourney);
+      bool hasMatchedUpdate = false;
+      String? completionMessage;
 
       // Use planned departure time as the anchor for refresh
-      final DateTime refDate = route.activeJourney!.plannedDeparture ??
-          route.activeJourney!.departure;
+      final DateTime refDate =
+          previousJourney.plannedDeparture ?? previousJourney.departure;
 
       void handleResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty || !mounted) return;
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(refreshToken)) {
+          return;
+        }
         final idx = _tabs.indexWhere((t) => t.id == route.id);
         if (idx == -1) return;
         final currentRoute = _tabs[idx];
@@ -4339,8 +4508,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (matched != null) {
           final upd =
               _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
+          final updatedSignature = _savedJourneyRealtimeSignature(upd);
+          final hasChanged = updatedSignature != previousSignature;
           setState(() {
             _isLoadingRoute = false;
+            _activeRouteSearchToken = null;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
             if (freshIdx != -1) {
               final latest = _tabs[freshIdx];
@@ -4362,6 +4534,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       FormatUtils.formatDuration(upd.duration.inMinutes));
             }
           });
+          hasMatchedUpdate = true;
+          completionMessage = hasChanged
+              ? "Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: matched)}."
+              : "Route refresh finished: no changes.";
         }
       }
 
@@ -4371,19 +4547,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate.subtract(const Duration(minutes: 20)),
         isArrival: false,
-        results: 20,
+        // We only need a compact window around the active trip to merge live updates.
+        results: _activeJourneyRefreshWindowSize,
         onPartialResults: handleResults,
       );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
+        _showRouteRefreshToast(
+          completionMessage ??
+              (hasMatchedUpdate
+                  ? "Route refresh finished."
+                  : "Route refresh finished: no matching update found."),
+        );
+      }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
                 AppLocalizations.of(context)!.refreshFailed(e.toString()))));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _disposeRouteSearch(refreshToken);
     }
   }
 
@@ -4464,38 +4650,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       : route.subtitle,
                                   style:
                                       TextStyle(color: colors.textSecondary)),
-                              if (route.source != null) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                        color: route.source == 'motis'
-                                            ? Colors.blue.withValues(alpha: 0.2)
-                                            : Colors.red.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(4)),
-                                    child: Row(children: [
-                                      Icon(
-                                          route.source == 'motis'
-                                              ? Icons.public
-                                              : Icons.dns,
-                                          size: 10,
-                                          color: route.source == 'motis'
-                                              ? Colors.blue
-                                              : Colors.red),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                          route.source == 'motis'
-                                              ? 'Transitous'
-                                              : 'DB',
-                                          style: TextStyle(
-                                              color: route.source == 'motis'
-                                                  ? Colors.blue
-                                                  : Colors.red,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold))
-                                    ]))
-                              ]
                             ])
                           ])),
                       IconButton(
@@ -4674,30 +4828,15 @@ class _StepCardState extends State<_StepCard> {
                           child: Row(
                         children: [
                           Builder(builder: (context) {
-                            String displayLine = step.line.trim();
+                            final displayLine = formatRideDisplayLine(
+                              line: step.line,
+                              platform: step.platform,
+                              arrivalPlatform: step.arrivalPlatform,
+                              tripId: step.tripId,
+                              showTrainNumbers: widget.showTrainNumbers,
+                            );
 
-                            if (!widget.showTrainNumbers) {
-                              final regexParens = RegExp(r'\s*\(\d+\)$');
-                              displayLine = displayLine
-                                  .replaceAll(regexParens, '')
-                                  .trim();
-
-                              if (step.tripId != null) {
-                                displayLine = displayLine
-                                    .replaceAll(step.tripId!, "")
-                                    .trim();
-                              }
-                            }
-
-                            String suffix = "";
-                            if (widget.showTrainNumbers &&
-                                step.tripId != null) {
-                              if (!displayLine.contains(step.tripId!)) {
-                                suffix = " (${step.tripId})";
-                              }
-                            }
-
-                            return Text("$displayLine$suffix",
+                            return Text(displayLine,
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     color: colors.textPrimary));

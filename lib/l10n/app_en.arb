@@ -510,7 +510,7 @@
   "emailSettings": "Email",
   "newPasswordOpt": "New Password",
   "profileUpdated": "Profile updated! Check email for confirmation if changed.",
-  "incorrectPasswordOrRpcMissing": "Incorrect password or error (RPC missing?)",
+  "incorrectPasswordOrRpcMissing": "Incorrect password.",
   "changeUsername": "Change Username",
   "changeEmail": "Change Email",
   "changePassword": "Change Password",

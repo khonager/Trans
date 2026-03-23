@@ -657,7 +657,14 @@ class _TicketPanelState extends State<TicketPanel> {
                       alignment: Alignment.center,
                       children: [
                         if (showGeneratedQr)
-                          _buildStyledQr(colors)
+                          GestureDetector(
+                            onTap: _styledQrBytes == null
+                                ? null
+                                : () => _openFullScreen(
+                                      MemoryImage(_styledQrBytes!),
+                                    ),
+                            child: _buildStyledQr(),
+                          )
                         else
                           GestureDetector(
                             onTap: () => _openFullScreen(imageToShow!),
@@ -823,28 +830,19 @@ class _TicketPanelState extends State<TicketPanel> {
     );
   }
 
-  Widget _buildStyledQr(TransColors colors) {
+  Widget _buildStyledQr() {
     final styled = _styledQrBytes;
     if (styled == null) return const SizedBox.shrink();
-    final qrBg = colors.ticketSheetBg;
 
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: qrBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.divider),
-      ),
       child: AspectRatio(
         aspectRatio: 1,
-        child: Center(
-          child: Image.memory(
-            styled,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.none,
-            gaplessPlayback: true,
-          ),
+        child: Image.memory(
+          styled,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.none,
+          gaplessPlayback: true,
         ),
       ),
     );

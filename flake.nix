@@ -111,6 +111,19 @@
             export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
             export JAVA_HOME="${pkgs.jdk17}"
 
+            # Let Xcode and Flutter use the native Apple toolchain for iOS builds.
+            # The Nix C toolchain variables break device linking/archive builds on macOS.
+            unset AR
+            unset CC
+            unset CXX
+            unset DEVELOPER_DIR
+            unset LD
+            unset MACOSX_DEPLOYMENT_TARGET
+            unset NM
+            unset RANLIB
+            unset SDKROOT
+            unset STRIP
+
             # macOS-specific: Use system Chrome or installed browser
             if [ -e "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
               export CHROME_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
