@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationManager {
@@ -63,6 +64,30 @@ class NotificationManager {
       await iosImplementation.requestPermissions(
           alert: true, badge: true, sound: true);
     }
+  }
+
+  /// Recreates the wake_alarm_channel with [vibrationPattern] so that
+  /// background notifications use the user's custom vibration.
+  /// On Android 8.0+ channel settings are immutable after first creation,
+  /// so we delete the old channel and create a fresh one each time the
+  /// alarm is started.
+  static Future<void> updateWakeAlarmChannel(List<int> vibrationPattern) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+    await androidImplementation.deleteNotificationChannel(
+        channelId: 'wake_alarm_channel');
+    await androidImplementation
+        .createNotificationChannel(AndroidNotificationChannel(
+      'wake_alarm_channel',
+      'Wake Alarm',
+      description: 'Alarms for arriving at station',
+      importance: Importance.max,
+      enableVibration: true,
+      vibrationPattern: Int64List.fromList(vibrationPattern),
+    ));
   }
 
   static Future<void> showNotification({
