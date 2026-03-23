@@ -68,10 +68,12 @@ class TransportApi {
     for (int attempt = 0; attempt <= retries; attempt++) {
       try {
         debugPrint("Fetching: $uri");
-        final response = await http.get(uri, headers: {
-          'User-Agent': userAgent,
-          'Accept': 'application/json',
-        }).timeout(const Duration(seconds: 15));
+        final response = await http
+            .get(
+              uri,
+              headers: {'User-Agent': userAgent, 'Accept': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 15));
 
         if (response.statusCode == 200) return response;
 
@@ -79,7 +81,8 @@ class TransportApi {
         if (response.statusCode == 503 && attempt < retries) {
           final delay = Duration(milliseconds: 500 * (attempt + 1));
           debugPrint(
-              "API returned 503, retrying in ${delay.inMilliseconds}ms...");
+            "API returned 503, retrying in ${delay.inMilliseconds}ms...",
+          );
           await Future.delayed(delay);
           continue;
         }
@@ -90,7 +93,8 @@ class TransportApi {
         if (attempt < retries) {
           final delay = Duration(milliseconds: 500 * (attempt + 1));
           debugPrint(
-              "Network Error: $e, retrying in ${delay.inMilliseconds}ms...");
+            "Network Error: $e, retrying in ${delay.inMilliseconds}ms...",
+          );
           await Future.delayed(delay);
           continue;
         }
@@ -117,8 +121,11 @@ class TransportApi {
     return Uri.parse(url);
   }
 
-  static Future<List<Station>> _searchStationsV6(String query,
-      {double? lat, double? lng}) async {
+  static Future<List<Station>> _searchStationsV6(
+    String query, {
+    double? lat,
+    double? lng,
+  }) async {
     final Map<String, dynamic> params = {
       'query': query,
       'results': 20,
@@ -137,12 +144,14 @@ class TransportApi {
   }
 
   static Future<List<Station>> _getNearbyStopsV6(double lat, double lng) async {
-    final response = await _fetch(_getV6Uri('/stops/nearby', {
-      'latitude': lat,
-      'longitude': lng,
-      'results': 5,
-      'distance': 1000,
-    }));
+    final response = await _fetch(
+      _getV6Uri('/stops/nearby', {
+        'latitude': lat,
+        'longitude': lng,
+        'results': 5,
+        'distance': 1000,
+      }),
+    );
     final List<dynamic> data = json.decode(response.body);
     return data.map((json) => Station.fromJson(json)).toList();
   }
@@ -202,7 +211,9 @@ class TransportApi {
       return true;
     }
     if (_containsAnyServiceToken(
-        productName, _nonDeutschlandticketServiceTokens)) {
+      productName,
+      _nonDeutschlandticketServiceTokens,
+    )) {
       return true;
     }
 
@@ -210,13 +221,17 @@ class TransportApi {
     final lineName = normalizeServiceText(line['name']);
     if (lineName.contains('FLX') || lineName.contains('FLIX')) return true;
     if (_containsAnyServiceToken(
-        lineName, _nonDeutschlandticketServiceTokens)) {
+      lineName,
+      _nonDeutschlandticketServiceTokens,
+    )) {
       return true;
     }
 
     final lineNumber = _lineNumberText(line);
     if (_containsAnyServiceToken(
-        lineNumber, _nonDeutschlandticketServiceTokens)) {
+      lineNumber,
+      _nonDeutschlandticketServiceTokens,
+    )) {
       return true;
     }
 
@@ -234,13 +249,15 @@ class TransportApi {
 
   /// Filters out journeys that contain non-Deutschlandticket legs
   static List<Map<String, dynamic>> _filterForDeutschlandticket(
-      List<Map<String, dynamic>> journeys) {
+    List<Map<String, dynamic>> journeys,
+  ) {
     return journeys.where((journey) {
       final legs = journey['legs'] as List?;
       if (legs == null) return true;
       // Keep journey only if NO leg is a non-Deutschlandticket service
-      return !legs.any((leg) =>
-          leg is Map<String, dynamic> && _isNonDeutschlandticketLeg(leg));
+      return !legs.any(
+        (leg) => leg is Map<String, dynamic> && _isNonDeutschlandticketLeg(leg),
+      );
     }).toList();
   }
 
@@ -318,15 +335,16 @@ class TransportApi {
     if (params == null || params.isEmpty) return uri;
 
     return uri.replace(
-        queryParameters:
-            params.map((k, v) => MapEntry(k, v?.toString() ?? '')));
+      queryParameters: params.map((k, v) => MapEntry(k, v?.toString() ?? '')),
+    );
   }
 
-  static Future<List<Station>> _searchStationsMotis(String query,
-      {double? lat, double? lng}) async {
-    final Map<String, dynamic> params = {
-      'text': query,
-    };
+  static Future<List<Station>> _searchStationsMotis(
+    String query, {
+    double? lat,
+    double? lng,
+  }) async {
+    final Map<String, dynamic> params = {'text': query};
 
     if (lat != null && lng != null) {
       params['place'] = '$lat,$lng';
@@ -342,11 +360,15 @@ class TransportApi {
   }
 
   static Future<List<Station>> _getNearbyStopsMotis(
-      double lat, double lng) async {
-    final response = await _fetch(_getMotisUri('/api/v1/reverse-geocode', {
-      'place': '$lat,$lng',
-      'type': 'STOP', // Only return transit stops
-    }));
+    double lat,
+    double lng,
+  ) async {
+    final response = await _fetch(
+      _getMotisUri('/api/v1/reverse-geocode', {
+        'place': '$lat,$lng',
+        'type': 'STOP', // Only return transit stops
+      }),
+    );
     final List<dynamic> data = json.decode(response.body);
     return data.map((match) => stationFromMotisMatch(match)).toList();
   }
@@ -423,8 +445,11 @@ class TransportApi {
 
   /// Search for stations/addresses by query
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
-  static Future<List<Station>> searchStations(String query,
-      {double? lat, double? lng}) async {
+  static Future<List<Station>> searchStations(
+    String query, {
+    double? lat,
+    double? lng,
+  }) async {
     final sanitizedQuery = _sanitizeStationQuery(query);
     if (sanitizedQuery.isEmpty) return [];
 
@@ -439,16 +464,23 @@ class TransportApi {
     final inFlight = _stationSearchInFlight[cacheKey];
     if (inFlight != null) return inFlight;
 
-    final future =
-        _searchStationsInternal(sanitizedQuery, cacheKey, lat: lat, lng: lng);
+    final future = _searchStationsInternal(
+      sanitizedQuery,
+      cacheKey,
+      lat: lat,
+      lng: lng,
+    );
     _stationSearchInFlight[cacheKey] = future;
     future.whenComplete(() => _stationSearchInFlight.remove(cacheKey));
     return future;
   }
 
   static Future<List<Station>> _searchStationsInternal(
-      String query, String cacheKey,
-      {double? lat, double? lng}) async {
+    String query,
+    String cacheKey, {
+    double? lat,
+    double? lng,
+  }) async {
     if (apiMode == 'v6') {
       final result = await _searchStationsV6(query, lat: lat, lng: lng);
       final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
@@ -463,27 +495,44 @@ class TransportApi {
       debugPrint('Transitous searchStations failed: $error');
     }
 
-    final rankedMotis =
-        rankStationsForQuery(motisResults, query, lat: lat, lng: lng);
+    final rankedMotis = rankStationsForQuery(
+      motisResults,
+      query,
+      lat: lat,
+      lng: lng,
+    );
 
     if (apiMode == 'motis') {
-      _stationCache[cacheKey] =
-          _CacheEntry(rankedMotis, const Duration(hours: 1));
+      _stationCache[cacheKey] = _CacheEntry(
+        rankedMotis,
+        const Duration(hours: 1),
+      );
       return rankedMotis;
     }
 
-    if (!_shouldAugmentStationResultsWithV6(rankedMotis, query,
-        lat: lat, lng: lng)) {
-      _stationCache[cacheKey] =
-          _CacheEntry(rankedMotis, const Duration(hours: 1));
+    if (!_shouldAugmentStationResultsWithV6(
+      rankedMotis,
+      query,
+      lat: lat,
+      lng: lng,
+    )) {
+      _stationCache[cacheKey] = _CacheEntry(
+        rankedMotis,
+        const Duration(hours: 1),
+      );
       return rankedMotis;
     }
 
-    final v6Results =
-        await _searchStationsV6WithCooldown(query, lat: lat, lng: lng);
+    final v6Results = await _searchStationsV6WithCooldown(
+      query,
+      lat: lat,
+      lng: lng,
+    );
     if (v6Results.isEmpty) {
-      _stationCache[cacheKey] =
-          _CacheEntry(rankedMotis, const Duration(hours: 1));
+      _stationCache[cacheKey] = _CacheEntry(
+        rankedMotis,
+        const Duration(hours: 1),
+      );
       return rankedMotis;
     }
 
@@ -494,7 +543,9 @@ class TransportApi {
   }
 
   static List<Station> _mergeStations(
-      List<Station> primary, List<Station> secondary) {
+    List<Station> primary,
+    List<Station> secondary,
+  ) {
     final merged = <Station>[];
     final seen = <String>{};
 
@@ -524,12 +575,16 @@ class TransportApi {
     return '${station.name.trim().toLowerCase()}|$lat|$lng';
   }
 
-  static Future<List<Station>> _searchStationsV6WithCooldown(String query,
-      {double? lat, double? lng}) async {
+  static Future<List<Station>> _searchStationsV6WithCooldown(
+    String query, {
+    double? lat,
+    double? lng,
+  }) async {
     final cooldownUntil = _v6StationsCooldownUntil;
     if (cooldownUntil != null && DateTime.now().isBefore(cooldownUntil)) {
       debugPrint(
-          'Skipping v6 station search during cooldown for query: $query');
+        'Skipping v6 station search during cooldown for query: $query',
+      );
       return const <Station>[];
     }
 
@@ -547,14 +602,18 @@ class TransportApi {
   }
 
   static bool _shouldAugmentStationResultsWithV6(
-      List<Station> motisResults, String query,
-      {double? lat, double? lng}) {
+    List<Station> motisResults,
+    String query, {
+    double? lat,
+    double? lng,
+  }) {
     if (motisResults.isEmpty) return true;
 
     final queryTokens = _searchTokens(query);
     final topResults = motisResults.take(5).toList();
-    final transitResults =
-        topResults.where((station) => _isTransitStation(station)).toList();
+    final transitResults = topResults
+        .where((station) => _isTransitStation(station))
+        .toList();
 
     if (_isAirportLikeQuery(queryTokens)) {
       return transitResults.isEmpty ||
@@ -577,8 +636,11 @@ class TransportApi {
 
   @visibleForTesting
   static List<Station> rankStationsForQuery(
-      List<Station> stations, String query,
-      {double? lat, double? lng}) {
+    List<Station> stations,
+    String query, {
+    double? lat,
+    double? lng,
+  }) {
     if (stations.length < 2) return stations;
 
     final normalizedQuery = _normalizeSearchText(query);
@@ -587,10 +649,20 @@ class TransportApi {
 
     final indexedStations = stations.asMap().entries.toList();
     indexedStations.sort((a, b) {
-      final scoreA = _stationSearchScore(a.value, normalizedQuery, queryTokens,
-          lat: lat, lng: lng);
-      final scoreB = _stationSearchScore(b.value, normalizedQuery, queryTokens,
-          lat: lat, lng: lng);
+      final scoreA = _stationSearchScore(
+        a.value,
+        normalizedQuery,
+        queryTokens,
+        lat: lat,
+        lng: lng,
+      );
+      final scoreB = _stationSearchScore(
+        b.value,
+        normalizedQuery,
+        queryTokens,
+        lat: lat,
+        lng: lng,
+      );
       final scoreCompare = scoreB.compareTo(scoreA);
       if (scoreCompare != 0) return scoreCompare;
       return a.key.compareTo(b.key);
@@ -600,17 +672,25 @@ class TransportApi {
   }
 
   static int _stationSearchScore(
-      Station station, String normalizedQuery, List<String> queryTokens,
-      {double? lat, double? lng}) {
+    Station station,
+    String normalizedQuery,
+    List<String> queryTokens, {
+    double? lat,
+    double? lng,
+  }) {
     final normalizedName = _normalizeSearchText(station.name);
     final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(_normalizeSearchText([
-      station.city,
-      station.region,
-      station.country,
-      station.category,
-      station.type,
-    ].whereType<String>().join(' ')));
+    final metadataTokens = _splitSearchTokens(
+      _normalizeSearchText(
+        [
+          station.city,
+          station.region,
+          station.country,
+          station.category,
+          station.type,
+        ].whereType<String>().join(' '),
+      ),
+    );
     final isTransitStop = station.type == 'station' || station.type == 'stop';
     final isAirportQuery = _isAirportLikeQuery(queryTokens);
     final hasLocationBias = lat != null && lng != null;
@@ -687,8 +767,12 @@ class TransportApi {
         lng != null &&
         station.latitude != null &&
         station.longitude != null) {
-      final distanceKm =
-          _distanceKm(lat, lng, station.latitude!, station.longitude!);
+      final distanceKm = _distanceKm(
+        lat,
+        lng,
+        station.latitude!,
+        station.longitude!,
+      );
       score += math.max(0, 120 - distanceKm.round());
     }
 
@@ -696,7 +780,9 @@ class TransportApi {
   }
 
   static bool _looksLikeAirport(
-      List<String> nameTokens, List<String> metadataTokens) {
+    List<String> nameTokens,
+    List<String> metadataTokens,
+  ) {
     const airportTokens = {
       'airport',
       'flughafen',
@@ -707,27 +793,35 @@ class TransportApi {
     };
 
     final allTokens = [...nameTokens, ...metadataTokens];
-    return allTokens.any((token) =>
-        airportTokens.contains(token) ||
-        token.startsWith('flughaf') ||
-        token.startsWith('airport'));
+    return allTokens.any(
+      (token) =>
+          airportTokens.contains(token) ||
+          token.startsWith('flughaf') ||
+          token.startsWith('airport'),
+    );
   }
 
   static bool _looksLikeAirportStation(Station station) {
     final normalizedName = _normalizeSearchText(station.name);
     final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(_normalizeSearchText([
-      station.city,
-      station.region,
-      station.country,
-      station.category,
-      station.type,
-    ].whereType<String>().join(' ')));
+    final metadataTokens = _splitSearchTokens(
+      _normalizeSearchText(
+        [
+          station.city,
+          station.region,
+          station.country,
+          station.category,
+          station.type,
+        ].whereType<String>().join(' '),
+      ),
+    );
     return _looksLikeAirport(nameTokens, metadataTokens);
   }
 
   static bool _looksLikeTransitHub(
-      String normalizedName, List<String> nameTokens) {
+    String normalizedName,
+    List<String> nameTokens,
+  ) {
     if (normalizedName.contains('hauptbahnhof') ||
         normalizedName.contains('main station') ||
         normalizedName.contains('central station') ||
@@ -752,8 +846,10 @@ class TransportApi {
   }
 
   static bool _looksLikeTransitHubStation(Station station) =>
-      _looksLikeTransitHub(_normalizeSearchText(station.name),
-          _splitSearchTokens(_normalizeSearchText(station.name)));
+      _looksLikeTransitHub(
+        _normalizeSearchText(station.name),
+        _splitSearchTokens(_normalizeSearchText(station.name)),
+      );
 
   static bool _isTransitStation(Station station) =>
       station.type == 'station' || station.type == 'stop';
@@ -771,22 +867,24 @@ class TransportApi {
       'street',
       'weg',
     ];
-    return tokens.any((token) => roadSuffixes
-        .any((suffix) => token.endsWith(suffix) && token != suffix));
+    return tokens.any(
+      (token) => roadSuffixes.any(
+        (suffix) => token.endsWith(suffix) && token != suffix,
+      ),
+    );
   }
 
   static bool _isAirportLikeQuery(List<String> queryTokens) => queryTokens.any(
-        (token) =>
-            token.startsWith('flughaf') ||
-            token.startsWith('airport') ||
-            token.startsWith('airpor') ||
-            token.startsWith('aerodrom'),
-      );
+    (token) =>
+        token.startsWith('flughaf') ||
+        token.startsWith('airport') ||
+        token.startsWith('airpor') ||
+        token.startsWith('aerodrom'),
+  );
 
-  static List<String> _searchTokens(String text) =>
-      _splitSearchTokens(_normalizeSearchText(text))
-          .where(_isMeaningfulSearchToken)
-          .toList();
+  static List<String> _searchTokens(String text) => _splitSearchTokens(
+    _normalizeSearchText(text),
+  ).where(_isMeaningfulSearchToken).toList();
 
   static List<String> _splitSearchTokens(String text) => text
       .split(RegExp(r'\s+'))
@@ -863,14 +961,19 @@ class TransportApi {
   }
 
   static double _distanceKm(
-      double lat1, double lng1, double lat2, double lng2) {
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2,
+  ) {
     const earthRadiusKm = 6371.0;
     final lat1Rad = _degreesToRadians(lat1);
     final lat2Rad = _degreesToRadians(lat2);
     final latDelta = _degreesToRadians(lat2 - lat1);
     final lngDelta = _degreesToRadians(lng2 - lng1);
 
-    final a = math.sin(latDelta / 2) * math.sin(latDelta / 2) +
+    final a =
+        math.sin(latDelta / 2) * math.sin(latDelta / 2) +
         math.cos(lat1Rad) *
             math.cos(lat2Rad) *
             math.sin(lngDelta / 2) *
@@ -908,8 +1011,10 @@ class TransportApi {
       try {
         // Fallback to v6.db
         final result = await _getNearbyStopsV6(lat, lng);
-        _nearbyCache[cacheKey] =
-            _CacheEntry(result, const Duration(minutes: 30));
+        _nearbyCache[cacheKey] = _CacheEntry(
+          result,
+          const Duration(minutes: 30),
+        );
         return result;
       } catch (e2) {
         debugPrint('v6.db getNearbyStops also failed: $e2');
@@ -970,29 +1075,31 @@ class TransportApi {
     // 3. AUTO MODE: HYBRID FETCHING
     try {
       // Launch both requests in parallel
-      final motisFuture = _searchJourneysMotis(
-        from,
-        to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      ).then((res) => res).catchError((e) {
-        debugPrint('Hybrid: Transitous failed: $e');
-        return <Map<String, dynamic>>[];
-      });
+      final motisFuture =
+          _searchJourneysMotis(
+            from,
+            to,
+            nahverkehrOnly: nahverkehrOnly,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          ).then((res) => res).catchError((e) {
+            debugPrint('Hybrid: Transitous failed: $e');
+            return <Map<String, dynamic>>[];
+          });
 
-      final v6Future = _searchJourneysV6(
-        from,
-        to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      ).then((res) => res).catchError((e) {
-        debugPrint('Hybrid: v6 failed: $e');
-        return <Map<String, dynamic>>[];
-      });
+      final v6Future =
+          _searchJourneysV6(
+            from,
+            to,
+            nahverkehrOnly: nahverkehrOnly,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          ).then((res) => res).catchError((e) {
+            debugPrint('Hybrid: v6 failed: $e');
+            return <Map<String, dynamic>>[];
+          });
 
       if (onPartialResults != null) {
         bool motisDone = false;
@@ -1057,7 +1164,9 @@ class TransportApi {
   /// Merges results from both APIs, preferring MOTIS for duplicates but including unique v6 trips
   @visibleForTesting
   static List<Map<String, dynamic>> mergeResults(
-      List<Map<String, dynamic>> motis, List<Map<String, dynamic>> v6) {
+    List<Map<String, dynamic>> motis,
+    List<Map<String, dynamic>> v6,
+  ) {
     if (motis.isEmpty) return v6;
     if (v6.isEmpty) return motis;
 
@@ -1110,9 +1219,14 @@ class TransportApi {
   /// Get walking route between two points
   /// Still uses OSRM - MOTIS handles walking in journey legs but not standalone
   static Future<List<List<double>>> getWalkingRoute(
-      double startLat, double startLng, double endLat, double endLng) async {
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) async {
     final uri = Uri.parse(
-        'http://router.project-osrm.org/route/v1/foot/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson');
+      'http://router.project-osrm.org/route/v1/foot/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson',
+    );
 
     try {
       final response = await _fetch(uri);
@@ -1129,7 +1243,7 @@ class TransportApi {
     }
     return [
       [startLat, startLng],
-      [endLat, endLng]
+      [endLat, endLng],
     ];
   }
 
@@ -1137,8 +1251,9 @@ class TransportApi {
   static Future<bool> testConnection() async {
     try {
       // Test Transitous
-      final motisUri =
-          Uri.parse('$_motisUrl/api/v1/geocode?text=Berlin&limit=1');
+      final motisUri = Uri.parse(
+        '$_motisUrl/api/v1/geocode?text=Berlin&limit=1',
+      );
       await _fetch(motisUri);
       return true;
     } catch (e) {
@@ -1152,6 +1267,59 @@ class TransportApi {
         debugPrint("v6.db connection test also failed: $e2");
         return false;
       }
+    }
+  }
+
+  /// Fetch all departures for a stop on a given day.
+  /// Tries MOTIS `/api/v1/stoptimes` first, falls back to v6.db `/stops/{id}/departures`.
+  static Future<List<Map<String, dynamic>>> fetchStopDepartures(
+    String stationId, {
+    DateTime? date,
+    int maxResults = 100,
+  }) async {
+    final day = date ?? DateTime.now();
+
+    // Build a window covering the full calendar day (00:00 – 23:59).
+    final start = DateTime(day.year, day.month, day.day, 0, 0, 0).toUtc();
+    final end = DateTime(day.year, day.month, day.day, 23, 59, 59).toUtc();
+
+    // ── MOTIS ───────────────────────────────────────────────────────────────
+    if (apiMode != 'v6') {
+      try {
+        final response = await _fetch(
+          _getMotisUri('/api/v1/stoptimes', {
+            'stopId': stationId,
+            'startTime': '${start.toIso8601String().split('.').first}Z',
+            'endTime': '${end.toIso8601String().split('.').first}Z',
+            'n': maxResults.toString(),
+          }),
+        );
+        final List<dynamic> raw = json.decode(response.body);
+        return raw.cast<Map<String, dynamic>>();
+      } catch (e) {
+        debugPrint('MOTIS fetchStopDepartures failed: $e');
+        if (apiMode == 'motis') rethrow;
+      }
+    }
+
+    // ── v6.db ────────────────────────────────────────────────────────────────
+    try {
+      // v6 only accepts numeric station IDs
+      final isNumeric = RegExp(r'^[0-9]+$').hasMatch(stationId);
+      if (!isNumeric) throw Exception('v6: non-numeric id $stationId');
+      final response = await _fetch(
+        _getV6Uri('/stops/$stationId/departures', {
+          'when': start.toIso8601String(),
+          'duration': 1440, // minutes in a day
+          'results': maxResults,
+        }),
+      );
+      final data = json.decode(response.body);
+      final List<dynamic> deps = data['departures'] ?? data ?? [];
+      return deps.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('v6 fetchStopDepartures failed: $e');
+      return [];
     }
   }
 

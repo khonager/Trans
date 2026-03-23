@@ -889,4 +889,21 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get german => 'Deutsch';
+
+  @override
+  String stopDeparturesTitle(String stopName) => 'Abfahrten an $stopName';
+
+  @override
+  String stopDeparturesDate(String date) => 'am $date';
+
+  @override
+  String get noDeparturesFound =>
+      'Keine Abfahrten für diese Haltestelle gefunden.';
+
+  @override
+  String get loadingDepartures => 'Abfahrten werden geladen...';
+
+  @override
+  String get longPressForDepartures =>
+      'Haltestelle lang drücken, um alle Abfahrten des Tages zu sehen.';
 }

@@ -17,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/notification_manager.dart';
 import 'package:trans/widgets/chat_sheet.dart';
+import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/utils/app_error.dart';
@@ -4987,29 +4988,40 @@ class _StepCardState extends State<_StepCard> {
                         decoration: BoxDecoration(
                             color:
                                 colors.stepStopoversBg.withValues(alpha: 0.5)),
-                        child: ListTile(
-                            dense: true,
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 20),
-                            leading: const Icon(Icons.login,
-                                size: 14, color: Colors.green),
-                            title: Text(
-                                step.platform != null
-                                    ? AppLocalizations.of(context)!
-                                        .boardAtPlatform(
-                                            step.startStationName ?? '',
-                                            step.platform!)
-                                    : AppLocalizations.of(context)!
-                                        .boardAt(step.startStationName ?? ''),
-                                style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold)),
-                            trailing: Text(step.departureTime,
-                                style: TextStyle(
-                                    color: colors.stepTimeText,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13)))),
+                        child: GestureDetector(
+                            onLongPress: step.startStationId != null
+                                ? () => StopDeparturesSheet.show(
+                                      context,
+                                      stopId: step.startStationId!,
+                                      stopName: step.startStationName!,
+                                      date: step.plannedDeparture ??
+                                          step.dateTime ??
+                                          DateTime.now(),
+                                    )
+                                : null,
+                            child: ListTile(
+                                dense: true,
+                                contentPadding:
+                                    const EdgeInsets.symmetric(horizontal: 20),
+                                leading: const Icon(Icons.login,
+                                    size: 14, color: Colors.green),
+                                title: Text(
+                                    step.platform != null
+                                        ? AppLocalizations.of(context)!
+                                            .boardAtPlatform(
+                                                step.startStationName ?? '',
+                                                step.platform!)
+                                        : AppLocalizations.of(context)!
+                                            .boardAt(step.startStationName ?? ''),
+                                    style: TextStyle(
+                                        color: colors.textPrimary,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold)),
+                                trailing: Text(step.departureTime,
+                                    style: TextStyle(
+                                        color: colors.stepTimeText,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13))))),
                   if (step.stopovers != null && step.stopovers!.isNotEmpty)
                     Container(
                         decoration:
@@ -5053,40 +5065,49 @@ class _StepCardState extends State<_StepCard> {
                                   }
                                 }
                               }
-                              return ListTile(
-                                  dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 20),
-                                  leading: const Icon(Icons.circle,
-                                      size: 8, color: Colors.grey),
-                                  title: Text(displayName,
-                                      style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 13)),
-                                  trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(timeStr,
-                                            style: TextStyle(
-                                                color: timeColor,
-                                                fontSize: 12)),
-                                        const SizedBox(width: 8),
-                                        if (exactStopDate != null)
-                                          IconButton(
-                                              icon: const Icon(Icons.alt_route,
-                                                  size: 16, color: Colors.blue),
-                                              // FIX: Pass exact stop time and location if available
-                                              onPressed: () =>
-                                                  widget.onOpenAlternatives(
-                                                      stopId, exactStopDate!,
-                                                      lat: stop['stop']
-                                                              ['location']
-                                                          ?['latitude'],
-                                                      lng: stop['stop']
-                                                              ['location']
-                                                          ?['longitude'],
-                                                      name: name))
-                                      ]));
+                              return GestureDetector(
+                                  onLongPress: stopId != null
+                                      ? () => StopDeparturesSheet.show(
+                                            context,
+                                            stopId: stopId as String,
+                                            stopName: name as String? ?? displayName,
+                                            date: exactStopDate ?? widget.step.dateTime ?? DateTime.now(),
+                                          )
+                                      : null,
+                                  child: ListTile(
+                                      dense: true,
+                                      contentPadding: const EdgeInsets.symmetric(
+                                          horizontal: 20),
+                                      leading: const Icon(Icons.circle,
+                                          size: 8, color: Colors.grey),
+                                      title: Text(displayName,
+                                          style: TextStyle(
+                                              color: colors.textPrimary,
+                                              fontSize: 13)),
+                                      trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(timeStr,
+                                                style: TextStyle(
+                                                    color: timeColor,
+                                                    fontSize: 12)),
+                                            const SizedBox(width: 8),
+                                            if (exactStopDate != null)
+                                              IconButton(
+                                                  icon: const Icon(Icons.alt_route,
+                                                      size: 16, color: Colors.blue),
+                                                  // FIX: Pass exact stop time and location if available
+                                                  onPressed: () =>
+                                                      widget.onOpenAlternatives(
+                                                          stopId as String, exactStopDate!,
+                                                          lat: stop['stop']
+                                                                  ['location']
+                                                              ?['latitude'],
+                                                          lng: stop['stop']
+                                                                  ['location']
+                                                              ?['longitude'],
+                                                          name: name as String?))
+                                          ])));
                             }))
                   else
                     Padding(
@@ -5096,39 +5117,62 @@ class _StepCardState extends State<_StepCard> {
                   // Always show the link to the final destination as the last item
                   Container(
                       decoration: BoxDecoration(color: colors.stepStopoversBg),
-                      child: ListTile(
-                        dense: true,
-                        contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 20),
-                        leading:
-                            const Icon(Icons.flag, size: 14, color: Colors.red),
-                        title: Text(
-                            step.arrivalPlatform != null
-                                ? AppLocalizations.of(context)!
-                                    .getOffAtPlatform(
+                      child: GestureDetector(
+                          onLongPress: step.startStationId != null
+                              ? () {
+                                  // Derive destination station ID if possible via stopovers last entry
+                                  final lastStopoverId = (step.stopovers != null &&
+                                          step.stopovers!.isNotEmpty)
+                                      ? step.stopovers!.last['stop']?['id']
+                                          as String?
+                                      : null;
+                                  final destId =
+                                      lastStopoverId ?? step.startStationId!;
+                                  final destDate = step.plannedArrival ??
+                                      step.dateTime ??
+                                      DateTime.now();
+                                  StopDeparturesSheet.show(
+                                    context,
+                                    stopId: destId,
+                                    stopName:
                                         step.destinationName ?? 'Destination',
-                                        step.arrivalPlatform!)
-                                : AppLocalizations.of(context)!.getOffAt(
-                                    step.destinationName ?? 'Destination'),
-                            style: TextStyle(
-                                color: colors.textPrimary,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold)),
-                        trailing: Builder(builder: (context) {
-                          String timeStr = step.arrivalTime;
-                          Color timeColor = colors.delayOnTime;
-                          if (step.arrivalDelay != null &&
-                              step.arrivalDelay! > 0) {
-                            timeColor = colors.delayLate;
-                            timeStr += " (+${step.arrivalDelay})";
-                          }
-                          return Text(timeStr,
-                              style: TextStyle(
-                                  color: timeColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13));
-                        }),
-                      ))
+                                    date: destDate,
+                                  );
+                                }
+                              : null,
+                          child: ListTile(
+                            dense: true,
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 20),
+                            leading:
+                                const Icon(Icons.flag, size: 14, color: Colors.red),
+                            title: Text(
+                                step.arrivalPlatform != null
+                                    ? AppLocalizations.of(context)!
+                                        .getOffAtPlatform(
+                                            step.destinationName ?? 'Destination',
+                                            step.arrivalPlatform!)
+                                    : AppLocalizations.of(context)!.getOffAt(
+                                        step.destinationName ?? 'Destination'),
+                                style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: Builder(builder: (context) {
+                              String timeStr = step.arrivalTime;
+                              Color timeColor = colors.delayOnTime;
+                              if (step.arrivalDelay != null &&
+                                  step.arrivalDelay! > 0) {
+                                timeColor = colors.delayLate;
+                                timeStr += " (+${step.arrivalDelay})";
+                              }
+                              return Text(timeStr,
+                                  style: TextStyle(
+                                      color: timeColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13));
+                            }),
+                          )))
                 ])));
   }
 
