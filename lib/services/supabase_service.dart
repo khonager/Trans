@@ -19,6 +19,10 @@ class SupabaseService {
   static StreamSubscription? _friendReqSubscription;
   static StreamSubscription? _msgSubscription;
 
+  /// In-memory cache of the `settings` JSON column so `updateSettings` can
+  /// skip the SELECT roundtrip and go straight to the UPDATE.
+  static Map<String, dynamic>? _cachedSettings;
+
   // --- INITIALIZATION ---
   static Future<void> init() async {
     await NotificationManager.init();
@@ -34,11 +38,11 @@ class SupabaseService {
     _msgSubscription = client
         .from('messages')
         .stream(primaryKey: ['id'])
+        .eq('receiver_id', user.id)
         .order('created_at', ascending: false)
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final msg in data) {
-            if (msg['receiver_id'] != user.id) continue;
             final created = DateTime.parse(msg['created_at']);
             // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
             if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
@@ -166,6 +170,7 @@ class SupabaseService {
   static Future<void> signOut() async {
     _msgSubscription?.cancel();
     _friendReqSubscription?.cancel();
+    _cachedSettings = null;
     await client.auth.signOut();
     triggerFriendsListRefresh();
   }
@@ -220,12 +225,29 @@ class SupabaseService {
   static Future<void> updateThemeColor(int colorValue) async {
     final user = currentUser;
     if (user == null) return;
-    await client
-        .from('profiles')
-        .update({'theme_color': colorValue}).eq('id', user.id);
-    // Also update settings json for consistency if we move fully there, but for now keep theme_color column usage primarily
-    // or we can mirror it to settings. Let's mirror it to make settings the source of truth eventually.
-    await updateSettings({'theme_color_value': colorValue});
+    // Merge theme_color_value into the settings cache and persist both the
+    // dedicated column and the settings JSON in a single request.
+    Map<String, dynamic> base;
+    if (_cachedSettings != null) {
+      base = Map<String, dynamic>.from(_cachedSettings!);
+    } else {
+      try {
+        final res = await client
+            .from('profiles')
+            .select('settings')
+            .eq('id', user.id)
+            .single();
+        base = Map<String, dynamic>.from(res['settings'] ?? {});
+      } catch (_) {
+        base = {};
+      }
+    }
+    final updatedSettings = base..addAll({'theme_color_value': colorValue});
+    _cachedSettings = updatedSettings;
+    await client.from('profiles').update({
+      'theme_color': colorValue,
+      'settings': updatedSettings,
+    }).eq('id', user.id);
   }
 
   // --- SETTINGS SYNC ---
@@ -233,16 +255,24 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
 
-    // Get current settings first to merge (shallow merge)
     try {
-      final res = await client
-          .from('profiles')
-          .select('settings')
-          .eq('id', user.id)
-          .single();
-      final currentSettings = res['settings'] ?? {};
-      final updatedSettings = Map<String, dynamic>.from(currentSettings)
-        ..addAll(newSettings);
+      Map<String, dynamic> base;
+      if (_cachedSettings != null) {
+        // Fast path: merge into the in-memory cache to avoid a SELECT roundtrip.
+        base = Map<String, dynamic>.from(_cachedSettings!);
+      } else {
+        // Cache not yet populated (e.g. settings changed before loadAndSyncSettings
+        // completed). Fall back to fetching the current value from the database.
+        final res = await client
+            .from('profiles')
+            .select('settings')
+            .eq('id', user.id)
+            .single();
+        base = Map<String, dynamic>.from(res['settings'] ?? {});
+      }
+
+      final updatedSettings = base..addAll(newSettings);
+      _cachedSettings = updatedSettings;
 
       await client
           .from('profiles')
@@ -289,6 +319,10 @@ class SupabaseService {
           .single();
       final settings = data['settings'] as Map<String, dynamic>? ?? {};
       final favorites = data['favorites'] as List<dynamic>? ?? [];
+
+      // Populate the in-memory settings cache so subsequent updateSettings calls
+      // can skip the SELECT roundtrip.
+      _cachedSettings = Map<String, dynamic>.from(settings);
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
@@ -817,16 +851,10 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
 
-    // Check actual DB profile or use client-side logic?
-    // Best to read from DB once or pass state.
-    // For now we do a quick check. Ideally passed from UI.
-    final profile = await getCurrentProfile();
-    final bool isGhost = profile != null && profile['ghost_mode'] == true;
-
-    final Map<String, dynamic> updateData = {
-      'user_id': user.id,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    };
+    // Read ghost mode from SharedPreferences (memory-cached after first access)
+    // instead of making a network call on every location update.
+    final prefs = await SharedPreferences.getInstance();
+    final bool isGhost = prefs.getBool('ghost_mode') ?? false;
 
     if (isGhost) {
       // In Ghost Mode, we do not update location at all.
@@ -834,13 +862,15 @@ class SupabaseService {
       // Continuing to push 'null' violates NOT NULL constraints if the columns are set that way.
       // If we simply want to stop tracking, we just return here.
       return;
-    } else {
-      updateData['latitude'] = pos.latitude;
-      updateData['longitude'] = pos.longitude;
-      updateData['current_line'] = currentLine; // Simplify assignment
     }
 
-    await client.from('user_locations').upsert(updateData);
+    await client.from('user_locations').upsert({
+      'user_id': user.id,
+      'latitude': pos.latitude,
+      'longitude': pos.longitude,
+      'current_line': currentLine,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    });
   }
 
   static Future<Map<String, dynamic>?> getMyLocation() async {
