@@ -177,8 +177,9 @@ cd Trans
 # Install dependencies
 flutter pub get
 
-# Run the app
-flutter run
+# Run the app (Android requires a flavor: stable or unstable)
+flutter run --flavor stable         # Android
+flutter run                         # iOS / Web / Desktop
 ```
 
 ### Using Nix (Recommended)
@@ -191,7 +192,8 @@ nix develop
 
 # Then run as usual
 flutter pub get
-flutter run
+flutter run --flavor stable         # Android
+flutter run                         # iOS / Web / Desktop
 ```
 
 This automatically provides Flutter, Dart, Android SDK, and all other required tools without manual installation.
@@ -202,11 +204,11 @@ This automatically provides Flutter, Dart, Android SDK, and all other required t
 
 ### Mobile
 ```bash
-# Android APK
-flutter build apk
+# Android APK (stable release; use --flavor unstable for dev builds)
+flutter build apk --flavor stable --release
 
 # Android App Bundle (Play Store)
-flutter build appbundle
+flutter build appbundle --flavor stable --release
 
 # iOS (requires Xcode signing)
 flutter build ios
