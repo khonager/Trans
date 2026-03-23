@@ -626,7 +626,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       setState(() => _isWakeAlarmSet = true);
     }
 
-    // 2. Configure Background Location (Foreground Service)
+    // 2a. Recreate the wake alarm notification channel with the user's
+    //     custom vibration pattern. On Android 8.0+ the vibration pattern
+    //     must be registered on the channel; per-notification overrides are
+    //     ignored. Deleting and recreating the channel is the only reliable
+    //     way to apply the user's choice so background notifications vibrate
+    //     correctly even when the screen is off.
+    {
+      final prefs = await SharedPreferences.getInstance();
+      final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+      await NotificationManager.updateWakeAlarmChannel(
+          _getVibrationPattern(patternName));
+    }
+
+    // 3. Configure Background Location (Foreground Service)
     AndroidSettings androidSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 50,
@@ -2901,7 +2914,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
     final pattern = _getVibrationPattern(patternName);
-    // Android vibrationPattern uses Int64List in milliseconds
+    // Android vibrationPattern uses Int64List in milliseconds.
+    // The channel was already recreated with this pattern in _startWakeAlarm
+    // so the pattern is honoured even when the screen is off.
     final androidDetails = AndroidNotificationDetails(
       'wake_alarm_channel',
       'Wake Alarm',
@@ -2910,8 +2925,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       priority: Priority.high,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(pattern),
+      fullScreenIntent: true,
     );
-    final details = NotificationDetails(android: androidDetails);
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    final details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(
         id: 0,
         title: 'Wake Up!',
