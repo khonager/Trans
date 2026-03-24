@@ -285,6 +285,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         'rawBusSegments=${parseResult.rawBusSegments}, '
         'built=${parseResult.builtTrips}, '
         'visible=${parseResult.visibleTrips}, '
+        'onscreen=${parseResult.onScreenTrips}, '
         'nearby=${parseResult.nearbyTrips}, '
         'merged=${trips.length}, '
         'networkMs=$networkMs, '
@@ -1268,6 +1269,7 @@ class LiveMapParseResult {
   final int rawBusSegments;
   final int builtTrips;
   final int visibleTrips;
+  final int onScreenTrips;
   final int nearbyTrips;
 
   const LiveMapParseResult({
@@ -1276,6 +1278,7 @@ class LiveMapParseResult {
     required this.rawBusSegments,
     required this.builtTrips,
     required this.visibleTrips,
+    required this.onScreenTrips,
     required this.nearbyTrips,
   });
 }
@@ -1719,6 +1722,7 @@ LiveMapParseResult _parseLiveMapTripsIsolate(LiveMapParseRequest request) {
 
   final builtTrips = <LiveMapTripData>[];
   final visibleTrips = <LiveMapTripData>[];
+  final onScreenTrips = <LiveMapTripData>[];
   final nearbyTrips = <LiveMapTripData>[];
 
   for (final entry in grouped.entries) {
@@ -1730,22 +1734,24 @@ LiveMapParseResult _parseLiveMapTripsIsolate(LiveMapParseRequest request) {
     if (trip == null) continue;
     builtTrips.add(trip);
 
-    if (!_tripDataVisibleAt(trip, request.nowMs)) continue;
-    visibleTrips.add(trip);
+    if (_tripDataVisibleAt(trip, request.nowMs)) {
+      visibleTrips.add(trip);
+    }
+
+    if (_tripDataIntersectsBounds(trip, request.visibleBounds)) {
+      onScreenTrips.add(trip);
+    }
 
     if (_tripDataIntersectsBounds(trip, request.retentionBounds)) {
       nearbyTrips.add(trip);
     }
   }
 
-  final onScreenTrips = visibleTrips
-      .where((trip) => _tripDataIntersectsBounds(trip, request.visibleBounds))
-      .toList(growable: false);
   final preferredTrips = (nearbyTrips.isNotEmpty
-      ? nearbyTrips
-      : onScreenTrips.isNotEmpty
-          ? onScreenTrips
-          : visibleTrips)
+          ? nearbyTrips
+          : onScreenTrips.isNotEmpty
+              ? onScreenTrips
+              : builtTrips)
     ..sort((a, b) {
       final byName = a.displayName.compareTo(b.displayName);
       if (byName != 0) return byName;
@@ -1758,6 +1764,7 @@ LiveMapParseResult _parseLiveMapTripsIsolate(LiveMapParseRequest request) {
     rawBusSegments: rawBusSegments,
     builtTrips: builtTrips.length,
     visibleTrips: visibleTrips.length,
+    onScreenTrips: onScreenTrips.length,
     nearbyTrips: nearbyTrips.length,
   );
 }
