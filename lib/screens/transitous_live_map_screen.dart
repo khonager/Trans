@@ -397,7 +397,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final cacheKey = [
       identityHashCode(_trips),
       _selectedBus?.tripId ?? '',
-      _zoomBucketFor(zoom),
+      zoom.toStringAsFixed(2),
       center.latitude.toStringAsFixed(4),
       center.longitude.toStringAsFixed(4),
     ].join('|');
@@ -450,12 +450,36 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     );
   }
 
+  double _interpolateZoomValue(
+    double zoom,
+    List<(double zoom, double value)> stops,
+  ) {
+    if (stops.isEmpty) return 0;
+    if (zoom <= stops.first.$1) return stops.first.$2;
+
+    for (var index = 1; index < stops.length; index++) {
+      final previous = stops[index - 1];
+      final current = stops[index];
+      if (zoom <= current.$1) {
+        final t =
+            ((zoom - previous.$1) / (current.$1 - previous.$1)).clamp(0.0, 1.0);
+        return _lerp(previous.$2, current.$2, t);
+      }
+    }
+
+    return stops.last.$2;
+  }
+
   int _maxVisibleTripsForZoom(double zoom) {
-    if (zoom >= 14.5) return 220;
-    if (zoom >= 13.5) return 140;
-    if (zoom >= 12.5) return 90;
-    if (zoom >= 11.5) return 50;
-    return 24;
+    final interpolated = _interpolateZoomValue(zoom, const [
+      (11.0, 24.0),
+      (11.5, 50.0),
+      (12.5, 90.0),
+      (13.5, 140.0),
+      (14.5, 220.0),
+      (15.0, 260.0),
+    ]);
+    return interpolated.round();
   }
 
   List<_LiveBusTrip> _prioritizeTripsForDisplay(List<_LiveBusTrip> trips,
@@ -520,8 +544,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final normalizedZoom =
         ((zoom - _minLiveZoom) / (15 - _minLiveZoom)).clamp(0.0, 1.0);
     return Size(
-      _lerp(78, 112, normalizedZoom),
-      _lerp(42, 58, normalizedZoom),
+      _lerp(80, 112, normalizedZoom),
+      _lerp(40, 58, normalizedZoom),
     );
   }
 
@@ -538,15 +562,15 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   double _localMarkerScaleFor(double nearestDistancePx, double baseWidth) {
     if (!nearestDistancePx.isFinite) return 1.0;
 
-    final tightSpacing = baseWidth * 0.34;
-    final comfortableSpacing = baseWidth * 0.88;
-    if (nearestDistancePx <= tightSpacing) return 0.72;
+    final tightSpacing = baseWidth * 0.40;
+    final comfortableSpacing = baseWidth * 1.12;
+    if (nearestDistancePx <= tightSpacing) return 0.78;
     if (nearestDistancePx >= comfortableSpacing) return 1.0;
 
     final t = ((nearestDistancePx - tightSpacing) /
             (comfortableSpacing - tightSpacing))
         .clamp(0.0, 1.0);
-    return _lerp(0.72, 1.0, t);
+    return _lerp(0.78, 1.0, t);
   }
 
   double _markerScaleBoost(_LiveBusTrip trip) {
@@ -568,7 +592,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   }
 
   Size _markerSizeForScale(Size baseSize, double scale) {
-    final width = (baseSize.width * scale).clamp(56.0, 114.0);
+    final width = (baseSize.width * scale).clamp(64.0, 114.0);
     final height = (baseSize.height * scale).clamp(34.0, 58.0);
     return Size(width, height);
   }
@@ -618,14 +642,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               _localMarkerScaleFor(nearestDistances[index], baseSize.width);
           final scale =
               (globalScale * localScale + _markerScaleBoost(placement.trip))
-                  .clamp(0.72, 1.0);
+                  .clamp(0.78, 1.0);
           final size = _markerSizeForScale(baseSize, scale);
           return _MarkerVisual(
             trip: placement.trip,
             sample: placement.sample,
             size: size,
             scale: scale,
-            compact: size.width < 84,
             paintPriority: _markerPaintPriority(placement.trip),
           );
         })(),
@@ -926,19 +949,15 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
   Widget _buildBusMarker(
       BuildContext context, _LiveBusTrip trip, _TripSample sample,
-      {required bool compact, required double scale}) {
+      {required double scale}) {
     final colors = TransColors.of(context);
     final isSelected = _selectedBus?.tripId == trip.id;
     final markerAngle = _markerRotationRadians(sample.heading);
     final markerTextColor = trip.vehicleTextColor;
-    final normalizedScale = ((scale - 0.72) / 0.28).clamp(0.0, 1.0);
-    final horizontalPadding =
-        compact ? _lerp(6, 8, normalizedScale) : _lerp(8, 10, normalizedScale);
-    final verticalPadding =
-        compact ? _lerp(6, 8, normalizedScale) : _lerp(6, 8, normalizedScale);
-    final borderRadius = compact
-        ? _lerp(14, 18, normalizedScale)
-        : _lerp(12, 16, normalizedScale);
+    final normalizedScale = ((scale - 0.78) / 0.22).clamp(0.0, 1.0);
+    final horizontalPadding = _lerp(7, 10, normalizedScale);
+    final verticalPadding = _lerp(5, 8, normalizedScale);
+    final borderRadius = _lerp(12, 16, normalizedScale);
     final delayMinutes = math.max(0, trip.arrivalDelaySeconds) / 60;
     final shadowStrength = isSelected
         ? 1.0
@@ -964,35 +983,27 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               color: isSelected ? colors.textPrimary : Colors.white,
               width: isSelected ? 2 : 1,
             ),
-            boxShadow: compact
-                ? null
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: 0.12 + shadowStrength * 0.12,
-                      ),
-                      blurRadius: _lerp(8, 18, shadowStrength),
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-          ),
-          child: compact
-              ? Icon(
-                  Icons.directions_bus_filled_rounded,
-                  size: _lerp(14, 18, normalizedScale),
-                  color: markerTextColor,
-                )
-              : Center(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: _ExpandedBusMarkerLabel(
-                      label: trip.displayName,
-                      textColor: markerTextColor,
-                      iconLeads: math.cos(markerAngle) >= 0,
-                      scale: scale,
-                    ),
-                  ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(
+                  alpha: 0.12 + shadowStrength * 0.12,
                 ),
+                blurRadius: _lerp(8, 18, shadowStrength),
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: _ExpandedBusMarkerLabel(
+                label: trip.displayName,
+                textColor: markerTextColor,
+                iconLeads: math.cos(markerAngle) >= 0,
+                scale: scale,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1321,7 +1332,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                               context,
                               visual.trip,
                               visual.sample,
-                              compact: visual.compact,
                               scale: visual.scale,
                             ),
                           ),
@@ -1601,10 +1611,10 @@ class _ExpandedBusMarkerLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final normalizedScale = ((scale - 0.72) / 0.28).clamp(0.0, 1.0);
-    final iconSize = _lerp(13, 16, normalizedScale);
-    final spacing = _lerp(4, 6, normalizedScale);
-    final fontSize = _lerp(10, 12, normalizedScale);
+    final normalizedScale = ((scale - 0.78) / 0.22).clamp(0.0, 1.0);
+    final iconSize = _lerp(12, 16, normalizedScale);
+    final spacing = _lerp(3, 6, normalizedScale);
+    final fontSize = _lerp(9, 12, normalizedScale);
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -1654,7 +1664,6 @@ class _MarkerVisual {
   final _TripSample sample;
   final Size size;
   final double scale;
-  final bool compact;
   final double paintPriority;
 
   const _MarkerVisual({
@@ -1662,7 +1671,6 @@ class _MarkerVisual {
     required this.sample,
     required this.size,
     required this.scale,
-    required this.compact,
     required this.paintPriority,
   });
 }
