@@ -261,35 +261,43 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
 
                     return Column(
                       children: [
-                        if (platformTabs.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                            child: _ChipBar(
-                              chips: platformTabs
-                                  .map(
-                                    (tab) => _ChipModel(
-                                      label: tab.label,
-                                      selected: tab.key == selectedPlatformKey,
-                                      onTap: () => setState(
-                                        () => _selectedPlatformKey = tab.key,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                          ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                          child: _ChipBar(
-                            chips: data.dayTabs
-                                .map(
-                                  (tab) => _ChipModel(
-                                    label: tab.label,
-                                    selected: tab.id == selectedDayTab.id,
-                                    onTap: () => _selectDayTab(tab.id, data),
+                          child: Row(
+                            children: [
+                              _FixedChipRow(
+                                chips: data.dayTabs
+                                    .map(
+                                      (tab) => _ChipModel(
+                                        label: tab.label,
+                                        selected: tab.id == selectedDayTab.id,
+                                        onTap: () => _selectDayTab(tab.id, data),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                              if (platformTabs.isNotEmpty) ...[
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _ChipBar(
+                                    alignment: Alignment.centerRight,
+                                    chips: platformTabs
+                                        .map(
+                                          (tab) => _ChipModel(
+                                            label: tab.label,
+                                            selected:
+                                                tab.key == selectedPlatformKey,
+                                            onTap: () => setState(
+                                              () =>
+                                                  _selectedPlatformKey = tab.key,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
-                                )
-                                .toList(),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         Expanded(
@@ -345,25 +353,66 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
 
 class _ChipBar extends StatelessWidget {
   final List<_ChipModel> chips;
+  final Alignment alignment;
 
-  const _ChipBar({required this.chips});
+  const _ChipBar({
+    required this.chips,
+    this.alignment = Alignment.centerLeft,
+  });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 36,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: chips.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final chip = chips[index];
-          return _FilterChip(
-            label: chip.label,
-            selected: chip.selected,
-            onTap: chip.onTap,
-          );
-        },
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Align(
+              alignment: alignment,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < chips.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    _FilterChip(
+                      label: chips[i].label,
+                      selected: chips[i].selected,
+                      onTap: chips[i].onTap,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FixedChipRow extends StatelessWidget {
+  final List<_ChipModel> chips;
+
+  const _FixedChipRow({required this.chips});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < chips.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _FilterChip(
+              label: chips[i].label,
+              selected: chips[i].selected,
+              onTap: chips[i].onTap,
+            ),
+          ],
+        ],
       ),
     );
   }
