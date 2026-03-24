@@ -25,8 +25,8 @@ class TransitousLiveMapScreen extends StatefulWidget {
 
 class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   static const double _minLiveZoom = 11;
-  static const Duration _lookBehind = Duration(minutes: 5);
-  static const Duration _lookAhead = Duration(minutes: 45);
+  static const Duration _lookBehind = Duration(minutes: 1);
+  static const Duration _lookAhead = Duration(minutes: 3);
   static const Duration _fetchDebounceDuration = Duration(milliseconds: 350);
   static const Duration _refreshInterval = Duration(seconds: 5);
   static const Duration _animationInterval = Duration(milliseconds: 120);
@@ -42,6 +42,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   double _initialZoom = 13;
   bool _isLoadingInitialView = true;
   bool _isFetchingTrips = false;
+  bool _isMapReady = false;
   String? _errorMessage;
   MapCamera? _latestCamera;
   _FetchedViewport? _lastFetchedViewport;
@@ -123,12 +124,19 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   double _requestZoom(double zoom) =>
       (zoom / _zoomRequestStep).round() * _zoomRequestStep;
 
+  double _markerRotationRadians(double heading) =>
+      (heading - 90) * math.pi / 180;
+
   Future<void> _fetchTripsForViewport() async {
-    final camera = _latestCamera ?? _mapController.camera;
+    final camera = _latestCamera;
     final force = _forceNextFetch;
     _forceNextFetch = false;
 
-    if (!mounted || camera.zoom < _minLiveZoom) {
+    if (!mounted || !_isMapReady || camera == null) {
+      return;
+    }
+
+    if (camera.zoom < _minLiveZoom) {
       if (_trips.isNotEmpty || _errorMessage != null) {
         setState(() {
           _trips = const [];
@@ -170,12 +178,29 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       );
       if (!mounted || token != _requestToken) return;
 
+      final incomingTrips = _buildTrips(
+        rawTrips,
+        fetchedAtMs: now.toUtc().millisecondsSinceEpoch,
+      );
+      final retentionBounds = _expandBounds(
+        visibleBounds,
+        _retentionPaddingFactor,
+      );
+      final visibleIncomingTrips = incomingTrips
+          .where(
+            (trip) => trip.isVisibleAt(now),
+          )
+          .toList();
+      final nearbyIncomingTrips = visibleIncomingTrips
+          .where((trip) => trip.intersectsBounds(retentionBounds))
+          .toList();
+      final preferredIncomingTrips = nearbyIncomingTrips.isNotEmpty
+          ? nearbyIncomingTrips
+          : visibleIncomingTrips;
+
       final trips = _mergeTrips(
         existing: _trips,
-        incoming: _buildTrips(
-          rawTrips,
-          fetchedAtMs: now.toUtc().millisecondsSinceEpoch,
-        ),
+        incoming: preferredIncomingTrips,
         now: now,
         visibleBounds: visibleBounds,
       );
@@ -295,6 +320,69 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return combined;
   }
 
+  int _maxVisibleTripsForZoom(double zoom) {
+    if (zoom >= 14.5) return 220;
+    if (zoom >= 13.5) return 140;
+    if (zoom >= 12.5) return 90;
+    if (zoom >= 11.5) return 50;
+    return 24;
+  }
+
+  List<_LiveBusTrip> _prioritizeTripsForDisplay(
+    List<_LiveBusTrip> trips,
+    {required LatLng center, required double zoom}) {
+    final selectedTripId = _selectedBus?.tripId;
+    final maxVisible = _maxVisibleTripsForZoom(zoom);
+    if (trips.length <= maxVisible) return trips;
+
+    final scored = trips.toList()
+      ..sort((a, b) {
+        final aScore = _displayPriorityScore(
+          a,
+          selectedTripId: selectedTripId,
+          center: center,
+        );
+        final bScore = _displayPriorityScore(
+          b,
+          selectedTripId: selectedTripId,
+          center: center,
+        );
+        final byScore = bScore.compareTo(aScore);
+        if (byScore != 0) return byScore;
+        return a.id.compareTo(b.id);
+      });
+
+    return scored.take(maxVisible).toList();
+  }
+
+  double _displayPriorityScore(
+    _LiveBusTrip trip, {
+    required String? selectedTripId,
+    required LatLng center,
+  }) {
+    final sample = trip.sample(_now);
+    final distanceFromCenterKm =
+        _distance.as(LengthUnit.Kilometer, center, sample.position);
+
+    var score = 0.0;
+    if (trip.id == selectedTripId) score += 10000;
+    if (trip.realTime) score += 600;
+    score += trip.arrivalDelaySeconds.abs() / 6;
+    score += math.max(0, 300 - distanceFromCenterKm * 35);
+
+    final line = trip.displayName.trim().toUpperCase();
+    if (line.startsWith('N')) score -= 120;
+
+    return score;
+  }
+
+  Size _markerSizeForZoom(double zoom) {
+    if (zoom >= 14.5) return const Size(112, 58);
+    if (zoom >= 13.5) return const Size(98, 52);
+    if (zoom >= 12.5) return const Size(90, 48);
+    return const Size(78, 42);
+  }
+
   void _selectTrip(_LiveBusTrip trip) {
     setState(() {
       _selectedBus = _SelectedBus(
@@ -388,48 +476,59 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final isSelected = _selectedBus?.tripId == trip.id;
     final vehicleColor = _vehicleStatusColor(trip, context);
     final markerTextColor = _foregroundFor(vehicleColor);
+    final markerAngle = _markerRotationRadians(sample.heading);
+    final iconLeads = math.cos(markerAngle) >= 0;
+    final content = <Widget>[
+      if (!iconLeads)
+        Icon(
+          Icons.directions_bus_filled_rounded,
+          size: 16,
+          color: markerTextColor,
+        ),
+      if (!iconLeads) const SizedBox(width: 6),
+      Text(
+        trip.displayName,
+        style: TextStyle(
+          color: markerTextColor,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+      if (iconLeads) const SizedBox(width: 6),
+      if (iconLeads)
+        Icon(
+          Icons.directions_bus_filled_rounded,
+          size: 16,
+          color: markerTextColor,
+        ),
+    ];
 
     return GestureDetector(
       onTap: () => _selectTrip(trip),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: vehicleColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? colors.textPrimary : Colors.white,
-            width: isSelected ? 2 : 1,
+      child: Transform.rotate(
+        angle: markerAngle,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: vehicleColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected ? colors.textPrimary : Colors.white,
+              width: isSelected ? 2 : 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: isSelected ? 18 : 10,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: isSelected ? 18 : 10,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Transform.rotate(
-              angle: _iconRotationRadians(sample.heading),
-              child: Icon(
-                Icons.directions_bus_filled_rounded,
-                size: 16,
-                color: markerTextColor,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              trip.displayName,
-              style: TextStyle(
-                color: markerTextColor,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
-          ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: content,
+          ),
         ),
       ),
     );
@@ -437,16 +536,27 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
   Widget _buildTopBanner(BuildContext context) {
     final colors = TransColors.of(context);
+    final center = _latestCamera?.center ?? _initialCenter;
     final zoom = _latestCamera?.zoom ?? _initialZoom;
-    final busesVisible = _trips.length;
+    final prioritizedTrips = _prioritizeTripsForDisplay(
+      _trips,
+      center: center,
+      zoom: zoom,
+    );
+    final busesVisible = prioritizedTrips.length;
+    final totalLoaded = _trips.length;
 
     String text;
-    if (zoom < _minLiveZoom) {
+    if (!_isMapReady) {
+      text = 'Preparing live map...';
+    } else if (zoom < _minLiveZoom) {
       text = 'Zoom in to ${_minLiveZoom.toInt()}+ to reveal live buses.';
     } else if (_isFetchingTrips && busesVisible == 0) {
       text = 'Loading live buses...';
     } else if (_errorMessage != null) {
       text = _errorMessage!;
+    } else if (totalLoaded > busesVisible) {
+      text = 'Showing $busesVisible of $totalLoaded live buses';
     } else {
       text = '$busesVisible live buses in this area';
     }
@@ -608,8 +718,16 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final center = _latestCamera?.center ?? _initialCenter;
+    final zoom = _latestCamera?.zoom ?? _initialZoom;
     final selectedTrip = _currentSelectedTrip();
     final remainingPath = selectedTrip?.remainingPath(_now) ?? const <LatLng>[];
+    final displayedTrips = _prioritizeTripsForDisplay(
+      _trips,
+      center: center,
+      zoom: zoom,
+    );
+    final markerSize = _markerSizeForZoom(zoom);
 
     if (_isLoadingInitialView) {
       return Scaffold(
@@ -620,13 +738,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     }
 
     final markers = <Marker>[
-      for (final trip in _trips)
+      for (final trip in displayedTrips)
         (() {
           final sample = trip.sample(_now);
           return Marker(
             point: sample.position,
-            width: 96,
-            height: 44,
+            width: markerSize.width,
+            height: markerSize.height,
             child: KeyedSubtree(
               key: ValueKey('live-bus-${trip.id}'),
               child: _buildBusMarker(context, trip, sample),
@@ -656,6 +774,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           _clearSelection();
+          if (!_isMapReady) return;
           _mapController.move(_initialCenter, _initialZoom);
           _scheduleFetch(force: true);
         },
@@ -669,7 +788,11 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               initialCenter: _initialCenter,
               initialZoom: _initialZoom,
               onMapReady: () {
-                _latestCamera = _mapController.camera;
+                if (!mounted) return;
+                setState(() {
+                  _isMapReady = true;
+                  _latestCamera = _mapController.camera;
+                });
                 _scheduleFetch(force: true);
               },
               onTap: (_, __) => _clearSelection(),
@@ -696,28 +819,26 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                     ),
                     Polyline(
                       points: selectedTrip.points,
-                      strokeWidth: 4,
-                      color: _routeColor(selectedTrip, context).withValues(
-                        alpha: 0.38,
-                      ),
+                      strokeWidth: 6,
+                      color: _routeColor(selectedTrip, context),
                     ),
                     if (remainingPath.length >= 2)
                       Polyline(
                         points: remainingPath,
-                        strokeWidth: 10,
-                        color: Colors.white.withValues(alpha: 0.85),
+                        strokeWidth: 12,
+                        color: Colors.white.withValues(alpha: 0.92),
                       ),
                     if (remainingPath.length >= 2)
                       Polyline(
                         points: remainingPath,
-                        strokeWidth: 6,
-                        color: _routeColor(selectedTrip, context),
+                        strokeWidth: 7,
+                        color: _vehicleStatusColor(selectedTrip, context),
                       ),
                     if (remainingPath.length >= 2)
                       Polyline(
                         points: remainingPath.take(2).toList(),
-                        strokeWidth: 8,
-                        color: _vehicleStatusColor(selectedTrip, context),
+                        strokeWidth: 9,
+                        color: _routeColor(selectedTrip, context),
                       ),
                   ],
                 ),
@@ -964,6 +1085,30 @@ class _LiveBusTrip {
     remaining.addAll(points.skip(startIndex));
     return _dedupeSequentialPoints(remaining);
   }
+
+  bool isVisibleAt(
+    DateTime now, {
+    Duration preStartGrace = const Duration(minutes: 2),
+    Duration postEndGrace = const Duration(minutes: 1),
+  }) {
+    if (timestampsMs.isEmpty) return false;
+
+    final nowMs = now.toUtc().millisecondsSinceEpoch;
+    return nowMs >= timestampsMs.first - preStartGrace.inMilliseconds &&
+        nowMs <= timestampsMs.last + postEndGrace.inMilliseconds;
+  }
+
+  bool intersectsBounds(LatLngBounds bounds) {
+    if (points.isEmpty) return false;
+
+    for (var index = 0; index < points.length; index += 6) {
+      if (_containsPoint(bounds, points[index])) {
+        return true;
+      }
+    }
+
+    return _containsPoint(bounds, points.last);
+  }
 }
 
 class _SampledSegment {
@@ -1060,8 +1205,6 @@ bool _containsPoint(LatLngBounds bounds, LatLng point) {
       point.longitude >= southWest.longitude &&
       point.longitude <= northEast.longitude;
 }
-
-double _iconRotationRadians(double heading) => (heading - 90) * math.pi / 180;
 
 List<LatLng> _dedupeSequentialPoints(List<LatLng> points) {
   if (points.length < 2) return points;
