@@ -25,7 +25,8 @@ class TransitousLiveMapScreen extends StatefulWidget {
       _TransitousLiveMapScreenState();
 }
 
-class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
+class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
+    with WidgetsBindingObserver {
   static const double _minLiveZoom = 11;
   static const Duration _lookBehind = Duration(minutes: 1);
   static const Duration _lookAhead = Duration(minutes: 3);
@@ -59,30 +60,60 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   Timer? _animationTimer;
   bool _forceNextFetch = false;
   int _selectedTripRouteRequestToken = 0;
+  bool _appIsActive = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bootstrap();
-    _animationTimer = Timer.periodic(_animationInterval, (_) {
-      if (!mounted) return;
-      _clock.value = DateTime.now();
-    });
-    _refreshTimer = Timer.periodic(
-      _refreshInterval,
-      (_) {
-        _scheduleFetch(force: true);
-      },
-    );
+    _startTimers();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fetchDebounce?.cancel();
     _refreshTimer?.cancel();
     _animationTimer?.cancel();
     _clock.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasActive = _appIsActive;
+    _appIsActive = state != AppLifecycleState.paused &&
+        state != AppLifecycleState.detached;
+    if (_appIsActive && !wasActive) {
+      _startTimers();
+      _scheduleFetch(force: true);
+    } else if (!_appIsActive && wasActive) {
+      _stopTimers();
+    }
+  }
+
+  void _startTimers() {
+    if (_animationTimer == null || !_animationTimer!.isActive) {
+      _animationTimer = Timer.periodic(_animationInterval, (_) {
+        if (!mounted) return;
+        _clock.value = DateTime.now();
+      });
+    }
+    if (_refreshTimer == null || !_refreshTimer!.isActive) {
+      _refreshTimer = Timer.periodic(_refreshInterval, (_) {
+        _scheduleFetch(force: true);
+      });
+    }
+  }
+
+  void _stopTimers() {
+    _fetchDebounce?.cancel();
+    _fetchDebounce = null;
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    _animationTimer?.cancel();
+    _animationTimer = null;
   }
 
   Future<void> _bootstrap() async {
@@ -119,6 +150,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   }
 
   void _scheduleFetch({bool force = false}) {
+    if (!_appIsActive) return;
     if (force) {
       _forceNextFetch = true;
     }
