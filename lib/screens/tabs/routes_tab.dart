@@ -5076,7 +5076,7 @@ class _StepCardState extends State<_StepCard> {
                                                 widget.step.dateTime ??
                                                 DateTime.now(),
                                             preferredPlatform:
-                                                platform as String?,
+                                                platform?.toString(),
                                           )
                                       : null,
                                   child: ListTile(
