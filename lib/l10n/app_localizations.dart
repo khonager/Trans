@@ -1670,11 +1670,47 @@ abstract class AppLocalizations {
   /// **'for {date}'**
   String stopDeparturesDate(String date);
 
+  /// No description provided for @stopPlatformFilter.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform'**
+  String get stopPlatformFilter;
+
+  /// No description provided for @stopPlatformAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get stopPlatformAll;
+
+  /// No description provided for @stopServiceDayFilter.
+  ///
+  /// In en, this message translates to:
+  /// **'Service Day'**
+  String get stopServiceDayFilter;
+
+  /// No description provided for @stopServiceDayWeekday.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekday'**
+  String get stopServiceDayWeekday;
+
+  /// No description provided for @stopServiceDayWeekendHoliday.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekend/Holiday'**
+  String get stopServiceDayWeekendHoliday;
+
   /// No description provided for @noDeparturesFound.
   ///
   /// In en, this message translates to:
   /// **'No departures found for this stop.'**
   String get noDeparturesFound;
+
+  /// No description provided for @noDeparturesForPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'No departures found for this platform.'**
+  String get noDeparturesForPlatform;
 
   /// No description provided for @loadingDepartures.
   ///

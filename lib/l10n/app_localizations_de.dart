@@ -901,8 +901,27 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get stopPlatformFilter => 'Steig / Gleis';
+
+  @override
+  String get stopPlatformAll => 'Alle';
+
+  @override
+  String get stopServiceDayFilter => 'Verkehrstag';
+
+  @override
+  String get stopServiceDayWeekday => 'Werktag';
+
+  @override
+  String get stopServiceDayWeekendHoliday => 'Wochenende/Feiertag';
+
+  @override
   String get noDeparturesFound =>
       'Keine Abfahrten für diese Haltestelle gefunden.';
+
+  @override
+  String get noDeparturesForPlatform =>
+      'Keine Abfahrten für diesen Steig gefunden.';
 
   @override
   String get loadingDepartures => 'Abfahrten werden geladen...';
