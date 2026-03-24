@@ -6,21 +6,18 @@ import 'package:trans/utils/app_error.dart';
 
 import '../l10n/app_localizations.dart';
 
-enum _ServiceDayFilter { weekday, weekendHoliday }
-
-/// Shows all departures for [stopName] (identified by [stopId]) on [date] in
-/// a scrollable bottom-sheet that the user can long-press into from any stop
-/// row inside a connection detail view.
 class StopDeparturesSheet extends StatefulWidget {
   final String stopId;
   final String stopName;
   final DateTime date;
+  final String? preferredPlatform;
 
   const StopDeparturesSheet({
     super.key,
     required this.stopId,
     required this.stopName,
     required this.date,
+    this.preferredPlatform,
   });
 
   static Future<void> show(
@@ -28,13 +25,18 @@ class StopDeparturesSheet extends StatefulWidget {
     required String stopId,
     required String stopName,
     required DateTime date,
+    String? preferredPlatform,
   }) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) =>
-          StopDeparturesSheet(stopId: stopId, stopName: stopName, date: date),
+      builder: (_) => StopDeparturesSheet(
+        stopId: stopId,
+        stopName: stopName,
+        date: date,
+        preferredPlatform: preferredPlatform,
+      ),
     );
   }
 
@@ -43,39 +45,114 @@ class StopDeparturesSheet extends StatefulWidget {
 }
 
 class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
-  late Future<List<Map<String, dynamic>>> _future;
-  late _ServiceDayFilter _dayFilter;
-  late DateTime _viewDate;
-  String? _selectedPlatform;
+  late Future<_StopDeparturesData> _future;
+  String? _selectedDayTabId;
+  String? _selectedPlatformKey;
 
   @override
   void initState() {
     super.initState();
-    _dayFilter = _isWeekendOrHoliday(widget.date)
-        ? _ServiceDayFilter.weekendHoliday
-        : _ServiceDayFilter.weekday;
-    _viewDate = _dateForFilter(widget.date, _dayFilter);
     _load();
   }
 
   void _load() {
-    _future = TransportApi.fetchStopDepartures(widget.stopId, date: _viewDate)
-        .then((deps) {
-      if (!mounted) return deps;
-      final platforms = _platformOptions(deps);
-      if (_selectedPlatform != null && !platforms.contains(_selectedPlatform)) {
-        setState(() => _selectedPlatform = null);
+    _future = _loadData().then((data) {
+      if (!mounted) return data;
+
+      final selectedDayTab =
+          data.dayTabById(_selectedDayTabId) ?? data.defaultDayTab(widget.date);
+      final platformTabs = data.platformTabsForDay(selectedDayTab.id);
+      final nextPlatformKey = _resolvePlatformKey(
+        platformTabs,
+        currentKey: _selectedPlatformKey,
+      );
+
+      if (_selectedDayTabId != selectedDayTab.id ||
+          _selectedPlatformKey != nextPlatformKey) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _selectedDayTabId = selectedDayTab.id;
+            _selectedPlatformKey = nextPlatformKey;
+          });
+        });
       }
-      return deps;
+
+      return data;
     });
   }
 
-  void _setDayFilter(_ServiceDayFilter filter) {
-    if (_dayFilter == filter) return;
+  Future<_StopDeparturesData> _loadData() async {
+    final dates = _sampleWeek(widget.date);
+    final results = await Future.wait(
+      dates.map(
+        (date) => TransportApi.fetchStopDepartures(widget.stopId, date: date)
+            .catchError((_) => <Map<String, dynamic>>[]),
+      ),
+    );
+
+    final dayBuckets = <_DayBucket>[];
+    for (var i = 0; i < dates.length; i++) {
+      final date = dates[i];
+      final deps = results[i];
+      final signature = _daySignature(deps);
+      final existingIndex = dayBuckets.indexWhere(
+        (bucket) => bucket.signature == signature,
+      );
+      if (existingIndex == -1) {
+        dayBuckets.add(
+          _DayBucket(signature: signature, dates: [date], departures: deps),
+        );
+      } else {
+        dayBuckets[existingIndex].dates.add(date);
+      }
+    }
+
+    final dayTabs = dayBuckets
+        .map(
+          (bucket) => _DayTab(
+            id: bucket.dates.map((date) => date.weekday.toString()).join('-'),
+            label: _dayTabLabel(context, bucket.dates),
+            dates: bucket.dates,
+            departures: bucket.departures,
+          ),
+        )
+        .toList();
+
+    return _StopDeparturesData(dayTabs: dayTabs);
+  }
+
+  String? _resolvePlatformKey(
+    List<_PlatformTab> tabs, {
+    String? currentKey,
+  }) {
+    if (tabs.isEmpty) return null;
+    if (currentKey != null && tabs.any((tab) => tab.key == currentKey)) {
+      return currentKey;
+    }
+
+    final stopMatch = tabs.cast<_PlatformTab?>().firstWhere(
+          (tab) => tab?.stopAreaId == widget.stopId,
+          orElse: () => null,
+        );
+    if (stopMatch != null) return stopMatch.key;
+
+    if (widget.preferredPlatform != null) {
+      final platformMatch = tabs.cast<_PlatformTab?>().firstWhere(
+            (tab) => tab?.platformLabel == widget.preferredPlatform,
+            orElse: () => null,
+          );
+      if (platformMatch != null) return platformMatch.key;
+    }
+
+    return tabs.first.key;
+  }
+
+  void _selectDayTab(String dayTabId, _StopDeparturesData data) {
+    final platformTabs = data.platformTabsForDay(dayTabId);
     setState(() {
-      _dayFilter = filter;
-      _viewDate = _dateForFilter(widget.date, filter);
-      _load();
+      _selectedDayTabId = dayTabId;
+      _selectedPlatformKey = _resolvePlatformKey(platformTabs);
     });
   }
 
@@ -85,7 +162,7 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
     final l10n = AppLocalizations.of(context)!;
 
     return DraggableScrollableSheet(
-      initialChildSize: 0.78,
+      initialChildSize: 0.8,
       minChildSize: 0.45,
       maxChildSize: 0.95,
       expand: false,
@@ -98,7 +175,7 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 14),
                 child: Container(
                   width: 40,
                   height: 4,
@@ -109,31 +186,21 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.stopDeparturesTitle(widget.stopName),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: colors.textPrimary,
-                      ),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    l10n.stopDeparturesTitle(widget.stopName),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: colors.textPrimary,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      DateFormat('EEE, d MMM').format(_viewDate),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
               Expanded(
-                child: FutureBuilder<List<Map<String, dynamic>>>(
+                child: FutureBuilder<_StopDeparturesData>(
                   future: _future,
                   builder: (ctx, snap) {
                     if (snap.connectionState == ConnectionState.waiting) {
@@ -165,90 +232,78 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                       );
                     }
 
-                    final deps = snap.data ?? const <Map<String, dynamic>>[];
-                    final platforms = _platformOptions(deps);
-                    final filteredDeps = deps.where((dep) {
-                      if (_selectedPlatform == null) return true;
-                      return _platformForDeparture(dep) == _selectedPlatform;
-                    }).toList();
+                    final data =
+                        snap.data ?? const _StopDeparturesData(dayTabs: []);
+                    if (data.dayTabs.isEmpty) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            l10n.noDeparturesFound,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.textSecondary),
+                          ),
+                        ),
+                      );
+                    }
+
+                    final selectedDayTab = data.dayTabById(_selectedDayTabId) ??
+                        data.defaultDayTab(widget.date);
+                    final platformTabs = data.platformTabsForDay(
+                      selectedDayTab.id,
+                    );
+                    final selectedPlatformKey = _resolvePlatformKey(
+                      platformTabs,
+                      currentKey: _selectedPlatformKey,
+                    );
+                    final selectedPlatformTab =
+                        platformTabs.cast<_PlatformTab?>().firstWhere(
+                              (tab) => tab?.key == selectedPlatformKey,
+                              orElse: () => null,
+                            );
+                    final departures = selectedPlatformTab?.departures ??
+                        selectedDayTab.departures;
 
                     return Column(
                       children: [
+                        if (platformTabs.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: _ChipBar(
+                              chips: platformTabs
+                                  .map(
+                                    (tab) => _ChipModel(
+                                      label: tab.label,
+                                      selected: tab.key == selectedPlatformKey,
+                                      onTap: () => setState(
+                                        () => _selectedPlatformKey = tab.key,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: _FilterCard(
-                                  title: l10n.stopPlatformFilter,
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: Row(
-                                      children: [
-                                        _FilterChip(
-                                          label: l10n.stopPlatformAll,
-                                          selected: _selectedPlatform == null,
-                                          onTap: () => setState(
-                                            () => _selectedPlatform = null,
-                                          ),
-                                        ),
-                                        for (final platform in platforms)
-                                          _FilterChip(
-                                            label: platform,
-                                            selected:
-                                                platform == _selectedPlatform,
-                                            onTap: () => setState(
-                                              () =>
-                                                  _selectedPlatform = platform,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
+                          child: _ChipBar(
+                            chips: data.dayTabs
+                                .map(
+                                  (tab) => _ChipModel(
+                                    label: tab.label,
+                                    selected: tab.id == selectedDayTab.id,
+                                    onTap: () => _selectDayTab(tab.id, data),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _FilterCard(
-                                  title: l10n.stopServiceDayFilter,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      _FilterChip(
-                                        label: l10n.stopServiceDayWeekday,
-                                        selected: _dayFilter ==
-                                            _ServiceDayFilter.weekday,
-                                        onTap: () => _setDayFilter(
-                                          _ServiceDayFilter.weekday,
-                                        ),
-                                      ),
-                                      _FilterChip(
-                                        label:
-                                            l10n.stopServiceDayWeekendHoliday,
-                                        selected: _dayFilter ==
-                                            _ServiceDayFilter.weekendHoliday,
-                                        onTap: () => _setDayFilter(
-                                          _ServiceDayFilter.weekendHoliday,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
+                                )
+                                .toList(),
                           ),
                         ),
                         Expanded(
-                          child: filteredDeps.isEmpty
+                          child: departures.isEmpty
                               ? Center(
                                   child: Padding(
                                     padding: const EdgeInsets.all(24),
                                     child: Text(
-                                      deps.isEmpty
-                                          ? l10n.noDeparturesFound
-                                          : l10n.noDeparturesForPlatform,
+                                      l10n.noDeparturesFound,
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         color: colors.textSecondary,
@@ -256,24 +311,26 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                     ),
                                   ),
                                 )
-                              : ListView.builder(
+                              : ListView.separated(
                                   controller: scrollCtrl,
                                   padding: const EdgeInsets.fromLTRB(
                                     16,
                                     0,
                                     16,
-                                    28,
+                                    24,
                                   ),
-                                  itemCount: filteredDeps.length,
+                                  itemCount: departures.length,
+                                  separatorBuilder: (_, __) => Divider(
+                                    height: 1,
+                                    color: colors.divider.withValues(
+                                      alpha: 0.45,
+                                    ),
+                                  ),
                                   itemBuilder: (ctx, idx) {
-                                    return Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 10),
-                                      child: _DepartureRow(
-                                        dep: filteredDeps[idx],
-                                        colors: colors,
-                                        l10n: l10n,
-                                      ),
+                                    return _DepartureRow(
+                                      dep: departures[idx],
+                                      colors: colors,
+                                      l10n: l10n,
                                     );
                                   },
                                 ),
@@ -291,39 +348,42 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
   }
 }
 
-class _FilterCard extends StatelessWidget {
-  final String title;
-  final Widget child;
+class _ChipBar extends StatelessWidget {
+  final List<_ChipModel> chips;
 
-  const _FilterCard({required this.title, required this.child});
+  const _ChipBar({required this.chips});
 
   @override
   Widget build(BuildContext context) {
-    final colors = TransColors.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.stepStopoversBg,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: colors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 10),
-          child,
-        ],
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: chips.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final chip = chips[index];
+          return _FilterChip(
+            label: chip.label,
+            selected: chip.selected,
+            onTap: chip.onTap,
+          );
+        },
       ),
     );
   }
+}
+
+class _ChipModel {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ChipModel({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 }
 
 class _FilterChip extends StatelessWidget {
@@ -340,18 +400,17 @@ class _FilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: selected ? colors.chipActiveBg : colors.chipBg,
-            borderRadius: BorderRadius.circular(999),
-          ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? colors.chipActiveBg : colors.chipBg,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Center(
           child: Text(
             label,
             style: TextStyle(
@@ -380,145 +439,104 @@ class _DepartureRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final parsed = _ParsedDeparture.fromMap(dep);
-    final platform = _platformForDeparture(dep);
-    final cardBorder = parsed.isCancelled
-        ? Colors.red.withValues(alpha: 0.25)
-        : colors.divider.withValues(alpha: 0.45);
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colors.cardBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: cardBorder),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            constraints: const BoxConstraints(minWidth: 56),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            constraints: const BoxConstraints(minWidth: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: parsed.isCancelled
                   ? Colors.red.withValues(alpha: 0.12)
                   : colors.chipBg,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               parsed.lineName.isNotEmpty ? parsed.lineName : '—',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: parsed.isCancelled ? Colors.red : colors.textPrimary,
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
                 decoration:
                     parsed.isCancelled ? TextDecoration.lineThrough : null,
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        parsed.direction.isNotEmpty ? parsed.direction : '—',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: parsed.isCancelled
-                              ? colors.textSecondary
-                              : colors.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          decoration: parsed.isCancelled
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
-                    ),
-                    if (platform != null) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.searchHeaderIconBg,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          platform,
-                          style: TextStyle(
-                            color: colors.searchHeaderIcon,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
+                Text(
+                  parsed.direction.isNotEmpty ? parsed.direction : '—',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: parsed.isCancelled
+                        ? colors.textSecondary
+                        : colors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    decoration:
+                        parsed.isCancelled ? TextDecoration.lineThrough : null,
+                  ),
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: parsed.isCancelled
-                            ? colors.chipBg
-                            : colors.timeContainerBg,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        parsed.timeStr,
-                        style: TextStyle(
-                          color: parsed.isCancelled
-                              ? colors.textSecondary
-                              : (parsed.delayStr == null
-                                  ? colors.textPrimary
-                                  : parsed.timeColor),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          decoration: parsed.isCancelled
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
-                    ),
-                    if (parsed.delayStr != null && !parsed.isCancelled) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        parsed.delayStr!,
-                        style: TextStyle(
-                          color: parsed.delayStr == null
-                              ? colors.textPrimary
-                              : parsed.timeColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                    if (parsed.isCancelled) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        l10n.cancelled,
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ],
+                const SizedBox(height: 3),
+                Text(
+                  parsed.metaLine,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 58),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  parsed.timeStr,
+                  style: TextStyle(
+                    color: parsed.isCancelled
+                        ? colors.textSecondary
+                        : (parsed.delayStr == null
+                            ? colors.textPrimary
+                            : parsed.timeColor),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    decoration:
+                        parsed.isCancelled ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                if (parsed.isCancelled)
+                  Text(
+                    l10n.cancelled,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  )
+                else if (parsed.delayStr != null)
+                  Text(
+                    parsed.delayStr!,
+                    style: TextStyle(
+                      color: parsed.timeColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -535,6 +553,7 @@ class _ParsedDeparture {
   final bool isCancelled;
   final String lineName;
   final String direction;
+  final String metaLine;
 
   const _ParsedDeparture({
     required this.timeStr,
@@ -543,6 +562,7 @@ class _ParsedDeparture {
     required this.isCancelled,
     required this.lineName,
     required this.direction,
+    required this.metaLine,
   });
 
   factory _ParsedDeparture.fromMap(Map<String, dynamic> dep) {
@@ -605,6 +625,12 @@ class _ParsedDeparture {
     final headsign = dep['headsign'] as String?;
     final tripTo = dep['tripTo'] as Map<String, dynamic>?;
     final lineObj = dep['line'] as Map<String, dynamic>?;
+    final platform = _platformLabel(dep);
+    final stopLabel = _stopAreaName(dep);
+    final metaParts = <String>[
+      if (platform != null && platform.isNotEmpty) platform,
+      if (stopLabel != null && stopLabel.isNotEmpty) stopLabel,
+    ];
 
     return _ParsedDeparture(
       timeStr: timeStr,
@@ -619,22 +645,167 @@ class _ParsedDeparture {
           (tripTo?['name'] as String?) ??
           (dep['direction'] as String?) ??
           '',
+      metaLine: metaParts.isEmpty ? ' ' : metaParts.join(' • '),
     );
   }
 }
 
-List<String> _platformOptions(List<Map<String, dynamic>> deps) {
-  final platforms = deps
-      .map(_platformForDeparture)
-      .whereType<String>()
-      .where((platform) => platform.trim().isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-  return platforms;
+class _StopDeparturesData {
+  final List<_DayTab> dayTabs;
+
+  const _StopDeparturesData({required this.dayTabs});
+
+  _DayTab? dayTabById(String? id) {
+    if (id == null) return null;
+    return dayTabs.cast<_DayTab?>().firstWhere(
+          (tab) => tab?.id == id,
+          orElse: () => null,
+        );
+  }
+
+  _DayTab defaultDayTab(DateTime date) {
+    final weekday = date.weekday;
+    return dayTabs.cast<_DayTab?>().firstWhere(
+              (tab) =>
+                  tab?.dates.any((item) => item.weekday == weekday) == true,
+              orElse: () => dayTabs.isNotEmpty ? dayTabs.first : null,
+            ) ??
+        const _DayTab(id: 'empty', label: '', dates: [], departures: []);
+  }
+
+  List<_PlatformTab> platformTabsForDay(String dayTabId) {
+    final dayTab = dayTabById(dayTabId);
+    if (dayTab == null) return const <_PlatformTab>[];
+
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final dep in dayTab.departures) {
+      final key = _platformKey(dep);
+      grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(dep);
+    }
+
+    final duplicateCounts = <String, int>{};
+    for (final dep in dayTab.departures) {
+      final label = _platformLabel(dep);
+      if (label != null) {
+        duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
+      }
+    }
+
+    final tabs = grouped.entries.map((entry) {
+      final dep = entry.value.first;
+      final platformLabel = _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
+      final hasDuplicateLabel = (duplicateCounts[platformLabel] ?? 0) > 1;
+      final label = hasDuplicateLabel
+          ? '$platformLabel ${_shortDirection(dep)}'
+          : platformLabel;
+
+      return _PlatformTab(
+        key: entry.key,
+        label: label.trim(),
+        platformLabel: _platformLabel(dep),
+        stopAreaId: _stopAreaId(dep),
+        departures: entry.value,
+      );
+    }).toList()
+      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+
+    return tabs;
+  }
 }
 
-String? _platformForDeparture(Map<String, dynamic> dep) {
+class _DayTab {
+  final String id;
+  final String label;
+  final List<DateTime> dates;
+  final List<Map<String, dynamic>> departures;
+
+  const _DayTab({
+    required this.id,
+    required this.label,
+    required this.dates,
+    required this.departures,
+  });
+}
+
+class _PlatformTab {
+  final String key;
+  final String label;
+  final String? platformLabel;
+  final String? stopAreaId;
+  final List<Map<String, dynamic>> departures;
+
+  const _PlatformTab({
+    required this.key,
+    required this.label,
+    required this.platformLabel,
+    required this.stopAreaId,
+    required this.departures,
+  });
+}
+
+class _DayBucket {
+  final String signature;
+  final List<DateTime> dates;
+  final List<Map<String, dynamic>> departures;
+
+  _DayBucket({
+    required this.signature,
+    required this.dates,
+    required this.departures,
+  });
+}
+
+List<DateTime> _sampleWeek(DateTime anchor) {
+  final start = DateTime(
+    anchor.year,
+    anchor.month,
+    anchor.day,
+  ).subtract(Duration(days: anchor.weekday - 1));
+  return List.generate(7, (index) => start.add(Duration(days: index)));
+}
+
+String _daySignature(List<Map<String, dynamic>> departures) {
+  final items = departures.map((dep) {
+    final time =
+        _scheduledTime(dep) ?? _actualTime(dep) ?? dep['plannedWhen'] ?? '';
+    return [
+      time.toString(),
+      _platformKey(dep),
+      _lineName(dep),
+      _direction(dep),
+    ].join('|');
+  }).toList()
+    ..sort();
+  return items.join('||');
+}
+
+String _dayTabLabel(BuildContext context, List<DateTime> dates) {
+  final locale = Localizations.localeOf(context).languageCode;
+  final labels =
+      dates.map((date) => DateFormat('EEE', locale).format(date)).toList();
+  return labels.join(', ');
+}
+
+String _platformKey(Map<String, dynamic> dep) {
+  final stopAreaId = _stopAreaId(dep) ?? '';
+  final platformLabel = _platformLabel(dep) ?? '';
+  return '$stopAreaId|$platformLabel';
+}
+
+String? _stopAreaId(Map<String, dynamic> dep) {
+  final place = dep['place'] as Map<String, dynamic>?;
+  final value = place?['stopId'] ?? place?['parentId'] ?? dep['stopId'];
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String? _stopAreaName(Map<String, dynamic> dep) {
+  final place = dep['place'] as Map<String, dynamic>?;
+  final text = (place?['description'] ?? place?['name'])?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String? _platformLabel(Map<String, dynamic> dep) {
   final place = dep['place'] as Map<String, dynamic>?;
   final platform = place?['track'] ??
       place?['scheduledTrack'] ??
@@ -644,27 +815,41 @@ String? _platformForDeparture(Map<String, dynamic> dep) {
   return text == null || text.isEmpty ? null : text;
 }
 
-bool _isWeekendOrHoliday(DateTime date) =>
-    date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+String _lineName(Map<String, dynamic> dep) {
+  final line = dep['line'] as Map<String, dynamic>?;
+  return (dep['routeShortName'] ?? dep['displayName'] ?? line?['name'] ?? '')
+      .toString();
+}
 
-DateTime _dateForFilter(DateTime anchor, _ServiceDayFilter filter) {
-  final base = DateTime(
-    anchor.year,
-    anchor.month,
-    anchor.day,
-    anchor.hour,
-    anchor.minute,
-  );
+String _direction(Map<String, dynamic> dep) {
+  final tripTo = dep['tripTo'] as Map<String, dynamic>?;
+  return (dep['headsign'] ?? tripTo?['name'] ?? dep['direction'] ?? '')
+      .toString();
+}
 
-  if (filter == _ServiceDayFilter.weekendHoliday) {
-    if (_isWeekendOrHoliday(base)) return base;
-    final delta = (DateTime.saturday - base.weekday + 7) % 7;
-    return base.add(Duration(days: delta == 0 ? 7 : delta));
-  }
+String _shortDirection(Map<String, dynamic> dep) {
+  final direction = _direction(dep).trim();
+  if (direction.isEmpty) return '';
+  final words = direction.split(' ').where((part) => part.isNotEmpty).toList();
+  return words.take(2).join(' ');
+}
 
-  if (!_isWeekendOrHoliday(base)) return base;
-  final delta = (DateTime.monday - base.weekday + 7) % 7;
-  return base.add(Duration(days: delta == 0 ? 7 : delta));
+String? _scheduledTime(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  return (motisDepObj?['scheduledTime'] as String?) ??
+      (motisPlaceObj?['scheduledDeparture'] as String?) ??
+      (motisPlaceObj?['scheduledArrival'] as String?) ??
+      (dep['plannedWhen'] as String?);
+}
+
+String? _actualTime(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  return (motisDepObj?['time'] as String?) ??
+      (motisPlaceObj?['departure'] as String?) ??
+      (motisPlaceObj?['arrival'] as String?) ??
+      (dep['when'] as String?);
 }
 
 int? _calculateDelayMinutes(String? scheduled, String? actual) {

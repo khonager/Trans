@@ -4996,6 +4996,7 @@ class _StepCardState extends State<_StepCard> {
                                       date: step.plannedDeparture ??
                                           step.dateTime ??
                                           DateTime.now(),
+                                      preferredPlatform: step.platform,
                                     )
                                 : null,
                             child: ListTile(
@@ -5074,6 +5075,8 @@ class _StepCardState extends State<_StepCard> {
                                             date: exactStopDate ??
                                                 widget.step.dateTime ??
                                                 DateTime.now(),
+                                            preferredPlatform:
+                                                platform as String?,
                                           )
                                       : null,
                                   child: ListTile(
@@ -5145,6 +5148,7 @@ class _StepCardState extends State<_StepCard> {
                                     stopName:
                                         step.destinationName ?? 'Destination',
                                     date: destDate,
+                                    preferredPlatform: step.arrivalPlatform,
                                   );
                                 }
                               : null,
