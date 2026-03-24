@@ -891,10 +891,14 @@ class AppLocalizationsDe extends AppLocalizations {
   String get german => 'Deutsch';
 
   @override
-  String stopDeparturesTitle(String stopName) => 'Abfahrten an $stopName';
+  String stopDeparturesTitle(String stopName) {
+    return 'Abfahrten an $stopName';
+  }
 
   @override
-  String stopDeparturesDate(String date) => 'am $date';
+  String stopDeparturesDate(String date) {
+    return 'am $date';
+  }
 
   @override
   String get noDeparturesFound =>
