@@ -1,0 +1,864 @@
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:trans/config/app_theme.dart';
+import 'package:trans/services/transport_api.dart';
+import 'package:trans/utils/app_error.dart';
+
+import '../l10n/app_localizations.dart';
+
+class StopDeparturesSheet extends StatefulWidget {
+  final String stopId;
+  final String stopName;
+  final DateTime date;
+  final String? preferredPlatform;
+
+  const StopDeparturesSheet({
+    super.key,
+    required this.stopId,
+    required this.stopName,
+    required this.date,
+    this.preferredPlatform,
+  });
+
+  static Future<void> show(
+    BuildContext context, {
+    required String stopId,
+    required String stopName,
+    required DateTime date,
+    String? preferredPlatform,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StopDeparturesSheet(
+        stopId: stopId,
+        stopName: stopName,
+        date: date,
+        preferredPlatform: preferredPlatform,
+      ),
+    );
+  }
+
+  @override
+  State<StopDeparturesSheet> createState() => _StopDeparturesSheetState();
+}
+
+class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
+  late Future<_StopDeparturesData> _future;
+  String? _selectedDayTabId;
+  String? _selectedPlatformKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() {
+    _future = _loadData().then((data) {
+      if (!mounted) return data;
+
+      final selectedDayTab =
+          data.dayTabById(_selectedDayTabId) ?? data.defaultDayTab(widget.date);
+      final platformTabs = data.platformTabsForDay(selectedDayTab.id);
+      final nextPlatformKey = _resolvePlatformKey(
+        platformTabs,
+        currentKey: _selectedPlatformKey,
+      );
+
+      if (_selectedDayTabId != selectedDayTab.id ||
+          _selectedPlatformKey != nextPlatformKey) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _selectedDayTabId = selectedDayTab.id;
+            _selectedPlatformKey = nextPlatformKey;
+          });
+        });
+      }
+
+      return data;
+    });
+  }
+
+  Future<_StopDeparturesData> _loadData() async {
+    final dates = _sampleWeek(widget.date);
+    final results = await Future.wait(
+      dates.map(
+        (date) => TransportApi.fetchStopDepartures(widget.stopId, date: date)
+            .catchError((_) => <Map<String, dynamic>>[]),
+      ),
+    );
+
+    final dayBuckets = <_DayBucket>[];
+    for (var i = 0; i < dates.length; i++) {
+      final date = dates[i];
+      final deps = results[i];
+      final signature = _daySignature(deps);
+      final existingIndex = dayBuckets.indexWhere(
+        (bucket) => bucket.signature == signature,
+      );
+      if (existingIndex == -1) {
+        dayBuckets.add(
+          _DayBucket(signature: signature, dates: [date], departures: deps),
+        );
+      } else {
+        dayBuckets[existingIndex].dates.add(date);
+      }
+    }
+
+    final dayTabs = dayBuckets
+        .map(
+          (bucket) => _DayTab(
+            id: bucket.dates.map((date) => date.weekday.toString()).join('-'),
+            label: _dayTabLabel(context, bucket.dates),
+            dates: bucket.dates,
+            departures: bucket.departures,
+          ),
+        )
+        .toList();
+
+    return _StopDeparturesData(dayTabs: dayTabs);
+  }
+
+  String? _resolvePlatformKey(
+    List<_PlatformTab> tabs, {
+    String? currentKey,
+  }) {
+    if (tabs.isEmpty) return null;
+    if (currentKey != null && tabs.any((tab) => tab.key == currentKey)) {
+      return currentKey;
+    }
+
+    final stopMatch = tabs.cast<_PlatformTab?>().firstWhere(
+          (tab) => tab?.stopAreaId == widget.stopId,
+          orElse: () => null,
+        );
+    if (stopMatch != null) return stopMatch.key;
+
+    if (widget.preferredPlatform != null) {
+      final platformMatch = tabs.cast<_PlatformTab?>().firstWhere(
+            (tab) => tab?.platformLabel == widget.preferredPlatform,
+            orElse: () => null,
+          );
+      if (platformMatch != null) return platformMatch.key;
+    }
+
+    return tabs.first.key;
+  }
+
+  void _selectDayTab(String dayTabId, _StopDeparturesData data) {
+    final platformTabs = data.platformTabsForDay(dayTabId);
+    setState(() {
+      _selectedDayTabId = dayTabId;
+      _selectedPlatformKey = _resolvePlatformKey(platformTabs);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    final l10n = AppLocalizations.of(context)!;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.8,
+      minChildSize: 0.45,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (ctx, scrollCtrl) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.modalHandle.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    l10n.stopDeparturesTitle(widget.stopName),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder<_StopDeparturesData>(
+                  future: _future,
+                  builder: (ctx, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 12),
+                            Text(
+                              l10n.loadingDepartures,
+                              style: TextStyle(color: colors.textSecondary),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    if (snap.hasError) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            AppError.userMessage(context, snap.error!),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.textSecondary),
+                          ),
+                        ),
+                      );
+                    }
+
+                    final data =
+                        snap.data ?? const _StopDeparturesData(dayTabs: []);
+                    if (data.dayTabs.isEmpty) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            l10n.noDeparturesFound,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.textSecondary),
+                          ),
+                        ),
+                      );
+                    }
+
+                    final selectedDayTab = data.dayTabById(_selectedDayTabId) ??
+                        data.defaultDayTab(widget.date);
+                    final platformTabs = data.platformTabsForDay(
+                      selectedDayTab.id,
+                    );
+                    final selectedPlatformKey = _resolvePlatformKey(
+                      platformTabs,
+                      currentKey: _selectedPlatformKey,
+                    );
+                    final selectedPlatformTab =
+                        platformTabs.cast<_PlatformTab?>().firstWhere(
+                              (tab) => tab?.key == selectedPlatformKey,
+                              orElse: () => null,
+                            );
+                    final departures = selectedPlatformTab?.departures ??
+                        selectedDayTab.departures;
+
+                    return Column(
+                      children: [
+                        if (platformTabs.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: _ChipBar(
+                              chips: platformTabs
+                                  .map(
+                                    (tab) => _ChipModel(
+                                      label: tab.label,
+                                      selected: tab.key == selectedPlatformKey,
+                                      onTap: () => setState(
+                                        () => _selectedPlatformKey = tab.key,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                          child: _ChipBar(
+                            chips: data.dayTabs
+                                .map(
+                                  (tab) => _ChipModel(
+                                    label: tab.label,
+                                    selected: tab.id == selectedDayTab.id,
+                                    onTap: () => _selectDayTab(tab.id, data),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                        Expanded(
+                          child: departures.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(24),
+                                    child: Text(
+                                      l10n.noDeparturesFound,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : ListView.separated(
+                                  controller: scrollCtrl,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    0,
+                                    16,
+                                    24,
+                                  ),
+                                  itemCount: departures.length,
+                                  separatorBuilder: (_, __) => Divider(
+                                    height: 1,
+                                    color: colors.divider.withValues(
+                                      alpha: 0.45,
+                                    ),
+                                  ),
+                                  itemBuilder: (ctx, idx) {
+                                    return _DepartureRow(
+                                      dep: departures[idx],
+                                      colors: colors,
+                                      l10n: l10n,
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ChipBar extends StatelessWidget {
+  final List<_ChipModel> chips;
+
+  const _ChipBar({required this.chips});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: chips.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final chip = chips[index];
+          return _FilterChip(
+            label: chip.label,
+            selected: chip.selected,
+            onTap: chip.onTap,
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ChipModel {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ChipModel({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? colors.chipActiveBg : colors.chipBg,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? colors.chipActiveFg : colors.chipFg,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DepartureRow extends StatelessWidget {
+  final Map<String, dynamic> dep;
+  final TransColors colors;
+  final AppLocalizations l10n;
+
+  const _DepartureRow({
+    required this.dep,
+    required this.colors,
+    required this.l10n,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final parsed = _ParsedDeparture.fromMap(dep);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            constraints: const BoxConstraints(minWidth: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: parsed.isCancelled
+                  ? Colors.red.withValues(alpha: 0.12)
+                  : colors.chipBg,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              parsed.lineName.isNotEmpty ? parsed.lineName : '—',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: parsed.isCancelled ? Colors.red : colors.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                decoration:
+                    parsed.isCancelled ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  parsed.direction.isNotEmpty ? parsed.direction : '—',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: parsed.isCancelled
+                        ? colors.textSecondary
+                        : colors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    decoration:
+                        parsed.isCancelled ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  parsed.metaLine,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 58),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  parsed.timeStr,
+                  style: TextStyle(
+                    color: parsed.isCancelled
+                        ? colors.textSecondary
+                        : (parsed.delayStr == null
+                            ? colors.textPrimary
+                            : parsed.timeColor),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    decoration:
+                        parsed.isCancelled ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                if (parsed.isCancelled)
+                  Text(
+                    l10n.cancelled,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  )
+                else if (parsed.delayStr != null)
+                  Text(
+                    parsed.delayStr!,
+                    style: TextStyle(
+                      color: parsed.timeColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ParsedDeparture {
+  final String timeStr;
+  final String? delayStr;
+  final Color timeColor;
+  final bool isCancelled;
+  final String lineName;
+  final String direction;
+  final String metaLine;
+
+  const _ParsedDeparture({
+    required this.timeStr,
+    required this.delayStr,
+    required this.timeColor,
+    required this.isCancelled,
+    required this.lineName,
+    required this.direction,
+    required this.metaLine,
+  });
+
+  factory _ParsedDeparture.fromMap(Map<String, dynamic> dep) {
+    String timeStr = '--:--';
+    String? delayStr;
+    Color timeColor = Colors.red;
+    bool isCancelled = false;
+
+    final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+    final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+    if (motisDepObj != null || motisPlaceObj != null) {
+      final scheduled = (motisDepObj?['scheduledTime'] as String?) ??
+          (motisPlaceObj?['scheduledDeparture'] as String?) ??
+          (motisPlaceObj?['scheduledArrival'] as String?);
+      final actual = (motisDepObj?['time'] as String?) ??
+          (motisPlaceObj?['departure'] as String?) ??
+          (motisPlaceObj?['arrival'] as String?);
+      final rawDelay = motisDepObj?['delay'];
+      final delay = rawDelay is num
+          ? rawDelay.toInt()
+          : _calculateDelayMinutes(scheduled, actual);
+
+      isCancelled = (dep['cancelled'] as bool?) ??
+          (motisPlaceObj?['cancelled'] as bool?) ??
+          false;
+
+      final displayedTime = scheduled ?? actual;
+      if (displayedTime != null) {
+        final dt = DateTime.parse(displayedTime).toLocal();
+        timeStr =
+            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      }
+      if (delay != null && delay != 0) {
+        final sign = delay > 0 ? '+' : '';
+        delayStr = '$sign$delay\'';
+        timeColor = delay > 2 ? Colors.red : Colors.green;
+      }
+    } else {
+      final planned = dep['plannedWhen'] as String?;
+      final actual = dep['when'] as String?;
+      isCancelled = (dep['cancelled'] as bool?) ?? false;
+      final displayedTime = planned ?? actual;
+      if (displayedTime != null) {
+        final dt = DateTime.parse(displayedTime).toLocal();
+        timeStr =
+            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      }
+      final delay = dep['delay'] as int?;
+      if (delay != null && delay != 0) {
+        final delayMin = (delay / 60).round();
+        if (delayMin != 0) {
+          final sign = delayMin > 0 ? '+' : '';
+          delayStr = '$sign$delayMin\'';
+          timeColor = delayMin > 2 ? Colors.red : Colors.green;
+        }
+      }
+    }
+
+    final routeShort = dep['routeShortName'] as String?;
+    final headsign = dep['headsign'] as String?;
+    final tripTo = dep['tripTo'] as Map<String, dynamic>?;
+    final lineObj = dep['line'] as Map<String, dynamic>?;
+    final platform = _platformLabel(dep);
+    final stopLabel = _stopAreaName(dep);
+    final metaParts = <String>[
+      if (platform != null && platform.isNotEmpty) platform,
+      if (stopLabel != null && stopLabel.isNotEmpty) stopLabel,
+    ];
+
+    return _ParsedDeparture(
+      timeStr: timeStr,
+      delayStr: delayStr,
+      timeColor: timeColor,
+      isCancelled: isCancelled,
+      lineName: routeShort ??
+          (dep['displayName'] as String?) ??
+          (lineObj?['name'] as String?) ??
+          '',
+      direction: headsign ??
+          (tripTo?['name'] as String?) ??
+          (dep['direction'] as String?) ??
+          '',
+      metaLine: metaParts.isEmpty ? ' ' : metaParts.join(' • '),
+    );
+  }
+}
+
+class _StopDeparturesData {
+  final List<_DayTab> dayTabs;
+
+  const _StopDeparturesData({required this.dayTabs});
+
+  _DayTab? dayTabById(String? id) {
+    if (id == null) return null;
+    return dayTabs.cast<_DayTab?>().firstWhere(
+          (tab) => tab?.id == id,
+          orElse: () => null,
+        );
+  }
+
+  _DayTab defaultDayTab(DateTime date) {
+    final weekday = date.weekday;
+    return dayTabs.cast<_DayTab?>().firstWhere(
+              (tab) =>
+                  tab?.dates.any((item) => item.weekday == weekday) == true,
+              orElse: () => dayTabs.isNotEmpty ? dayTabs.first : null,
+            ) ??
+        const _DayTab(id: 'empty', label: '', dates: [], departures: []);
+  }
+
+  List<_PlatformTab> platformTabsForDay(String dayTabId) {
+    final dayTab = dayTabById(dayTabId);
+    if (dayTab == null) return const <_PlatformTab>[];
+
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final dep in dayTab.departures) {
+      final key = _platformKey(dep);
+      grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(dep);
+    }
+
+    final duplicateCounts = <String, int>{};
+    for (final dep in dayTab.departures) {
+      final label = _platformLabel(dep);
+      if (label != null) {
+        duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
+      }
+    }
+
+    final tabs = grouped.entries.map((entry) {
+      final dep = entry.value.first;
+      final platformLabel = _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
+      final hasDuplicateLabel = (duplicateCounts[platformLabel] ?? 0) > 1;
+      final label = hasDuplicateLabel
+          ? '$platformLabel ${_shortDirection(dep)}'
+          : platformLabel;
+
+      return _PlatformTab(
+        key: entry.key,
+        label: label.trim(),
+        platformLabel: _platformLabel(dep),
+        stopAreaId: _stopAreaId(dep),
+        departures: entry.value,
+      );
+    }).toList()
+      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+
+    return tabs;
+  }
+}
+
+class _DayTab {
+  final String id;
+  final String label;
+  final List<DateTime> dates;
+  final List<Map<String, dynamic>> departures;
+
+  const _DayTab({
+    required this.id,
+    required this.label,
+    required this.dates,
+    required this.departures,
+  });
+}
+
+class _PlatformTab {
+  final String key;
+  final String label;
+  final String? platformLabel;
+  final String? stopAreaId;
+  final List<Map<String, dynamic>> departures;
+
+  const _PlatformTab({
+    required this.key,
+    required this.label,
+    required this.platformLabel,
+    required this.stopAreaId,
+    required this.departures,
+  });
+}
+
+class _DayBucket {
+  final String signature;
+  final List<DateTime> dates;
+  final List<Map<String, dynamic>> departures;
+
+  _DayBucket({
+    required this.signature,
+    required this.dates,
+    required this.departures,
+  });
+}
+
+List<DateTime> _sampleWeek(DateTime anchor) {
+  final start = DateTime(
+    anchor.year,
+    anchor.month,
+    anchor.day,
+  ).subtract(Duration(days: anchor.weekday - 1));
+  return List.generate(7, (index) => start.add(Duration(days: index)));
+}
+
+String _daySignature(List<Map<String, dynamic>> departures) {
+  final items = departures.map((dep) {
+    final time =
+        _scheduledTime(dep) ?? _actualTime(dep) ?? dep['plannedWhen'] ?? '';
+    return [
+      time.toString(),
+      _platformKey(dep),
+      _lineName(dep),
+      _direction(dep),
+    ].join('|');
+  }).toList()
+    ..sort();
+  return items.join('||');
+}
+
+String _dayTabLabel(BuildContext context, List<DateTime> dates) {
+  final locale = Localizations.localeOf(context).languageCode;
+  final labels =
+      dates.map((date) => DateFormat('EEE', locale).format(date)).toList();
+  return labels.join(', ');
+}
+
+String _platformKey(Map<String, dynamic> dep) {
+  final stopAreaId = _stopAreaId(dep) ?? '';
+  final platformLabel = _platformLabel(dep) ?? '';
+  return '$stopAreaId|$platformLabel';
+}
+
+String? _stopAreaId(Map<String, dynamic> dep) {
+  final place = dep['place'] as Map<String, dynamic>?;
+  final value = place?['stopId'] ?? place?['parentId'] ?? dep['stopId'];
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String? _stopAreaName(Map<String, dynamic> dep) {
+  final place = dep['place'] as Map<String, dynamic>?;
+  final text = (place?['description'] ?? place?['name'])?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String? _platformLabel(Map<String, dynamic> dep) {
+  final place = dep['place'] as Map<String, dynamic>?;
+  final platform = place?['track'] ??
+      place?['scheduledTrack'] ??
+      dep['platform'] ??
+      dep['plannedPlatform'];
+  final text = platform?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String _lineName(Map<String, dynamic> dep) {
+  final line = dep['line'] as Map<String, dynamic>?;
+  return (dep['routeShortName'] ?? dep['displayName'] ?? line?['name'] ?? '')
+      .toString();
+}
+
+String _direction(Map<String, dynamic> dep) {
+  final tripTo = dep['tripTo'] as Map<String, dynamic>?;
+  return (dep['headsign'] ?? tripTo?['name'] ?? dep['direction'] ?? '')
+      .toString();
+}
+
+String _shortDirection(Map<String, dynamic> dep) {
+  final direction = _direction(dep).trim();
+  if (direction.isEmpty) return '';
+  final words = direction.split(' ').where((part) => part.isNotEmpty).toList();
+  return words.take(2).join(' ');
+}
+
+String? _scheduledTime(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  return (motisDepObj?['scheduledTime'] as String?) ??
+      (motisPlaceObj?['scheduledDeparture'] as String?) ??
+      (motisPlaceObj?['scheduledArrival'] as String?) ??
+      (dep['plannedWhen'] as String?);
+}
+
+String? _actualTime(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  return (motisDepObj?['time'] as String?) ??
+      (motisPlaceObj?['departure'] as String?) ??
+      (motisPlaceObj?['arrival'] as String?) ??
+      (dep['when'] as String?);
+}
+
+int? _calculateDelayMinutes(String? scheduled, String? actual) {
+  if (scheduled == null || actual == null) return null;
+  try {
+    return DateTime.parse(actual)
+        .difference(DateTime.parse(scheduled))
+        .inMinutes;
+  } catch (_) {
+    return null;
+  }
+}

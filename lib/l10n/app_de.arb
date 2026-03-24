@@ -332,5 +332,30 @@
   "send": "Senden",
   "language": "Sprache",
   "english": "Englisch",
-  "german": "Deutsch"
+  "german": "Deutsch",
+  "stopDeparturesTitle": "Abfahrten an {stopName}",
+  "@stopDeparturesTitle": {
+    "placeholders": {
+      "stopName": {
+        "type": "String"
+      }
+    }
+  },
+  "stopDeparturesDate": "am {date}",
+  "@stopDeparturesDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "stopPlatformFilter": "Steig / Gleis",
+  "stopPlatformAll": "Alle",
+  "stopServiceDayFilter": "Verkehrstag",
+  "stopServiceDayWeekday": "Werktag",
+  "stopServiceDayWeekendHoliday": "Wochenende/Feiertag",
+  "noDeparturesFound": "Keine Abfahrten f\u00fcr diese Haltestelle gefunden.",
+  "noDeparturesForPlatform": "Keine Abfahrten f\u00fcr diesen Steig gefunden.",
+  "loadingDepartures": "Abfahrten werden geladen...",
+  "longPressForDepartures": "Haltestelle lang dr\u00fccken, um alle Abfahrten des Tages zu sehen."
 }
