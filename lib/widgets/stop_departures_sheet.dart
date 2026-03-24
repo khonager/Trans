@@ -123,12 +123,6 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
       return currentKey;
     }
 
-    final stopMatch = tabs.cast<_PlatformTab?>().firstWhere(
-          (tab) => tab?.stopAreaId == widget.stopId,
-          orElse: () => null,
-        );
-    if (stopMatch != null) return stopMatch.key;
-
     if (widget.preferredPlatform != null) {
       final platformMatch = tabs.cast<_PlatformTab?>().firstWhere(
             (tab) => tab?.platformLabel == widget.preferredPlatform,
@@ -137,6 +131,12 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
       if (platformMatch != null) return platformMatch.key;
     }
 
+    final stopMatch = tabs.cast<_PlatformTab?>().firstWhere(
+          (tab) => tab?.stopAreaId == widget.stopId,
+          orElse: () => null,
+        );
+    if (stopMatch != null) return stopMatch.key;
+
     return tabs.first.key;
   }
 
@@ -144,7 +144,10 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
     final platformTabs = data.platformTabsForDay(dayTabId);
     setState(() {
       _selectedDayTabId = dayTabId;
-      _selectedPlatformKey = _resolvePlatformKey(platformTabs);
+      _selectedPlatformKey = _resolvePlatformKey(
+        platformTabs,
+        currentKey: _selectedPlatformKey,
+      );
     });
   }
 
