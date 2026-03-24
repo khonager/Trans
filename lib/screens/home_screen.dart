@@ -240,6 +240,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setInt('current_tab_index', index);
   }
 
+  List<NavigationDestination> _buildDestinations(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return [
+      NavigationDestination(
+        icon: const Icon(Icons.directions),
+        label: l10n.routes,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.people),
+        label: l10n.friends,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.settings),
+        label: l10n.settings,
+      ),
+    ];
+  }
+
   Future<void> _handleBottomNavLongPress(
     LongPressStartDetails details,
     double navWidth,
@@ -247,7 +265,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (navWidth <= 0) return;
 
     // Compute the width of a single tab based on the actual number of destinations.
-    final int destinationsCount = _destinations.length;
+    final int destinationsCount = _buildDestinations(context).length;
     if (destinationsCount <= 0) return;
 
     final double routesTabWidth = navWidth / destinationsCount;
@@ -383,17 +401,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: NavigationBar(
                   selectedIndex: _currentIndex,
                   onDestinationSelected: _onTabChanged,
-                  destinations: [
-                    NavigationDestination(
-                        icon: const Icon(Icons.directions),
-                        label: AppLocalizations.of(context)!.routes),
-                    NavigationDestination(
-                        icon: const Icon(Icons.people),
-                        label: AppLocalizations.of(context)!.friends),
-                    NavigationDestination(
-                        icon: const Icon(Icons.settings),
-                        label: AppLocalizations.of(context)!.settings),
-                  ],
+                  destinations: _buildDestinations(context),
                 ),
               );
             },
