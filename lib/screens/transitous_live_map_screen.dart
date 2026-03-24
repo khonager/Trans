@@ -25,10 +25,12 @@ class TransitousLiveMapScreen extends StatefulWidget {
 
 class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   static const double _minLiveZoom = 12;
-  static const Duration _lookAhead = Duration(minutes: 3);
+  static const Duration _lookAhead = Duration(minutes: 5);
   static const Duration _fetchDebounceDuration = Duration(milliseconds: 350);
-  static const Duration _refreshInterval = Duration(minutes: 1);
+  static const Duration _refreshInterval = Duration(seconds: 10);
   static const Duration _animationInterval = Duration(milliseconds: 250);
+  static const double _fetchPaddingFactor = 0.35;
+  static const double _zoomRequestStep = 0.5;
 
   final MapController _mapController = MapController();
   final Distance _distance = const Distance();
@@ -39,6 +41,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   bool _isFetchingTrips = false;
   String? _errorMessage;
   MapCamera? _latestCamera;
+  _FetchedViewport? _lastFetchedViewport;
   DateTime _now = DateTime.now();
   List<_LiveBusTrip> _trips = const [];
   _SelectedBus? _selectedBus;
@@ -47,6 +50,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   Timer? _refreshTimer;
   Timer? _animationTimer;
   int _requestToken = 0;
+  bool _forceNextFetch = false;
 
   @override
   void initState() {
@@ -56,7 +60,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
-    _refreshTimer = Timer.periodic(_refreshInterval, (_) => _scheduleFetch());
+    _refreshTimer = Timer.periodic(
+      _refreshInterval,
+      (_) => _scheduleFetch(force: true),
+    );
   }
 
   @override
@@ -100,15 +107,24 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     }
   }
 
-  void _scheduleFetch() {
+  void _scheduleFetch({bool force = false}) {
+    if (force) {
+      _forceNextFetch = true;
+    }
     _fetchDebounce?.cancel();
     _fetchDebounce = Timer(_fetchDebounceDuration, _fetchTripsForViewport);
   }
 
   String _coordString(LatLng point) => '${point.latitude},${point.longitude}';
 
+  double _requestZoom(double zoom) =>
+      (zoom / _zoomRequestStep).round() * _zoomRequestStep;
+
   Future<void> _fetchTripsForViewport() async {
     final camera = _latestCamera ?? _mapController.camera;
+    final force = _forceNextFetch;
+    _forceNextFetch = false;
+
     if (!mounted || camera.zoom < _minLiveZoom) {
       if (_trips.isNotEmpty || _errorMessage != null) {
         setState(() {
@@ -117,10 +133,22 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
           _errorMessage = null;
         });
       }
+      _lastFetchedViewport = null;
       return;
     }
 
-    final bounds = camera.visibleBounds;
+    final visibleBounds = camera.visibleBounds;
+    final requestZoom = _requestZoom(camera.zoom);
+    if (!force &&
+        _lastFetchedViewport?.covers(
+              visibleBounds: visibleBounds,
+              requestZoom: requestZoom,
+            ) ==
+            true) {
+      return;
+    }
+
+    final bounds = _expandBounds(visibleBounds, _fetchPaddingFactor);
     final now = DateTime.now();
     final token = ++_requestToken;
 
@@ -131,11 +159,11 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
     try {
       final rawTrips = await TransportApi.fetchLiveMapTrips(
-        min: _coordString(bounds.southEast),
-        max: _coordString(bounds.northWest),
+        min: _coordString(_southWest(bounds)),
+        max: _coordString(_northEast(bounds)),
         startTime: now,
         endTime: now.add(_lookAhead),
-        zoom: camera.zoom,
+        zoom: requestZoom,
       );
       if (!mounted || token != _requestToken) return;
 
@@ -157,6 +185,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 position: selectedTrip.sample(now).position,
               );
       });
+      _lastFetchedViewport = _FetchedViewport(
+        bounds: bounds,
+        requestZoom: requestZoom,
+      );
     } catch (error, stackTrace) {
       if (!mounted || token != _requestToken) return;
       AppError.log(
@@ -165,8 +197,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         source: 'live map trips',
       );
       setState(() {
-        _trips = const [];
-        _selectedBus = null;
         _errorMessage = AppError.userMessage(
           context,
           error,
@@ -208,7 +238,11 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       }
     }
 
-    combined.sort((a, b) => a.displayName.compareTo(b.displayName));
+    combined.sort((a, b) {
+      final byName = a.displayName.compareTo(b.displayName);
+      if (byName != 0) return byName;
+      return a.id.compareTo(b.id);
+    });
     return combined;
   }
 
@@ -468,12 +502,18 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
     final markers = <Marker>[
       for (final trip in _trips)
-        Marker(
-          point: trip.sample(_now).position,
-          width: 96,
-          height: 44,
-          child: _buildBusMarker(context, trip, trip.sample(_now)),
-        ),
+        (() {
+          final sample = trip.sample(_now);
+          return Marker(
+            point: sample.position,
+            width: 96,
+            height: 44,
+            child: KeyedSubtree(
+              key: ValueKey('live-bus-${trip.id}'),
+              child: _buildBusMarker(context, trip, sample),
+            ),
+          );
+        })(),
     ];
 
     return Scaffold(
@@ -483,7 +523,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         actions: [
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _fetchTripsForViewport,
+            onPressed: () => _scheduleFetch(force: true),
             icon: _isFetchingTrips
                 ? const SizedBox(
                     width: 18,
@@ -498,7 +538,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         onPressed: () {
           _clearSelection();
           _mapController.move(_initialCenter, _initialZoom);
-          _scheduleFetch();
+          _scheduleFetch(force: true);
         },
         child: const Icon(Icons.center_focus_strong),
       ),
@@ -509,7 +549,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
             options: MapOptions(
               initialCenter: _initialCenter,
               initialZoom: _initialZoom,
-              onMapReady: _scheduleFetch,
+              onMapReady: () {
+                _latestCamera = _mapController.camera;
+                _scheduleFetch(force: true);
+              },
               onTap: (_, __) => _clearSelection(),
               onPositionChanged: (camera, hasGesture) {
                 _latestCamera = camera;
@@ -543,6 +586,26 @@ class _SelectedBus {
     required this.tripId,
     required this.position,
   });
+}
+
+class _FetchedViewport {
+  final LatLngBounds bounds;
+  final double requestZoom;
+
+  const _FetchedViewport({
+    required this.bounds,
+    required this.requestZoom,
+  });
+
+  bool covers({
+    required LatLngBounds visibleBounds,
+    required double requestZoom,
+  }) {
+    if (this.requestZoom != requestZoom) return false;
+
+    return _containsPoint(bounds, _northWest(visibleBounds)) &&
+        _containsPoint(bounds, _southEast(visibleBounds));
+  }
 }
 
 class _TripSample {
@@ -756,6 +819,46 @@ _SampledSegment _sampleSegment(
     timestampsMs: timestamps,
     headings: headings,
   );
+}
+
+LatLngBounds _expandBounds(LatLngBounds bounds, double factor) {
+  final northWest = _northWest(bounds);
+  final southEast = _southEast(bounds);
+  final latPadding = (northWest.latitude - southEast.latitude).abs() * factor;
+  final lonPadding = (southEast.longitude - northWest.longitude).abs() * factor;
+
+  return LatLngBounds(
+    LatLng(
+      southEast.latitude - latPadding,
+      northWest.longitude - lonPadding,
+    ),
+    LatLng(
+      northWest.latitude + latPadding,
+      southEast.longitude + lonPadding,
+    ),
+  );
+}
+
+LatLng _northWest(LatLngBounds bounds) =>
+    LatLng(bounds.northWest.latitude, bounds.northWest.longitude);
+
+LatLng _southEast(LatLngBounds bounds) =>
+    LatLng(bounds.southEast.latitude, bounds.southEast.longitude);
+
+LatLng _southWest(LatLngBounds bounds) =>
+    LatLng(bounds.southEast.latitude, bounds.northWest.longitude);
+
+LatLng _northEast(LatLngBounds bounds) =>
+    LatLng(bounds.northWest.latitude, bounds.southEast.longitude);
+
+bool _containsPoint(LatLngBounds bounds, LatLng point) {
+  final southWest = _southWest(bounds);
+  final northEast = _northEast(bounds);
+
+  return point.latitude >= southWest.latitude &&
+      point.latitude <= northEast.latitude &&
+      point.longitude >= southWest.longitude &&
+      point.longitude <= northEast.longitude;
 }
 
 List<LatLng> _decodePolyline(String encoded, {int precision = 5}) {
