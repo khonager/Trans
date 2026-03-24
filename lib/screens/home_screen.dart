@@ -245,7 +245,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     double navWidth,
   ) async {
     if (navWidth <= 0) return;
-    final routesTabWidth = navWidth / 3;
+
+    // Compute the width of a single tab based on the actual number of destinations.
+    final int destinationsCount = _destinations.length;
+    if (destinationsCount <= 0) return;
+
+    final double routesTabWidth = navWidth / destinationsCount;
     if (details.localPosition.dx > routesTabWidth) return;
 
     await HapticFeedback.mediumImpact();
