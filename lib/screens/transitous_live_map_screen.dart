@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -31,29 +33,30 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   static const Duration _refreshInterval = Duration(seconds: 5);
   static const Duration _animationInterval = Duration(milliseconds: 120);
   static const Duration _tripRetentionDuration = Duration(minutes: 2);
-  static const double _fetchPaddingFactor = 0.3;
   static const double _retentionPaddingFactor = 0.8;
-  static const double _zoomRequestStep = 0.5;
 
   final MapController _mapController = MapController();
-  final Distance _distance = const DistanceHaversine();
+  final ValueNotifier<DateTime> _clock = ValueNotifier(DateTime.now());
 
   LatLng _initialCenter = const LatLng(52.52, 13.405);
   double _initialZoom = 13;
   bool _isLoadingInitialView = true;
   bool _isFetchingTrips = false;
+  bool _isFetchPipelineActive = false;
+  bool _hasPendingViewportFetch = false;
+  bool _pendingForceFetch = false;
   bool _isMapReady = false;
   String? _errorMessage;
   MapCamera? _latestCamera;
   _FetchedViewport? _lastFetchedViewport;
-  DateTime _now = DateTime.now();
   List<_LiveBusTrip> _trips = const [];
   _SelectedBus? _selectedBus;
+  List<_LiveBusTrip> _displayedTripsCache = const [];
+  String? _displayedTripsCacheKey;
 
   Timer? _fetchDebounce;
   Timer? _refreshTimer;
   Timer? _animationTimer;
-  int _requestToken = 0;
   bool _forceNextFetch = false;
 
   @override
@@ -62,12 +65,12 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     _bootstrap();
     _animationTimer = Timer.periodic(_animationInterval, (_) {
       if (!mounted) return;
-      setState(() => _now = DateTime.now());
+      _clock.value = DateTime.now();
     });
     _refreshTimer = Timer.periodic(
       _refreshInterval,
       (_) {
-        if (!_isFetchingTrips) _scheduleFetch(force: true);
+        _scheduleFetch(force: true);
       },
     );
   }
@@ -77,6 +80,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     _fetchDebounce?.cancel();
     _refreshTimer?.cancel();
     _animationTimer?.cancel();
+    _clock.dispose();
     super.dispose();
   }
 
@@ -123,8 +127,52 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
   String _coordString(LatLng point) => '${point.latitude},${point.longitude}';
 
-  double _requestZoom(double zoom) =>
-      (zoom / _zoomRequestStep).round() * _zoomRequestStep;
+  int _zoomBucketFor(double zoom) {
+    if (zoom < 12) return 11;
+    if (zoom < 13) return 12;
+    if (zoom < 14) return 13;
+    if (zoom < 15) return 14;
+    return 15;
+  }
+
+  double _requestZoom(double zoom) => _zoomBucketFor(zoom).toDouble();
+
+  double _fetchPaddingFactorForZoom(double zoom) {
+    if (zoom < 12) return 0.05;
+    if (zoom < 13) return 0.12;
+    if (zoom < 14) return 0.20;
+    return 0.30;
+  }
+
+  double _maxRequestHeightKmForZoom(int zoomBucket) {
+    switch (zoomBucket) {
+      case 11:
+        return 36;
+      case 12:
+        return 24;
+      case 13:
+        return 16;
+      case 14:
+        return 10;
+      default:
+        return 7;
+    }
+  }
+
+  double _maxRequestWidthKmForZoom(int zoomBucket) {
+    switch (zoomBucket) {
+      case 11:
+        return 54;
+      case 12:
+        return 34;
+      case 13:
+        return 22;
+      case 14:
+        return 14;
+      default:
+        return 10;
+    }
+  }
 
   double _markerRotationRadians(double heading) =>
       (heading - 90) * math.pi / 180;
@@ -133,6 +181,12 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final camera = _latestCamera;
     final force = _forceNextFetch;
     _forceNextFetch = false;
+
+    if (_isFetchPipelineActive) {
+      _hasPendingViewportFetch = true;
+      _pendingForceFetch = _pendingForceFetch || force;
+      return;
+    }
 
     if (!mounted || !_isMapReady || camera == null) {
       return;
@@ -155,19 +209,27 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       debugPrint('Live map: skipping fetch because visible bounds are invalid');
       return;
     }
+    final zoomBucket = _zoomBucketFor(camera.zoom);
     final requestZoom = _requestZoom(camera.zoom);
     if (!force &&
         _lastFetchedViewport?.covers(
               visibleBounds: visibleBounds,
               requestZoom: requestZoom,
+              center: camera.center,
             ) ==
             true) {
       return;
     }
 
-    final bounds = _expandBounds(visibleBounds, _fetchPaddingFactor);
+    final resolvedRequest = _resolveRequestViewport(
+      visibleBounds: visibleBounds,
+      center: camera.center,
+      zoomBucket: zoomBucket,
+    );
+    final bounds = resolvedRequest.bounds;
     final now = DateTime.now();
-    final token = ++_requestToken;
+    final fetchStartedAt = Stopwatch()..start();
+    _isFetchPipelineActive = true;
 
     setState(() {
       _isFetchingTrips = true;
@@ -175,53 +237,60 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     });
 
     try {
-      final rawTrips = await TransportApi.fetchLiveMapTrips(
+      final rawBody = await TransportApi.fetchLiveMapTrips(
         min: _coordString(_southWest(bounds)),
         max: _coordString(_northEast(bounds)),
         startTime: now.subtract(_lookBehind),
         endTime: now.add(_lookAhead),
         zoom: requestZoom,
       );
+      final networkMs = fetchStartedAt.elapsedMilliseconds;
       if (!mounted) return;
 
-      final incomingTrips = _buildTrips(
-        rawTrips,
-        fetchedAtMs: now.toUtc().millisecondsSinceEpoch,
-      );
-      final rawBusSegments = rawTrips.where((trip) {
-        final mode = (trip['mode'] as String?)?.toUpperCase();
-        return mode == 'BUS';
-      }).length;
       final retentionBounds = _expandBounds(
         visibleBounds,
         _retentionPaddingFactor,
       );
-      final visibleIncomingTrips = incomingTrips
-          .where(
-            (trip) => trip.isVisibleAt(now),
-          )
-          .toList();
-      final nearbyIncomingTrips = visibleIncomingTrips
-          .where((trip) => trip.intersectsBounds(retentionBounds))
-          .toList();
-      final preferredIncomingTrips = nearbyIncomingTrips.isNotEmpty
-          ? nearbyIncomingTrips
-          : visibleIncomingTrips;
+      final parseStartedAt = Stopwatch()..start();
+      final parseResult = await compute(
+        _parseLiveMapTripsIsolate,
+        LiveMapParseRequest(
+          body: rawBody,
+          fetchedAtMs: now.toUtc().millisecondsSinceEpoch,
+          nowMs: now.toUtc().millisecondsSinceEpoch,
+          visibleBounds: LiveMapBoundsData.fromLatLngBounds(visibleBounds),
+          retentionBounds: LiveMapBoundsData.fromLatLngBounds(retentionBounds),
+        ),
+      );
+      final parseMs = parseStartedAt.elapsedMilliseconds;
+      if (!mounted) return;
 
+      final incomingTrips = parseResult.trips
+          .map(_LiveBusTrip.fromParsed)
+          .toList(growable: false);
+
+      final mergeStartedAt = Stopwatch()..start();
       final trips = _mergeTrips(
         existing: _trips,
-        incoming: preferredIncomingTrips,
+        incoming: incomingTrips,
         now: now,
         visibleBounds: visibleBounds,
       );
+      final mergeMs = mergeStartedAt.elapsedMilliseconds;
       debugPrint(
         'Live map fetch summary: '
-        'raw=${rawTrips.length}, '
-        'rawBusSegments=$rawBusSegments, '
-        'built=${incomingTrips.length}, '
-        'visible=${visibleIncomingTrips.length}, '
-        'nearby=${nearbyIncomingTrips.length}, '
-        'merged=${trips.length}',
+        'zoomBucket=$zoomBucket, '
+        'clamped=${resolvedRequest.clamped}, '
+        'raw=${parseResult.rawSegments}, '
+        'rawBusSegments=${parseResult.rawBusSegments}, '
+        'built=${parseResult.builtTrips}, '
+        'visible=${parseResult.visibleTrips}, '
+        'nearby=${parseResult.nearbyTrips}, '
+        'merged=${trips.length}, '
+        'networkMs=$networkMs, '
+        'parseMs=$parseMs, '
+        'mergeMs=$mergeMs, '
+        'firstVisibleMs=${trips.isEmpty ? -1 : fetchStartedAt.elapsedMilliseconds}',
       );
       final selectedTrip = _selectedBus == null
           ? null
@@ -231,82 +300,45 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               );
 
       setState(() {
-        _now = now;
         _trips = trips;
+        _invalidateDisplayedTripsCache();
         _selectedBus = selectedTrip == null
             ? null
             : _SelectedBus(
                 tripId: selectedTrip.id,
-                position: selectedTrip.sample(now).position,
               );
       });
-      if (token == _requestToken) {
-        _lastFetchedViewport = _FetchedViewport(
-          bounds: bounds,
-          requestZoom: requestZoom,
-        );
-      }
+      _lastFetchedViewport = _FetchedViewport(
+        bounds: bounds,
+        requestZoom: requestZoom,
+        clamped: resolvedRequest.clamped,
+      );
     } catch (error, stackTrace) {
       if (!mounted) return;
-      if (token == _requestToken) {
-        AppError.log(
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'live map trips',
+      );
+      setState(() {
+        _errorMessage = AppError.userMessage(
+          context,
           error,
-          stackTrace: stackTrace,
-          source: 'live map trips',
+          fallback: 'Could not load live buses.',
         );
-        setState(() {
-          _errorMessage = AppError.userMessage(
-            context,
-            error,
-            fallback: 'Could not load live buses.',
-          );
-        });
-      }
+      });
     } finally {
-      if (mounted && token == _requestToken) {
+      _isFetchPipelineActive = false;
+      if (mounted) {
         setState(() => _isFetchingTrips = false);
       }
-    }
-  }
-
-  List<_LiveBusTrip> _buildTrips(
-    List<Map<String, dynamic>> rawTrips, {
-    required int fetchedAtMs,
-  }) {
-    final grouped = <String, List<Map<String, dynamic>>>{};
-
-    for (final trip in rawTrips) {
-      final mode = (trip['mode'] as String?)?.toUpperCase();
-      if (mode != 'BUS') continue;
-
-      final trips = trip['trips'] as List?;
-      final firstTrip = trips?.isNotEmpty == true ? trips!.first : null;
-      final tripId =
-          (firstTrip as Map<String, dynamic>?)?['tripId']?.toString();
-      if (tripId == null || tripId.isEmpty) continue;
-
-      grouped.putIfAbsent(tripId, () => []).add(trip);
-    }
-
-    final combined = <_LiveBusTrip>[];
-    for (final entry in grouped.entries) {
-      final trip = _LiveBusTrip.fromSegments(
-        entry.key,
-        entry.value,
-        distance: _distance,
-        fetchedAtMs: fetchedAtMs,
-      );
-      if (trip != null) {
-        combined.add(trip);
+      if (_hasPendingViewportFetch) {
+        final pendingForce = _pendingForceFetch;
+        _hasPendingViewportFetch = false;
+        _pendingForceFetch = false;
+        _scheduleFetch(force: pendingForce);
       }
     }
-
-    combined.sort((a, b) {
-      final byName = a.displayName.compareTo(b.displayName);
-      if (byName != 0) return byName;
-      return a.id.compareTo(b.id);
-    });
-    return combined;
   }
 
   List<_LiveBusTrip> _mergeTrips({
@@ -349,6 +381,71 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return combined;
   }
 
+  void _invalidateDisplayedTripsCache() {
+    _displayedTripsCacheKey = null;
+    _displayedTripsCache = const [];
+  }
+
+  List<_LiveBusTrip> _displayedTripsFor({
+    required LatLng center,
+    required double zoom,
+  }) {
+    final cacheKey = [
+      identityHashCode(_trips),
+      _selectedBus?.tripId ?? '',
+      _zoomBucketFor(zoom),
+      center.latitude.toStringAsFixed(4),
+      center.longitude.toStringAsFixed(4),
+    ].join('|');
+
+    if (_displayedTripsCacheKey == cacheKey) {
+      return _displayedTripsCache;
+    }
+
+    final displayed = _prioritizeTripsForDisplay(
+      _trips,
+      center: center,
+      zoom: zoom,
+    );
+    _displayedTripsCacheKey = cacheKey;
+    _displayedTripsCache = displayed;
+    return displayed;
+  }
+
+  _ResolvedRequestViewport _resolveRequestViewport({
+    required LatLngBounds visibleBounds,
+    required LatLng center,
+    required int zoomBucket,
+  }) {
+    final padded = _expandBounds(
+      visibleBounds,
+      _fetchPaddingFactorForZoom(zoomBucket.toDouble()),
+    );
+    final maxHeightKm = _maxRequestHeightKmForZoom(zoomBucket);
+    final maxWidthKm = _maxRequestWidthKmForZoom(zoomBucket);
+    final heightKm = _axisDistanceKm(
+      LatLng(padded.south, center.longitude),
+      LatLng(padded.north, center.longitude),
+    );
+    final widthKm = _axisDistanceKm(
+      LatLng(center.latitude, padded.west),
+      LatLng(center.latitude, padded.east),
+    );
+
+    if (heightKm <= maxHeightKm && widthKm <= maxWidthKm) {
+      return _ResolvedRequestViewport(bounds: padded, clamped: false);
+    }
+
+    return _ResolvedRequestViewport(
+      bounds: _boundsAroundCenter(
+        center,
+        widthKm: maxWidthKm,
+        heightKm: maxHeightKm,
+      ),
+      clamped: true,
+    );
+  }
+
   int _maxVisibleTripsForZoom(double zoom) {
     if (zoom >= 14.5) return 220;
     if (zoom >= 13.5) return 140;
@@ -357,9 +454,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return 24;
   }
 
-  List<_LiveBusTrip> _prioritizeTripsForDisplay(
-    List<_LiveBusTrip> trips,
-    {required LatLng center, required double zoom}) {
+  List<_LiveBusTrip> _prioritizeTripsForDisplay(List<_LiveBusTrip> trips,
+      {required LatLng center, required double zoom}) {
     final selectedTripId = _selectedBus?.tripId;
     final maxVisible = _maxVisibleTripsForZoom(zoom);
     if (trips.length <= maxVisible) return trips;
@@ -389,10 +485,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     required String? selectedTripId,
     required LatLng center,
   }) {
-    final sample = trip.sample(_now);
+    final sample = trip.sample(_clock.value);
     final distanceFromCenterKm = _safeDistanceAs(
-      _distance,
-      LengthUnit.Kilometer,
       center,
       sample.position,
       fallback: double.infinity,
@@ -417,18 +511,23 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return const Size(78, 42);
   }
 
+  bool _useCompactMarkers(double zoom) => zoom < 13;
+
   void _selectTrip(_LiveBusTrip trip) {
     setState(() {
+      _invalidateDisplayedTripsCache();
       _selectedBus = _SelectedBus(
         tripId: trip.id,
-        position: trip.sample(_now).position,
       );
     });
   }
 
   void _clearSelection() {
     if (_selectedBus == null) return;
-    setState(() => _selectedBus = null);
+    setState(() {
+      _selectedBus = null;
+      _invalidateDisplayedTripsCache();
+    });
   }
 
   _LiveBusTrip? _currentSelectedTrip() {
@@ -441,58 +540,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         );
   }
 
-  Color _routeColor(_LiveBusTrip trip, BuildContext context) {
-    final routeColor = _parseHexColor(trip.routeColorHex);
-    if (routeColor != null) return routeColor;
-    return TransColors.of(context).navBarSelected;
-  }
-
-  Color _routeTextColor(_LiveBusTrip trip, BuildContext context) {
-    final textColor = _parseHexColor(trip.routeTextColorHex);
-    if (textColor != null) return textColor;
-    return _routeColor(trip, context).computeLuminance() > 0.5
-        ? Colors.black
-        : Colors.white;
-  }
-
-  Color _vehicleStatusColor(_LiveBusTrip trip, BuildContext context) {
-    final colors = TransColors.of(context);
-    if (!trip.realTime) {
-      return colors.textSecondary.withValues(alpha: 0.75);
-    }
-
-    final delayMinutes = trip.arrivalDelaySeconds / 60;
-    if (delayMinutes <= 0) return const Color(0xFF2E9B57);
-    if (delayMinutes <= 2) {
-      return Color.lerp(
-            const Color(0xFF2E9B57),
-            const Color(0xFFF2C94C),
-            delayMinutes / 2,
-          ) ??
-          const Color(0xFFF2C94C);
-    }
-    if (delayMinutes <= 5) {
-      return Color.lerp(
-            const Color(0xFFF2C94C),
-            const Color(0xFFF2994A),
-            (delayMinutes - 2) / 3,
-          ) ??
-          const Color(0xFFF2994A);
-    }
-    if (delayMinutes <= 10) {
-      return Color.lerp(
-            const Color(0xFFF2994A),
-            const Color(0xFFEB5757),
-            (delayMinutes - 5) / 5,
-          ) ??
-          const Color(0xFFEB5757);
-    }
-    return const Color(0xFFC0392B);
-  }
-
-  Color _foregroundFor(Color background) =>
-      background.computeLuminance() > 0.45 ? Colors.black : Colors.white;
-
   String _delayLabel(_LiveBusTrip trip) {
     if (!trip.realTime) return 'No realtime';
 
@@ -502,83 +549,61 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   }
 
   Widget _buildBusMarker(
-    BuildContext context,
-    _LiveBusTrip trip,
-    _TripSample sample,
-  ) {
+      BuildContext context, _LiveBusTrip trip, _TripSample sample,
+      {required bool compact}) {
     final colors = TransColors.of(context);
     final isSelected = _selectedBus?.tripId == trip.id;
-    final vehicleColor = _vehicleStatusColor(trip, context);
-    final markerTextColor = _foregroundFor(vehicleColor);
     final markerAngle = _markerRotationRadians(sample.heading);
-    final iconLeads = math.cos(markerAngle) >= 0;
-    final content = <Widget>[
-      if (!iconLeads)
-        Icon(
-          Icons.directions_bus_filled_rounded,
-          size: 16,
-          color: markerTextColor,
-        ),
-      if (!iconLeads) const SizedBox(width: 6),
-      Text(
-        trip.displayName,
-        style: TextStyle(
-          color: markerTextColor,
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
-        ),
-      ),
-      if (iconLeads) const SizedBox(width: 6),
-      if (iconLeads)
-        Icon(
-          Icons.directions_bus_filled_rounded,
-          size: 16,
-          color: markerTextColor,
-        ),
-    ];
+    final markerTextColor = trip.vehicleTextColor;
 
     return GestureDetector(
       onTap: () => _selectTrip(trip),
       child: Transform.rotate(
         angle: markerAngle,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Container(
+          padding: compact
+              ? const EdgeInsets.all(8)
+              : const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: vehicleColor,
-            borderRadius: BorderRadius.circular(16),
+            color: trip.vehicleColor,
+            borderRadius: BorderRadius.circular(compact ? 18 : 16),
             border: Border.all(
               color: isSelected ? colors.textPrimary : Colors.white,
               width: isSelected ? 2 : 1,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: isSelected ? 18 : 10,
-                offset: const Offset(0, 6),
-              ),
-            ],
+            boxShadow: compact
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: isSelected ? 18 : 10,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: content,
-          ),
+          child: compact
+              ? Icon(
+                  Icons.directions_bus_filled_rounded,
+                  size: 16,
+                  color: markerTextColor,
+                )
+              : _ExpandedBusMarkerLabel(
+                  label: trip.displayName,
+                  textColor: markerTextColor,
+                  iconLeads: math.cos(markerAngle) >= 0,
+                ),
         ),
       ),
     );
   }
 
-  Widget _buildTopBanner(BuildContext context) {
+  Widget _buildTopBanner(
+    BuildContext context, {
+    required int busesVisible,
+    required int totalLoaded,
+    required double zoom,
+  }) {
     final colors = TransColors.of(context);
-    final center = _latestCamera?.center ?? _initialCenter;
-    final zoom = _latestCamera?.zoom ?? _initialZoom;
-    final prioritizedTrips = _prioritizeTripsForDisplay(
-      _trips,
-      center: center,
-      zoom: zoom,
-    );
-    final busesVisible = prioritizedTrips.length;
-    final totalLoaded = _trips.length;
 
     String text;
     if (!_isMapReady) {
@@ -636,10 +661,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     if (selected == null) return const SizedBox.shrink();
 
     final colors = TransColors.of(context);
-    final sample = selected.sample(_now);
     final realtimeLabel = selected.realTime ? 'Realtime' : 'Scheduled';
-    final delayColor = _vehicleStatusColor(selected, context);
-    final delayTextColor = _foregroundFor(delayColor);
 
     return Positioned(
       left: 12,
@@ -653,7 +675,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
             color: colors.cardBg.withValues(alpha: 0.96),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: _routeColor(selected, context).withValues(alpha: 0.35),
+              color: selected.routeColor.withValues(alpha: 0.35),
             ),
             boxShadow: [
               BoxShadow(
@@ -675,13 +697,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: _routeColor(selected, context),
+                      color: selected.routeColor,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       selected.displayName,
                       style: TextStyle(
-                        color: _routeTextColor(selected, context),
+                        color: selected.routeTextColor,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -701,13 +723,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: delayColor,
+                      color: selected.vehicleColor,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       _delayLabel(selected),
                       style: TextStyle(
-                        color: delayTextColor,
+                        color: selected.vehicleTextColor,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -737,10 +759,16 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
-                'Lat ${sample.position.latitude.toStringAsFixed(5)}, '
-                'Lng ${sample.position.longitude.toStringAsFixed(5)}',
-                style: TextStyle(color: colors.textSecondary),
+              ValueListenableBuilder<DateTime>(
+                valueListenable: _clock,
+                builder: (context, now, _) {
+                  final sample = selected.sample(now);
+                  return Text(
+                    'Lat ${sample.position.latitude.toStringAsFixed(5)}, '
+                    'Lng ${sample.position.longitude.toStringAsFixed(5)}',
+                    style: TextStyle(color: colors.textSecondary),
+                  );
+                },
               ),
             ],
           ),
@@ -755,13 +783,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final center = _latestCamera?.center ?? _initialCenter;
     final zoom = _latestCamera?.zoom ?? _initialZoom;
     final selectedTrip = _currentSelectedTrip();
-    final remainingPath = selectedTrip?.remainingPath(_now) ?? const <LatLng>[];
-    final displayedTrips = _prioritizeTripsForDisplay(
-      _trips,
-      center: center,
-      zoom: zoom,
-    );
+    final displayedTrips = _displayedTripsFor(center: center, zoom: zoom);
     final markerSize = _markerSizeForZoom(zoom);
+    final compactMarkers = _useCompactMarkers(zoom);
 
     if (_isLoadingInitialView) {
       return Scaffold(
@@ -770,22 +794,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
-
-    final markers = <Marker>[
-      for (final trip in displayedTrips)
-        (() {
-          final sample = trip.sample(_now);
-          return Marker(
-            point: sample.position,
-            width: markerSize.width,
-            height: markerSize.height,
-            child: KeyedSubtree(
-              key: ValueKey('live-bus-${trip.id}'),
-              child: _buildBusMarker(context, trip, sample),
-            ),
-          );
-        })(),
-    ];
 
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
@@ -831,10 +839,14 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               },
               onTap: (_, __) => _clearSelection(),
               onPositionChanged: (camera, hasGesture) {
-                _latestCamera = camera;
-                if (hasGesture) {
-                  _clearSelection();
-                }
+                final hadGestureSelection = hasGesture && _selectedBus != null;
+                setState(() {
+                  _latestCamera = camera;
+                  if (hadGestureSelection) {
+                    _selectedBus = null;
+                  }
+                  _invalidateDisplayedTripsCache();
+                });
                 _scheduleFetch();
               },
             ),
@@ -844,42 +856,78 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 userAgentPackageName: 'com.example.trans',
               ),
               if (selectedTrip != null)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: selectedTrip.points,
-                      strokeWidth: 12,
-                      color: Colors.black.withValues(alpha: 0.10),
-                    ),
-                    Polyline(
-                      points: selectedTrip.points,
-                      strokeWidth: 6,
-                      color: _routeColor(selectedTrip, context),
-                    ),
-                    if (remainingPath.length >= 2)
-                      Polyline(
-                        points: remainingPath,
-                        strokeWidth: 12,
-                        color: Colors.white.withValues(alpha: 0.92),
-                      ),
-                    if (remainingPath.length >= 2)
-                      Polyline(
-                        points: remainingPath,
-                        strokeWidth: 7,
-                        color: _vehicleStatusColor(selectedTrip, context),
-                      ),
-                    if (remainingPath.length >= 2)
-                      Polyline(
-                        points: remainingPath.take(2).toList(),
-                        strokeWidth: 9,
-                        color: _routeColor(selectedTrip, context),
-                      ),
-                  ],
+                ValueListenableBuilder<DateTime>(
+                  valueListenable: _clock,
+                  builder: (context, now, _) {
+                    final remainingPath = selectedTrip.remainingPath(now);
+                    return PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: selectedTrip.points,
+                          strokeWidth: 12,
+                          color: Colors.black.withValues(alpha: 0.10),
+                        ),
+                        Polyline(
+                          points: selectedTrip.points,
+                          strokeWidth: 6,
+                          color: selectedTrip.routeColor,
+                        ),
+                        if (remainingPath.length >= 2)
+                          Polyline(
+                            points: remainingPath,
+                            strokeWidth: 12,
+                            color: Colors.white.withValues(alpha: 0.92),
+                          ),
+                        if (remainingPath.length >= 2)
+                          Polyline(
+                            points: remainingPath,
+                            strokeWidth: 7,
+                            color: selectedTrip.vehicleColor,
+                          ),
+                        if (remainingPath.length >= 2)
+                          Polyline(
+                            points: remainingPath.take(2).toList(),
+                            strokeWidth: 9,
+                            color: selectedTrip.routeColor,
+                          ),
+                      ],
+                    );
+                  },
                 ),
-              MarkerLayer(markers: markers),
+              ValueListenableBuilder<DateTime>(
+                valueListenable: _clock,
+                builder: (context, now, _) {
+                  final markers = <Marker>[
+                    for (final trip in displayedTrips)
+                      (() {
+                        final sample = trip.sample(now);
+                        return Marker(
+                          point: sample.position,
+                          width: markerSize.width,
+                          height: markerSize.height,
+                          child: KeyedSubtree(
+                            key: ValueKey('live-bus-${trip.id}'),
+                            child: _buildBusMarker(
+                              context,
+                              trip,
+                              sample,
+                              compact: compactMarkers,
+                            ),
+                          ),
+                        );
+                      })(),
+                  ];
+                  return MarkerLayer(markers: markers);
+                },
+              ),
             ],
           ),
-          _buildTopBanner(context),
+          _buildTopBanner(
+            context,
+            busesVisible: displayedTrips.length,
+            totalLoaded: _trips.length,
+            zoom: zoom,
+          ),
           _buildSelectionSheet(context),
         ],
       ),
@@ -889,28 +937,30 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
 class _SelectedBus {
   final String tripId;
-  final LatLng position;
 
   const _SelectedBus({
     required this.tripId,
-    required this.position,
   });
 }
 
 class _FetchedViewport {
   final LatLngBounds bounds;
   final double requestZoom;
+  final bool clamped;
 
   const _FetchedViewport({
     required this.bounds,
     required this.requestZoom,
+    required this.clamped,
   });
 
   bool covers({
     required LatLngBounds visibleBounds,
     required double requestZoom,
+    required LatLng center,
   }) {
     if (this.requestZoom != requestZoom) return false;
+    if (clamped) return _containsPoint(bounds, center);
 
     return _containsPoint(bounds, _northWest(visibleBounds)) &&
         _containsPoint(bounds, _southEast(visibleBounds));
@@ -920,16 +970,12 @@ class _FetchedViewport {
 class _TripSample {
   final LatLng position;
   final double heading;
-  final int previousIndex;
   final int nextIndex;
-  final double progress;
 
   const _TripSample({
     required this.position,
     required this.heading,
-    required this.previousIndex,
     required this.nextIndex,
-    required this.progress,
   });
 }
 
@@ -939,10 +985,12 @@ class _LiveBusTrip {
   final String fromName;
   final String toName;
   final bool realTime;
-  final String? routeColorHex;
-  final String? routeTextColorHex;
   final int arrivalDelaySeconds;
   final int fetchedAtMs;
+  final Color routeColor;
+  final Color routeTextColor;
+  final Color vehicleColor;
+  final Color vehicleTextColor;
   final List<LatLng> points;
   final List<int> timestampsMs;
   final List<double> headings;
@@ -953,96 +1001,38 @@ class _LiveBusTrip {
     required this.fromName,
     required this.toName,
     required this.realTime,
-    required this.routeColorHex,
-    required this.routeTextColorHex,
     required this.arrivalDelaySeconds,
     required this.fetchedAtMs,
+    required this.routeColor,
+    required this.routeTextColor,
+    required this.vehicleColor,
+    required this.vehicleTextColor,
     required this.points,
     required this.timestampsMs,
     required this.headings,
   });
 
-  static _LiveBusTrip? fromSegments(
-    String tripId,
-    List<Map<String, dynamic>> segments, {
-    required Distance distance,
-    required int fetchedAtMs,
-  }) {
-    if (segments.isEmpty) return null;
-
-    segments.sort((a, b) {
-      final aTime = DateTime.tryParse(a['departure']?.toString() ?? '');
-      final bTime = DateTime.tryParse(b['departure']?.toString() ?? '');
-      return (aTime ?? DateTime.fromMillisecondsSinceEpoch(0))
-          .compareTo(bTime ?? DateTime.fromMillisecondsSinceEpoch(0));
-    });
-
-    final firstSegment = segments.first;
-    final lastSegment = segments.last;
-    final points = <LatLng>[];
-    final timestamps = <int>[];
-    final headings = <double>[];
-
-    for (final segment in segments) {
-      final polyline = segment['polyline']?.toString();
-      if (polyline == null || polyline.isEmpty) continue;
-
-      final decoded = _decodePolyline(polyline);
-      if (decoded.isEmpty) continue;
-
-      final start = DateTime.tryParse(segment['departure']?.toString() ?? '');
-      final end = DateTime.tryParse(segment['arrival']?.toString() ?? '');
-      if (start == null || end == null) continue;
-
-      final sampled = _sampleSegment(
-        decoded,
-        start.toUtc().millisecondsSinceEpoch,
-        end.toUtc().millisecondsSinceEpoch,
-        distance,
-      );
-      if (sampled.points.isEmpty) continue;
-
-      final overlaps = points.isNotEmpty &&
-          sampled.points.isNotEmpty &&
-          _samePoint(points.last, sampled.points.first);
-      final sameTimestamp = overlaps &&
-          timestamps.isNotEmpty &&
-          sampled.timestampsMs.isNotEmpty &&
-          timestamps.last == sampled.timestampsMs.first;
-      final startIndex = overlaps && sameTimestamp ? 1 : 0;
-
-      points.addAll(sampled.points.skip(startIndex));
-      timestamps.addAll(sampled.timestampsMs.skip(startIndex));
-      headings.addAll(sampled.headings.skip(startIndex));
-    }
-
-    if (points.isEmpty || timestamps.isEmpty || headings.isEmpty) return null;
-
-    final trips = lastSegment['trips'] as List?;
-    final firstTrip = trips?.isNotEmpty == true ? trips!.first : null;
+  factory _LiveBusTrip.fromParsed(LiveMapTripData data) {
+    final points = <LatLng>[
+      for (var index = 0; index < data.latitudes.length; index++)
+        LatLng(data.latitudes[index], data.longitudes[index]),
+    ];
 
     return _LiveBusTrip(
-      id: tripId,
-      displayName:
-          (firstTrip as Map<String, dynamic>?)?['displayName']?.toString() ??
-              tripId,
-      fromName: (firstSegment['from'] as Map<String, dynamic>?)?['name']
-              ?.toString() ??
-          'Unknown stop',
-      toName:
-          (lastSegment['to'] as Map<String, dynamic>?)?['name']?.toString() ??
-              'Unknown stop',
-      realTime: lastSegment['realTime'] == true,
-      routeColorHex: lastSegment['routeColor']?.toString(),
-      routeTextColorHex: lastSegment['routeTextColor']?.toString(),
-      arrivalDelaySeconds: _delaySeconds(
-        lastSegment['scheduledArrival']?.toString(),
-        lastSegment['arrival']?.toString(),
-      ),
-      fetchedAtMs: fetchedAtMs,
+      id: data.id,
+      displayName: data.displayName,
+      fromName: data.fromName,
+      toName: data.toName,
+      realTime: data.realTime,
+      arrivalDelaySeconds: data.arrivalDelaySeconds,
+      fetchedAtMs: data.fetchedAtMs,
+      routeColor: Color(data.routeColorValue),
+      routeTextColor: Color(data.routeTextColorValue),
+      vehicleColor: Color(data.vehicleColorValue),
+      vehicleTextColor: Color(data.vehicleTextColorValue),
       points: points,
-      timestampsMs: timestamps,
-      headings: headings,
+      timestampsMs: data.timestampsMs,
+      headings: data.headings,
     );
   }
 
@@ -1051,9 +1041,7 @@ class _LiveBusTrip {
       return _TripSample(
         position: points.first,
         heading: headings.firstOrZero,
-        previousIndex: 0,
         nextIndex: 0,
-        progress: 0,
       );
     }
 
@@ -1062,9 +1050,7 @@ class _LiveBusTrip {
       return _TripSample(
         position: points.first,
         heading: headings.firstOrZero,
-        previousIndex: 0,
         nextIndex: 0,
-        progress: 0,
       );
     }
     if (nowMs >= timestampsMs.last) {
@@ -1072,17 +1058,11 @@ class _LiveBusTrip {
       return _TripSample(
         position: points.last,
         heading: headings.lastOrZero,
-        previousIndex: lastIndex,
         nextIndex: lastIndex,
-        progress: 1,
       );
     }
 
-    var index = 1;
-    while (index < timestampsMs.length && timestampsMs[index] < nowMs) {
-      index++;
-    }
-
+    final index = _lowerBound(timestampsMs, nowMs);
     final previousIndex = math.max(index - 1, 0);
     final nextIndex = math.min(index, points.length - 1);
     final previousTime = timestampsMs[previousIndex];
@@ -1106,9 +1086,7 @@ class _LiveBusTrip {
         headings[nextIndex],
         progress,
       ),
-      previousIndex: previousIndex,
       nextIndex: nextIndex,
-      progress: progress,
     );
   }
 
@@ -1119,87 +1097,244 @@ class _LiveBusTrip {
     remaining.addAll(points.skip(startIndex));
     return _dedupeSequentialPoints(remaining);
   }
-
-  bool isVisibleAt(
-    DateTime now, {
-    Duration preStartGrace = const Duration(minutes: 2),
-    Duration postEndGrace = const Duration(minutes: 1),
-  }) {
-    if (timestampsMs.isEmpty) return false;
-
-    final nowMs = now.toUtc().millisecondsSinceEpoch;
-    return nowMs >= timestampsMs.first - preStartGrace.inMilliseconds &&
-        nowMs <= timestampsMs.last + postEndGrace.inMilliseconds;
-  }
-
-  bool intersectsBounds(LatLngBounds bounds) {
-    if (points.isEmpty) return false;
-
-    for (var index = 0; index < points.length; index += 6) {
-      if (_containsPoint(bounds, points[index])) {
-        return true;
-      }
-    }
-
-    return _containsPoint(bounds, points.last);
-  }
 }
 
 class _SampledSegment {
-  final List<LatLng> points;
+  final List<double> latitudes;
+  final List<double> longitudes;
   final List<int> timestampsMs;
   final List<double> headings;
 
   const _SampledSegment({
-    required this.points,
+    required this.latitudes,
+    required this.longitudes,
     required this.timestampsMs,
     required this.headings,
   });
 }
 
-_SampledSegment _sampleSegment(
-  List<LatLng> decoded,
-  int startMs,
-  int endMs,
-  Distance distance,
-) {
-  if (decoded.isEmpty) {
-    return const _SampledSegment(points: [], timestampsMs: [], headings: []);
+class _ResolvedRequestViewport {
+  final LatLngBounds bounds;
+  final bool clamped;
+
+  const _ResolvedRequestViewport({
+    required this.bounds,
+    required this.clamped,
+  });
+}
+
+class _DecodedPolyline {
+  final List<double> latitudes;
+  final List<double> longitudes;
+
+  const _DecodedPolyline({
+    required this.latitudes,
+    required this.longitudes,
+  });
+}
+
+class _ExpandedBusMarkerLabel extends StatelessWidget {
+  final String label;
+  final Color textColor;
+  final bool iconLeads;
+
+  const _ExpandedBusMarkerLabel({
+    required this.label,
+    required this.textColor,
+    required this.iconLeads,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!iconLeads)
+          Icon(
+            Icons.directions_bus_filled_rounded,
+            size: 16,
+            color: textColor,
+          ),
+        if (!iconLeads) const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontWeight: FontWeight.w800,
+            fontSize: 12,
+          ),
+        ),
+        if (iconLeads) const SizedBox(width: 6),
+        if (iconLeads)
+          Icon(
+            Icons.directions_bus_filled_rounded,
+            size: 16,
+            color: textColor,
+          ),
+      ],
+    );
+  }
+}
+
+@immutable
+class LiveMapBoundsData {
+  final double north;
+  final double south;
+  final double east;
+  final double west;
+
+  const LiveMapBoundsData({
+    required this.north,
+    required this.south,
+    required this.east,
+    required this.west,
+  });
+
+  factory LiveMapBoundsData.fromLatLngBounds(LatLngBounds bounds) {
+    return LiveMapBoundsData(
+      north: bounds.north,
+      south: bounds.south,
+      east: bounds.east,
+      west: bounds.west,
+    );
   }
 
-  if (decoded.length == 1) {
+  bool contains(double latitude, double longitude) {
+    return latitude >= south &&
+        latitude <= north &&
+        longitude >= west &&
+        longitude <= east;
+  }
+}
+
+@immutable
+class LiveMapParseRequest {
+  final String body;
+  final int fetchedAtMs;
+  final int nowMs;
+  final LiveMapBoundsData visibleBounds;
+  final LiveMapBoundsData retentionBounds;
+
+  const LiveMapParseRequest({
+    required this.body,
+    required this.fetchedAtMs,
+    required this.nowMs,
+    required this.visibleBounds,
+    required this.retentionBounds,
+  });
+}
+
+@immutable
+class LiveMapTripData {
+  final String id;
+  final String displayName;
+  final String fromName;
+  final String toName;
+  final bool realTime;
+  final int arrivalDelaySeconds;
+  final int fetchedAtMs;
+  final int routeColorValue;
+  final int routeTextColorValue;
+  final int vehicleColorValue;
+  final int vehicleTextColorValue;
+  final List<double> latitudes;
+  final List<double> longitudes;
+  final List<int> timestampsMs;
+  final List<double> headings;
+
+  const LiveMapTripData({
+    required this.id,
+    required this.displayName,
+    required this.fromName,
+    required this.toName,
+    required this.realTime,
+    required this.arrivalDelaySeconds,
+    required this.fetchedAtMs,
+    required this.routeColorValue,
+    required this.routeTextColorValue,
+    required this.vehicleColorValue,
+    required this.vehicleTextColorValue,
+    required this.latitudes,
+    required this.longitudes,
+    required this.timestampsMs,
+    required this.headings,
+  });
+}
+
+@immutable
+class LiveMapParseResult {
+  final List<LiveMapTripData> trips;
+  final int rawSegments;
+  final int rawBusSegments;
+  final int builtTrips;
+  final int visibleTrips;
+  final int nearbyTrips;
+
+  const LiveMapParseResult({
+    required this.trips,
+    required this.rawSegments,
+    required this.rawBusSegments,
+    required this.builtTrips,
+    required this.visibleTrips,
+    required this.nearbyTrips,
+  });
+}
+
+_SampledSegment _sampleSegment(
+  List<double> latitudes,
+  List<double> longitudes,
+  int startMs,
+  int endMs,
+) {
+  if (latitudes.isEmpty || longitudes.isEmpty) {
+    return const _SampledSegment(
+      latitudes: [],
+      longitudes: [],
+      timestampsMs: [],
+      headings: [],
+    );
+  }
+
+  if (latitudes.length == 1) {
     return _SampledSegment(
-      points: decoded,
+      latitudes: latitudes,
+      longitudes: longitudes,
       timestampsMs: [startMs],
       headings: const [0],
     );
   }
 
-  final cumulativeDistances = List<double>.filled(decoded.length, 0);
-  final headings = List<double>.filled(decoded.length, 0);
+  final cumulativeDistances = List<double>.filled(latitudes.length, 0);
+  final headings = List<double>.filled(latitudes.length, 0);
 
   var totalDistance = 0.0;
-  for (var i = 1; i < decoded.length; i++) {
-    totalDistance += _safeDistanceAs(
-      distance,
-      LengthUnit.Meter,
-      decoded[i - 1],
-      decoded[i],
+  for (var i = 1; i < latitudes.length; i++) {
+    totalDistance += _distanceMeters(
+      latitudes[i - 1],
+      longitudes[i - 1],
+      latitudes[i],
+      longitudes[i],
     );
     cumulativeDistances[i] = totalDistance;
-    headings[i - 1] = _bearing(decoded[i - 1], decoded[i]);
+    headings[i - 1] = _bearingFromCoords(
+      latitudes[i - 1],
+      longitudes[i - 1],
+      latitudes[i],
+      longitudes[i],
+    );
   }
-  headings[decoded.length - 1] = headings[decoded.length - 2];
+  headings[latitudes.length - 1] = headings[latitudes.length - 2];
 
   final duration = endMs - startMs;
-  final timestamps = List<int>.generate(decoded.length, (index) {
+  final timestamps = List<int>.generate(latitudes.length, (index) {
     if (totalDistance == 0 || duration <= 0) return startMs;
     final progress = cumulativeDistances[index] / totalDistance;
     return startMs + (duration * progress).round();
   });
 
   return _SampledSegment(
-    points: decoded,
+    latitudes: latitudes,
+    longitudes: longitudes,
     timestampsMs: timestamps,
     headings: headings,
   );
@@ -1227,19 +1362,23 @@ LatLngBounds _expandBounds(LatLngBounds bounds, double factor) {
 
 LatLngBounds? _safeVisibleBounds(MapCamera camera) {
   try {
-    // In flutter_map v8, pixelBounds natively represents the exact bounding box 
-    // of the view (including rotation scaling) in world pixels. 
+    // In flutter_map v8, pixelBounds natively represents the exact bounding box
+    // of the view (including rotation scaling) in world pixels.
     final Rect pw = camera.pixelBounds;
-    
+
     // Unprojecting these exact pixel bounds provides the perfect geographic rectangle
     // without the math over-approximation that made the API bounds too large.
     final LatLng bottomLeft = camera.unprojectAtZoom(pw.bottomLeft);
     final LatLng topRight = camera.unprojectAtZoom(pw.topRight);
 
-    final north = _clampLatitude(math.max(bottomLeft.latitude, topRight.latitude));
-    final south = _clampLatitude(math.min(bottomLeft.latitude, topRight.latitude));
-    final east = _clampLongitude(math.max(bottomLeft.longitude, topRight.longitude));
-    final west = _clampLongitude(math.min(bottomLeft.longitude, topRight.longitude));
+    final north =
+        _clampLatitude(math.max(bottomLeft.latitude, topRight.latitude));
+    final south =
+        _clampLatitude(math.min(bottomLeft.latitude, topRight.latitude));
+    final east =
+        _clampLongitude(math.max(bottomLeft.longitude, topRight.longitude));
+    final west =
+        _clampLongitude(math.min(bottomLeft.longitude, topRight.longitude));
 
     final bounds = LatLngBounds.unsafe(
       north: north,
@@ -1294,6 +1433,24 @@ double _clampLongitude(double value) {
   return value;
 }
 
+LatLngBounds _boundsAroundCenter(
+  LatLng center, {
+  required double widthKm,
+  required double heightKm,
+}) {
+  final latHalfSpan = heightKm / 2 / 111.32;
+  final lonDivisor =
+      111.32 * math.max(0.2, math.cos(center.latitude * math.pi / 180).abs());
+  final lonHalfSpan = widthKm / 2 / lonDivisor;
+
+  return LatLngBounds.unsafe(
+    north: _clampLatitude(center.latitude + latHalfSpan),
+    south: _clampLatitude(center.latitude - latHalfSpan),
+    east: _clampLongitude(center.longitude + lonHalfSpan),
+    west: _clampLongitude(center.longitude - lonHalfSpan),
+  );
+}
+
 LatLng _northWest(LatLngBounds bounds) =>
     LatLng(_clampLatitude(bounds.north), _clampLongitude(bounds.west));
 
@@ -1317,8 +1474,6 @@ bool _containsPoint(LatLngBounds bounds, LatLng point) {
 }
 
 double _safeDistanceAs(
-  Distance distance,
-  LengthUnit unit,
   LatLng from,
   LatLng to, {
   double fallback = 0,
@@ -1328,7 +1483,13 @@ double _safeDistanceAs(
   }
 
   try {
-    final result = distance.as(unit, from, to);
+    final result = _distanceMeters(
+          from.latitude,
+          from.longitude,
+          to.latitude,
+          to.longitude,
+        ) /
+        1000;
     if (!result.isFinite) return fallback;
     return result;
   } catch (error) {
@@ -1345,6 +1506,9 @@ bool _isValidPoint(LatLng point) =>
     point.longitude >= -180 &&
     point.longitude <= 180;
 
+double _axisDistanceKm(LatLng from, LatLng to) =>
+    _safeDistanceAs(from, to, fallback: double.infinity);
+
 List<LatLng> _dedupeSequentialPoints(List<LatLng> points) {
   if (points.length < 2) return points;
 
@@ -1357,8 +1521,9 @@ List<LatLng> _dedupeSequentialPoints(List<LatLng> points) {
   return deduped;
 }
 
-List<LatLng> _decodePolyline(String encoded, {int precision = 5}) {
-  final points = <LatLng>[];
+_DecodedPolyline _decodePolyline(String encoded, {int precision = 5}) {
+  final latitudes = <double>[];
+  final longitudes = <double>[];
   var index = 0;
   var lat = 0;
   var lng = 0;
@@ -1389,16 +1554,22 @@ List<LatLng> _decodePolyline(String encoded, {int precision = 5}) {
     final lngChange = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
     lng += lngChange;
 
-    points.add(LatLng(lat / factor, lng / factor));
+    latitudes.add(lat / factor);
+    longitudes.add(lng / factor);
   }
 
-  return points;
+  return _DecodedPolyline(latitudes: latitudes, longitudes: longitudes);
 }
 
-double _bearing(LatLng from, LatLng to) {
-  final fromLat = from.latitude * math.pi / 180;
-  final toLat = to.latitude * math.pi / 180;
-  final deltaLng = (to.longitude - from.longitude) * math.pi / 180;
+double _bearingFromCoords(
+  double fromLatitude,
+  double fromLongitude,
+  double toLatitude,
+  double toLongitude,
+) {
+  final fromLat = fromLatitude * math.pi / 180;
+  final toLat = toLatitude * math.pi / 180;
+  final deltaLng = (toLongitude - fromLongitude) * math.pi / 180;
 
   final y = math.sin(deltaLng) * math.cos(toLat);
   final x = math.cos(fromLat) * math.sin(toLat) -
@@ -1418,6 +1589,14 @@ bool _samePoint(LatLng a, LatLng b) =>
     (a.latitude - b.latitude).abs() < 0.000001 &&
     (a.longitude - b.longitude).abs() < 0.000001;
 
+bool _sameCoordinate(
+  double aLat,
+  double aLon,
+  double bLat,
+  double bLon,
+) =>
+    (aLat - bLat).abs() < 0.000001 && (aLon - bLon).abs() < 0.000001;
+
 int _delaySeconds(String? scheduled, String? actual) {
   if (scheduled == null || actual == null) return 0;
   final scheduledTime = DateTime.tryParse(scheduled);
@@ -1426,12 +1605,290 @@ int _delaySeconds(String? scheduled, String? actual) {
   return actualTime.difference(scheduledTime).inSeconds;
 }
 
-Color? _parseHexColor(String? value) {
+int? _parseHexColorValue(String? value) {
   if (value == null || value.isEmpty) return null;
   final sanitized = value.replaceFirst('#', '');
   if (sanitized.length != 6) return null;
   final parsed = int.tryParse('FF$sanitized', radix: 16);
-  return parsed == null ? null : Color(parsed);
+  return parsed;
+}
+
+final int _defaultRouteColorValue = const Color(0xFF1E88E5).toARGB32();
+final int _defaultVehicleMutedColorValue =
+    const Color(0xFF7A8697).withValues(alpha: 0.85).toARGB32();
+
+int _foregroundColorValue(int backgroundValue) =>
+    Color(backgroundValue).computeLuminance() > 0.45
+        ? Colors.black.toARGB32()
+        : Colors.white.toARGB32();
+
+int _vehicleStatusColorValue(bool realTime, int arrivalDelaySeconds) {
+  if (!realTime) {
+    return _defaultVehicleMutedColorValue;
+  }
+
+  final delayMinutes = arrivalDelaySeconds / 60;
+  if (delayMinutes <= 0) return const Color(0xFF2E9B57).toARGB32();
+  if (delayMinutes <= 2) {
+    return (Color.lerp(
+              const Color(0xFF2E9B57),
+              const Color(0xFFF2C94C),
+              delayMinutes / 2,
+            ) ??
+            const Color(0xFFF2C94C))
+        .toARGB32();
+  }
+  if (delayMinutes <= 5) {
+    return (Color.lerp(
+              const Color(0xFFF2C94C),
+              const Color(0xFFF2994A),
+              (delayMinutes - 2) / 3,
+            ) ??
+            const Color(0xFFF2994A))
+        .toARGB32();
+  }
+  if (delayMinutes <= 10) {
+    return (Color.lerp(
+              const Color(0xFFF2994A),
+              const Color(0xFFEB5757),
+              (delayMinutes - 5) / 5,
+            ) ??
+            const Color(0xFFEB5757))
+        .toARGB32();
+  }
+  return const Color(0xFFC0392B).toARGB32();
+}
+
+double _distanceMeters(
+  double fromLatitude,
+  double fromLongitude,
+  double toLatitude,
+  double toLongitude,
+) {
+  final dLat = (toLatitude - fromLatitude) * math.pi / 180;
+  final dLon = (toLongitude - fromLongitude) * math.pi / 180;
+  final startLat = fromLatitude * math.pi / 180;
+  final endLat = toLatitude * math.pi / 180;
+
+  final a = math.pow(math.sin(dLat / 2), 2) +
+      math.cos(startLat) * math.cos(endLat) * math.pow(math.sin(dLon / 2), 2);
+  final normalized = a.toDouble().clamp(0.0, 1.0);
+  final c = 2 * math.atan2(math.sqrt(normalized), math.sqrt(1 - normalized));
+  return 6371000 * c;
+}
+
+int _lowerBound(List<int> values, int target) {
+  var low = 0;
+  var high = values.length;
+  while (low < high) {
+    final mid = low + ((high - low) >> 1);
+    if (values[mid] < target) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+LiveMapParseResult _parseLiveMapTripsIsolate(LiveMapParseRequest request) {
+  final decoded = jsonDecode(request.body);
+  if (decoded is! List) {
+    throw FormatException(
+      'Unsupported live map trips response: ${decoded.runtimeType}',
+    );
+  }
+
+  final grouped = <String, List<Map<String, dynamic>>>{};
+  var rawBusSegments = 0;
+
+  for (final entry in decoded) {
+    if (entry is! Map) continue;
+    final trip = Map<String, dynamic>.from(entry);
+    final mode = (trip['mode'] as String?)?.toUpperCase();
+    if (mode != 'BUS') continue;
+    rawBusSegments++;
+
+    final trips = trip['trips'] as List?;
+    final firstTrip = trips?.isNotEmpty == true ? trips!.first : null;
+    final tripId = (firstTrip as Map<String, dynamic>?)?['tripId']?.toString();
+    if (tripId == null || tripId.isEmpty) continue;
+
+    grouped.putIfAbsent(tripId, () => <Map<String, dynamic>>[]).add(trip);
+  }
+
+  final builtTrips = <LiveMapTripData>[];
+  final visibleTrips = <LiveMapTripData>[];
+  final nearbyTrips = <LiveMapTripData>[];
+
+  for (final entry in grouped.entries) {
+    final trip = _buildParsedTrip(
+      entry.key,
+      entry.value,
+      fetchedAtMs: request.fetchedAtMs,
+    );
+    if (trip == null) continue;
+    builtTrips.add(trip);
+
+    if (!_tripDataVisibleAt(trip, request.nowMs)) continue;
+    visibleTrips.add(trip);
+
+    if (_tripDataIntersectsBounds(trip, request.retentionBounds)) {
+      nearbyTrips.add(trip);
+    }
+  }
+
+  final onScreenTrips = visibleTrips
+      .where((trip) => _tripDataIntersectsBounds(trip, request.visibleBounds))
+      .toList(growable: false);
+  final preferredTrips = (nearbyTrips.isNotEmpty
+      ? nearbyTrips
+      : onScreenTrips.isNotEmpty
+          ? onScreenTrips
+          : visibleTrips)
+    ..sort((a, b) {
+      final byName = a.displayName.compareTo(b.displayName);
+      if (byName != 0) return byName;
+      return a.id.compareTo(b.id);
+    });
+
+  return LiveMapParseResult(
+    trips: preferredTrips,
+    rawSegments: decoded.length,
+    rawBusSegments: rawBusSegments,
+    builtTrips: builtTrips.length,
+    visibleTrips: visibleTrips.length,
+    nearbyTrips: nearbyTrips.length,
+  );
+}
+
+LiveMapTripData? _buildParsedTrip(
+  String tripId,
+  List<Map<String, dynamic>> segments, {
+  required int fetchedAtMs,
+}) {
+  if (segments.isEmpty) return null;
+
+  segments.sort((a, b) {
+    final aTime = DateTime.tryParse(a['departure']?.toString() ?? '');
+    final bTime = DateTime.tryParse(b['departure']?.toString() ?? '');
+    return (aTime ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .compareTo(bTime ?? DateTime.fromMillisecondsSinceEpoch(0));
+  });
+
+  final firstSegment = segments.first;
+  final lastSegment = segments.last;
+  final latitudes = <double>[];
+  final longitudes = <double>[];
+  final timestamps = <int>[];
+  final headings = <double>[];
+
+  for (final segment in segments) {
+    final polyline = segment['polyline']?.toString();
+    if (polyline == null || polyline.isEmpty) continue;
+
+    final decoded = _decodePolyline(polyline);
+    if (decoded.latitudes.isEmpty || decoded.longitudes.isEmpty) continue;
+
+    final start = DateTime.tryParse(segment['departure']?.toString() ?? '');
+    final end = DateTime.tryParse(segment['arrival']?.toString() ?? '');
+    if (start == null || end == null) continue;
+
+    final sampled = _sampleSegment(
+      decoded.latitudes,
+      decoded.longitudes,
+      start.toUtc().millisecondsSinceEpoch,
+      end.toUtc().millisecondsSinceEpoch,
+    );
+    if (sampled.latitudes.isEmpty || sampled.longitudes.isEmpty) continue;
+
+    final overlaps = latitudes.isNotEmpty &&
+        sampled.latitudes.isNotEmpty &&
+        _sameCoordinate(
+          latitudes.last,
+          longitudes.last,
+          sampled.latitudes.first,
+          sampled.longitudes.first,
+        );
+    final sameTimestamp = overlaps &&
+        timestamps.isNotEmpty &&
+        sampled.timestampsMs.isNotEmpty &&
+        timestamps.last == sampled.timestampsMs.first;
+    final startIndex = overlaps && sameTimestamp ? 1 : 0;
+
+    latitudes.addAll(sampled.latitudes.skip(startIndex));
+    longitudes.addAll(sampled.longitudes.skip(startIndex));
+    timestamps.addAll(sampled.timestampsMs.skip(startIndex));
+    headings.addAll(sampled.headings.skip(startIndex));
+  }
+
+  if (latitudes.isEmpty || timestamps.isEmpty || headings.isEmpty) return null;
+
+  final trips = lastSegment['trips'] as List?;
+  final firstTrip = trips?.isNotEmpty == true ? trips!.first : null;
+  final displayName =
+      (firstTrip as Map<String, dynamic>?)?['displayName']?.toString() ??
+          tripId;
+  final realTime = lastSegment['realTime'] == true;
+  final arrivalDelaySeconds = _delaySeconds(
+    lastSegment['scheduledArrival']?.toString(),
+    lastSegment['arrival']?.toString(),
+  );
+  final routeColorValue =
+      _parseHexColorValue(lastSegment['routeColor']?.toString()) ??
+          _defaultRouteColorValue;
+  final routeTextColorValue =
+      _parseHexColorValue(lastSegment['routeTextColor']?.toString()) ??
+          _foregroundColorValue(routeColorValue);
+  final vehicleColorValue =
+      _vehicleStatusColorValue(realTime, arrivalDelaySeconds);
+
+  return LiveMapTripData(
+    id: tripId,
+    displayName: displayName,
+    fromName:
+        (firstSegment['from'] as Map<String, dynamic>?)?['name']?.toString() ??
+            'Unknown stop',
+    toName: (lastSegment['to'] as Map<String, dynamic>?)?['name']?.toString() ??
+        'Unknown stop',
+    realTime: realTime,
+    arrivalDelaySeconds: arrivalDelaySeconds,
+    fetchedAtMs: fetchedAtMs,
+    routeColorValue: routeColorValue,
+    routeTextColorValue: routeTextColorValue,
+    vehicleColorValue: vehicleColorValue,
+    vehicleTextColorValue: _foregroundColorValue(vehicleColorValue),
+    latitudes: latitudes,
+    longitudes: longitudes,
+    timestampsMs: timestamps,
+    headings: headings,
+  );
+}
+
+bool _tripDataVisibleAt(
+  LiveMapTripData trip,
+  int nowMs, {
+  int preStartGraceMs = 2 * 60 * 1000,
+  int postEndGraceMs = 60 * 1000,
+}) {
+  if (trip.timestampsMs.isEmpty) return false;
+  return nowMs >= trip.timestampsMs.first - preStartGraceMs &&
+      nowMs <= trip.timestampsMs.last + postEndGraceMs;
+}
+
+bool _tripDataIntersectsBounds(
+  LiveMapTripData trip,
+  LiveMapBoundsData bounds,
+) {
+  if (trip.latitudes.isEmpty || trip.longitudes.isEmpty) return false;
+
+  for (var index = 0; index < trip.latitudes.length; index += 6) {
+    if (bounds.contains(trip.latitudes[index], trip.longitudes[index])) {
+      return true;
+    }
+  }
+
+  return bounds.contains(trip.latitudes.last, trip.longitudes.last);
 }
 
 extension on List<double> {

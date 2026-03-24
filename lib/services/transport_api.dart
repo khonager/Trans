@@ -1099,7 +1099,7 @@ class TransportApi {
     return data is Map<String, dynamic> ? data : null;
   }
 
-  static Future<List<Map<String, dynamic>>> fetchLiveMapTrips({
+  static Future<String> fetchLiveMapTrips({
     required String min,
     required String max,
     required DateTime startTime,
@@ -1115,13 +1115,7 @@ class TransportApi {
         'zoom': zoom.toStringAsFixed(2),
       }),
     );
-    final data = json.decode(response.body);
-    if (data is List) {
-      return data.whereType<Map<String, dynamic>>().toList();
-    }
-    throw FormatException(
-      'Unsupported live map trips response: ${data.runtimeType}',
-    );
+    return response.body;
   }
 
   /// Get nearby stops by coordinates
