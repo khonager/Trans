@@ -559,28 +559,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return (1 - shrinkAmount).clamp(0.82, 1.0);
   }
 
-  double _localMarkerScaleFor(double nearestDistancePx, double baseWidth) {
-    if (!nearestDistancePx.isFinite) return 1.0;
-
-    final tightSpacing = baseWidth * 0.40;
-    final comfortableSpacing = baseWidth * 1.12;
-    if (nearestDistancePx <= tightSpacing) return 0.78;
-    if (nearestDistancePx >= comfortableSpacing) return 1.0;
-
-    final t = ((nearestDistancePx - tightSpacing) /
-            (comfortableSpacing - tightSpacing))
-        .clamp(0.0, 1.0);
-    return _lerp(0.78, 1.0, t);
-  }
-
-  double _markerScaleBoost(_LiveBusTrip trip) {
-    if (_selectedBus?.tripId == trip.id) return 0.18;
-
-    final lateMinutes = math.max(0, trip.arrivalDelaySeconds) / 60;
-    if (lateMinutes <= 0) return 0;
-    return math.min(0.14, 0.04 + lateMinutes * 0.015);
-  }
-
   double _markerPaintPriority(_LiveBusTrip trip) {
     var score = 0.0;
 
@@ -601,57 +579,20 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     required List<_LiveBusTrip> trips,
     required DateTime now,
     required double zoom,
-    required MapCamera? camera,
   }) {
     final baseSize = _baseMarkerSizeForZoom(zoom);
-    final globalScale = _globalMarkerScaleFor(zoom, trips.length);
-    final placements = <_MarkerPlacement>[
-      for (final trip in trips)
-        (() {
-          final sample = trip.sample(now);
-          return _MarkerPlacement(
-            trip: trip,
-            sample: sample,
-            layerOffset: camera?.getOffsetFromOrigin(sample.position),
-          );
-        })(),
-    ];
-
-    final nearestDistances = List<double>.filled(
-      placements.length,
-      double.infinity,
-    );
-
-    for (var i = 0; i < placements.length; i++) {
-      final a = placements[i].layerOffset;
-      if (a == null) continue;
-      for (var j = i + 1; j < placements.length; j++) {
-        final b = placements[j].layerOffset;
-        if (b == null) continue;
-        final distance = (a - b).distance;
-        if (distance < nearestDistances[i]) nearestDistances[i] = distance;
-        if (distance < nearestDistances[j]) nearestDistances[j] = distance;
-      }
-    }
+    final scale = _globalMarkerScaleFor(zoom, trips.length).clamp(0.78, 1.0);
+    final size = _markerSizeForScale(baseSize, scale);
 
     final visuals = <_MarkerVisual>[
-      for (var index = 0; index < placements.length; index++)
-        (() {
-          final placement = placements[index];
-          final localScale =
-              _localMarkerScaleFor(nearestDistances[index], baseSize.width);
-          final scale =
-              (globalScale * localScale + _markerScaleBoost(placement.trip))
-                  .clamp(0.78, 1.0);
-          final size = _markerSizeForScale(baseSize, scale);
-          return _MarkerVisual(
-            trip: placement.trip,
-            sample: placement.sample,
-            size: size,
-            scale: scale,
-            paintPriority: _markerPaintPriority(placement.trip),
-          );
-        })(),
+      for (final trip in trips)
+        _MarkerVisual(
+          trip: trip,
+          sample: trip.sample(now),
+          size: size,
+          scale: scale,
+          paintPriority: _markerPaintPriority(trip),
+        ),
     ]..sort((a, b) {
         final byPriority = a.paintPriority.compareTo(b.paintPriority);
         if (byPriority != 0) return byPriority;
@@ -1317,7 +1258,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                     trips: displayedTrips,
                     now: now,
                     zoom: zoom,
-                    camera: _latestCamera,
                   );
                   final markers = <Marker>[
                     for (final visual in markerVisuals)
@@ -1645,18 +1585,6 @@ class _ExpandedBusMarkerLabel extends StatelessWidget {
       ],
     );
   }
-}
-
-class _MarkerPlacement {
-  final _LiveBusTrip trip;
-  final _TripSample sample;
-  final Offset? layerOffset;
-
-  const _MarkerPlacement({
-    required this.trip,
-    required this.sample,
-    required this.layerOffset,
-  });
 }
 
 class _MarkerVisual {
