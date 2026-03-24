@@ -1010,6 +1010,93 @@ class TransportApi {
     );
   }
 
+  static String? _nextStopTimesPageCursor(dynamic data) {
+    if (data is! Map<String, dynamic>) return null;
+    final cursor = data['nextPageCursor']?.toString().trim();
+    if (cursor == null || cursor.isEmpty) return null;
+    return cursor;
+  }
+
+  static DateTime? _stopDepartureDateTimeLocal(Map<String, dynamic> dep) {
+    final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+    final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+    final rawTime = (motisDepObj?['scheduledTime'] as String?) ??
+        (motisDepObj?['time'] as String?) ??
+        (motisPlaceObj?['scheduledDeparture'] as String?) ??
+        (motisPlaceObj?['departure'] as String?) ??
+        (motisPlaceObj?['scheduledArrival'] as String?) ??
+        (motisPlaceObj?['arrival'] as String?) ??
+        (dep['plannedWhen'] as String?) ??
+        (dep['when'] as String?);
+    if (rawTime == null || rawTime.isEmpty) return null;
+
+    try {
+      return DateTime.parse(rawTime).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchMotisStopDepartures(
+    String stationId, {
+    required DateTime startLocal,
+    required DateTime endLocal,
+    required int maxResults,
+  }) async {
+    final baseParams = <String, dynamic>{
+      'stopId': stationId,
+      'time': startLocal.toUtc().toIso8601String(),
+      'direction': 'LATER',
+      'n': math.min(maxResults, 100).toString(),
+    };
+
+    final departures = <Map<String, dynamic>>[];
+    final seenKeys = <String>{};
+    String? pageCursor;
+
+    for (var page = 0; page < 8 && departures.length < maxResults; page++) {
+      final response = await _fetch(
+        _getMotisUri('/api/v5/stoptimes', {
+          ...baseParams,
+          if (pageCursor != null) 'pageCursor': pageCursor,
+        }),
+      );
+      final data = json.decode(response.body);
+      final pageDepartures = decodeStopDeparturesResponse(data);
+      if (pageDepartures.isEmpty) break;
+
+      var reachedNextDay = false;
+      for (final dep in pageDepartures) {
+        final departureTime = _stopDepartureDateTimeLocal(dep);
+        if (departureTime == null) continue;
+        if (departureTime.isAfter(endLocal)) {
+          reachedNextDay = true;
+          break;
+        }
+        if (departureTime.isBefore(startLocal)) continue;
+
+        final dedupeKey = [
+          departureTime.toIso8601String(),
+          dep['routeShortName'] ?? dep['displayName'] ?? '',
+          dep['headsign'] ?? dep['direction'] ?? '',
+          (dep['place'] as Map<String, dynamic>?)?['track'] ?? '',
+        ].join('|');
+        if (!seenKeys.add(dedupeKey)) continue;
+
+        departures.add(dep);
+        if (departures.length >= maxResults) break;
+      }
+
+      if (departures.length >= maxResults || reachedNextDay) break;
+
+      final nextPageCursor = _nextStopTimesPageCursor(data);
+      if (nextPageCursor == null || nextPageCursor == pageCursor) break;
+      pageCursor = nextPageCursor;
+    }
+
+    return departures;
+  }
+
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
@@ -1294,30 +1381,28 @@ class TransportApi {
   }
 
   /// Fetch all departures for a stop on a given day.
-  /// Tries MOTIS `/api/v1/stoptimes` first, falls back to v6.db `/stops/{id}/departures`.
+  /// Tries MOTIS `/api/v5/stoptimes` first, falls back to v6.db `/stops/{id}/departures`.
   static Future<List<Map<String, dynamic>>> fetchStopDepartures(
     String stationId, {
     DateTime? date,
-    int maxResults = 100,
+    int maxResults = 250,
   }) async {
     final day = date ?? DateTime.now();
 
     // Build a window covering the full calendar day (00:00 – 23:59).
-    final start = DateTime(day.year, day.month, day.day, 0, 0, 0).toUtc();
-    final end = DateTime(day.year, day.month, day.day, 23, 59, 59).toUtc();
+    final startLocal = DateTime(day.year, day.month, day.day, 0, 0, 0);
+    final endLocal = DateTime(day.year, day.month, day.day, 23, 59, 59);
+    final start = startLocal.toUtc();
 
     // ── MOTIS ───────────────────────────────────────────────────────────────
     if (apiMode != 'v6') {
       try {
-        final response = await _fetch(
-          _getMotisUri('/api/v1/stoptimes', {
-            'stopId': stationId,
-            'startTime': '${start.toIso8601String().split('.').first}Z',
-            'endTime': '${end.toIso8601String().split('.').first}Z',
-            'n': maxResults.toString(),
-          }),
+        return await _fetchMotisStopDepartures(
+          stationId,
+          startLocal: startLocal,
+          endLocal: endLocal,
+          maxResults: maxResults,
         );
-        return decodeStopDeparturesResponse(json.decode(response.body));
       } catch (e) {
         debugPrint('MOTIS fetchStopDepartures failed: $e');
         if (apiMode == 'motis') rethrow;
