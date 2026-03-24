@@ -1100,15 +1100,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               },
               onTap: (_, __) => _clearSelection(),
               onPositionChanged: (camera, hasGesture) {
-                final hadGestureSelection = hasGesture && _selectedBus != null;
-                if (hadGestureSelection) {
-                  _selectedTripRouteRequestToken++;
-                }
                 setState(() {
                   _latestCamera = camera;
-                  if (hadGestureSelection) {
-                    _selectedBus = null;
-                  }
                   _invalidateDisplayedTripsCache();
                 });
                 _scheduleFetch();
