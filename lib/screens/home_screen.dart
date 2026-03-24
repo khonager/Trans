@@ -240,11 +240,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setInt('current_tab_index', index);
   }
 
+  Future<void> _openLiveMap() async {
+    await HapticFeedback.mediumImpact();
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TransitousLiveMapScreen(
+          currentPosition: _currentPosition,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRoutesNavIcon() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: _openLiveMap,
+      child: const SizedBox(
+        width: 56,
+        height: 56,
+        child: Center(
+          child: Icon(Icons.directions),
+        ),
+      ),
+    );
+  }
+
   List<NavigationDestination> _buildDestinations(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return [
       NavigationDestination(
-        icon: const Icon(Icons.directions),
+        icon: _buildRoutesNavIcon(),
+        selectedIcon: _buildRoutesNavIcon(),
         label: l10n.routes,
       ),
       NavigationDestination(
@@ -256,31 +284,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         label: l10n.settings,
       ),
     ];
-  }
-
-  Future<void> _handleBottomNavLongPress(
-    LongPressStartDetails details,
-    double navWidth,
-  ) async {
-    if (navWidth <= 0) return;
-
-    // Compute the width of a single tab based on the actual number of destinations.
-    final int destinationsCount = _buildDestinations(context).length;
-    if (destinationsCount <= 0) return;
-
-    final double routesTabWidth = navWidth / destinationsCount;
-    if (details.localPosition.dx > routesTabWidth) return;
-
-    await HapticFeedback.mediumImpact();
-    if (!mounted) return;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => TransitousLiveMapScreen(
-          currentPosition: _currentPosition,
-        ),
-      ),
-    );
   }
 
   Future<void> _determinePosition() async {
@@ -392,19 +395,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const TicketPanel(),
             ],
           ),
-          bottomNavigationBar: LayoutBuilder(
-            builder: (context, constraints) {
-              return GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onLongPressStart: (details) =>
-                    _handleBottomNavLongPress(details, constraints.maxWidth),
-                child: NavigationBar(
-                  selectedIndex: _currentIndex,
-                  onDestinationSelected: _onTabChanged,
-                  destinations: _buildDestinations(context),
-                ),
-              );
-            },
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: _onTabChanged,
+            destinations: _buildDestinations(context),
           ),
         ));
   }
