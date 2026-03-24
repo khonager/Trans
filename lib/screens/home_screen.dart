@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:trans/services/supabase_service.dart';
+import 'package:trans/screens/transitous_live_map_screen.dart';
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
@@ -239,6 +240,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setInt('current_tab_index', index);
   }
 
+  Future<void> _handleBottomNavLongPress(
+    LongPressStartDetails details,
+    double navWidth,
+  ) async {
+    if (navWidth <= 0) return;
+
+    // Compute the width of a single tab based on the actual number of destinations.
+    final int destinationsCount = _destinations.length;
+    if (destinationsCount <= 0) return;
+
+    final double routesTabWidth = navWidth / destinationsCount;
+    if (details.localPosition.dx > routesTabWidth) return;
+
+    await HapticFeedback.mediumImpact();
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TransitousLiveMapScreen(
+          currentPosition: _currentPosition,
+        ),
+      ),
+    );
+  }
+
   Future<void> _determinePosition() async {
     try {
       bool serviceEnabled;
@@ -348,20 +374,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const TicketPanel(),
             ],
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: _onTabChanged,
-            destinations: [
-              NavigationDestination(
-                  icon: const Icon(Icons.directions),
-                  label: AppLocalizations.of(context)!.routes),
-              NavigationDestination(
-                  icon: const Icon(Icons.people),
-                  label: AppLocalizations.of(context)!.friends),
-              NavigationDestination(
-                  icon: const Icon(Icons.settings),
-                  label: AppLocalizations.of(context)!.settings),
-            ],
+          bottomNavigationBar: LayoutBuilder(
+            builder: (context, constraints) {
+              return GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onLongPressStart: (details) =>
+                    _handleBottomNavLongPress(details, constraints.maxWidth),
+                child: NavigationBar(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: _onTabChanged,
+                  destinations: [
+                    NavigationDestination(
+                        icon: const Icon(Icons.directions),
+                        label: AppLocalizations.of(context)!.routes),
+                    NavigationDestination(
+                        icon: const Icon(Icons.people),
+                        label: AppLocalizations.of(context)!.friends),
+                    NavigationDestination(
+                        icon: const Icon(Icons.settings),
+                        label: AppLocalizations.of(context)!.settings),
+                  ],
+                ),
+              );
+            },
           ),
         ));
   }
