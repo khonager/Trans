@@ -31,12 +31,12 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   static const Duration _refreshInterval = Duration(seconds: 5);
   static const Duration _animationInterval = Duration(milliseconds: 120);
   static const Duration _tripRetentionDuration = Duration(minutes: 2);
-  static const double _fetchPaddingFactor = 0.9;
-  static const double _retentionPaddingFactor = 1.5;
+  static const double _fetchPaddingFactor = 0.3;
+  static const double _retentionPaddingFactor = 0.8;
   static const double _zoomRequestStep = 0.5;
 
   final MapController _mapController = MapController();
-  final Distance _distance = const Distance();
+  final Distance _distance = const DistanceHaversine();
 
   LatLng _initialCenter = const LatLng(52.52, 13.405);
   double _initialZoom = 13;
@@ -66,7 +66,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     });
     _refreshTimer = Timer.periodic(
       _refreshInterval,
-      (_) => _scheduleFetch(force: true),
+      (_) {
+        if (!_isFetchingTrips) _scheduleFetch(force: true);
+      },
     );
   }
 
@@ -148,7 +150,11 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       return;
     }
 
-    final visibleBounds = camera.visibleBounds;
+    final visibleBounds = _safeVisibleBounds(camera);
+    if (visibleBounds == null) {
+      debugPrint('Live map: skipping fetch because visible bounds are invalid');
+      return;
+    }
     final requestZoom = _requestZoom(camera.zoom);
     if (!force &&
         _lastFetchedViewport?.covers(
@@ -176,12 +182,16 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         endTime: now.add(_lookAhead),
         zoom: requestZoom,
       );
-      if (!mounted || token != _requestToken) return;
+      if (!mounted) return;
 
       final incomingTrips = _buildTrips(
         rawTrips,
         fetchedAtMs: now.toUtc().millisecondsSinceEpoch,
       );
+      final rawBusSegments = rawTrips.where((trip) {
+        final mode = (trip['mode'] as String?)?.toUpperCase();
+        return mode == 'BUS';
+      }).length;
       final retentionBounds = _expandBounds(
         visibleBounds,
         _retentionPaddingFactor,
@@ -204,6 +214,15 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         now: now,
         visibleBounds: visibleBounds,
       );
+      debugPrint(
+        'Live map fetch summary: '
+        'raw=${rawTrips.length}, '
+        'rawBusSegments=$rawBusSegments, '
+        'built=${incomingTrips.length}, '
+        'visible=${visibleIncomingTrips.length}, '
+        'nearby=${nearbyIncomingTrips.length}, '
+        'merged=${trips.length}',
+      );
       final selectedTrip = _selectedBus == null
           ? null
           : trips.cast<_LiveBusTrip?>().firstWhere(
@@ -221,24 +240,28 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 position: selectedTrip.sample(now).position,
               );
       });
-      _lastFetchedViewport = _FetchedViewport(
-        bounds: bounds,
-        requestZoom: requestZoom,
-      );
-    } catch (error, stackTrace) {
-      if (!mounted || token != _requestToken) return;
-      AppError.log(
-        error,
-        stackTrace: stackTrace,
-        source: 'live map trips',
-      );
-      setState(() {
-        _errorMessage = AppError.userMessage(
-          context,
-          error,
-          fallback: 'Could not load live buses.',
+      if (token == _requestToken) {
+        _lastFetchedViewport = _FetchedViewport(
+          bounds: bounds,
+          requestZoom: requestZoom,
         );
-      });
+      }
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      if (token == _requestToken) {
+        AppError.log(
+          error,
+          stackTrace: stackTrace,
+          source: 'live map trips',
+        );
+        setState(() {
+          _errorMessage = AppError.userMessage(
+            context,
+            error,
+            fallback: 'Could not load live buses.',
+          );
+        });
+      }
     } finally {
       if (mounted && token == _requestToken) {
         setState(() => _isFetchingTrips = false);
@@ -302,7 +325,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     );
 
     for (final trip in existing) {
-      if (merged.containsKey(trip.id)) continue;
+      if (merged.containsKey(trip.id)) {
+        // Prevent older in-flight requests from overwriting newer local data
+        if (trip.fetchedAtMs > merged[trip.id]!.fetchedAtMs) {
+          merged[trip.id] = trip;
+        }
+        continue;
+      }
       final age = now.toUtc().millisecondsSinceEpoch - trip.fetchedAtMs;
       if (trip.id == selectedTripId ||
           (age <= _tripRetentionDuration.inMilliseconds &&
@@ -361,8 +390,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     required LatLng center,
   }) {
     final sample = trip.sample(_now);
-    final distanceFromCenterKm =
-        _distance.as(LengthUnit.Kilometer, center, sample.position);
+    final distanceFromCenterKm = _safeDistanceAs(
+      _distance,
+      LengthUnit.Kilometer,
+      center,
+      sample.position,
+      fallback: double.infinity,
+    );
 
     var score = 0.0;
     if (trip.id == selectedTripId) score += 10000;
@@ -1146,7 +1180,12 @@ _SampledSegment _sampleSegment(
 
   var totalDistance = 0.0;
   for (var i = 1; i < decoded.length; i++) {
-    totalDistance += distance.as(LengthUnit.Meter, decoded[i - 1], decoded[i]);
+    totalDistance += _safeDistanceAs(
+      distance,
+      LengthUnit.Meter,
+      decoded[i - 1],
+      decoded[i],
+    );
     cumulativeDistances[i] = totalDistance;
     headings[i - 1] = _bearing(decoded[i - 1], decoded[i]);
   }
@@ -1167,34 +1206,105 @@ _SampledSegment _sampleSegment(
 }
 
 LatLngBounds _expandBounds(LatLngBounds bounds, double factor) {
-  final northWest = _northWest(bounds);
-  final southEast = _southEast(bounds);
-  final latPadding = (northWest.latitude - southEast.latitude).abs() * factor;
-  final lonPadding = (southEast.longitude - northWest.longitude).abs() * factor;
+  final north = math.max(bounds.north, bounds.south);
+  final south = math.min(bounds.north, bounds.south);
+  final east = math.max(bounds.east, bounds.west);
+  final west = math.min(bounds.east, bounds.west);
+  final latPadding = (north - south).abs() * factor;
+  final lonPadding = (east - west).abs() * factor;
+  final expandedNorth = _clampLatitude(north + latPadding);
+  final expandedSouth = _clampLatitude(south - latPadding);
+  final expandedEast = _clampLongitude(east + lonPadding);
+  final expandedWest = _clampLongitude(west - lonPadding);
 
-  return LatLngBounds(
-    LatLng(
-      southEast.latitude - latPadding,
-      northWest.longitude - lonPadding,
-    ),
-    LatLng(
-      northWest.latitude + latPadding,
-      southEast.longitude + lonPadding,
-    ),
+  return LatLngBounds.unsafe(
+    north: math.max(expandedNorth, expandedSouth),
+    south: math.min(expandedNorth, expandedSouth),
+    east: math.max(expandedEast, expandedWest),
+    west: math.min(expandedEast, expandedWest),
   );
 }
 
+LatLngBounds? _safeVisibleBounds(MapCamera camera) {
+  try {
+    // In flutter_map v8, pixelBounds natively represents the exact bounding box 
+    // of the view (including rotation scaling) in world pixels. 
+    final Rect pw = camera.pixelBounds;
+    
+    // Unprojecting these exact pixel bounds provides the perfect geographic rectangle
+    // without the math over-approximation that made the API bounds too large.
+    final LatLng bottomLeft = camera.unprojectAtZoom(pw.bottomLeft);
+    final LatLng topRight = camera.unprojectAtZoom(pw.topRight);
+
+    final north = _clampLatitude(math.max(bottomLeft.latitude, topRight.latitude));
+    final south = _clampLatitude(math.min(bottomLeft.latitude, topRight.latitude));
+    final east = _clampLongitude(math.max(bottomLeft.longitude, topRight.longitude));
+    final west = _clampLongitude(math.min(bottomLeft.longitude, topRight.longitude));
+
+    final bounds = LatLngBounds.unsafe(
+      north: north,
+      south: south,
+      east: east,
+      west: west,
+    );
+
+    if (!_isValidBounds(bounds)) {
+      return null;
+    }
+    return bounds;
+  } catch (error) {
+    debugPrint('Live map: failed to compute safe bounds: $error');
+    return null;
+  }
+}
+
+bool _isValidBounds(LatLngBounds bounds) {
+  final north = bounds.north;
+  final south = bounds.south;
+  final east = bounds.east;
+  final west = bounds.west;
+
+  return north.isFinite &&
+      south.isFinite &&
+      east.isFinite &&
+      west.isFinite &&
+      north <= 90 &&
+      north >= -90 &&
+      south <= 90 &&
+      south >= -90 &&
+      east <= 180 &&
+      east >= -180 &&
+      west <= 180 &&
+      west >= -180 &&
+      north >= south &&
+      east >= west;
+}
+
+double _clampLatitude(double value) {
+  if (!value.isFinite) return 0;
+  if (value > 90) return 90;
+  if (value < -90) return -90;
+  return value;
+}
+
+double _clampLongitude(double value) {
+  if (!value.isFinite) return 0;
+  if (value > 180) return 180;
+  if (value < -180) return -180;
+  return value;
+}
+
 LatLng _northWest(LatLngBounds bounds) =>
-    LatLng(bounds.northWest.latitude, bounds.northWest.longitude);
+    LatLng(_clampLatitude(bounds.north), _clampLongitude(bounds.west));
 
 LatLng _southEast(LatLngBounds bounds) =>
-    LatLng(bounds.southEast.latitude, bounds.southEast.longitude);
+    LatLng(_clampLatitude(bounds.south), _clampLongitude(bounds.east));
 
 LatLng _southWest(LatLngBounds bounds) =>
-    LatLng(bounds.southEast.latitude, bounds.northWest.longitude);
+    LatLng(_clampLatitude(bounds.south), _clampLongitude(bounds.west));
 
 LatLng _northEast(LatLngBounds bounds) =>
-    LatLng(bounds.northWest.latitude, bounds.southEast.longitude);
+    LatLng(_clampLatitude(bounds.north), _clampLongitude(bounds.east));
 
 bool _containsPoint(LatLngBounds bounds, LatLng point) {
   final southWest = _southWest(bounds);
@@ -1205,6 +1315,35 @@ bool _containsPoint(LatLngBounds bounds, LatLng point) {
       point.longitude >= southWest.longitude &&
       point.longitude <= northEast.longitude;
 }
+
+double _safeDistanceAs(
+  Distance distance,
+  LengthUnit unit,
+  LatLng from,
+  LatLng to, {
+  double fallback = 0,
+}) {
+  if (!_isValidPoint(from) || !_isValidPoint(to)) {
+    return fallback;
+  }
+
+  try {
+    final result = distance.as(unit, from, to);
+    if (!result.isFinite) return fallback;
+    return result;
+  } catch (error) {
+    debugPrint('Live map: distance calculation failed: $error');
+    return fallback;
+  }
+}
+
+bool _isValidPoint(LatLng point) =>
+    point.latitude.isFinite &&
+    point.longitude.isFinite &&
+    point.latitude >= -90 &&
+    point.latitude <= 90 &&
+    point.longitude >= -180 &&
+    point.longitude <= 180;
 
 List<LatLng> _dedupeSequentialPoints(List<LatLng> points) {
   if (points.length < 2) return points;
