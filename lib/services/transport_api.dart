@@ -1093,10 +1093,53 @@ class TransportApi {
     return departures;
   }
 
+  /// Decodes a JSON response body and returns the result only when it is a
+  /// JSON object (i.e. `Map<String, dynamic>`); returns `null` otherwise.
+  ///
+  /// Extracted so that the Map-or-null contract can be unit-tested without an
+  /// HTTP round-trip.
+  @visibleForTesting
+  static Map<String, dynamic>? decodeJsonMap(String body) {
+    final data = json.decode(body);
+    return data is Map<String, dynamic> ? data : null;
+  }
+
+  /// Builds the MOTIS URI for `/api/v5/map/trips` with the required query
+  /// parameters.  Exposed for unit-testing of parameter serialisation.
+  @visibleForTesting
+  static Uri buildLiveMapTripsUri({
+    required String min,
+    required String max,
+    required DateTime startTime,
+    required DateTime endTime,
+    required double zoom,
+  }) =>
+      _getMotisUri('/api/v5/map/trips', {
+        'min': min,
+        'max': max,
+        'startTime': startTime.toUtc().toIso8601String(),
+        'endTime': endTime.toUtc().toIso8601String(),
+        'zoom': zoom.toStringAsFixed(2),
+      });
+
+  /// Builds the MOTIS URI for `/api/v5/trip` with the required query
+  /// parameters.  Exposed for unit-testing of parameter serialisation.
+  /// Boolean flags are serialised as lowercase strings ('true'/'false').
+  @visibleForTesting
+  static Uri buildTripItineraryUri(
+    String tripId, {
+    bool withScheduledSkippedStops = true,
+    bool joinInterlinedLegs = true,
+  }) =>
+      _getMotisUri('/api/v5/trip', {
+        'tripId': tripId,
+        'withScheduledSkippedStops': withScheduledSkippedStops.toString(),
+        'joinInterlinedLegs': joinInterlinedLegs.toString(),
+      });
+
   static Future<Map<String, dynamic>?> fetchMapInitial() async {
     final response = await _fetch(_getMotisUri('/api/v1/map/initial'));
-    final data = json.decode(response.body);
-    return data is Map<String, dynamic> ? data : null;
+    return decodeJsonMap(response.body);
   }
 
   static Future<String> fetchLiveMapTrips({
@@ -1107,13 +1150,13 @@ class TransportApi {
     required double zoom,
   }) async {
     final response = await _fetch(
-      _getMotisUri('/api/v5/map/trips', {
-        'min': min,
-        'max': max,
-        'startTime': startTime.toUtc().toIso8601String(),
-        'endTime': endTime.toUtc().toIso8601String(),
-        'zoom': zoom.toStringAsFixed(2),
-      }),
+      buildLiveMapTripsUri(
+        min: min,
+        max: max,
+        startTime: startTime,
+        endTime: endTime,
+        zoom: zoom,
+      ),
     );
     return response.body;
   }
@@ -1124,14 +1167,13 @@ class TransportApi {
     bool joinInterlinedLegs = true,
   }) async {
     final response = await _fetch(
-      _getMotisUri('/api/v5/trip', {
-        'tripId': tripId,
-        'withScheduledSkippedStops': withScheduledSkippedStops,
-        'joinInterlinedLegs': joinInterlinedLegs,
-      }),
+      buildTripItineraryUri(
+        tripId,
+        withScheduledSkippedStops: withScheduledSkippedStops,
+        joinInterlinedLegs: joinInterlinedLegs,
+      ),
     );
-    final data = json.decode(response.body);
-    return data is Map<String, dynamic> ? data : null;
+    return decodeJsonMap(response.body);
   }
 
   /// Get nearby stops by coordinates
