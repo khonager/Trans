@@ -499,7 +499,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     var score = 0.0;
     if (trip.id == selectedTripId) score += 10000;
     if (trip.realTime) score += 600;
-    score += trip.arrivalDelaySeconds.abs() / 6;
+    score += _lateTripPriorityBoost(trip);
     score += math.max(0, 300 - distanceFromCenterKm * 35);
 
     final line = trip.displayName.trim().toUpperCase();
@@ -508,14 +508,135 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     return score;
   }
 
-  Size _markerSizeForZoom(double zoom) {
-    if (zoom >= 14.5) return const Size(112, 58);
-    if (zoom >= 13.5) return const Size(98, 52);
-    if (zoom >= 12.5) return const Size(90, 48);
-    return const Size(78, 42);
+  double _lateTripPriorityBoost(_LiveBusTrip trip) {
+    if (!trip.realTime) return -80;
+
+    final lateMinutes = math.max(0, trip.arrivalDelaySeconds) / 60;
+    if (lateMinutes <= 0) return 0;
+    return math.min(900, 120 + lateMinutes * 85);
   }
 
-  bool _useCompactMarkers(double zoom) => zoom < 13;
+  Size _baseMarkerSizeForZoom(double zoom) {
+    final normalizedZoom =
+        ((zoom - _minLiveZoom) / (15 - _minLiveZoom)).clamp(0.0, 1.0);
+    return Size(
+      _lerp(78, 112, normalizedZoom),
+      _lerp(42, 58, normalizedZoom),
+    );
+  }
+
+  double _globalMarkerScaleFor(double zoom, int visibleCount) {
+    final maxVisible = _maxVisibleTripsForZoom(zoom).toDouble();
+    final crowdingRatio =
+        maxVisible == 0 ? 0.0 : (visibleCount / maxVisible).clamp(0.0, 1.0);
+    final normalizedZoom =
+        ((zoom - _minLiveZoom) / (15 - _minLiveZoom)).clamp(0.0, 1.0);
+    final shrinkAmount = _lerp(0.18, 0.08, normalizedZoom) * crowdingRatio;
+    return (1 - shrinkAmount).clamp(0.82, 1.0);
+  }
+
+  double _localMarkerScaleFor(double nearestDistancePx, double baseWidth) {
+    if (!nearestDistancePx.isFinite) return 1.0;
+
+    final tightSpacing = baseWidth * 0.34;
+    final comfortableSpacing = baseWidth * 0.88;
+    if (nearestDistancePx <= tightSpacing) return 0.72;
+    if (nearestDistancePx >= comfortableSpacing) return 1.0;
+
+    final t = ((nearestDistancePx - tightSpacing) /
+            (comfortableSpacing - tightSpacing))
+        .clamp(0.0, 1.0);
+    return _lerp(0.72, 1.0, t);
+  }
+
+  double _markerScaleBoost(_LiveBusTrip trip) {
+    if (_selectedBus?.tripId == trip.id) return 0.18;
+
+    final lateMinutes = math.max(0, trip.arrivalDelaySeconds) / 60;
+    if (lateMinutes <= 0) return 0;
+    return math.min(0.14, 0.04 + lateMinutes * 0.015);
+  }
+
+  double _markerPaintPriority(_LiveBusTrip trip) {
+    var score = 0.0;
+
+    if (_selectedBus?.tripId == trip.id) score += 10000;
+    if (trip.realTime) score += 150;
+    score += _lateTripPriorityBoost(trip);
+
+    return score;
+  }
+
+  Size _markerSizeForScale(Size baseSize, double scale) {
+    final width = (baseSize.width * scale).clamp(56.0, 114.0);
+    final height = (baseSize.height * scale).clamp(34.0, 58.0);
+    return Size(width, height);
+  }
+
+  List<_MarkerVisual> _markerVisualsFor({
+    required List<_LiveBusTrip> trips,
+    required DateTime now,
+    required double zoom,
+    required MapCamera? camera,
+  }) {
+    final baseSize = _baseMarkerSizeForZoom(zoom);
+    final globalScale = _globalMarkerScaleFor(zoom, trips.length);
+    final placements = <_MarkerPlacement>[
+      for (final trip in trips)
+        (() {
+          final sample = trip.sample(now);
+          return _MarkerPlacement(
+            trip: trip,
+            sample: sample,
+            layerOffset: camera?.getOffsetFromOrigin(sample.position),
+          );
+        })(),
+    ];
+
+    final nearestDistances = List<double>.filled(
+      placements.length,
+      double.infinity,
+    );
+
+    for (var i = 0; i < placements.length; i++) {
+      final a = placements[i].layerOffset;
+      if (a == null) continue;
+      for (var j = i + 1; j < placements.length; j++) {
+        final b = placements[j].layerOffset;
+        if (b == null) continue;
+        final distance = (a - b).distance;
+        if (distance < nearestDistances[i]) nearestDistances[i] = distance;
+        if (distance < nearestDistances[j]) nearestDistances[j] = distance;
+      }
+    }
+
+    final visuals = <_MarkerVisual>[
+      for (var index = 0; index < placements.length; index++)
+        (() {
+          final placement = placements[index];
+          final localScale =
+              _localMarkerScaleFor(nearestDistances[index], baseSize.width);
+          final scale =
+              (globalScale * localScale + _markerScaleBoost(placement.trip))
+                  .clamp(0.72, 1.0);
+          final size = _markerSizeForScale(baseSize, scale);
+          return _MarkerVisual(
+            trip: placement.trip,
+            sample: placement.sample,
+            size: size,
+            scale: scale,
+            compact: size.width < 84,
+            paintPriority: _markerPaintPriority(placement.trip),
+          );
+        })(),
+    ]..sort((a, b) {
+        final byPriority = a.paintPriority.compareTo(b.paintPriority);
+        if (byPriority != 0) return byPriority;
+        return a.trip.id.compareTo(b.trip.id);
+      });
+
+    return visuals;
+  }
 
   void _selectTrip(_LiveBusTrip trip) {
     final existingSelection = _selectedBus;
@@ -805,23 +926,40 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
   Widget _buildBusMarker(
       BuildContext context, _LiveBusTrip trip, _TripSample sample,
-      {required bool compact}) {
+      {required bool compact, required double scale}) {
     final colors = TransColors.of(context);
     final isSelected = _selectedBus?.tripId == trip.id;
     final markerAngle = _markerRotationRadians(sample.heading);
     final markerTextColor = trip.vehicleTextColor;
+    final normalizedScale = ((scale - 0.72) / 0.28).clamp(0.0, 1.0);
+    final horizontalPadding =
+        compact ? _lerp(6, 8, normalizedScale) : _lerp(8, 10, normalizedScale);
+    final verticalPadding =
+        compact ? _lerp(6, 8, normalizedScale) : _lerp(6, 8, normalizedScale);
+    final borderRadius = compact
+        ? _lerp(14, 18, normalizedScale)
+        : _lerp(12, 16, normalizedScale);
+    final delayMinutes = math.max(0, trip.arrivalDelaySeconds) / 60;
+    final shadowStrength = isSelected
+        ? 1.0
+        : delayMinutes >= 5
+            ? 0.9
+            : delayMinutes > 0
+                ? 0.7
+                : 0.5;
 
     return GestureDetector(
       onTap: () => _selectTrip(trip),
       child: Transform.rotate(
         angle: markerAngle,
         child: Container(
-          padding: compact
-              ? const EdgeInsets.all(8)
-              : const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: verticalPadding,
+          ),
           decoration: BoxDecoration(
             color: trip.vehicleColor,
-            borderRadius: BorderRadius.circular(compact ? 18 : 16),
+            borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(
               color: isSelected ? colors.textPrimary : Colors.white,
               width: isSelected ? 2 : 1,
@@ -830,8 +968,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 ? null
                 : [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: isSelected ? 18 : 10,
+                      color: Colors.black.withValues(
+                        alpha: 0.12 + shadowStrength * 0.12,
+                      ),
+                      blurRadius: _lerp(8, 18, shadowStrength),
                       offset: const Offset(0, 6),
                     ),
                   ],
@@ -839,13 +979,19 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
           child: compact
               ? Icon(
                   Icons.directions_bus_filled_rounded,
-                  size: 16,
+                  size: _lerp(14, 18, normalizedScale),
                   color: markerTextColor,
                 )
-              : _ExpandedBusMarkerLabel(
-                  label: trip.displayName,
-                  textColor: markerTextColor,
-                  iconLeads: math.cos(markerAngle) >= 0,
+              : Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: _ExpandedBusMarkerLabel(
+                      label: trip.displayName,
+                      textColor: markerTextColor,
+                      iconLeads: math.cos(markerAngle) >= 0,
+                      scale: scale,
+                    ),
+                  ),
                 ),
         ),
       ),
@@ -1045,8 +1191,6 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     final zoom = _latestCamera?.zoom ?? _initialZoom;
     final selectedTrip = _currentSelectedTrip();
     final displayedTrips = _displayedTripsFor(center: center, zoom: zoom);
-    final markerSize = _markerSizeForZoom(zoom);
-    final compactMarkers = _useCompactMarkers(zoom);
 
     if (_isLoadingInitialView) {
       return Scaffold(
@@ -1158,21 +1302,27 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               ValueListenableBuilder<DateTime>(
                 valueListenable: _clock,
                 builder: (context, now, _) {
+                  final markerVisuals = _markerVisualsFor(
+                    trips: displayedTrips,
+                    now: now,
+                    zoom: zoom,
+                    camera: _latestCamera,
+                  );
                   final markers = <Marker>[
-                    for (final trip in displayedTrips)
+                    for (final visual in markerVisuals)
                       (() {
-                        final sample = trip.sample(now);
                         return Marker(
-                          point: sample.position,
-                          width: markerSize.width,
-                          height: markerSize.height,
+                          point: visual.sample.position,
+                          width: visual.size.width,
+                          height: visual.size.height,
                           child: KeyedSubtree(
-                            key: ValueKey('live-bus-${trip.id}'),
+                            key: ValueKey('live-bus-${visual.trip.id}'),
                             child: _buildBusMarker(
                               context,
-                              trip,
-                              sample,
-                              compact: compactMarkers,
+                              visual.trip,
+                              visual.sample,
+                              compact: visual.compact,
+                              scale: visual.scale,
                             ),
                           ),
                         );
@@ -1440,43 +1590,81 @@ class _ExpandedBusMarkerLabel extends StatelessWidget {
   final String label;
   final Color textColor;
   final bool iconLeads;
+  final double scale;
 
   const _ExpandedBusMarkerLabel({
     required this.label,
     required this.textColor,
     required this.iconLeads,
+    required this.scale,
   });
 
   @override
   Widget build(BuildContext context) {
+    final normalizedScale = ((scale - 0.72) / 0.28).clamp(0.0, 1.0);
+    final iconSize = _lerp(13, 16, normalizedScale);
+    final spacing = _lerp(4, 6, normalizedScale);
+    final fontSize = _lerp(10, 12, normalizedScale);
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (!iconLeads)
           Icon(
             Icons.directions_bus_filled_rounded,
-            size: 16,
+            size: iconSize,
             color: textColor,
           ),
-        if (!iconLeads) const SizedBox(width: 6),
+        if (!iconLeads) SizedBox(width: spacing),
         Text(
           label,
+          maxLines: 1,
           style: TextStyle(
             color: textColor,
             fontWeight: FontWeight.w800,
-            fontSize: 12,
+            fontSize: fontSize,
           ),
         ),
-        if (iconLeads) const SizedBox(width: 6),
+        if (iconLeads) SizedBox(width: spacing),
         if (iconLeads)
           Icon(
             Icons.directions_bus_filled_rounded,
-            size: 16,
+            size: iconSize,
             color: textColor,
           ),
       ],
     );
   }
+}
+
+class _MarkerPlacement {
+  final _LiveBusTrip trip;
+  final _TripSample sample;
+  final Offset? layerOffset;
+
+  const _MarkerPlacement({
+    required this.trip,
+    required this.sample,
+    required this.layerOffset,
+  });
+}
+
+class _MarkerVisual {
+  final _LiveBusTrip trip;
+  final _TripSample sample;
+  final Size size;
+  final double scale;
+  final bool compact;
+  final double paintPriority;
+
+  const _MarkerVisual({
+    required this.trip,
+    required this.sample,
+    required this.size,
+    required this.scale,
+    required this.compact,
+    required this.paintPriority,
+  });
 }
 
 @immutable
