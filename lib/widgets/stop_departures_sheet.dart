@@ -213,23 +213,37 @@ class _DepartureRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ── Parse departure time ──────────────────────────────────────────────
-    // MOTIS stoptimes format: { departure: { scheduledTime, time, delay }, ... }
-    // v6.db departures format: { when, plannedWhen, delay, line: {...}, direction }
     String timeStr = '--:--';
     String? delayStr;
     Color timeColor = colors.textPrimary;
     bool isCancelled = false;
 
-    // Try MOTIS format
     final motisDepObj = dep['departure'] as Map<String, dynamic>?;
-    if (motisDepObj != null) {
-      final scheduled = motisDepObj['scheduledTime'] as String?;
-      final actual = motisDepObj['time'] as String?;
-      final delay = motisDepObj['delay'] as int?;
-      isCancelled = (dep['cancelled'] as bool?) ?? false;
+    final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+    if (motisDepObj != null || motisPlaceObj != null) {
+      final scheduled =
+          (motisDepObj?['scheduledTime'] as String?) ??
+          (motisPlaceObj?['scheduledDeparture'] as String?) ??
+          (motisPlaceObj?['scheduledArrival'] as String?);
+      final actual =
+          (motisDepObj?['time'] as String?) ??
+          (motisPlaceObj?['departure'] as String?) ??
+          (motisPlaceObj?['arrival'] as String?);
+      final rawDelay = motisDepObj?['delay'];
+      final delay = rawDelay is num
+          ? rawDelay.toInt()
+          : _calculateDelayMinutes(scheduled, actual);
+      isCancelled =
+          (dep['cancelled'] as bool?) ??
+          (motisPlaceObj?['cancelled'] as bool?) ??
+          false;
+
       if (scheduled != null) {
         final dt = DateTime.parse(scheduled).toLocal();
+        timeStr =
+            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      } else if (actual != null) {
+        final dt = DateTime.parse(actual).toLocal();
         timeStr =
             '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
       }
@@ -264,17 +278,17 @@ class _DepartureRow extends StatelessWidget {
       }
     }
 
-    // ── Parse line / direction ────────────────────────────────────────────
-    // MOTIS: { routeShortName, headsign, ... }
-    // v6:    { line: { name, ... }, direction }
     String lineName = '';
     String direction = '';
 
     final routeShort = dep['routeShortName'] as String?;
     final headsign = dep['headsign'] as String?;
     if (routeShort != null || headsign != null) {
-      lineName = routeShort ?? '';
-      direction = headsign ?? '';
+      lineName = routeShort ?? (dep['displayName'] as String?) ?? '';
+      direction =
+          headsign ??
+          (dep['tripTo'] as Map<String, dynamic>?)?['name'] as String? ??
+          '';
     } else {
       final lineObj = dep['line'] as Map<String, dynamic>?;
       lineName = (lineObj?['name'] as String?) ?? '';
@@ -347,5 +361,14 @@ class _DepartureRow extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+int? _calculateDelayMinutes(String? scheduled, String? actual) {
+  if (scheduled == null || actual == null) return null;
+  try {
+    return DateTime.parse(actual).difference(DateTime.parse(scheduled)).inMinutes;
+  } catch (_) {
+    return null;
   }
 }

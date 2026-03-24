@@ -987,6 +987,29 @@ class TransportApi {
   static bool _looksLikeServiceUnavailable(Object error) =>
       error.toString().contains('503');
 
+  @visibleForTesting
+  static List<Map<String, dynamic>> decodeStopDeparturesResponse(dynamic data) {
+    if (data is List) {
+      return data.whereType<Map<String, dynamic>>().toList();
+    }
+
+    if (data is Map<String, dynamic>) {
+      final nestedList =
+          data['stopTimes'] ?? data['stoptimes'] ?? data['departures'];
+      if (nestedList is List) {
+        return nestedList.whereType<Map<String, dynamic>>().toList();
+      }
+
+      if (data.containsKey('place') || data.containsKey('line')) {
+        return [data];
+      }
+    }
+
+    throw FormatException(
+      'Unsupported stop departures response: ${data.runtimeType}',
+    );
+  }
+
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
@@ -1294,8 +1317,7 @@ class TransportApi {
             'n': maxResults.toString(),
           }),
         );
-        final List<dynamic> raw = json.decode(response.body);
-        return raw.cast<Map<String, dynamic>>();
+        return decodeStopDeparturesResponse(json.decode(response.body));
       } catch (e) {
         debugPrint('MOTIS fetchStopDepartures failed: $e');
         if (apiMode == 'motis') rethrow;
@@ -1304,9 +1326,11 @@ class TransportApi {
 
     // ── v6.db ────────────────────────────────────────────────────────────────
     try {
-      // v6 only accepts numeric station IDs
       final isNumeric = RegExp(r'^[0-9]+$').hasMatch(stationId);
-      if (!isNumeric) throw Exception('v6: non-numeric id $stationId');
+      if (!isNumeric) {
+        debugPrint('Skipping v6 stop departures for non-numeric id $stationId');
+        return [];
+      }
       final response = await _fetch(
         _getV6Uri('/stops/$stationId/departures', {
           'when': start.toIso8601String(),
@@ -1314,9 +1338,7 @@ class TransportApi {
           'results': maxResults,
         }),
       );
-      final data = json.decode(response.body);
-      final List<dynamic> deps = data['departures'] ?? data ?? [];
-      return deps.cast<Map<String, dynamic>>();
+      return decodeStopDeparturesResponse(json.decode(response.body));
     } catch (e) {
       debugPrint('v6 fetchStopDepartures failed: $e');
       return [];
