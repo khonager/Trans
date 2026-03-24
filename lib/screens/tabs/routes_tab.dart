@@ -97,9 +97,8 @@ String formatRideDisplayLine({
     }
   }
 
-  final effectivePlatform = platform?.trim().isNotEmpty == true
-      ? platform
-      : arrivalPlatform;
+  final effectivePlatform =
+      platform?.trim().isNotEmpty == true ? platform : arrivalPlatform;
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
@@ -5011,8 +5010,8 @@ class _StepCardState extends State<_StepCard> {
                                             .boardAtPlatform(
                                                 step.startStationName ?? '',
                                                 step.platform!)
-                                        : AppLocalizations.of(context)!
-                                            .boardAt(step.startStationName ?? ''),
+                                        : AppLocalizations.of(context)!.boardAt(
+                                            step.startStationName ?? ''),
                                     style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 14,
@@ -5070,14 +5069,18 @@ class _StepCardState extends State<_StepCard> {
                                       ? () => StopDeparturesSheet.show(
                                             context,
                                             stopId: stopId as String,
-                                            stopName: name as String? ?? displayName,
-                                            date: exactStopDate ?? widget.step.dateTime ?? DateTime.now(),
+                                            stopName:
+                                                name as String? ?? displayName,
+                                            date: exactStopDate ??
+                                                widget.step.dateTime ??
+                                                DateTime.now(),
                                           )
                                       : null,
                                   child: ListTile(
                                       dense: true,
-                                      contentPadding: const EdgeInsets.symmetric(
-                                          horizontal: 20),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 20),
                                       leading: const Icon(Icons.circle,
                                           size: 8, color: Colors.grey),
                                       title: Text(displayName,
@@ -5094,19 +5097,23 @@ class _StepCardState extends State<_StepCard> {
                                             const SizedBox(width: 8),
                                             if (exactStopDate != null)
                                               IconButton(
-                                                  icon: const Icon(Icons.alt_route,
-                                                      size: 16, color: Colors.blue),
+                                                  icon: const Icon(
+                                                      Icons.alt_route,
+                                                      size: 16,
+                                                      color: Colors.blue),
                                                   // FIX: Pass exact stop time and location if available
                                                   onPressed: () =>
                                                       widget.onOpenAlternatives(
-                                                          stopId as String, exactStopDate!,
+                                                          stopId as String,
+                                                          exactStopDate!,
                                                           lat: stop['stop']
                                                                   ['location']
                                                               ?['latitude'],
                                                           lng: stop['stop']
                                                                   ['location']
                                                               ?['longitude'],
-                                                          name: name as String?))
+                                                          name:
+                                                              name as String?))
                                           ])));
                             }))
                   else
@@ -5121,11 +5128,12 @@ class _StepCardState extends State<_StepCard> {
                           onLongPress: step.startStationId != null
                               ? () {
                                   // Derive destination station ID if possible via stopovers last entry
-                                  final lastStopoverId = (step.stopovers != null &&
-                                          step.stopovers!.isNotEmpty)
-                                      ? step.stopovers!.last['stop']?['id']
-                                          as String?
-                                      : null;
+                                  String? lastStopoverId;
+                                  if (step.stopovers != null &&
+                                      step.stopovers!.isNotEmpty) {
+                                    lastStopoverId = step.stopovers!
+                                        .last['stop']?['id'] as String?;
+                                  }
                                   final destId =
                                       lastStopoverId ?? step.startStationId!;
                                   final destDate = step.plannedArrival ??
@@ -5144,13 +5152,14 @@ class _StepCardState extends State<_StepCard> {
                             dense: true,
                             contentPadding:
                                 const EdgeInsets.symmetric(horizontal: 20),
-                            leading:
-                                const Icon(Icons.flag, size: 14, color: Colors.red),
+                            leading: const Icon(Icons.flag,
+                                size: 14, color: Colors.red),
                             title: Text(
                                 step.arrivalPlatform != null
                                     ? AppLocalizations.of(context)!
                                         .getOffAtPlatform(
-                                            step.destinationName ?? 'Destination',
+                                            step.destinationName ??
+                                                'Destination',
                                             step.arrivalPlatform!)
                                     : AppLocalizations.of(context)!.getOffAt(
                                         step.destinationName ?? 'Destination'),

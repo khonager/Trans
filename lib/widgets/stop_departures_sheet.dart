@@ -165,7 +165,7 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                         child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Text(
-                            AppError.friendlyMessage(snap.error!),
+                            AppError.userMessage(context, snap.error!),
                             textAlign: TextAlign.center,
                             style: TextStyle(color: colors.textSecondary),
                           ),
