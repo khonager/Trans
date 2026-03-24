@@ -13,14 +13,21 @@ void main() {
 
     test('isRecentlyJoinedFriend returns true only within last 7 days', () {
       final now = DateTime.utc(2026, 3, 22, 12);
-      final recent = {'created_at': now.subtract(const Duration(days: 6)).toIso8601String()};
-      final old = {'created_at': now.subtract(const Duration(days: 8)).toIso8601String()};
-      final future = {'created_at': now.add(const Duration(days: 1)).toIso8601String()};
+      final recent = {
+        'created_at': now.subtract(const Duration(days: 6)).toIso8601String()
+      };
+      final old = {
+        'created_at': now.subtract(const Duration(days: 8)).toIso8601String()
+      };
+      final future = {
+        'created_at': now.add(const Duration(days: 1)).toIso8601String()
+      };
 
       expect(isRecentlyJoinedFriend(recent, nowUtc: now), isTrue);
       expect(isRecentlyJoinedFriend(old, nowUtc: now), isFalse);
       expect(isRecentlyJoinedFriend(future, nowUtc: now), isFalse);
-      expect(isRecentlyJoinedFriend({'created_at': 'invalid'}, nowUtc: now), isFalse);
+      expect(isRecentlyJoinedFriend({'created_at': 'invalid'}, nowUtc: now),
+          isFalse);
       expect(isRecentlyJoinedFriend({}, nowUtc: now), isFalse);
     });
 
@@ -31,12 +38,15 @@ void main() {
     });
 
     test('autoAddedSectionLabel localizes de and defaults to en', () {
-      expect(autoAddedSectionLabel(const Locale('de')), 'Automatisch hinzugefügt');
+      expect(
+          autoAddedSectionLabel(const Locale('de')), 'Automatisch hinzugefügt');
       expect(autoAddedSectionLabel(const Locale('en')), 'Auto Added');
       expect(autoAddedSectionLabel(const Locale('fr')), 'Auto Added');
     });
 
-    test('triggerFriendsListRefresh increments the shared friends reload notifier', () {
+    test(
+        'triggerFriendsListRefresh increments the shared friends reload notifier',
+        () {
       final before = SupabaseService.friendsListRefresh.value;
 
       SupabaseService.triggerFriendsListRefresh();
@@ -67,7 +77,8 @@ void main() {
       expect(map.containsKey('y'), isFalse);
     });
 
-    test('friendAutoAddedMapForUser handles duplicate directional rows safely', () {
+    test('friendAutoAddedMapForUser handles duplicate directional rows safely',
+        () {
       final map = SupabaseService.friendAutoAddedMapForUser(
         'me',
         friendRelations: const [
@@ -95,7 +106,8 @@ void main() {
       expect(map.length, 1);
     });
 
-    test('friendAutoAddedMapForUser keeps false when duplicates are both false', () {
+    test('friendAutoAddedMapForUser keeps false when duplicates are both false',
+        () {
       final map = SupabaseService.friendAutoAddedMapForUser(
         'me',
         friendRelations: const [
@@ -108,7 +120,9 @@ void main() {
       expect(map.length, 1);
     });
 
-    test('mergeFriendRelations combines directional rows and deduplicates pairs', () {
+    test(
+        'mergeFriendRelations combines directional rows and deduplicates pairs',
+        () {
       final merged = SupabaseService.mergeFriendRelations(
         friendsAsUser: const [
           {'user_id': 'me', 'friend_id': 'alice', 'is_auto_added': false},

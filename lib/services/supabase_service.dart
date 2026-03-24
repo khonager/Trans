@@ -487,14 +487,10 @@ class SupabaseService {
       debugPrint(
           'friends table auto-added fields unavailable, falling back to full select: $e');
       try {
-        final friendsAsUser = await client
-            .from('friends')
-            .select()
-            .eq('user_id', user.id);
-        final friendsAsFriend = await client
-            .from('friends')
-            .select()
-            .eq('friend_id', user.id);
+        final friendsAsUser =
+            await client.from('friends').select().eq('user_id', user.id);
+        final friendsAsFriend =
+            await client.from('friends').select().eq('friend_id', user.id);
         friendRelations = mergeFriendRelations(
           friendsAsUser: List<Map<String, dynamic>>.from(friendsAsUser),
           friendsAsFriend: List<Map<String, dynamic>>.from(friendsAsFriend),
@@ -620,7 +616,9 @@ class SupabaseService {
       }
       secondLevel[pairB] = mergedRelation;
     }
-    return dedupedByPair.values.expand((relations) => relations.values).toList();
+    return dedupedByPair.values
+        .expand((relations) => relations.values)
+        .toList();
   }
 
   static bool _isAutoAddedFriendRelation(Map<String, dynamic> relation) {
@@ -699,10 +697,10 @@ class SupabaseService {
         sub1 = client
             .from('user_locations')
             .stream(primaryKey: ['user_id']).listen(
-              update,
-              onError: (e) =>
-                  debugPrint('user_locations stream error (non-fatal): $e'),
-            );
+          update,
+          onError: (e) =>
+              debugPrint('user_locations stream error (non-fatal): $e'),
+        );
 
         // 2. Listen for friend list changes (add/remove)
         // Assuming primary key is composite (user_id, friend_id)
@@ -721,8 +719,8 @@ class SupabaseService {
             .eq('friend_id', user.id)
             .listen(
               update,
-              onError: (e) =>
-                  debugPrint('friends stream (friend_id) error (non-fatal): $e'),
+              onError: (e) => debugPrint(
+                  'friends stream (friend_id) error (non-fatal): $e'),
             );
 
         // Initial fetch

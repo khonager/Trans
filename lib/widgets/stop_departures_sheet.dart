@@ -271,7 +271,8 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                       (tab) => _ChipModel(
                                         label: tab.label,
                                         selected: tab.id == selectedDayTab.id,
-                                        onTap: () => _selectDayTab(tab.id, data),
+                                        onTap: () =>
+                                            _selectDayTab(tab.id, data),
                                       ),
                                     )
                                     .toList(),
@@ -288,8 +289,8 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                             selected:
                                                 tab.key == selectedPlatformKey,
                                             onTap: () => setState(
-                                              () =>
-                                                  _selectedPlatformKey = tab.key,
+                                              () => _selectedPlatformKey =
+                                                  tab.key,
                                             ),
                                           ),
                                         )

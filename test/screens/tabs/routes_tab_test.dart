@@ -12,7 +12,8 @@ void main() {
     expect(formatted, 'RB21 (Pl. 6)');
   });
 
-  test('does not duplicate platform suffix when Gl. suffix already present', () {
+  test('does not duplicate platform suffix when Gl. suffix already present',
+      () {
     final formatted = formatRideLineWithPlatform('RE 50 (Gl. 2)', '2');
     expect(formatted, 'RE 50 (Gl. 2)');
   });
