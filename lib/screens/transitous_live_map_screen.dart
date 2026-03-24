@@ -260,6 +260,16 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
     setState(() => _selectedBus = null);
   }
 
+  _LiveBusTrip? _currentSelectedTrip() {
+    final selectedTripId = _selectedBus?.tripId;
+    if (selectedTripId == null) return null;
+
+    return _trips.cast<_LiveBusTrip?>().firstWhere(
+          (trip) => trip?.id == selectedTripId,
+          orElse: () => null,
+        );
+  }
+
   Color _routeColor(_LiveBusTrip trip, BuildContext context) {
     final routeColor = _parseHexColor(trip.routeColorHex);
     if (routeColor != null) return routeColor;
@@ -274,6 +284,52 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
         : Colors.white;
   }
 
+  Color _vehicleStatusColor(_LiveBusTrip trip, BuildContext context) {
+    final colors = TransColors.of(context);
+    if (!trip.realTime) {
+      return colors.textSecondary.withValues(alpha: 0.75);
+    }
+
+    final delayMinutes = trip.arrivalDelaySeconds / 60;
+    if (delayMinutes <= 0) return const Color(0xFF2E9B57);
+    if (delayMinutes <= 2) {
+      return Color.lerp(
+            const Color(0xFF2E9B57),
+            const Color(0xFFF2C94C),
+            delayMinutes / 2,
+          ) ??
+          const Color(0xFFF2C94C);
+    }
+    if (delayMinutes <= 5) {
+      return Color.lerp(
+            const Color(0xFFF2C94C),
+            const Color(0xFFF2994A),
+            (delayMinutes - 2) / 3,
+          ) ??
+          const Color(0xFFF2994A);
+    }
+    if (delayMinutes <= 10) {
+      return Color.lerp(
+            const Color(0xFFF2994A),
+            const Color(0xFFEB5757),
+            (delayMinutes - 5) / 5,
+          ) ??
+          const Color(0xFFEB5757);
+    }
+    return const Color(0xFFC0392B);
+  }
+
+  Color _foregroundFor(Color background) =>
+      background.computeLuminance() > 0.45 ? Colors.black : Colors.white;
+
+  String _delayLabel(_LiveBusTrip trip) {
+    if (!trip.realTime) return 'No realtime';
+
+    final delayMinutes = (trip.arrivalDelaySeconds / 60).round();
+    if (delayMinutes <= 0) return 'On time';
+    return '+$delayMinutes min';
+  }
+
   Widget _buildBusMarker(
     BuildContext context,
     _LiveBusTrip trip,
@@ -281,8 +337,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   ) {
     final colors = TransColors.of(context);
     final isSelected = _selectedBus?.tripId == trip.id;
-    final routeColor = _routeColor(trip, context);
-    final routeTextColor = _routeTextColor(trip, context);
+    final vehicleColor = _vehicleStatusColor(trip, context);
+    final markerTextColor = _foregroundFor(vehicleColor);
 
     return GestureDetector(
       onTap: () => _selectTrip(trip),
@@ -292,7 +348,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: routeColor,
+            color: vehicleColor,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isSelected ? colors.textPrimary : Colors.white,
@@ -312,13 +368,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               Icon(
                 Icons.directions_bus_filled_rounded,
                 size: 16,
-                color: routeTextColor,
+                color: markerTextColor,
               ),
               const SizedBox(width: 6),
               Text(
                 trip.displayName,
                 style: TextStyle(
-                  color: routeTextColor,
+                  color: markerTextColor,
                   fontWeight: FontWeight.w800,
                   fontSize: 12,
                 ),
@@ -383,18 +439,14 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   }
 
   Widget _buildSelectionSheet(BuildContext context) {
-    final selected = _selectedBus == null
-        ? null
-        : _trips.cast<_LiveBusTrip?>().firstWhere(
-              (trip) => trip?.id == _selectedBus!.tripId,
-              orElse: () => null,
-            );
+    final selected = _currentSelectedTrip();
     if (selected == null) return const SizedBox.shrink();
 
     final colors = TransColors.of(context);
     final sample = selected.sample(_now);
-    final delayMinutes = (selected.arrivalDelaySeconds / 60).round();
     final realtimeLabel = selected.realTime ? 'Realtime' : 'Scheduled';
+    final delayColor = _vehicleStatusColor(selected, context);
+    final delayTextColor = _foregroundFor(delayColor);
 
     return Positioned(
       left: 12,
@@ -449,6 +501,24 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: delayColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      _delayLabel(selected),
+                      style: TextStyle(
+                        color: delayTextColor,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                   const Spacer(),
                   IconButton(
                     onPressed: _clearSelection,
@@ -467,12 +537,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                delayMinutes == 0
-                    ? 'On time'
-                    : '${delayMinutes > 0 ? '+' : ''}$delayMinutes min',
+                'Tap another bus to switch the highlighted route.',
                 style: TextStyle(
-                  color: delayMinutes == 0 ? Colors.green : Colors.orange,
-                  fontWeight: FontWeight.w700,
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 6),
@@ -491,6 +559,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final selectedTrip = _currentSelectedTrip();
 
     if (_isLoadingInitialView) {
       return Scaffold(
@@ -567,6 +636,21 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.trans',
               ),
+              if (selectedTrip != null)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: selectedTrip.points,
+                      strokeWidth: 10,
+                      color: Colors.black.withValues(alpha: 0.12),
+                    ),
+                    Polyline(
+                      points: selectedTrip.points,
+                      strokeWidth: 5,
+                      color: _routeColor(selectedTrip, context),
+                    ),
+                  ],
+                ),
               MarkerLayer(markers: markers),
             ],
           ),
