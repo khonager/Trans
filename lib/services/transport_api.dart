@@ -1118,6 +1118,22 @@ class TransportApi {
     return response.body;
   }
 
+  static Future<Map<String, dynamic>?> fetchTripItinerary(
+    String tripId, {
+    bool withScheduledSkippedStops = true,
+    bool joinInterlinedLegs = true,
+  }) async {
+    final response = await _fetch(
+      _getMotisUri('/api/v5/trip', {
+        'tripId': tripId,
+        'withScheduledSkippedStops': withScheduledSkippedStops,
+        'joinInterlinedLegs': joinInterlinedLegs,
+      }),
+    );
+    final data = json.decode(response.body);
+    return data is Map<String, dynamic> ? data : null;
+  }
+
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {

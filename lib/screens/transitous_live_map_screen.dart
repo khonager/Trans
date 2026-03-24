@@ -58,6 +58,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   Timer? _refreshTimer;
   Timer? _animationTimer;
   bool _forceNextFetch = false;
+  int _selectedTripRouteRequestToken = 0;
 
   @override
   void initState() {
@@ -194,6 +195,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
     if (camera.zoom < _minLiveZoom) {
       if (_trips.isNotEmpty || _errorMessage != null) {
+        _selectedTripRouteRequestToken++;
         setState(() {
           _trips = const [];
           _selectedBus = null;
@@ -303,11 +305,12 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
       setState(() {
         _trips = trips;
         _invalidateDisplayedTripsCache();
+        final existingSelection = _selectedBus;
         _selectedBus = selectedTrip == null
             ? null
-            : _SelectedBus(
-                tripId: selectedTrip.id,
-              );
+            : existingSelection?.tripId == selectedTrip.id
+                ? existingSelection
+                : _SelectedBus(tripId: selectedTrip.id);
       });
       _lastFetchedViewport = _FetchedViewport(
         bounds: bounds,
@@ -515,20 +518,271 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
   bool _useCompactMarkers(double zoom) => zoom < 13;
 
   void _selectTrip(_LiveBusTrip trip) {
+    final existingSelection = _selectedBus;
+    final isSameTrip = existingSelection?.tripId == trip.id;
+    final hasFullRoute =
+        (existingSelection?.fullRoutePoints?.length ?? 0) >= 2 && isSameTrip;
+    final isAlreadyLoading = existingSelection?.isLoadingFullRoute == true;
+    final shouldFetchFullRoute = !hasFullRoute && !isAlreadyLoading;
+
     setState(() {
       _invalidateDisplayedTripsCache();
-      _selectedBus = _SelectedBus(
-        tripId: trip.id,
-      );
+      _selectedBus = isSameTrip
+          ? existingSelection!.copyWith(
+              isLoadingFullRoute: shouldFetchFullRoute || isAlreadyLoading,
+            )
+          : _SelectedBus(
+              tripId: trip.id,
+              isLoadingFullRoute: true,
+            );
     });
+
+    if (shouldFetchFullRoute || !isSameTrip) {
+      unawaited(_loadFullTripRouteForSelection(trip.id));
+    }
   }
 
   void _clearSelection() {
     if (_selectedBus == null) return;
+    _selectedTripRouteRequestToken++;
     setState(() {
       _selectedBus = null;
       _invalidateDisplayedTripsCache();
     });
+  }
+
+  List<LatLng> _selectedRoutePointsFor(_LiveBusTrip trip) {
+    final fullRoutePoints =
+        _selectedBus?.tripId == trip.id ? _selectedBus?.fullRoutePoints : null;
+    if (fullRoutePoints == null || fullRoutePoints.length < 2) {
+      return trip.points;
+    }
+    return fullRoutePoints;
+  }
+
+  String _selectedFromNameFor(_LiveBusTrip trip) {
+    final selectedName =
+        _selectedBus?.tripId == trip.id ? _selectedBus?.fullFromName : null;
+    return (selectedName == null || selectedName.isEmpty)
+        ? trip.fromName
+        : selectedName;
+  }
+
+  String _selectedToNameFor(_LiveBusTrip trip) {
+    final selectedName =
+        _selectedBus?.tripId == trip.id ? _selectedBus?.fullToName : null;
+    return (selectedName == null || selectedName.isEmpty)
+        ? trip.toName
+        : selectedName;
+  }
+
+  List<LatLng> _selectedRemainingPathFor(_LiveBusTrip trip, DateTime now) {
+    final fullRoutePoints =
+        _selectedBus?.tripId == trip.id ? _selectedBus?.fullRoutePoints : null;
+    if (fullRoutePoints == null || fullRoutePoints.length < 2) {
+      return trip.remainingPath(now);
+    }
+
+    final sample = trip.sample(now);
+    return _remainingPathFromPosition(
+      fullRoutePoints,
+      sample.position,
+    );
+  }
+
+  Future<void> _loadFullTripRouteForSelection(String tripId) async {
+    final requestToken = ++_selectedTripRouteRequestToken;
+
+    try {
+      final itinerary = await TransportApi.fetchTripItinerary(
+        tripId,
+        withScheduledSkippedStops: true,
+        joinInterlinedLegs: true,
+      );
+      final fullRoute =
+          itinerary == null ? null : _extractFullTripRoute(itinerary);
+
+      if (!mounted ||
+          _selectedBus?.tripId != tripId ||
+          requestToken != _selectedTripRouteRequestToken) {
+        return;
+      }
+
+      setState(() {
+        _selectedBus = _selectedBus?.copyWith(
+          isLoadingFullRoute: false,
+          fullRoutePoints: fullRoute?.points,
+          fullFromName: fullRoute?.fromName,
+          fullToName: fullRoute?.toName,
+        );
+      });
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'live map trip itinerary',
+      );
+
+      if (!mounted ||
+          _selectedBus?.tripId != tripId ||
+          requestToken != _selectedTripRouteRequestToken) {
+        return;
+      }
+
+      setState(() {
+        _selectedBus = _selectedBus?.copyWith(isLoadingFullRoute: false);
+      });
+    }
+  }
+
+  _FullTripRouteData? _extractFullTripRoute(Map<String, dynamic> itinerary) {
+    final legs = itinerary['legs'] as List?;
+    if (legs == null || legs.isEmpty) return null;
+
+    final routePoints = <LatLng>[];
+    String? fromName;
+    String? toName;
+
+    for (final rawLeg in legs) {
+      if (rawLeg is! Map) continue;
+      final leg = Map<String, dynamic>.from(rawLeg);
+      final legPoints = <LatLng>[];
+
+      fromName ??= (leg['from'] as Map<String, dynamic>?)?['name']?.toString();
+      toName =
+          (leg['to'] as Map<String, dynamic>?)?['name']?.toString() ?? toName;
+
+      final legGeometry = leg['legGeometry'] as Map?;
+      final encodedPoints = legGeometry?['points']?.toString();
+      if (encodedPoints != null && encodedPoints.isNotEmpty) {
+        final precision = (legGeometry?['precision'] as num?)?.toInt() ?? 6;
+        final decoded = _decodePolyline(
+          encodedPoints,
+          precision: precision,
+        );
+        for (var index = 0; index < decoded.latitudes.length; index++) {
+          legPoints.add(
+            LatLng(decoded.latitudes[index], decoded.longitudes[index]),
+          );
+        }
+      }
+
+      if (legPoints.isEmpty) {
+        _appendUniqueRoutePoints(
+          legPoints,
+          _fallbackPointsFromLegStops(leg),
+        );
+      }
+
+      _appendUniqueRoutePoints(routePoints, legPoints);
+    }
+
+    final dedupedRoutePoints = _dedupeSequentialPoints(routePoints);
+    if (dedupedRoutePoints.length < 2) return null;
+
+    return _FullTripRouteData(
+      points: dedupedRoutePoints,
+      fromName: fromName ?? 'Unknown stop',
+      toName: toName ?? 'Unknown stop',
+    );
+  }
+
+  List<LatLng> _fallbackPointsFromLegStops(Map<String, dynamic> leg) {
+    final points = <LatLng>[];
+
+    void addPlace(dynamic place) {
+      final point = _latLngFromMotisPlace(place);
+      if (point == null) return;
+      if (points.isEmpty || !_samePoint(points.last, point)) {
+        points.add(point);
+      }
+    }
+
+    addPlace(leg['from']);
+
+    final intermediateStops = leg['intermediateStops'] as List?;
+    if (intermediateStops != null) {
+      for (final stop in intermediateStops) {
+        addPlace(stop);
+      }
+    }
+
+    addPlace(leg['to']);
+    return points;
+  }
+
+  LatLng? _latLngFromMotisPlace(dynamic place) {
+    if (place is! Map) return null;
+    final latitude = (place['lat'] as num?)?.toDouble() ??
+        (place['latitude'] as num?)?.toDouble();
+    final longitude = (place['lon'] as num?)?.toDouble() ??
+        (place['longitude'] as num?)?.toDouble();
+    if (latitude == null || longitude == null) return null;
+    return LatLng(latitude, longitude);
+  }
+
+  void _appendUniqueRoutePoints(List<LatLng> target, Iterable<LatLng> points) {
+    for (final point in points) {
+      if (target.isEmpty || !_samePoint(target.last, point)) {
+        target.add(point);
+      }
+    }
+  }
+
+  List<LatLng> _remainingPathFromPosition(
+    List<LatLng> routePoints,
+    LatLng position,
+  ) {
+    if (routePoints.isEmpty) return const [];
+    if (routePoints.length == 1) return routePoints;
+
+    var bestSegmentIndex = 0;
+    var bestProjectedPoint = routePoints.first;
+    var bestDistanceSquared = double.infinity;
+
+    for (var index = 0; index < routePoints.length - 1; index++) {
+      final projectedPoint = _projectPointOnSegment(
+        position,
+        routePoints[index],
+        routePoints[index + 1],
+      );
+      final distanceSquared = _distanceSquaredBetween(position, projectedPoint);
+      if (distanceSquared < bestDistanceSquared) {
+        bestDistanceSquared = distanceSquared;
+        bestSegmentIndex = index;
+        bestProjectedPoint = projectedPoint;
+      }
+    }
+
+    final remaining = <LatLng>[bestProjectedPoint];
+    remaining.addAll(routePoints.skip(bestSegmentIndex + 1));
+    return _dedupeSequentialPoints(remaining);
+  }
+
+  LatLng _projectPointOnSegment(LatLng point, LatLng start, LatLng end) {
+    final deltaLatitude = end.latitude - start.latitude;
+    final deltaLongitude = end.longitude - start.longitude;
+    final segmentLengthSquared =
+        deltaLatitude * deltaLatitude + deltaLongitude * deltaLongitude;
+    if (segmentLengthSquared <= 0) {
+      return start;
+    }
+
+    final projection = ((point.latitude - start.latitude) * deltaLatitude +
+            (point.longitude - start.longitude) * deltaLongitude) /
+        segmentLengthSquared;
+    final clampedProjection = projection.clamp(0.0, 1.0);
+
+    return LatLng(
+      start.latitude + deltaLatitude * clampedProjection,
+      start.longitude + deltaLongitude * clampedProjection,
+    );
+  }
+
+  double _distanceSquaredBetween(LatLng a, LatLng b) {
+    final deltaLatitude = a.latitude - b.latitude;
+    final deltaLongitude = a.longitude - b.longitude;
+    return deltaLatitude * deltaLatitude + deltaLongitude * deltaLongitude;
   }
 
   _LiveBusTrip? _currentSelectedTrip() {
@@ -663,6 +917,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
     final colors = TransColors.of(context);
     final realtimeLabel = selected.realTime ? 'Realtime' : 'Scheduled';
+    final isLoadingFullRoute = _selectedBus?.tripId == selected.id &&
+        _selectedBus?.isLoadingFullRoute == true;
+    final fromName = _selectedFromNameFor(selected);
+    final toName = _selectedToNameFor(selected);
 
     return Positioned(
       left: 12,
@@ -745,7 +1003,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                '${selected.fromName} -> ${selected.toName}',
+                '$fromName -> $toName',
                 style: TextStyle(
                   color: colors.textPrimary,
                   fontWeight: FontWeight.w700,
@@ -753,7 +1011,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Tap another bus to switch the highlighted route.',
+                isLoadingFullRoute
+                    ? 'Loading the full route...'
+                    : 'Tap another bus to switch the highlighted route.',
                 style: TextStyle(
                   color: colors.textSecondary,
                   fontWeight: FontWeight.w600,
@@ -841,6 +1101,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
               onTap: (_, __) => _clearSelection(),
               onPositionChanged: (camera, hasGesture) {
                 final hadGestureSelection = hasGesture && _selectedBus != null;
+                if (hadGestureSelection) {
+                  _selectedTripRouteRequestToken++;
+                }
                 setState(() {
                   _latestCamera = camera;
                   if (hadGestureSelection) {
@@ -860,19 +1123,23 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
                 ValueListenableBuilder<DateTime>(
                   valueListenable: _clock,
                   builder: (context, now, _) {
-                    final remainingPath = selectedTrip.remainingPath(now);
+                    final routePoints = _selectedRoutePointsFor(selectedTrip);
+                    final remainingPath =
+                        _selectedRemainingPathFor(selectedTrip, now);
                     return PolylineLayer(
                       polylines: [
-                        Polyline(
-                          points: selectedTrip.points,
-                          strokeWidth: 12,
-                          color: Colors.black.withValues(alpha: 0.10),
-                        ),
-                        Polyline(
-                          points: selectedTrip.points,
-                          strokeWidth: 6,
-                          color: selectedTrip.routeColor,
-                        ),
+                        if (routePoints.length >= 2)
+                          Polyline(
+                            points: routePoints,
+                            strokeWidth: 12,
+                            color: Colors.black.withValues(alpha: 0.10),
+                          ),
+                        if (routePoints.length >= 2)
+                          Polyline(
+                            points: routePoints,
+                            strokeWidth: 6,
+                            color: selectedTrip.routeColor,
+                          ),
                         if (remainingPath.length >= 2)
                           Polyline(
                             points: remainingPath,
@@ -938,9 +1205,51 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen> {
 
 class _SelectedBus {
   final String tripId;
+  final List<LatLng>? fullRoutePoints;
+  final String? fullFromName;
+  final String? fullToName;
+  final bool isLoadingFullRoute;
 
   const _SelectedBus({
     required this.tripId,
+    this.fullRoutePoints,
+    this.fullFromName,
+    this.fullToName,
+    this.isLoadingFullRoute = false,
+  });
+
+  _SelectedBus copyWith({
+    String? tripId,
+    List<LatLng>? fullRoutePoints,
+    bool clearFullRoutePoints = false,
+    String? fullFromName,
+    bool clearFullFromName = false,
+    String? fullToName,
+    bool clearFullToName = false,
+    bool? isLoadingFullRoute,
+  }) {
+    return _SelectedBus(
+      tripId: tripId ?? this.tripId,
+      fullRoutePoints: clearFullRoutePoints
+          ? null
+          : (fullRoutePoints ?? this.fullRoutePoints),
+      fullFromName:
+          clearFullFromName ? null : (fullFromName ?? this.fullFromName),
+      fullToName: clearFullToName ? null : (fullToName ?? this.fullToName),
+      isLoadingFullRoute: isLoadingFullRoute ?? this.isLoadingFullRoute,
+    );
+  }
+}
+
+class _FullTripRouteData {
+  final List<LatLng> points;
+  final String fromName;
+  final String toName;
+
+  const _FullTripRouteData({
+    required this.points,
+    required this.fromName,
+    required this.toName,
   });
 }
 
@@ -1748,10 +2057,10 @@ LiveMapParseResult _parseLiveMapTripsIsolate(LiveMapParseRequest request) {
   }
 
   final preferredTrips = (nearbyTrips.isNotEmpty
-          ? nearbyTrips
-          : onScreenTrips.isNotEmpty
-              ? onScreenTrips
-              : builtTrips)
+      ? nearbyTrips
+      : onScreenTrips.isNotEmpty
+          ? onScreenTrips
+          : builtTrips)
     ..sort((a, b) {
       final byName = a.displayName.compareTo(b.displayName);
       if (byName != 0) return byName;
