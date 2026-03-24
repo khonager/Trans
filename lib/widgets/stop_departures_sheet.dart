@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/utils/app_error.dart';
@@ -83,43 +82,36 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
   }
 
   Future<_StopDeparturesData> _loadData() async {
-    final dates = _sampleWeek(widget.date);
+    final dates = _serviceDaySampleDates(widget.date);
+    final dayTypes = _ServiceDayType.values;
     final results = await Future.wait(
-      dates.map(
-        (date) => TransportApi.fetchStopDepartures(widget.stopId, date: date)
-            .catchError((_) => <Map<String, dynamic>>[]),
+      dayTypes.map(
+        (type) => TransportApi.fetchStopDepartures(
+          widget.stopId,
+          date: dates[type],
+        ).catchError((_) => <Map<String, dynamic>>[]),
       ),
     );
 
-    final dayBuckets = <_DayBucket>[];
-    for (var i = 0; i < dates.length; i++) {
-      final date = dates[i];
-      final deps = results[i];
-      final signature = _daySignature(deps);
-      final existingIndex = dayBuckets.indexWhere(
-        (bucket) => bucket.signature == signature,
+    final dayTabs = List<_DayTab>.generate(dayTypes.length, (index) {
+      final type = dayTypes[index];
+      return _DayTab(
+        id: _serviceDayId(type),
+        label: _serviceDayLabel(type),
+        type: type,
+        departures: results[index],
       );
-      if (existingIndex == -1) {
-        dayBuckets.add(
-          _DayBucket(signature: signature, dates: [date], departures: deps),
-        );
-      } else {
-        dayBuckets[existingIndex].dates.add(date);
-      }
-    }
-
-    final dayTabs = dayBuckets
-        .map(
-          (bucket) => _DayTab(
-            id: bucket.dates.map((date) => date.weekday.toString()).join('-'),
-            label: _dayTabLabel(context, bucket.dates),
-            dates: bucket.dates,
-            departures: bucket.departures,
-          ),
-        )
-        .toList();
+    });
 
     return _StopDeparturesData(dayTabs: dayTabs);
+  }
+
+  String _serviceDayLabel(_ServiceDayType type) {
+    return switch (type) {
+      _ServiceDayType.weekday => 'Mo-Fr',
+      _ServiceDayType.saturday => 'Sam',
+      _ServiceDayType.sundayHoliday => 'So',
+    };
   }
 
   String? _resolvePlatformKey(
@@ -372,6 +364,34 @@ class _ChipBar extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _ServiceDayType { weekday, saturday, sundayHoliday }
+
+String _serviceDayId(_ServiceDayType type) {
+  return switch (type) {
+    _ServiceDayType.weekday => 'mo_fr',
+    _ServiceDayType.saturday => 'sam',
+    _ServiceDayType.sundayHoliday => 'so',
+  };
+}
+
+Map<_ServiceDayType, DateTime> _serviceDaySampleDates(DateTime anchor) {
+  final normalizedAnchor = DateTime(anchor.year, anchor.month, anchor.day);
+  final monday = normalizedAnchor.subtract(Duration(days: anchor.weekday - 1));
+  return <_ServiceDayType, DateTime>{
+    _ServiceDayType.weekday: monday,
+    _ServiceDayType.saturday: monday.add(const Duration(days: 5)),
+    _ServiceDayType.sundayHoliday: monday.add(const Duration(days: 6)),
+  };
+}
+
+_ServiceDayType _serviceDayTypeForDate(DateTime date) {
+  return switch (date.weekday) {
+    DateTime.saturday => _ServiceDayType.saturday,
+    DateTime.sunday => _ServiceDayType.sundayHoliday,
+    _ => _ServiceDayType.weekday,
+  };
 }
 
 class _ChipModel {
@@ -664,13 +684,17 @@ class _StopDeparturesData {
   }
 
   _DayTab defaultDayTab(DateTime date) {
-    final weekday = date.weekday;
+    final serviceDayType = _serviceDayTypeForDate(date);
     return dayTabs.cast<_DayTab?>().firstWhere(
-              (tab) =>
-                  tab?.dates.any((item) => item.weekday == weekday) == true,
+              (tab) => tab?.type == serviceDayType,
               orElse: () => dayTabs.isNotEmpty ? dayTabs.first : null,
             ) ??
-        const _DayTab(id: 'empty', label: '', dates: [], departures: []);
+        const _DayTab(
+          id: 'empty',
+          label: '',
+          type: _ServiceDayType.weekday,
+          departures: [],
+        );
   }
 
   List<_PlatformTab> platformTabsForDay(String dayTabId) {
@@ -716,13 +740,13 @@ class _StopDeparturesData {
 class _DayTab {
   final String id;
   final String label;
-  final List<DateTime> dates;
+  final _ServiceDayType type;
   final List<Map<String, dynamic>> departures;
 
   const _DayTab({
     required this.id,
     required this.label,
-    required this.dates,
+    required this.type,
     required this.departures,
   });
 }
@@ -741,49 +765,6 @@ class _PlatformTab {
     required this.stopAreaId,
     required this.departures,
   });
-}
-
-class _DayBucket {
-  final String signature;
-  final List<DateTime> dates;
-  final List<Map<String, dynamic>> departures;
-
-  _DayBucket({
-    required this.signature,
-    required this.dates,
-    required this.departures,
-  });
-}
-
-List<DateTime> _sampleWeek(DateTime anchor) {
-  final start = DateTime(
-    anchor.year,
-    anchor.month,
-    anchor.day,
-  ).subtract(Duration(days: anchor.weekday - 1));
-  return List.generate(7, (index) => start.add(Duration(days: index)));
-}
-
-String _daySignature(List<Map<String, dynamic>> departures) {
-  final items = departures.map((dep) {
-    final time =
-        _scheduledTime(dep) ?? _actualTime(dep) ?? dep['plannedWhen'] ?? '';
-    return [
-      time.toString(),
-      _platformKey(dep),
-      _lineName(dep),
-      _direction(dep),
-    ].join('|');
-  }).toList()
-    ..sort();
-  return items.join('||');
-}
-
-String _dayTabLabel(BuildContext context, List<DateTime> dates) {
-  final locale = Localizations.localeOf(context).languageCode;
-  final labels =
-      dates.map((date) => DateFormat('EEE', locale).format(date)).toList();
-  return labels.join(', ');
 }
 
 String _platformKey(Map<String, dynamic> dep) {
@@ -815,12 +796,6 @@ String? _platformLabel(Map<String, dynamic> dep) {
   return text == null || text.isEmpty ? null : text;
 }
 
-String _lineName(Map<String, dynamic> dep) {
-  final line = dep['line'] as Map<String, dynamic>?;
-  return (dep['routeShortName'] ?? dep['displayName'] ?? line?['name'] ?? '')
-      .toString();
-}
-
 String _direction(Map<String, dynamic> dep) {
   final tripTo = dep['tripTo'] as Map<String, dynamic>?;
   return (dep['headsign'] ?? tripTo?['name'] ?? dep['direction'] ?? '')
@@ -832,24 +807,6 @@ String _shortDirection(Map<String, dynamic> dep) {
   if (direction.isEmpty) return '';
   final words = direction.split(' ').where((part) => part.isNotEmpty).toList();
   return words.take(2).join(' ');
-}
-
-String? _scheduledTime(Map<String, dynamic> dep) {
-  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
-  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
-  return (motisDepObj?['scheduledTime'] as String?) ??
-      (motisPlaceObj?['scheduledDeparture'] as String?) ??
-      (motisPlaceObj?['scheduledArrival'] as String?) ??
-      (dep['plannedWhen'] as String?);
-}
-
-String? _actualTime(Map<String, dynamic> dep) {
-  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
-  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
-  return (motisDepObj?['time'] as String?) ??
-      (motisPlaceObj?['departure'] as String?) ??
-      (motisPlaceObj?['arrival'] as String?) ??
-      (dep['when'] as String?);
 }
 
 int? _calculateDelayMinutes(String? scheduled, String? actual) {
