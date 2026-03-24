@@ -253,7 +253,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const TransitousLiveMapScreen(),
+        builder: (_) => TransitousLiveMapScreen(
+          currentPosition: _currentPosition,
+        ),
       ),
     );
   }

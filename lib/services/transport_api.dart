@@ -68,12 +68,10 @@ class TransportApi {
     for (int attempt = 0; attempt <= retries; attempt++) {
       try {
         debugPrint("Fetching: $uri");
-        final response = await http
-            .get(
-              uri,
-              headers: {'User-Agent': userAgent, 'Accept': 'application/json'},
-            )
-            .timeout(const Duration(seconds: 15));
+        final response = await http.get(
+          uri,
+          headers: {'User-Agent': userAgent, 'Accept': 'application/json'},
+        ).timeout(const Duration(seconds: 15));
 
         if (response.statusCode == 200) return response;
 
@@ -611,9 +609,8 @@ class TransportApi {
 
     final queryTokens = _searchTokens(query);
     final topResults = motisResults.take(5).toList();
-    final transitResults = topResults
-        .where((station) => _isTransitStation(station))
-        .toList();
+    final transitResults =
+        topResults.where((station) => _isTransitStation(station)).toList();
 
     if (_isAirportLikeQuery(queryTokens)) {
       return transitResults.isEmpty ||
@@ -875,16 +872,16 @@ class TransportApi {
   }
 
   static bool _isAirportLikeQuery(List<String> queryTokens) => queryTokens.any(
-    (token) =>
-        token.startsWith('flughaf') ||
-        token.startsWith('airport') ||
-        token.startsWith('airpor') ||
-        token.startsWith('aerodrom'),
-  );
+        (token) =>
+            token.startsWith('flughaf') ||
+            token.startsWith('airport') ||
+            token.startsWith('airpor') ||
+            token.startsWith('aerodrom'),
+      );
 
   static List<String> _searchTokens(String text) => _splitSearchTokens(
-    _normalizeSearchText(text),
-  ).where(_isMeaningfulSearchToken).toList();
+        _normalizeSearchText(text),
+      ).where(_isMeaningfulSearchToken).toList();
 
   static List<String> _splitSearchTokens(String text) => text
       .split(RegExp(r'\s+'))
@@ -972,8 +969,7 @@ class TransportApi {
     final latDelta = _degreesToRadians(lat2 - lat1);
     final lngDelta = _degreesToRadians(lng2 - lng1);
 
-    final a =
-        math.sin(latDelta / 2) * math.sin(latDelta / 2) +
+    final a = math.sin(latDelta / 2) * math.sin(latDelta / 2) +
         math.cos(lat1Rad) *
             math.cos(lat2Rad) *
             math.sin(lngDelta / 2) *
@@ -1097,6 +1093,37 @@ class TransportApi {
     return departures;
   }
 
+  static Future<Map<String, dynamic>?> fetchMapInitial() async {
+    final response = await _fetch(_getMotisUri('/api/v1/map/initial'));
+    final data = json.decode(response.body);
+    return data is Map<String, dynamic> ? data : null;
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchLiveMapTrips({
+    required String min,
+    required String max,
+    required DateTime startTime,
+    required DateTime endTime,
+    required double zoom,
+  }) async {
+    final response = await _fetch(
+      _getMotisUri('/api/v5/map/trips', {
+        'min': min,
+        'max': max,
+        'startTime': startTime.toUtc().toIso8601String(),
+        'endTime': endTime.toUtc().toIso8601String(),
+        'zoom': zoom.toStringAsFixed(2),
+      }),
+    );
+    final data = json.decode(response.body);
+    if (data is List) {
+      return data.whereType<Map<String, dynamic>>().toList();
+    }
+    throw FormatException(
+      'Unsupported live map trips response: ${data.runtimeType}',
+    );
+  }
+
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
@@ -1185,31 +1212,29 @@ class TransportApi {
     // 3. AUTO MODE: HYBRID FETCHING
     try {
       // Launch both requests in parallel
-      final motisFuture =
-          _searchJourneysMotis(
-            from,
-            to,
-            nahverkehrOnly: nahverkehrOnly,
-            when: when,
-            isArrival: isArrival,
-            results: results,
-          ).then((res) => res).catchError((e) {
-            debugPrint('Hybrid: Transitous failed: $e');
-            return <Map<String, dynamic>>[];
-          });
+      final motisFuture = _searchJourneysMotis(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      ).then((res) => res).catchError((e) {
+        debugPrint('Hybrid: Transitous failed: $e');
+        return <Map<String, dynamic>>[];
+      });
 
-      final v6Future =
-          _searchJourneysV6(
-            from,
-            to,
-            nahverkehrOnly: nahverkehrOnly,
-            when: when,
-            isArrival: isArrival,
-            results: results,
-          ).then((res) => res).catchError((e) {
-            debugPrint('Hybrid: v6 failed: $e');
-            return <Map<String, dynamic>>[];
-          });
+      final v6Future = _searchJourneysV6(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      ).then((res) => res).catchError((e) {
+        debugPrint('Hybrid: v6 failed: $e');
+        return <Map<String, dynamic>>[];
+      });
 
       if (onPartialResults != null) {
         bool motisDone = false;
