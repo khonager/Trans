@@ -81,6 +81,7 @@ class _SettingsTabState extends State<SettingsTab> {
   StreamSubscription? _locationSub;
 
   String _version = "";
+  bool _isDevBuild = const bool.fromEnvironment('IS_DEV', defaultValue: false);
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
 
@@ -111,7 +112,15 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
-    if (mounted) setState(() => _version = info.version);
+    final isDevPackage = info.packageName.endsWith('.dev');
+    if (mounted) {
+      setState(() {
+        _version = info.version;
+        // Auto-enable DEV badge for dev flavor builds while keeping
+        // IS_DEV as an optional manual override.
+        _isDevBuild = _isDevBuild || isDevPackage;
+      });
+    }
   }
 
   void _subscribeToLocation() {
@@ -1082,8 +1091,7 @@ class _SettingsTabState extends State<SettingsTab> {
                       fontWeight: FontWeight.bold,
                       color: colors.textPrimary)),
               // DEV badge - only shows on dev builds
-              if (const bool.fromEnvironment('IS_DEV',
-                  defaultValue: false)) ...[
+              if (_isDevBuild) ...[
                 const SizedBox(width: 8),
                 Container(
                   padding:
