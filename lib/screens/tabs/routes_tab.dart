@@ -2910,6 +2910,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  DarwinNotificationDetails _buildWakeAlarmIosDetails() {
+    // iOS doesn't expose custom background vibration patterns for local
+    // notifications, so use the strongest non-critical delivery mode we can.
+    return const DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    );
+  }
+
   Future<void> _showNotification() async {
     final prefs = await SharedPreferences.getInstance();
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
@@ -2927,11 +2940,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       vibrationPattern: Int64List.fromList(pattern),
       fullScreenIntent: true,
     );
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
+    final iosDetails = _buildWakeAlarmIosDetails();
     final details =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(

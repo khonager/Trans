@@ -81,6 +81,9 @@ class _SettingsTabState extends State<SettingsTab> {
   StreamSubscription? _locationSub;
 
   String _version = "";
+  bool _isDevBuild = const bool.fromEnvironment('IS_DEV', defaultValue: false);
+  bool _isUnstableBuild =
+      const bool.fromEnvironment('IS_UNSTABLE', defaultValue: false);
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
 
@@ -111,7 +114,24 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
-    if (mounted) setState(() => _version = info.version);
+    final appNameLower = info.appName.toLowerCase();
+    final isUnstablePackage = info.packageName.endsWith('.unstable');
+    final isUnstableLabel = appNameLower.contains('unstable');
+    final isDevPackage = info.packageName.endsWith('.dev');
+    final isDevLabel = appNameLower.contains('dev');
+    final detectedUnstableBuild = isUnstablePackage || isUnstableLabel;
+    final detectedDevBuild =
+        (isDevPackage || isDevLabel) && !detectedUnstableBuild;
+    final unstableBuild = _isUnstableBuild || detectedUnstableBuild;
+    if (mounted) {
+      setState(() {
+        _version = unstableBuild ? "" : info.version;
+        _isUnstableBuild = unstableBuild;
+        // Auto-enable DEV badge for dev flavor builds while keeping
+        // IS_DEV as an optional manual override.
+        _isDevBuild = _isDevBuild || detectedDevBuild;
+      });
+    }
   }
 
   void _subscribeToLocation() {
@@ -1082,8 +1102,7 @@ class _SettingsTabState extends State<SettingsTab> {
                       fontWeight: FontWeight.bold,
                       color: colors.textPrimary)),
               // DEV badge - only shows on dev builds
-              if (const bool.fromEnvironment('IS_DEV',
-                  defaultValue: false)) ...[
+              if (_isDevBuild && !_isUnstableBuild) ...[
                 const SizedBox(width: 8),
                 Container(
                   padding:
@@ -1099,28 +1118,45 @@ class _SettingsTabState extends State<SettingsTab> {
                           color: Colors.white)),
                 ),
               ],
+              if (_isUnstableBuild) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade700,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text("UNSTABLE",
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white)),
+                ),
+              ],
               const Spacer(),
               // Version Display & Link
-              InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) =>
-                            ChangelogScreen(currentVersion: _version)),
-                  );
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Text("v$_version",
-                      style: TextStyle(
-                          color: colors.textSecondary.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14)),
+              if (!_isUnstableBuild && _version.isNotEmpty)
+                InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              ChangelogScreen(currentVersion: _version)),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text("v$_version",
+                        style: TextStyle(
+                            color: colors.textSecondary.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14)),
+                  ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 30),
