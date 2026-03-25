@@ -62,9 +62,8 @@ android {
         create("dev") {
             dimension = "version"
             applicationId = "de.khonager.trans"
-            applicationIdSuffix = ".dev"
             manifestPlaceholders["appLabel"] = "Trans Dev"
-            manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.dev.SuperClipboardDataProvider"
+            manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.SuperClipboardDataProvider"
         }
     }
 

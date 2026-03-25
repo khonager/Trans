@@ -113,12 +113,13 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     final isDevPackage = info.packageName.endsWith('.dev');
+    final isDevLabel = info.appName.toLowerCase().contains('dev');
     if (mounted) {
       setState(() {
         _version = info.version;
         // Auto-enable DEV badge for dev flavor builds while keeping
         // IS_DEV as an optional manual override.
-        _isDevBuild = _isDevBuild || isDevPackage;
+        _isDevBuild = _isDevBuild || isDevPackage || isDevLabel;
       });
     }
   }

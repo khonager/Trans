@@ -51,7 +51,7 @@ You can also install and update Trans from the custom F-Droid repository:
    ```
 4. **Refresh repositories**, then install:
    - **Trans** (stable)
-   - **Trans Dev** (separate dev app)
+   - **Trans Dev** (dev channel build)
 
 ---
 
