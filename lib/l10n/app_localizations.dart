@@ -1346,6 +1346,30 @@ abstract class AppLocalizations {
   /// **'Notify at {threshold} {remaining}'**
   String notifyAtThreshold(String threshold, String remaining);
 
+  /// No description provided for @alarmSound.
+  ///
+  /// In en, this message translates to:
+  /// **'Alarm Sound'**
+  String get alarmSound;
+
+  /// No description provided for @previewSound.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview sound'**
+  String get previewSound;
+
+  /// No description provided for @wakeAlarmPreviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Wake alarm preview'**
+  String get wakeAlarmPreviewTitle;
+
+  /// No description provided for @wakeAlarmPreviewBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This is how your wake alarm will sound.'**
+  String get wakeAlarmPreviewBody;
+
   /// No description provided for @alarmPattern.
   ///
   /// In en, this message translates to:
@@ -1387,6 +1411,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Vibration Intensity'**
   String get vibrationIntensity;
+
+  /// No description provided for @iosWakeAlarmVibrationNoticeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'iPhone vibration limit'**
+  String get iosWakeAlarmVibrationNoticeTitle;
+
+  /// No description provided for @iosWakeAlarmVibrationNoticeBody.
+  ///
+  /// In en, this message translates to:
+  /// **'On iPhone, custom vibration patterns only work while the app is open. For the full wake-alarm experience, an Android phone is recommended.'**
+  String get iosWakeAlarmVibrationNoticeBody;
 
   /// No description provided for @alwaysWakeMe.
   ///

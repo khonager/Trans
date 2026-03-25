@@ -16,6 +16,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/notification_manager.dart';
+import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
@@ -635,8 +636,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     {
       final prefs = await SharedPreferences.getInstance();
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+      final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+          WakeAlarmSettings.defaultSoundId;
       await NotificationManager.updateWakeAlarmChannel(
-          _getVibrationPattern(patternName));
+        WakeAlarmSettings.vibrationPatternForId(patternName),
+        soundId: soundId,
+      );
     }
 
     // 3. Configure Background Location (Foreground Service)
@@ -2773,130 +2778,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
-  List<int> _getVibrationPattern(String patternName) {
-    switch (patternName) {
-      case 'heartbeat':
-        return [0, 100, 100, 250, 600, 100, 100, 250];
-      case 'tick':
-        return [0, 30];
-      case 'mario':
-        return [0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 200];
-      case 'fox':
-        return [
-          0,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          150,
-          100,
-          150,
-          100,
-          150,
-          100,
-          400
-        ];
-      case 'imperial':
-        return [
-          0,
-          450,
-          150,
-          450,
-          150,
-          450,
-          150,
-          350,
-          100,
-          150,
-          450,
-          150,
-          350,
-          100,
-          150,
-          450
-        ];
-      case 'potter':
-        return [
-          0,
-          150,
-          350,
-          150,
-          100,
-          150,
-          100,
-          150,
-          100,
-          400,
-          300,
-          300,
-          150,
-          400
-        ];
-      case 'indy':
-        return [0, 150, 50, 80, 50, 150, 100, 500, 400, 150, 50, 80, 100, 600];
-      case 'mission':
-        return [
-          0,
-          250,
-          250,
-          250,
-          250,
-          120,
-          120,
-          120,
-          120,
-          250,
-          250,
-          250,
-          250,
-          120,
-          120,
-          120,
-          120
-        ];
-      case 'terminator':
-        return [0, 250, 250, 250, 400, 200, 200, 250, 200, 250];
-      case 'future':
-        return [0, 150, 150, 150, 150, 300, 200, 100, 50, 100, 50, 400];
-      case 'eva':
-        return [
-          0,
-          100,
-          100,
-          100,
-          100,
-          250,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          250,
-          100,
-          100
-        ];
-      case 'pokemon':
-        return [0, 100, 100, 100, 100, 300, 150, 100, 100, 300];
-      case 'titan':
-        return [0, 200, 150, 200, 150, 250, 250, 400, 400, 600];
-      case 'bebop':
-        return [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000];
-      default:
-        return [0, 500];
-    }
-  }
-
   Future<void> _triggerVibration() async {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator()) {
       final prefs = await SharedPreferences.getInstance();
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
-      final pattern = _getVibrationPattern(patternName);
+      final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
 
       if (await Vibration.hasAmplitudeControl()) {
         final intensities = List<int>.generate(
@@ -2910,37 +2798,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
-  DarwinNotificationDetails _buildWakeAlarmIosDetails() {
-    // iOS doesn't expose custom background vibration patterns for local
-    // notifications, so use the strongest non-critical delivery mode we can.
-    return const DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-      presentBanner: true,
-      presentList: true,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    );
-  }
-
   Future<void> _showNotification() async {
     final prefs = await SharedPreferences.getInstance();
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
-    final pattern = _getVibrationPattern(patternName);
-    // Android vibrationPattern uses Int64List in milliseconds.
-    // The channel was already recreated with this pattern in _startWakeAlarm
-    // so the pattern is honoured even when the screen is off.
-    final androidDetails = AndroidNotificationDetails(
-      'wake_alarm_channel',
-      'Wake Alarm',
-      channelDescription: 'Alarms for arriving at station',
-      importance: Importance.max,
-      priority: Priority.high,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(pattern),
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+    final androidDetails = NotificationManager.buildWakeAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
       fullScreenIntent: true,
     );
-    final iosDetails = _buildWakeAlarmIosDetails();
+    final iosDetails =
+        NotificationManager.buildWakeAlarmIosDetails(soundId: soundId);
     final details =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(

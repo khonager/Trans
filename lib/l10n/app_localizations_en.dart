@@ -721,6 +721,18 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get alarmSound => 'Alarm Sound';
+
+  @override
+  String get previewSound => 'Preview sound';
+
+  @override
+  String get wakeAlarmPreviewTitle => 'Wake alarm preview';
+
+  @override
+  String get wakeAlarmPreviewBody => 'This is how your wake alarm will sound.';
+
+  @override
   String get alarmPattern => 'Alarm Pattern';
 
   @override
@@ -740,6 +752,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vibrationIntensity => 'Vibration Intensity';
+
+  @override
+  String get iosWakeAlarmVibrationNoticeTitle => 'iPhone vibration limit';
+
+  @override
+  String get iosWakeAlarmVibrationNoticeBody =>
+      'On iPhone, custom vibration patterns only work while the app is open. For the full wake-alarm experience, an Android phone is recommended.';
 
   @override
   String get alwaysWakeMe => 'Always Wake Me';

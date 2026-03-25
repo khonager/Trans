@@ -478,6 +478,10 @@
       }
     }
   },
+  "alarmSound": "Alarm Sound",
+  "previewSound": "Preview sound",
+  "wakeAlarmPreviewTitle": "Wake alarm preview",
+  "wakeAlarmPreviewBody": "This is how your wake alarm will sound.",
   "alarmPattern": "Alarm Pattern",
   "ofLegCovered": "of leg covered",
   "fromTarget": "from target",
@@ -485,6 +489,8 @@
   "tenPercentRemaining": "10% Remaining",
   "fixed500m": "Fixed 500m",
   "vibrationIntensity": "Vibration Intensity",
+  "iosWakeAlarmVibrationNoticeTitle": "iPhone vibration limit",
+  "iosWakeAlarmVibrationNoticeBody": "On iPhone, custom vibration patterns only work while the app is open. For the full wake-alarm experience, an Android phone is recommended.",
   "alwaysWakeMe": "Always Wake Me",
   "turnOnAlarmDefault": "Turn on alarm for every journey by default",
   "dataAndPrivacy": "Data & Privacy",

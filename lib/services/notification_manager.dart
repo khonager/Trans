@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import 'wake_alarm_settings.dart';
+import 'wake_alarm_sound_storage.dart';
+
 class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -19,6 +22,7 @@ class NotificationManager {
         android: androidSettings, iOS: iosSettings, linux: linuxSettings);
 
     await _notifications.initialize(settings: initSettings);
+    await _ensureDarwinWakeAlarmSounds();
 
     // Create Channels (Android)
     final androidImplementation =
@@ -46,6 +50,7 @@ class NotificationManager {
         description: 'Alarms for arriving at station',
         importance: Importance.max,
         enableVibration: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ));
     }
   }
@@ -71,12 +76,16 @@ class NotificationManager {
   /// On Android 8.0+ channel settings are immutable after first creation,
   /// so we delete the old channel and create a fresh one each time the
   /// alarm is started.
-  static Future<void> updateWakeAlarmChannel(List<int> vibrationPattern) async {
+  static Future<void> updateWakeAlarmChannel(
+    List<int> vibrationPattern, {
+    required String soundId,
+  }) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final androidImplementation =
         _notifications.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     if (androidImplementation == null) return;
+    final sound = WakeAlarmSettings.soundForId(soundId);
     await androidImplementation.deleteNotificationChannel(
         channelId: 'wake_alarm_channel');
     await androidImplementation
@@ -85,9 +94,80 @@ class NotificationManager {
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
+      playSound: true,
+      sound: sound.androidSound,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(vibrationPattern),
+      audioAttributesUsage: AudioAttributesUsage.alarm,
     ));
+  }
+
+  static AndroidNotificationDetails buildWakeAlarmAndroidDetails({
+    required List<int> vibrationPattern,
+    required String soundId,
+    bool fullScreenIntent = false,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    return AndroidNotificationDetails(
+      'wake_alarm_channel',
+      'Wake Alarm',
+      channelDescription: 'Alarms for arriving at station',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+      sound: sound.androidSound,
+      enableVibration: true,
+      vibrationPattern: Int64List.fromList(vibrationPattern),
+      fullScreenIntent: fullScreenIntent,
+      category: AndroidNotificationCategory.alarm,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    );
+  }
+
+  static DarwinNotificationDetails buildWakeAlarmIosDetails({
+    required String soundId,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    return DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      sound: sound.fileName,
+    );
+  }
+
+  static Future<void> previewWakeAlarm({
+    required String title,
+    required String body,
+    required String soundId,
+    required List<int> vibrationPattern,
+  }) async {
+    await _ensureDarwinWakeAlarmSounds();
+    await requestPermissions();
+    await updateWakeAlarmChannel(vibrationPattern, soundId: soundId);
+
+    final details = NotificationDetails(
+      android: buildWakeAlarmAndroidDetails(
+        vibrationPattern: vibrationPattern,
+        soundId: soundId,
+      ),
+      iOS: buildWakeAlarmIosDetails(soundId: soundId),
+    );
+
+    await _notifications.show(
+      id: 9001,
+      title: title,
+      body: body,
+      notificationDetails: details,
+    );
+  }
+
+  static Future<void> _ensureDarwinWakeAlarmSounds() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    await ensureDarwinWakeAlarmSounds(WakeAlarmSettings.bundledSoundOptions);
   }
 
   static Future<void> showNotification({

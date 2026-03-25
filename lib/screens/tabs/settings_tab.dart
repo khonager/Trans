@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import '../../services/notification_manager.dart';
 import '../../services/supabase_service.dart';
+import '../../services/wake_alarm_settings.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -89,6 +91,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
+  String _wakeAlarmSound = WakeAlarmSettings.defaultSoundId;
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
@@ -161,6 +164,9 @@ class _SettingsTabState extends State<SettingsTab> {
       setState(() {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
+        _wakeAlarmSound =
+            prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+                WakeAlarmSettings.defaultSoundId;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =
@@ -176,8 +182,25 @@ class _SettingsTabState extends State<SettingsTab> {
     await prefs.setInt('vibration_intensity', _vibrationIntensity);
     await SupabaseService.updateSettings({
       'vibration_pattern': _vibrationPattern,
-      'vibration_intensity': _vibrationIntensity
+      'vibration_intensity': _vibrationIntensity,
     });
+    await NotificationManager.updateWakeAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+    );
+  }
+
+  Future<void> _persistWakeAlarmSoundSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        WakeAlarmSettings.soundPreferenceKey, _wakeAlarmSound);
+    await SupabaseService.updateSettings({
+      WakeAlarmSettings.soundPreferenceKey: _wakeAlarmSound,
+    });
+    await NotificationManager.updateWakeAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+    );
   }
 
   Future<void> _saveAlarmSettings(int stops) async {
@@ -211,163 +234,8 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _testVibration() async {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator()) {
-      List<int> pattern = [0, 500];
-
-      switch (_vibrationPattern) {
-        // Heartbeat: LUB-dub (pause) LUB-dub
-        case 'heartbeat':
-          pattern = [0, 100, 100, 250, 600, 100, 100, 250];
-          break;
-        // Tick: Single sharp, concise tap
-        case 'tick':
-          pattern = [0, 30];
-          break;
-        // Mario 1-UP: do-mi-so-do-so-do (Very fast ascending)
-        case 'mario':
-          pattern = [0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 200];
-          break;
-        // 20th Century Fox: rhythmic fanfare (Dun-dun, dun-dun, dun-dun-dun-DUN!)
-        case 'fox':
-          pattern = [
-            0,
-            100,
-            100,
-            100,
-            100,
-            100,
-            100,
-            100,
-            150,
-            100,
-            150,
-            100,
-            150,
-            100,
-            400
-          ];
-          break;
-        // Imperial March: Bold Triplets (DUN DUN DUN, dun-pa-DUN, dun-pa-DUN)
-        case 'imperial':
-          pattern = [
-            0,
-            450,
-            150,
-            450,
-            150,
-            450,
-            150,
-            350,
-            100,
-            150,
-            450,
-            150,
-            350,
-            100,
-            150,
-            450
-          ];
-          break;
-        // Harry Potter: Hedwig's Theme (B... E-G-F#-E... B-A)
-        case 'potter':
-          pattern = [
-            0,
-            150,
-            350,
-            150,
-            100,
-            150,
-            100,
-            150,
-            100,
-            400,
-            300,
-            300,
-            150,
-            400
-          ];
-          break;
-        // Indiana Jones: Raiders March - Ta-da-dad-DAAA... Ta-da-DAAAA!
-        case 'indy':
-          pattern = [
-            0,
-            150,
-            50,
-            80,
-            50,
-            150,
-            100,
-            500,
-            400,
-            150,
-            50,
-            80,
-            100,
-            600
-          ];
-          break;
-        // Mission Impossible: 5/4 syncopated (DUN DUN, da-da, DUN DUN, da-da)
-        case 'mission':
-          pattern = [
-            0,
-            250,
-            250,
-            250,
-            250,
-            120,
-            120,
-            120,
-            120,
-            250,
-            250,
-            250,
-            250,
-            120,
-            120,
-            120,
-            120
-          ];
-          break;
-        // Terminator: Menacing Industrial (DUN-DUN, dun-DUN-DUN)
-        case 'terminator':
-          pattern = [0, 250, 250, 250, 400, 200, 200, 250, 200, 250];
-          break;
-        // Back to the Future: Aggressively syncopated riff
-        case 'future':
-          pattern = [0, 150, 150, 150, 150, 300, 200, 100, 50, 100, 50, 400];
-          break;
-        // Evangelion: Driving beats (da-da-DA-da, da-da-DA-da)
-        case 'eva':
-          pattern = [
-            0,
-            100,
-            100,
-            100,
-            100,
-            250,
-            100,
-            100,
-            100,
-            100,
-            100,
-            100,
-            250,
-            100,
-            100
-          ];
-          break;
-        // Pokémon: Jingle (ba-da ba-DA-DA!)
-        case 'pokemon':
-          pattern = [0, 100, 100, 100, 100, 300, 150, 100, 100, 300];
-          break;
-        // Attack on Titan: Epic building choir (sa-sa-GAYO!)
-        case 'titan':
-          pattern = [0, 200, 150, 200, 150, 250, 250, 400, 400, 600];
-          break;
-        // Cowboy Bebop: Fast Jazz (3..2..1.. JAM!)
-        case 'bebop':
-          pattern = [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000];
-          break;
-      }
+      final pattern =
+          WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
 
       if (await Vibration.hasAmplitudeControl()) {
         // Correctly set intensity to 0 for pauses (even indices) and _vibrationIntensity for vibrations (odd indices)
@@ -378,6 +246,30 @@ class _SettingsTabState extends State<SettingsTab> {
         Vibration.vibrate(pattern: pattern);
       }
     }
+  }
+
+  Future<void> _previewWakeAlarmSound() async {
+    if (kIsWeb) return;
+    final l10n = AppLocalizations.of(context)!;
+    await NotificationManager.previewWakeAlarm(
+      title: l10n.wakeAlarmPreviewTitle,
+      body: l10n.wakeAlarmPreviewBody,
+      soundId: _wakeAlarmSound,
+      vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
+        _vibrationPattern,
+      ),
+    );
+  }
+
+  void _showIosVibrationAvailabilityMessage() {
+    if (defaultTargetPlatform != TargetPlatform.iOS || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(context)!.iosWakeAlarmVibrationNoticeBody,
+        ),
+      ),
+    );
   }
 
   void _pickAvatar() {
@@ -1370,6 +1262,47 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
             ListTile(
+              title: Text(AppLocalizations.of(context)!.alarmSound,
+                  style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text(
+                WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
+              trailing: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                children: [
+                  if (!kIsWeb)
+                    IconButton(
+                      tooltip: AppLocalizations.of(context)!.previewSound,
+                      onPressed: _previewWakeAlarmSound,
+                      icon: Icon(Icons.play_arrow_rounded,
+                          color: colors.textPrimary),
+                    ),
+                  DropdownButton<String>(
+                    value: _wakeAlarmSound,
+                    dropdownColor: colors.cardBg,
+                    underline: const SizedBox(),
+                    items: WakeAlarmSettings.soundOptions
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option.id,
+                            child: Text(option.label),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (val) async {
+                      if (val == null) return;
+                      setState(() => _wakeAlarmSound = val);
+                      await _persistWakeAlarmSoundSetting();
+                      await _previewWakeAlarmSound();
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Divider(color: colors.divider),
+            ListTile(
                 title: Text(AppLocalizations.of(context)!.alarmPattern,
                     style: TextStyle(color: colors.textPrimary)),
                 trailing: DropdownButton<String>(
@@ -1405,10 +1338,12 @@ class _SettingsTabState extends State<SettingsTab> {
                       DropdownMenuItem(
                           value: 'bebop', child: Text("Cowboy Bebop")),
                     ],
-                    onChanged: (val) {
-                      setState(() => _vibrationPattern = val!);
-                      _persistVibrationSettings();
+                    onChanged: (val) async {
+                      if (val == null) return;
+                      setState(() => _vibrationPattern = val);
+                      await _persistVibrationSettings();
                       _testVibration();
+                      _showIosVibrationAvailabilityMessage();
                     })),
             ListTile(
                 title: Text(AppLocalizations.of(context)!.vibrationIntensity,
@@ -1425,7 +1360,24 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChangeEnd: (val) {
                       _persistVibrationSettings();
                       _testVibration();
+                      _showIosVibrationAvailabilityMessage();
                     })),
+            if (defaultTargetPlatform == TargetPlatform.iOS)
+              ListTile(
+                leading: Icon(Icons.info_outline, color: colors.textSecondary),
+                title: Text(
+                  AppLocalizations.of(context)!
+                      .iosWakeAlarmVibrationNoticeTitle,
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  AppLocalizations.of(context)!.iosWakeAlarmVibrationNoticeBody,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
             Divider(color: colors.divider),
             SwitchListTile(
               title: Text(AppLocalizations.of(context)!.alwaysWakeMe,

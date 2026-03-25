@@ -317,6 +317,9 @@ class SupabaseService {
         await prefs.setInt(
             'vibration_intensity', settings['vibration_intensity']);
       }
+      if (settings.containsKey('wake_alarm_sound')) {
+        await prefs.setString('wake_alarm_sound', settings['wake_alarm_sound']);
+      }
       if (settings.containsKey('alarm_stops_before')) {
         await prefs.setInt(
             'alarm_stops_before', settings['alarm_stops_before']);
