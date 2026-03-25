@@ -60,7 +60,7 @@ You can also install and update Trans from the custom F-Droid repository:
 For those who want the absolute latest features (and bugs!), you can install the **Dev Build**. This version is updated automatically with every change to the source code.
 
 > [!CAUTION]
-> **Expect Bugs!** Dev builds are unstable and may crash or have broken features. We recommend keeping the stable version installed as a backup.
+> **Expect Bugs!** Dev builds may crash or have broken features. We recommend keeping the stable version installed as a backup.
 
 ### Install Dev Build via Obtainium
 
