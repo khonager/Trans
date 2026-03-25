@@ -293,7 +293,8 @@ class _FriendsTabState extends State<FriendsTab> {
                       const SizedBox(height: 8),
                       Divider(color: colors.divider),
                       _buildSectionHeader(
-                          autoAddedSectionLabel(Localizations.localeOf(context)),
+                          autoAddedSectionLabel(
+                              Localizations.localeOf(context)),
                           colors),
                       ...autoAddedFriends
                           .map((f) => _buildFriendCard(context, f, false)),

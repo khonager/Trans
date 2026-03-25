@@ -568,12 +568,12 @@ class _SettingsTabState extends State<SettingsTab> {
                           if (mounted) setState(() {});
                         }
                       } catch (e, st) {
+                        if (!ctx.mounted) return;
                         final userMessage = deleteAccountErrorMessage(
                           e,
-                          invalidPasswordMessage: AppLocalizations.of(context)!
-                              .incorrectPasswordOrRpcMissing,
-                          fallbackMessage: AppLocalizations.of(context)!
-                              .serviceBusyPleaseTryAgain,
+                          invalidPasswordMessage:
+                              l10n.incorrectPasswordOrRpcMissing,
+                          fallbackMessage: l10n.serviceBusyPleaseTryAgain,
                         );
                         setState(() {
                           errorMsg = userMessage;

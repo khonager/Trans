@@ -536,5 +536,30 @@
   "send": "Send",
   "language": "Language",
   "english": "English",
-  "german": "German"
+  "german": "German",
+  "stopDeparturesTitle": "Departures at {stopName}",
+  "@stopDeparturesTitle": {
+    "placeholders": {
+      "stopName": {
+        "type": "String"
+      }
+    }
+  },
+  "stopDeparturesDate": "for {date}",
+  "@stopDeparturesDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "stopPlatformFilter": "Platform",
+  "stopPlatformAll": "All",
+  "stopServiceDayFilter": "Service Day",
+  "stopServiceDayWeekday": "Weekday",
+  "stopServiceDayWeekendHoliday": "Weekend/Holiday",
+  "noDeparturesFound": "No departures found for this stop.",
+  "noDeparturesForPlatform": "No departures found for this platform.",
+  "loadingDepartures": "Loading departures...",
+  "longPressForDepartures": "Long-press any stop to see all departures for that day."
 }

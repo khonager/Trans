@@ -67,7 +67,6 @@
             glibc
             pkg-config # Required for finding libraries during build
             zlib
-            zlib
             ncurses5
             stdenv.cc.cc.lib
             openssl
@@ -90,7 +89,17 @@
             export ANDROID_HOME="${androidSdk}/share/android-sdk"
             export ANDROID_SDK_ROOT="${androidSdk}/share/android-sdk"
             export JAVA_HOME="${pkgs.jdk17}"
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+              pkgs.vulkan-loader
+              pkgs.zlib
+              pkgs.stdenv.cc.cc.lib
+              pkgs.glib
+              pkgs.gtk3
+              pkgs.nspr
+              pkgs.nss
+              pkgs.openssl
+              pkgs.expat
+            ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export CHROME_EXECUTABLE="chromium"
           '';
         };

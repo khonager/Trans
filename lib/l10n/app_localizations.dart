@@ -1657,6 +1657,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'German'**
   String get german;
+
+  /// No description provided for @stopDeparturesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Departures at {stopName}'**
+  String stopDeparturesTitle(String stopName);
+
+  /// No description provided for @stopDeparturesDate.
+  ///
+  /// In en, this message translates to:
+  /// **'for {date}'**
+  String stopDeparturesDate(String date);
+
+  /// No description provided for @stopPlatformFilter.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform'**
+  String get stopPlatformFilter;
+
+  /// No description provided for @stopPlatformAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get stopPlatformAll;
+
+  /// No description provided for @stopServiceDayFilter.
+  ///
+  /// In en, this message translates to:
+  /// **'Service Day'**
+  String get stopServiceDayFilter;
+
+  /// No description provided for @stopServiceDayWeekday.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekday'**
+  String get stopServiceDayWeekday;
+
+  /// No description provided for @stopServiceDayWeekendHoliday.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekend/Holiday'**
+  String get stopServiceDayWeekendHoliday;
+
+  /// No description provided for @noDeparturesFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No departures found for this stop.'**
+  String get noDeparturesFound;
+
+  /// No description provided for @noDeparturesForPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'No departures found for this platform.'**
+  String get noDeparturesForPlatform;
+
+  /// No description provided for @loadingDepartures.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading departures...'**
+  String get loadingDepartures;
+
+  /// No description provided for @longPressForDepartures.
+  ///
+  /// In en, this message translates to:
+  /// **'Long-press any stop to see all departures for that day.'**
+  String get longPressForDepartures;
 }
 
 class _AppLocalizationsDelegate

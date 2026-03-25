@@ -882,4 +882,43 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get german => 'German';
+
+  @override
+  String stopDeparturesTitle(String stopName) {
+    return 'Departures at $stopName';
+  }
+
+  @override
+  String stopDeparturesDate(String date) {
+    return 'for $date';
+  }
+
+  @override
+  String get stopPlatformFilter => 'Platform';
+
+  @override
+  String get stopPlatformAll => 'All';
+
+  @override
+  String get stopServiceDayFilter => 'Service Day';
+
+  @override
+  String get stopServiceDayWeekday => 'Weekday';
+
+  @override
+  String get stopServiceDayWeekendHoliday => 'Weekend/Holiday';
+
+  @override
+  String get noDeparturesFound => 'No departures found for this stop.';
+
+  @override
+  String get noDeparturesForPlatform =>
+      'No departures found for this platform.';
+
+  @override
+  String get loadingDepartures => 'Loading departures...';
+
+  @override
+  String get longPressForDepartures =>
+      'Long-press any stop to see all departures for that day.';
 }
