@@ -65,6 +65,13 @@ android {
             manifestPlaceholders["appLabel"] = "Trans Dev"
             manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.SuperClipboardDataProvider"
         }
+        create("unstable") {
+            dimension = "version"
+            applicationId = "de.khonager.trans"
+            applicationIdSuffix = ".unstable"
+            manifestPlaceholders["appLabel"] = "Trans Unstable"
+            manifestPlaceholders["clipboardAuthority"] = "de.khonager.trans.unstable.SuperClipboardDataProvider"
+        }
     }
 
     buildTypes {
