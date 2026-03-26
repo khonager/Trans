@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 import 'notification_manager.dart';
+import '../utils/app_error.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
@@ -38,31 +39,40 @@ class SupabaseService {
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final msg in data) {
-            if (msg['receiver_id'] != user.id) continue;
-            final created = DateTime.parse(msg['created_at']);
-            // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
-            if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
-              // Simple dedupe by ID hash or just rely on OS to update if ID is same
-              // If we really want to avoid re-notifying for the same message we've already shown in this session,
-              // we could keep a Set<String> _notifiedMessageIds.
-              // For now, the time check is a crude but effective filter for "live" updates.
-
-              String body = 'You received a secure message.';
-              // If it's NOT encrypted, show content. If it IS, keeping it generic is safer/easier unless we decrypt here.
-              // Decryption requires keys which depends on sender.
-              if (msg['is_encrypted'] == false) {
-                body = msg['content'];
-              }
-
-              NotificationManager.showNotification(
-                id: msg['id'].hashCode,
-                title: 'New Private Message',
-                body: body,
-                channelId: 'private_messages',
-                channelName: 'Private Messages',
+            try {
+              if (msg['receiver_id'] != user.id) continue;
+              final created = _tryParseTimestamp(
+                msg['created_at'],
+                source: 'messages.created_at',
               );
+              if (created == null) continue;
+
+              // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
+              if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+                String body = 'You received a secure message.';
+                if (msg['is_encrypted'] == false) {
+                  body = (msg['content'] ?? body).toString();
+                }
+
+                NotificationManager.showNotification(
+                  id: msg['id'].hashCode,
+                  title: 'New Private Message',
+                  body: body,
+                  channelId: 'private_messages',
+                  channelName: 'Private Messages',
+                );
+              }
+            } catch (e, st) {
+              AppError.log(e,
+                  stackTrace: st, source: 'SupabaseService._startMessageListener');
             }
           }
+        }, onError: (error, stackTrace) {
+          AppError.log(
+            error,
+            stackTrace: stackTrace is StackTrace ? stackTrace : null,
+            source: 'SupabaseService._startMessageListener.onError',
+          );
         });
   }
 
@@ -78,22 +88,56 @@ class SupabaseService {
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final req in data) {
-            if (req['receiver_id'] != user.id || req['status'] != 'pending') {
-              continue;
-            }
+            try {
+              if (req['receiver_id'] != user.id || req['status'] != 'pending') {
+                continue;
+              }
 
-            final created = DateTime.parse(req['created_at']);
-            if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
-              NotificationManager.showNotification(
-                id: req['id'].hashCode,
-                title: 'New Friend Request',
-                body: 'Someone wants to be your friend!',
-                channelId: 'friend_requests',
-                channelName: 'Friend Requests',
+              final created = _tryParseTimestamp(
+                req['created_at'],
+                source: 'friend_requests.created_at',
               );
+              if (created == null) continue;
+
+              if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+                NotificationManager.showNotification(
+                  id: req['id'].hashCode,
+                  title: 'New Friend Request',
+                  body: 'Someone wants to be your friend!',
+                  channelId: 'friend_requests',
+                  channelName: 'Friend Requests',
+                );
+              }
+            } catch (e, st) {
+              AppError.log(e,
+                  stackTrace: st,
+                  source: 'SupabaseService._startFriendRequestListener');
             }
           }
+        }, onError: (error, stackTrace) {
+          AppError.log(
+            error,
+            stackTrace: stackTrace is StackTrace ? stackTrace : null,
+            source: 'SupabaseService._startFriendRequestListener.onError',
+          );
         });
+  }
+
+  static DateTime? _tryParseTimestamp(
+    dynamic raw, {
+    required String source,
+  }) {
+    if (raw == null) {
+      AppError.log('Missing timestamp', source: source);
+      return null;
+    }
+
+    try {
+      return DateTime.parse(raw.toString()).toUtc();
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: source);
+      return null;
+    }
   }
 
   @visibleForTesting

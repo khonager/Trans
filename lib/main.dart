@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui'; // Needed for PointerDeviceKind
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
@@ -11,37 +12,58 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
+import 'utils/app_error.dart';
 
-void main() async {
+Future<void> main() async {
   usePathUrlStrategy();
   WidgetsFlutterBinding.ensureInitialized();
 
-  bool initFailed = false;
-  String? initError;
+  FlutterError.onError = (details) {
+    AppError.log(
+      details.exception,
+      stackTrace: details.stack,
+      source: 'FlutterError.onError',
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    AppError.log(
+      error,
+      stackTrace: stack,
+      source: 'PlatformDispatcher.onError',
+    );
+    return true;
+  };
 
-  try {
-    await dotenv.load(fileName: ".env");
+  await runZonedGuarded(() async {
+    bool initFailed = false;
+    String? initError;
 
-    await Supabase.initialize(
-      url: AppConfig.supabaseUrl,
-      anonKey: AppConfig.supabaseAnonKey,
+    try {
+      await dotenv.load(fileName: ".env");
+
+      await Supabase.initialize(
+        url: AppConfig.supabaseUrl,
+        anonKey: AppConfig.supabaseAnonKey,
+      );
+
+      await SupabaseService.init();
+    } catch (e, st) {
+      initFailed = true;
+      initError = e.toString();
+      AppError.log(e, stackTrace: st, source: 'main initialization');
+    }
+
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+      ),
     );
 
-    await SupabaseService.init();
-  } catch (e) {
-    initFailed = true;
-    initError = e.toString();
-    debugPrint("Initialization Failed: $e");
-  }
-
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-    ),
-  );
-
-  runApp(TransApp(initFailed: initFailed, initError: initError));
+    runApp(TransApp(initFailed: initFailed, initError: initError));
+  }, (error, stack) {
+    AppError.log(error, stackTrace: stack, source: 'runZonedGuarded');
+  });
 }
 
 // FIX: Enable Mouse Dragging for Web/Desktop
