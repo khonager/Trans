@@ -15,13 +15,13 @@ import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/services/favorites_policy.dart';
 import 'package:trans/services/notification_manager.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart';
-import 'package:trans/utils/app_error.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
@@ -1156,6 +1156,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
+    if (!isSupportedFavorite(fav)) {
+      await FavoritesManager.deleteFavorite(fav.id);
+      if (mounted) {
+        await _loadFavorites();
+      }
+      return;
+    }
+
     // Capture the active field BEFORE async operations or state clearing
     final currentField = _activeSearchField;
 
@@ -1164,45 +1172,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _activeSearchField = '';
     });
     FocusScope.of(context).unfocus();
-    Station? target;
-    if (fav.type == 'station') {
-      target = fav.station;
-      if (target == null) {
-        _showEditFavoriteDialog(fav);
-        return;
-      }
-    } else if (fav.type == 'friend' && fav.friendId != null) {
-      setState(() => _isLoadingRoute = true);
-      try {
-        final data = await SupabaseService.client
-            .from('user_locations')
-            .select()
-            .eq('user_id', fav.friendId!)
-            .maybeSingle();
-        if (data != null) {
-          final stops = await TransportApi.getNearbyStops(
-              data['latitude'], data['longitude']);
-          if (mounted && stops.isNotEmpty) target = stops.first;
-        }
-      } catch (e, st) {
-        if (!mounted) return;
-        AppError.showSnackBar(
-          context,
-          error: e,
-          stackTrace: st,
-          source: 'resolve friend favorite location',
-        );
-      } finally {
-        if (mounted) setState(() => _isLoadingRoute = false);
-      }
+    final target = fav.station;
+    if (target == null) {
+      _showEditFavoriteDialog(fav);
+      return;
     }
 
-    if (target != null && mounted) {
+    if (mounted) {
       setState(() {
         if (currentField == 'from') {
           _fromStation = target;
           _fromUsesCurrentLocation = false;
-          _fromController.text = target!.name;
+          _fromController.text = target.name;
           if (_toStation == null) {
             _activeSearchField = 'to';
             _toFocusNode.requestFocus();
@@ -1210,7 +1191,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           }
         } else if (currentField == 'to') {
           _toStation = target;
-          _toController.text = target!.name;
+          _toController.text = target.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
           if (_fromStation == null && _effectiveCurrentPosition == null) {
             _activeSearchField = 'from';
@@ -1219,11 +1200,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else {
           if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
-            _toController.text = target!.name;
+            _toController.text = target.name;
           } else {
             _fromStation = target;
             _fromUsesCurrentLocation = false;
-            _fromController.text = target!.name;
+            _fromController.text = target.name;
             _toFocusNode.requestFocus();
             _scrollToTop();
           }
@@ -3314,9 +3295,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               }
                               final fav = _favorites[idx];
                               IconData icon = Icons.star;
-                              if (fav.type == 'friend') {
-                                icon = Icons.person;
-                              } else if (fav.label.toLowerCase() == 'home') {
+                              if (fav.label.toLowerCase() == 'home') {
                                 icon = Icons.home;
                               } else if (fav.label.toLowerCase() == 'work') {
                                 icon = Icons.work;
@@ -3326,12 +3305,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                     (i) => i.codePoint == fav.iconCode,
                                     orElse: () => Icons.star);
                               }
-                              Color bg = fav.type == 'friend'
-                                  ? colors.favFriendBg
-                                  : colors.favStationBg;
-                              Color fg = fav.type == 'friend'
-                                  ? colors.favFriendIcon
-                                  : colors.favStationIcon;
                               return GestureDetector(
                                   onTap: () => _onFavoriteTap(fav),
                                   onLongPress: () =>
@@ -3344,10 +3317,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                             width: 48,
                                             height: 48,
                                             decoration: BoxDecoration(
-                                                color: bg,
+                                                color: colors.favStationBg,
                                                 shape: BoxShape.circle),
                                             child: Icon(icon,
-                                                color: fg, size: 20)),
+                                                color: colors.favStationIcon,
+                                                size: 20)),
                                         const SizedBox(height: 4),
                                         Text(fav.label,
                                             style: TextStyle(
@@ -5101,9 +5075,7 @@ class _EditFavoriteDialog extends StatefulWidget {
 class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   late TextEditingController _labelCtrl;
   final TextEditingController _searchCtrl = TextEditingController();
-  late String _currentType;
   Station? _selectedStation;
-  String? _selectedFriendId;
   int? _selectedIconCode;
   List<Station> _suggestions = [];
   Timer? _debounce;
@@ -5114,9 +5086,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   void initState() {
     super.initState();
     _labelCtrl = TextEditingController(text: widget.favorite.label);
-    _currentType = widget.favorite.type;
     _selectedStation = widget.favorite.station;
-    _selectedFriendId = widget.favorite.friendId;
     _selectedIconCode = widget.favorite.iconCode;
   }
 
@@ -5158,29 +5128,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                       labelText:
                           AppLocalizations.of(context)!.favoriteLabelHint)),
               const SizedBox(height: 10),
-              Row(children: [
-                Expanded(
-                    child: RadioGroup<String>(
-                  groupValue: _currentType,
-                  onChanged: (val) =>
-                      setState(() => _currentType = val ?? _currentType),
-                  child: RadioListTile<String>(
-                      title: Text(AppLocalizations.of(context)!.station),
-                      value: 'station',
-                      contentPadding: EdgeInsets.zero),
-                )),
-                Expanded(
-                    child: RadioGroup<String>(
-                  groupValue: _currentType,
-                  onChanged: (val) =>
-                      setState(() => _currentType = val ?? _currentType),
-                  child: RadioListTile<String>(
-                      title: Text(AppLocalizations.of(context)!.friend),
-                      value: 'friend',
-                      contentPadding: EdgeInsets.zero),
-                )),
-              ]),
-              const SizedBox(height: 10),
               SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -5203,113 +5150,88 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     isSelected ? Colors.white : Colors.grey)));
                   }).toList())),
               const SizedBox(height: 10),
-              if (_currentType == 'station') ...[
-                if (_selectedStation != null)
-                  ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.train, color: Colors.indigo),
-                      title: Text(_selectedStation!.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      trailing: IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => setState(() {
-                                _selectedStation = null;
-                                _searchCtrl.clear();
-                                _suggestions = [];
-                              })))
-                else ...[
-                  TextField(
-                    controller: _searchCtrl,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context)!.searchStationName,
-                        prefixIcon: const Icon(Icons.search),
-                        suffix: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: _isLoading
-                                ? const CircularProgressIndicator(
-                                    strokeWidth: 2)
-                                : null)),
-                    onChanged: (val) {
-                      final sanitizedQuery = val.trim();
-                      if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (sanitizedQuery.isEmpty) {
-                        _searchRequestToken++;
-                        if (mounted) setState(() => _suggestions = []);
-                        return;
-                      }
-                      final requestToken = ++_searchRequestToken;
-                      _debounce =
-                          Timer(const Duration(milliseconds: 400), () async {
-                        if (!mounted) return;
-                        setState(() => _isLoading = true);
-                        try {
-                          final res =
-                              await TransportApi.searchStations(sanitizedQuery)
-                                  .timeout(const Duration(seconds: 10));
-                          if (requestToken != _searchRequestToken) return;
-                          if (mounted) {
-                            setState(() {
-                              _suggestions = res;
-                              _isLoading = false;
-                            });
-                          }
-                        } catch (e) {
-                          if (requestToken != _searchRequestToken) return;
-                          if (mounted) setState(() => _isLoading = false);
-                        }
-                      });
-                    },
-                  ),
-                  if (_suggestions.isNotEmpty)
-                    Container(
-                        height: 150,
-                        margin: const EdgeInsets.only(top: 8),
-                        decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white10),
-                            borderRadius: BorderRadius.circular(8)),
-                        child: ListView.builder(
-                            itemCount: _suggestions.length,
-                            itemBuilder: (context, idx) {
-                              final s = _suggestions[idx];
-                              return ListTile(
-                                  dense: true,
-                                  title: Text(s.name),
-                                  onTap: () {
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _selectedStation = s;
-                                      _suggestions = [];
-                                      if (_labelCtrl.text.isEmpty) {
-                                        _labelCtrl.text = s.name;
-                                      }
-                                    });
-                                  });
-                            }))
-                ]
-              ],
-              if (_currentType == 'friend') ...[
+              if (_selectedStation != null)
+                ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.train, color: Colors.indigo),
+                    title: Text(_selectedStation!.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    trailing: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() {
+                              _selectedStation = null;
+                              _searchCtrl.clear();
+                              _suggestions = [];
+                            })))
+              else ...[
                 TextField(
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context)!.searchFriendUsername),
-                    onSubmitted: (val) async {
-                      final res = await SupabaseService.searchUsers(val);
-                      if (res.isNotEmpty && mounted) {
-                        setState(() {
-                          _selectedFriendId = res.first['id'];
-                          if (_labelCtrl.text.isEmpty) {
-                            _labelCtrl.text = res.first['username'];
-                          }
-                        });
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                      labelText:
+                          AppLocalizations.of(context)!.searchStationName,
+                      prefixIcon: const Icon(Icons.search),
+                      suffix: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: _isLoading
+                              ? const CircularProgressIndicator(strokeWidth: 2)
+                              : null)),
+                  onChanged: (val) {
+                    final sanitizedQuery = val.trim();
+                    if (_debounce?.isActive ?? false) _debounce!.cancel();
+                    if (sanitizedQuery.isEmpty) {
+                      _searchRequestToken++;
+                      if (mounted) setState(() => _suggestions = []);
+                      return;
+                    }
+                    final requestToken = ++_searchRequestToken;
+                    _debounce =
+                        Timer(const Duration(milliseconds: 400), () async {
+                      if (!mounted) return;
+                      setState(() => _isLoading = true);
+                      try {
+                        final res = await TransportApi.searchStations(
+                          sanitizedQuery,
+                        ).timeout(const Duration(seconds: 10));
+                        if (requestToken != _searchRequestToken) return;
+                        if (mounted) {
+                          setState(() {
+                            _suggestions = res;
+                            _isLoading = false;
+                          });
+                        }
+                      } catch (e) {
+                        if (requestToken != _searchRequestToken) return;
+                        if (mounted) setState(() => _isLoading = false);
                       }
-                    }),
-                if (_selectedFriendId != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(AppLocalizations.of(context)!.friendSelected,
-                          style: const TextStyle(color: Colors.green))),
+                    });
+                  },
+                ),
+                if (_suggestions.isNotEmpty)
+                  Container(
+                      height: 150,
+                      margin: const EdgeInsets.only(top: 8),
+                      decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white10),
+                          borderRadius: BorderRadius.circular(8)),
+                      child: ListView.builder(
+                          itemCount: _suggestions.length,
+                          itemBuilder: (context, idx) {
+                            final s = _suggestions[idx];
+                            return ListTile(
+                                dense: true,
+                                title: Text(s.name),
+                                onTap: () {
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _selectedStation = s;
+                                    _suggestions = [];
+                                    if (_labelCtrl.text.isEmpty) {
+                                      _labelCtrl.text = s.name;
+                                    }
+                                  });
+                                });
+                          }))
               ],
               const SizedBox(height: 20),
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -5338,9 +5260,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     .toString()
                                 : widget.favorite.id,
                             label: _labelCtrl.text,
-                            type: _currentType,
+                            type: kSupportedFavoriteType,
                             station: _selectedStation,
-                            friendId: _selectedFriendId,
                             iconCode: _selectedIconCode);
                         await FavoritesManager.saveFavorite(newFav);
                         if (context.mounted) Navigator.pop(context, true);

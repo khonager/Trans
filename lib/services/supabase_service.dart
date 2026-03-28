@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import 'favorites_policy.dart';
 import 'notification_manager.dart';
 import '../utils/app_error.dart';
 
@@ -64,7 +65,8 @@ class SupabaseService {
               }
             } catch (e, st) {
               AppError.log(e,
-                  stackTrace: st, source: 'SupabaseService._startMessageListener');
+                  stackTrace: st,
+                  source: 'SupabaseService._startMessageListener');
             }
           }
         }, onError: (error, stackTrace) {
@@ -300,9 +302,10 @@ class SupabaseService {
       List<Map<String, dynamic>> favorites) async {
     final user = currentUser;
     if (user == null) return;
+    final sanitizedFavorites = sanitizeFavoritePayloads(favorites);
     await client
         .from('profiles')
-        .update({'favorites': favorites}).eq('id', user.id);
+        .update({'favorites': sanitizedFavorites}).eq('id', user.id);
   }
 
   static Future<void> updatePreviousSearches(List<dynamic> searches) async {
@@ -332,7 +335,8 @@ class SupabaseService {
           .eq('id', user.id)
           .single();
       final settings = data['settings'] as Map<String, dynamic>? ?? {};
-      final favorites = data['favorites'] as List<dynamic>? ?? [];
+      final favorites =
+          sanitizeFavoritePayloads(data['favorites'] as List<dynamic>? ?? []);
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
@@ -400,11 +404,9 @@ class SupabaseService {
         await prefs.setString('locale_code', settings['locale_code']);
       }
 
-      if (favorites.isNotEmpty) {
-        final List<String> favs =
-            favorites.map((f) => json.encode(f)).toList().cast<String>();
-        await prefs.setStringList('saved_favorites', favs);
-      }
+      final List<String> favs =
+          favorites.map((f) => json.encode(f)).toList().cast<String>();
+      await prefs.setStringList('saved_favorites', favs);
 
       // Notify app to reload settings
       settingsRefreshNotifier.value++;
