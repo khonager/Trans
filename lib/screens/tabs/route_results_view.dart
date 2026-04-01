@@ -28,6 +28,7 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onLoadLater;
   final Future<void> Function()? onRefresh;
   final bool showTrainNumbers;
+  final Color? loadingIndicatorColor;
 
   const RouteResultsView({
     super.key,
@@ -38,6 +39,7 @@ class RouteResultsView extends StatefulWidget {
     this.onLoadLater,
     this.onRefresh,
     this.showTrainNumbers = false,
+    this.loadingIndicatorColor,
   });
 
   @override
@@ -295,11 +297,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         child: Padding(
                           padding: const EdgeInsets.only(bottom: 8.0),
                           child: _isLoadingMoreEarlier
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 24,
                                   height: 24,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: widget.loadingIndicatorColor,
+                                  ))
                               : _LoadTrigger(
                                   label:
                                       AppLocalizations.of(context)!.loadEarlier,
@@ -316,11 +320,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         child: Padding(
                           padding: const EdgeInsets.only(top: 8.0),
                           child: _isLoadingMoreLater
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 24,
                                   height: 24,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: widget.loadingIndicatorColor,
+                                  ))
                               : _LoadTrigger(
                                   label:
                                       AppLocalizations.of(context)!.loadLater,

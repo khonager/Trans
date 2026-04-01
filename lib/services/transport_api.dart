@@ -55,6 +55,9 @@ class TransportApi {
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
   static const String _v6Url = 'https://v6.db.transport.rest';
+  static const String loadPhaseMotis = 'motis';
+  static const String loadPhaseV6 = 'v6';
+  static const String loadPhaseSynthetic = 'synthetic';
 
   /// API Mode: 'auto', 'motis', or 'v6'
   static String apiMode = 'auto';
@@ -1774,6 +1777,7 @@ class TransportApi {
     Station destination, {
     required bool nahverkehrOnly,
     void Function(List<Map<String, dynamic>> syntheticSoFar)? onProgress,
+    bool Function()? shouldContinue,
   }) async {
     _syntheticLog(
       'seed start: ${seed.originStopName} ${_formatDebugTime(seed.firstDeparture)} '
@@ -1859,6 +1863,10 @@ class TransportApi {
     final seenTrips = <String>{};
 
     for (final departure in matchingDepartures) {
+      if (!(shouldContinue?.call() ?? true)) {
+        _syntheticLog('seed aborted: ${seed.dedupeKey}');
+        break;
+      }
       final tripId = _stopDepartureTripId(departure);
       if (tripId == null || !seenTrips.add(tripId)) continue;
 
@@ -1941,7 +1949,9 @@ class TransportApi {
           ),
         );
       }
-      onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
+      if (shouldContinue?.call() ?? true) {
+        onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
+      }
     }
 
     _syntheticLog(
@@ -1960,6 +1970,7 @@ class TransportApi {
     required bool nahverkehrOnly,
     required bool isArrival,
     void Function(List<Map<String, dynamic>> mergedJourneys)? onProgress,
+    bool Function()? shouldContinue,
   }) async {
     if (apiMode == 'v6' || journeys.isEmpty) {
       return journeys;
@@ -1993,6 +2004,10 @@ class TransportApi {
 
     final synthetic = <Map<String, dynamic>>[];
     for (final seed in seeds) {
+      if (!(shouldContinue?.call() ?? true)) {
+        _syntheticLog('augment aborted before seed ${seed.dedupeKey}');
+        break;
+      }
       try {
         final expanded = await _expandSyntheticSeed(
           seed,
@@ -2017,6 +2032,7 @@ class TransportApi {
             );
             onProgress(merged);
           },
+          shouldContinue: shouldContinue,
         );
         synthetic.addAll(expanded);
       } catch (error) {
@@ -2090,7 +2106,19 @@ class TransportApi {
     bool isArrival = false,
     int results = 7,
     Function(List<Map<String, dynamic>>)? onPartialResults,
+    void Function(Set<String> activePhases)? onLoadStateChanged,
+    bool Function()? shouldContinue,
   }) async {
+    final activePhases = <String>{};
+    void setPhase(String phase, bool active) {
+      if (active) {
+        activePhases.add(phase);
+      } else {
+        activePhases.remove(phase);
+      }
+      onLoadStateChanged?.call(Set<String>.from(activePhases));
+    }
+
     _syntheticLog(
       'search start: mode=$apiMode from=${from.name} to=${to.name} '
       'when=${when?.toIso8601String() ?? 'now'} arriveBy=$isArrival results=$results',
@@ -2098,25 +2126,31 @@ class TransportApi {
 
     // 1. STRICT V6 MODE
     if (apiMode == 'v6') {
-      final res = await _searchJourneysV6(
-        from,
-        to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      );
-      final mapped = res.map((j) {
-        j['source'] = 'v6';
-        return j;
-      }).toList();
-      if (onPartialResults != null) onPartialResults(mapped);
-      _syntheticLog('search done: strict v6 returned=${mapped.length}');
-      return mapped;
+      setPhase(loadPhaseV6, true);
+      try {
+        final res = await _searchJourneysV6(
+          from,
+          to,
+          nahverkehrOnly: nahverkehrOnly,
+          when: when,
+          isArrival: isArrival,
+          results: results,
+        );
+        final mapped = res.map((j) {
+          j['source'] = 'v6';
+          return j;
+        }).toList();
+        if (onPartialResults != null) onPartialResults(mapped);
+        _syntheticLog('search done: strict v6 returned=${mapped.length}');
+        return mapped;
+      } finally {
+        setPhase(loadPhaseV6, false);
+      }
     }
 
     // 2. STRICT MOTIS MODE
     if (apiMode == 'motis') {
+      setPhase(loadPhaseMotis, true);
       try {
         final res = await _searchJourneysMotis(
           from,
@@ -2127,6 +2161,8 @@ class TransportApi {
           results: results,
         );
         if (onPartialResults != null) onPartialResults(res);
+        setPhase(loadPhaseMotis, false);
+        setPhase(loadPhaseSynthetic, true);
         final augmented = await _augmentJourneysWithSynthetic(
           from,
           to,
@@ -2135,6 +2171,7 @@ class TransportApi {
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,
+          shouldContinue: shouldContinue,
         );
         if (onPartialResults != null && augmented.length > res.length) {
           onPartialResults(augmented);
@@ -2147,12 +2184,16 @@ class TransportApi {
         debugPrint('Transitous searchJourneys failed (strict mode): $e');
         _syntheticLog('search fail: strict motis error=$e');
         rethrow;
+      } finally {
+        setPhase(loadPhaseMotis, false);
+        setPhase(loadPhaseSynthetic, false);
       }
     }
 
     // 3. AUTO MODE: HYBRID FETCHING
     try {
       // Launch both requests in parallel
+      setPhase(loadPhaseMotis, true);
       final motisFuture = _searchJourneysMotis(
         from,
         to,
@@ -2163,8 +2204,9 @@ class TransportApi {
       ).then((res) => res).catchError((e) {
         debugPrint('Hybrid: Transitous failed: $e');
         return <Map<String, dynamic>>[];
-      });
+      }).whenComplete(() => setPhase(loadPhaseMotis, false));
 
+      setPhase(loadPhaseV6, true);
       final v6Future = _searchJourneysV6(
         from,
         to,
@@ -2175,7 +2217,7 @@ class TransportApi {
       ).then((res) => res).catchError((e) {
         debugPrint('Hybrid: v6 failed: $e');
         return <Map<String, dynamic>>[];
-      });
+      }).whenComplete(() => setPhase(loadPhaseV6, false));
 
       if (onPartialResults != null) {
         bool motisDone = false;
@@ -2215,6 +2257,7 @@ class TransportApi {
         final resultsList = await Future.wait([motisFuture, v6Future]);
         final merged = mergeResults(resultsList[0], resultsList[1]);
         final baseResults = merged.isEmpty ? resultsList[0] : merged;
+        setPhase(loadPhaseSynthetic, true);
         final augmented = await _augmentJourneysWithSynthetic(
           from,
           to,
@@ -2223,6 +2266,7 @@ class TransportApi {
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,
+          shouldContinue: shouldContinue,
         );
         if (augmented.length > baseResults.length) {
           onPartialResults(augmented);
@@ -2251,6 +2295,7 @@ class TransportApi {
           throw Exception("No routes found on either API");
         }
 
+        setPhase(loadPhaseSynthetic, true);
         final augmented = await _augmentJourneysWithSynthetic(
           from,
           to,
@@ -2259,6 +2304,7 @@ class TransportApi {
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,
+          shouldContinue: shouldContinue,
         );
         _syntheticLog(
           'search done: auto motis=${motisResults.length} v6=${v6Results.length} '
@@ -2270,6 +2316,10 @@ class TransportApi {
       debugPrint('Hybrid searchJourneys critical failure: $e');
       _syntheticLog('search fail: auto error=$e');
       return [];
+    } finally {
+      setPhase(loadPhaseMotis, false);
+      setPhase(loadPhaseV6, false);
+      setPhase(loadPhaseSynthetic, false);
     }
   }
 
