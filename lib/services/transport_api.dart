@@ -1747,6 +1747,28 @@ class TransportApi {
     };
   }
 
+  static bool _journeyMatchesQueryWindow(
+    Map<String, dynamic> journey, {
+    required DateTime? when,
+    required bool isArrival,
+  }) {
+    if (when == null) return true;
+
+    final reference = when.toLocal();
+    final departure = _parseJourneyTimeLocal(
+      journey['plannedDeparture'] ?? journey['departure'],
+    );
+    final arrival = _parseJourneyTimeLocal(
+      journey['plannedArrival'] ?? journey['arrival'],
+    );
+
+    if (isArrival) {
+      return arrival == null || !arrival.isAfter(reference);
+    }
+
+    return departure == null || !departure.isBefore(reference);
+  }
+
   static Future<List<Map<String, dynamic>>> _expandSyntheticSeed(
     _SyntheticSeed seed,
     Station destination, {
@@ -1934,11 +1956,12 @@ class TransportApi {
     Station from,
     Station to,
     List<Map<String, dynamic>> journeys, {
+    required DateTime? when,
     required bool nahverkehrOnly,
     required bool isArrival,
     void Function(List<Map<String, dynamic>> mergedJourneys)? onProgress,
   }) async {
-    if (apiMode == 'v6' || isArrival || journeys.isEmpty) {
+    if (apiMode == 'v6' || journeys.isEmpty) {
       return journeys;
     }
 
@@ -1981,7 +2004,13 @@ class TransportApi {
               ...journeys,
               ...synthetic,
               ...seedSyntheticSoFar,
-            ]);
+            ]).where((journey) {
+              return _journeyMatchesQueryWindow(
+                journey,
+                when: when,
+                isArrival: isArrival,
+              );
+            }).toList();
             _syntheticLog(
               'augment progress ${from.name} -> ${to.name}: '
               'seedPartial=${seedSyntheticSoFar.length} visible=${merged.length}',
@@ -2000,7 +2029,14 @@ class TransportApi {
     );
 
     if (synthetic.isEmpty) return journeys;
-    final merged = _dedupeAndSortJourneys([...journeys, ...synthetic]);
+    final merged = _dedupeAndSortJourneys([...journeys, ...synthetic])
+        .where((journey) {
+      return _journeyMatchesQueryWindow(
+        journey,
+        when: when,
+        isArrival: isArrival,
+      );
+    }).toList();
     _syntheticLog(
       'augment merged ${from.name} -> ${to.name}: final=${merged.length}',
     );
@@ -2095,6 +2131,7 @@ class TransportApi {
           from,
           to,
           res,
+          when: when,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,
@@ -2182,6 +2219,7 @@ class TransportApi {
           from,
           to,
           baseResults,
+          when: when,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,
@@ -2217,6 +2255,7 @@ class TransportApi {
           from,
           to,
           merged,
+          when: when,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
           onProgress: onPartialResults,

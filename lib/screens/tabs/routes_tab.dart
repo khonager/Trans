@@ -2732,6 +2732,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         return;
       }
     }
+    String? currentTabId;
+    var hasDisplayedResults = false;
     try {
       DateTime when;
       if (_selectedDate != null) {
@@ -2749,7 +2751,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       TransportApi.addSyntheticDebugLog(
         'ui: search request from=${from.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
       );
-      String? currentTabId;
       final res = await TransportApi.searchJourneys(from, _toStation!,
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
@@ -2760,6 +2761,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           );
           return;
         }
+        hasDisplayedResults = true;
         if (currentTabId == null) {
           currentTabId = _addJourneyTab(
               candidatesData: partial, origin: from, destination: _toStation);
@@ -2778,6 +2780,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;
 
       if (res.isNotEmpty) {
+        hasDisplayedResults = true;
         if (currentTabId != null) {
           TransportApi.addSyntheticDebugLog(
             'ui: final update tab id=$currentTabId results=${res.length}',
@@ -2803,8 +2806,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
       }
     } on TimeoutException catch (_) {
-      TransportApi.addSyntheticDebugLog('ui: search timed out');
-      if (!_isRouteSearchCancelled(searchToken) && mounted) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: search timed out visibleResults=$hasDisplayedResults',
+      );
+      if (!_isRouteSearchCancelled(searchToken) &&
+          mounted &&
+          !hasDisplayedResults) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
