@@ -20,6 +20,22 @@ enum RouteSortOption {
   leastWalking,
 }
 
+bool _shouldDisplaySummaryTripId(String? tripId) {
+  final normalizedTripId = tripId?.trim();
+  if (normalizedTripId == null || normalizedTripId.isEmpty) return false;
+  if (normalizedTripId.length > 10) return false;
+  if (normalizedTripId.contains('_') ||
+      normalizedTripId.contains(':') ||
+      normalizedTripId.contains(' ') ||
+      normalizedTripId.toLowerCase().contains('de-delfi')) {
+    return false;
+  }
+  if (!RegExp(r'^[A-Za-z0-9-]+$').hasMatch(normalizedTripId)) {
+    return false;
+  }
+  return RegExp(r'\d').hasMatch(normalizedTripId);
+}
+
 class RouteResultsView extends StatefulWidget {
   final List<Journey> candidates;
   final Function(Journey) onSelect;
@@ -659,6 +675,10 @@ class _JourneyCard extends StatelessWidget {
                   .take(4)
                   .map((step) {
                 String displayLine = step.line.trim();
+                final displayableTripId =
+                    _shouldDisplaySummaryTripId(step.tripId)
+                        ? step.tripId!.trim()
+                        : null;
                 // Clean train numbers if disabled
                 if (!showTrainNumbers) {
                   final regexParens = RegExp(r'\s*\(\d+\)$');
@@ -669,9 +689,9 @@ class _JourneyCard extends StatelessWidget {
                   }
                 } else {
                   // Ensure it's there if enabled
-                  if (step.tripId != null &&
-                      !displayLine.contains(step.tripId!)) {
-                    displayLine += " (${step.tripId})";
+                  if (displayableTripId != null &&
+                      !displayLine.contains(displayableTripId)) {
+                    displayLine += " ($displayableTripId)";
                   }
                 }
 

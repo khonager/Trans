@@ -75,6 +75,22 @@ String formatRideLineWithPlatform(String line, String? platform) {
 
 final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
 
+bool _shouldDisplayTripId(String? tripId) {
+  final normalizedTripId = tripId?.trim();
+  if (normalizedTripId == null || normalizedTripId.isEmpty) return false;
+  if (normalizedTripId.length > 10) return false;
+  if (normalizedTripId.contains('_') ||
+      normalizedTripId.contains(':') ||
+      normalizedTripId.contains(' ') ||
+      normalizedTripId.toLowerCase().contains('de-delfi')) {
+    return false;
+  }
+  if (!RegExp(r'^[A-Za-z0-9-]+$').hasMatch(normalizedTripId)) {
+    return false;
+  }
+  return RegExp(r'\d').hasMatch(normalizedTripId);
+}
+
 @visibleForTesting
 String formatRideDisplayLine({
   required String line,
@@ -85,6 +101,8 @@ String formatRideDisplayLine({
 }) {
   String baseLine = line.trim();
   final normalizedTripId = tripId?.trim();
+  final displayableTripId =
+      _shouldDisplayTripId(normalizedTripId) ? normalizedTripId : null;
   if (!showTrainNumbers) {
     baseLine =
         baseLine.replaceAll(_embeddedNumericParenthesesPattern, '').trim();
@@ -104,10 +122,9 @@ String formatRideDisplayLine({
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
-      normalizedTripId != null &&
-      normalizedTripId.isNotEmpty &&
-      !displayLine.contains(normalizedTripId)) {
-    return '$displayLine ($normalizedTripId)';
+      displayableTripId != null &&
+      !displayLine.contains(displayableTripId)) {
+    return '$displayLine ($displayableTripId)';
   }
 
   return displayLine;
