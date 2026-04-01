@@ -486,6 +486,13 @@ class _JourneyCard extends StatelessWidget {
     final depStr = DateFormat('HH:mm').format(journey.departure);
     final arrStr = DateFormat('HH:mm').format(journey.arrival);
     final durStr = FormatUtils.formatDuration(journey.duration.inMinutes);
+    final isSynthetic = journey.source == 'motis_synthetic';
+    final badgeLabel = isSynthetic
+        ? 'TRANS/SYN'
+        : (journey.source == 'motis' ? 'TRANS' : 'DB');
+    final badgeColor = isSynthetic
+        ? Colors.green
+        : (journey.source == 'motis' ? Colors.blue : Colors.red);
 
     return GestureDetector(
       onTap: onTap,
@@ -610,15 +617,11 @@ class _JourneyCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                            color: journey.source == 'motis'
-                                ? Colors.blue.withValues(alpha: 0.2)
-                                : Colors.red.withValues(alpha: 0.2),
+                            color: badgeColor.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4)),
-                        child: Text(journey.source == 'motis' ? 'TRANS' : 'DB',
+                        child: Text(badgeLabel,
                             style: TextStyle(
-                                color: journey.source == 'motis'
-                                    ? Colors.blue
-                                    : Colors.red,
+                                color: badgeColor,
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold))),
                     const SizedBox(height: 8),
