@@ -82,6 +82,7 @@ class TransportApi {
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
+  static const int _syntheticProgressBatchSize = 4;
   static const List<String> _nonDeutschlandticketServiceTokens = [
     'ICE',
     'IC',
@@ -1861,6 +1862,7 @@ class TransportApi {
 
     final synthetic = <Map<String, dynamic>>[];
     final seenTrips = <String>{};
+    var lastProgressCount = 0;
 
     for (final departure in matchingDepartures) {
       if (!(shouldContinue?.call() ?? true)) {
@@ -1948,9 +1950,16 @@ class TransportApi {
           tripId,
         ),
       );
-      if (shouldContinue?.call() ?? true) {
+      final shouldEmitProgress =
+          synthetic.length - lastProgressCount >= _syntheticProgressBatchSize;
+      if ((shouldContinue?.call() ?? true) && shouldEmitProgress) {
+        lastProgressCount = synthetic.length;
         onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
       }
+    }
+
+    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+      onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
     _syntheticLog(
