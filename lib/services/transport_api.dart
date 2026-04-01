@@ -1340,7 +1340,7 @@ class TransportApi {
     final lineKey = _normalizeTransitKey(_journeyLegLineName(firstRide));
     if (lineKey.isEmpty) return null;
 
-    final directionKey = _normalizeTransitKey(transferRide['direction']);
+    final directionKey = _normalizeTransitKey(firstRide['direction']);
     final transferStopId = _stringOrNull(transfer['id']) ?? '';
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
