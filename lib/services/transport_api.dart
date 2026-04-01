@@ -1890,6 +1890,54 @@ class TransportApi {
     return 0;
   }
 
+  static DateTime? _journeyFirstRideDepartureLocal(
+    Map<String, dynamic> journey,
+  ) {
+    final firstRide = _firstRideLegFromJourney(journey);
+    if (firstRide == null) return null;
+    return _parseJourneyTimeLocal(
+      firstRide['plannedDeparture'] ?? firstRide['departure'],
+    );
+  }
+
+  static List<Map<String, dynamic>> _limitSyntheticToBaseRideWindow(
+    List<Map<String, dynamic>> journeys,
+  ) {
+    final baseJourneys = journeys
+        .where((journey) => journey['source']?.toString() != 'motis_synthetic')
+        .toList();
+    if (baseJourneys.isEmpty) return journeys;
+
+    DateTime? minBaseDeparture;
+    DateTime? maxBaseDeparture;
+    for (final journey in baseJourneys) {
+      final departure = _journeyFirstRideDepartureLocal(journey);
+      if (departure == null) continue;
+      if (minBaseDeparture == null || departure.isBefore(minBaseDeparture)) {
+        minBaseDeparture = departure;
+      }
+      if (maxBaseDeparture == null || departure.isAfter(maxBaseDeparture)) {
+        maxBaseDeparture = departure;
+      }
+    }
+
+    if (minBaseDeparture == null || maxBaseDeparture == null) {
+      return journeys;
+    }
+    final minDeparture = minBaseDeparture;
+    final maxDeparture = maxBaseDeparture;
+
+    return journeys.where((journey) {
+      if (journey['source']?.toString() != 'motis_synthetic') {
+        return true;
+      }
+      final departure = _journeyFirstRideDepartureLocal(journey);
+      if (departure == null) return false;
+      return !departure.isBefore(minDeparture) &&
+          !departure.isAfter(maxDeparture);
+    }).toList();
+  }
+
   static List<Map<String, dynamic>> _dedupeAndSortJourneys(
     List<Map<String, dynamic>> journeys,
   ) {
@@ -2474,7 +2522,9 @@ class TransportApi {
               ...journeys,
               ...synthetic,
               ...seedSyntheticSoFar,
-            ]).where((journey) {
+            ]);
+            final bounded = _limitSyntheticToBaseRideWindow(merged);
+            final visible = bounded.where((journey) {
               return _journeyMatchesQueryWindow(
                 journey,
                 when: when,
@@ -2483,9 +2533,9 @@ class TransportApi {
             }).toList();
             _syntheticLog(
               'augment progress ${from.name} -> ${to.name}: '
-              'seedPartial=${seedSyntheticSoFar.length} visible=${merged.length}',
+              'seedPartial=${seedSyntheticSoFar.length} visible=${visible.length}',
             );
-            onProgress(merged);
+            onProgress(visible);
           },
           shouldContinue: shouldContinue,
         );
@@ -2500,8 +2550,9 @@ class TransportApi {
     );
 
     if (synthetic.isEmpty) return journeys;
-    final merged = _dedupeAndSortJourneys([...journeys, ...synthetic])
-        .where((journey) {
+    final merged = _dedupeAndSortJourneys([...journeys, ...synthetic]);
+    final bounded = _limitSyntheticToBaseRideWindow(merged);
+    final visible = bounded.where((journey) {
       return _journeyMatchesQueryWindow(
         journey,
         when: when,
@@ -2509,9 +2560,9 @@ class TransportApi {
       );
     }).toList();
     _syntheticLog(
-      'augment merged ${from.name} -> ${to.name}: final=${merged.length}',
+      'augment merged ${from.name} -> ${to.name}: final=${visible.length}',
     );
-    return merged;
+    return visible;
   }
 
   /// Get nearby stops by coordinates
