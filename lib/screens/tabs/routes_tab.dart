@@ -511,8 +511,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isRouteSearchCancelled(int token) =>
       _cancelledRouteSearchTokens.contains(token);
 
-  void _setRouteLoadPhases(Set<String> phases) {
-    if (!mounted) return;
+  void _setRouteLoadPhasesForToken(int token, Set<String> phases) {
+    if (!mounted ||
+        _activeRouteSearchToken != token ||
+        _isRouteSearchCancelled(token)) {
+      return;
+    }
     setState(() => _activeRouteLoadPhases = phases);
   }
 
@@ -527,17 +531,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return Colors.red;
     }
     return colors.searchBtnText;
-  }
-
-  void _finishRouteSearchLoading(int token) {
-    if (!mounted || _activeRouteSearchToken != token || !_isLoadingRoute) {
-      return;
-    }
-    setState(() {
-      _activeRouteSearchToken = null;
-      _isLoadingRoute = false;
-      _activeRouteLoadPhases = <String>{};
-    });
   }
 
   void _disposeRouteSearch(int token) {
@@ -2777,7 +2770,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival,
-          onLoadStateChanged: _setRouteLoadPhases,
+          onLoadStateChanged: (phases) =>
+              _setRouteLoadPhasesForToken(searchToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(searchToken),
           onPartialResults: (partial) {
         if (!mounted || _isRouteSearchCancelled(searchToken)) {
@@ -2793,7 +2787,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.addSyntheticDebugLog(
             'ui: created tab id=$currentTabId partial=${partial.length}',
           );
-          _finishRouteSearchLoading(searchToken);
         } else {
           TransportApi.addSyntheticDebugLog(
             'ui: update tab id=$currentTabId partial=${partial.length}',
@@ -2817,7 +2810,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.addSyntheticDebugLog(
             'ui: created tab from final id=$currentTabId results=${res.length}',
           );
-          _finishRouteSearchLoading(searchToken);
         }
         if (_isRouteSearchCancelled(searchToken)) return;
         await SearchHistoryManager.saveJourney(from, _toStation!);
@@ -3322,8 +3314,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         width: double.infinity,
                         height: 56,
                         child: Builder(builder: (context) {
-                          final loadingColor =
-                              _routeLoadingColor(TransColors.of(context));
                           return ElevatedButton(
                             onPressed: _isLoadingRoute
                                 ? _cancelRouteSearch
@@ -3342,7 +3332,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                           height: 24,
                                           child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: loadingColor)),
+                                              color: colors.searchBtnText)),
                                       const SizedBox(width: 12),
                                       Text(AppLocalizations.of(context)!.cancel,
                                           style: const TextStyle(
@@ -4176,17 +4166,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
-      final visibleResults = Completer<void>();
-      var deliveredAny = false;
-
-      void completeVisibleResults() {
-        if (deliveredAny) return;
-        deliveredAny = true;
-        _finishRouteSearchLoading(loadToken);
-        if (!visibleResults.isCompleted) {
-          visibleResults.complete();
-        }
-      }
 
       void appendResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty ||
@@ -4224,33 +4203,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
           }
         });
-        completeVisibleResults();
       }
 
-      unawaited(TransportApi.searchJourneys(
+      final newResults = await TransportApi.searchJourneys(
         originStation,
         route.destination,
         nahverkehrOnly: widget.onlyNahverkehr,
         when: refDate,
         isArrival: isArrival,
         results: 5,
-        onLoadStateChanged: _setRouteLoadPhases,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(loadToken, phases),
         shouldContinue: () => !_isRouteSearchCancelled(loadToken),
         onPartialResults: appendResults,
-      ).then((newResults) {
-        appendResults(newResults);
-        if (!visibleResults.isCompleted) {
-          visibleResults.complete();
-        }
-      }).catchError((error) {
-        if (!visibleResults.isCompleted) {
-          visibleResults.completeError(error);
-        }
-      }).whenComplete(() {
-        _disposeRouteSearch(loadToken);
-      }));
-
-      await visibleResults.future;
+      );
+      if (_isRouteSearchCancelled(loadToken) || !mounted) return;
+      appendResults(newResults);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -4258,9 +4226,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 .couldNotLoadMoreRoutes(e.toString()))));
       }
     } finally {
-      if (!_isRouteSearchCancelled(loadToken)) {
-        _finishRouteSearchLoading(loadToken);
-      }
+      _disposeRouteSearch(loadToken);
     }
   }
 
@@ -4272,6 +4238,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
     });
 
     try {
@@ -4315,8 +4282,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         hasRefreshResults = true;
 
         setState(() {
-          _isLoadingRoute = false;
-          _activeRouteSearchToken = null;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4332,6 +4297,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         when: refDate,
         isArrival: false,
         results: 5,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(refreshToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(refreshToken),
         onPartialResults: handleResults,
       );
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
@@ -4488,6 +4456,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
     });
 
     try {
@@ -4530,8 +4499,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final updatedSignature = _savedJourneyRealtimeSignature(upd);
           final hasChanged = updatedSignature != previousSignature;
           setState(() {
-            _isLoadingRoute = false;
-            _activeRouteSearchToken = null;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
             if (freshIdx != -1) {
               final latest = _tabs[freshIdx];
@@ -4568,6 +4535,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isArrival: false,
         // We only need a compact window around the active trip to merge live updates.
         results: _activeJourneyRefreshWindowSize,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(refreshToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(refreshToken),
         onPartialResults: handleResults,
       );
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
@@ -4626,6 +4596,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     final colors = TransColors.of(context);
     return RefreshIndicator(
+      color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
       child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),

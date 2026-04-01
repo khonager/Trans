@@ -284,6 +284,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             // List of Routes
             Expanded(
               child: RefreshIndicator(
+                color: widget.loadingIndicatorColor,
                 onRefresh: widget.onRefresh ?? () async {},
                 child: ListView.builder(
                   padding: const EdgeInsets.fromLTRB(
