@@ -1813,6 +1813,83 @@ class TransportApi {
     return '$departure|$arrival|$firstLine';
   }
 
+  static Map<String, dynamic>? _firstRideLegFromJourney(
+    Map<String, dynamic> journey,
+  ) {
+    final legs = journey['legs'] as List?;
+    if (legs == null) return null;
+    for (final leg in legs.whereType<Map>()) {
+      final mapped = leg.cast<String, dynamic>();
+      if (mapped['line'] != null) return mapped;
+    }
+    return null;
+  }
+
+  static String? _journeyFirstRideKey(Map<String, dynamic> journey) {
+    final firstRide = _firstRideLegFromJourney(journey);
+    if (firstRide == null) return null;
+
+    final origin = (firstRide['origin'] as Map?)?.cast<String, dynamic>();
+    final originStopId = _stringOrNull(origin?['id']) ?? '';
+    final lineKey = _normalizeTransitKey(_journeyLegLineName(firstRide));
+    final directionKey = _normalizeTransitKey(firstRide['direction']);
+    final tripId = _journeyLegTripId(firstRide) ?? '';
+    final departure = _stringOrNull(
+          firstRide['plannedDeparture'] ?? firstRide['departure'],
+        ) ??
+        '';
+
+    if (originStopId.isEmpty &&
+        lineKey.isEmpty &&
+        directionKey.isEmpty &&
+        tripId.isEmpty &&
+        departure.isEmpty) {
+      return null;
+    }
+
+    return '$originStopId|$lineKey|$directionKey|$tripId|$departure';
+  }
+
+  static int _journeySyntheticPreferenceScore(Map<String, dynamic> journey) {
+    final source = journey['source']?.toString();
+    if (source == 'motis_synthetic') return 1;
+    return 0;
+  }
+
+  static int _compareJourneyPreference(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final sourceScore =
+        _journeySyntheticPreferenceScore(a).compareTo(
+          _journeySyntheticPreferenceScore(b),
+        );
+    if (sourceScore != 0) return sourceScore;
+
+    final arrivalA = _parseJourneyTimeLocal(
+      a['plannedArrival'] ?? a['arrival'],
+    );
+    final arrivalB = _parseJourneyTimeLocal(
+      b['plannedArrival'] ?? b['arrival'],
+    );
+    if (arrivalA != null && arrivalB != null) {
+      final arrivalCompare = arrivalA.compareTo(arrivalB);
+      if (arrivalCompare != 0) return arrivalCompare;
+    }
+
+    final departureA = _parseJourneyTimeLocal(
+      a['plannedDeparture'] ?? a['departure'],
+    );
+    final departureB = _parseJourneyTimeLocal(
+      b['plannedDeparture'] ?? b['departure'],
+    );
+    if (departureA != null && departureB != null) {
+      return departureA.compareTo(departureB);
+    }
+
+    return 0;
+  }
+
   static List<Map<String, dynamic>> _dedupeAndSortJourneys(
     List<Map<String, dynamic>> journeys,
   ) {
@@ -1823,7 +1900,29 @@ class TransportApi {
       if (seen.add(key)) deduped.add(journey);
     }
 
-    deduped.sort((a, b) {
+    final firstRideDeduped = <Map<String, dynamic>>[];
+    final firstRideIndex = <String, int>{};
+    for (final journey in deduped) {
+      final firstRideKey = _journeyFirstRideKey(journey);
+      if (firstRideKey == null) {
+        firstRideDeduped.add(journey);
+        continue;
+      }
+
+      final existingIndex = firstRideIndex[firstRideKey];
+      if (existingIndex == null) {
+        firstRideIndex[firstRideKey] = firstRideDeduped.length;
+        firstRideDeduped.add(journey);
+        continue;
+      }
+
+      final existing = firstRideDeduped[existingIndex];
+      if (_compareJourneyPreference(journey, existing) < 0) {
+        firstRideDeduped[existingIndex] = journey;
+      }
+    }
+
+    firstRideDeduped.sort((a, b) {
       final depA = _parseJourneyTimeLocal(
         a['plannedDeparture'] ?? a['departure'],
       );
@@ -1833,7 +1932,7 @@ class TransportApi {
       if (depA == null || depB == null) return 0;
       return depA.compareTo(depB);
     });
-    return deduped;
+    return firstRideDeduped;
   }
 
   static Map<String, dynamic> _buildSyntheticJourney(
