@@ -45,6 +45,7 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onRefresh;
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
+  final bool isBackgroundLoading;
 
   const RouteResultsView({
     super.key,
@@ -56,6 +57,7 @@ class RouteResultsView extends StatefulWidget {
     this.onRefresh,
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
+    this.isBackgroundLoading = false,
   });
 
   @override
@@ -296,6 +298,20 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 ],
               ),
             ),
+            if (widget.isBackgroundLoading &&
+                !_isLoadingMoreEarlier &&
+                !_isLoadingMoreLater)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: widget.loadingIndicatorColor,
+                  ),
+                ),
+              ),
 
             // List of Routes
             Expanded(

@@ -528,6 +528,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isRouteSearchCancelled(int token) =>
       _cancelledRouteSearchTokens.contains(token);
 
+  void _releaseBlockingRouteLoad(int token) {
+    if (!mounted || _activeRouteSearchToken != token || !_isLoadingRoute) {
+      return;
+    }
+    setState(() {
+      _isLoadingRoute = false;
+    });
+  }
+
+  void _cancelActiveBackgroundRouteSearch() {
+    final token = _activeRouteSearchToken;
+    if (token == null || _isLoadingRoute) return;
+    _cancelledRouteSearchTokens.add(token);
+    if (!mounted) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _activeRouteLoadPhases = <String>{};
+    });
+  }
+
   void _setRouteLoadPhasesForToken(int token, Set<String> phases) {
     if (!mounted ||
         _activeRouteSearchToken != token ||
@@ -2670,6 +2690,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _findRoutes() async {
+    _cancelActiveBackgroundRouteSearch();
     if (_isLoadingRoute) return;
     TransportApi.clearSyntheticDebugLog();
     TransportApi.addSyntheticDebugLog('ui: find routes tapped');
@@ -2810,6 +2831,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           );
           _updateTabCandidates(currentTabId!, partial);
         }
+        _releaseBlockingRouteLoad(searchToken);
       }).timeout(const Duration(seconds: 20));
 
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;
@@ -2827,6 +2849,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.addSyntheticDebugLog(
             'ui: created tab from final id=$currentTabId results=${res.length}',
           );
+          _releaseBlockingRouteLoad(searchToken);
         }
         if (_isRouteSearchCancelled(searchToken)) return;
         await SearchHistoryManager.saveJourney(from, _toStation!);
@@ -4154,6 +4177,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _loadMoreRoutes(RouteTab route, {required bool earlier}) async {
+    _cancelActiveBackgroundRouteSearch();
     if (_isLoadingRoute) return;
     final loadToken = ++_nextRouteSearchToken;
 
@@ -4183,6 +4207,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final visibleResults = Completer<void>();
 
       void appendResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty ||
@@ -4220,22 +4245,40 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
           }
         });
+        _releaseBlockingRouteLoad(loadToken);
+        if (!visibleResults.isCompleted) {
+          visibleResults.complete();
+        }
       }
 
-      final newResults = await TransportApi.searchJourneys(
-        originStation,
-        route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate,
-        isArrival: isArrival,
-        results: 5,
-        onLoadStateChanged: (phases) =>
-            _setRouteLoadPhasesForToken(loadToken, phases),
-        shouldContinue: () => !_isRouteSearchCancelled(loadToken),
-        onPartialResults: appendResults,
+      unawaited(
+        TransportApi.searchJourneys(
+          originStation,
+          route.destination,
+          nahverkehrOnly: widget.onlyNahverkehr,
+          when: refDate,
+          isArrival: isArrival,
+          results: 5,
+          onLoadStateChanged: (phases) =>
+              _setRouteLoadPhasesForToken(loadToken, phases),
+          shouldContinue: () => !_isRouteSearchCancelled(loadToken),
+          onPartialResults: appendResults,
+        ).then((newResults) {
+          if (_isRouteSearchCancelled(loadToken) || !mounted) return;
+          appendResults(newResults);
+          if (!visibleResults.isCompleted) {
+            visibleResults.complete();
+          }
+        }).catchError((error) {
+          if (!visibleResults.isCompleted) {
+            visibleResults.completeError(error);
+          }
+        }).whenComplete(() {
+          _disposeRouteSearch(loadToken);
+        }),
       );
-      if (_isRouteSearchCancelled(loadToken) || !mounted) return;
-      appendResults(newResults);
+
+      await visibleResults.future;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -4243,7 +4286,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 .couldNotLoadMoreRoutes(e.toString()))));
       }
     } finally {
-      _disposeRouteSearch(loadToken);
+      _releaseBlockingRouteLoad(loadToken);
     }
   }
 
@@ -4608,6 +4651,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         onRefresh: () => _refreshRoutes(route),
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
+        isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
       );
     }
 

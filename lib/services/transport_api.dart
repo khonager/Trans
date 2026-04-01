@@ -1938,6 +1938,24 @@ class TransportApi {
     }).toList();
   }
 
+  static ({DateTime? minDeparture, DateTime? maxDeparture})
+      _baseRideDepartureWindow(List<Map<String, dynamic>> journeys) {
+    DateTime? minDeparture;
+    DateTime? maxDeparture;
+    for (final journey in journeys) {
+      if (journey['source']?.toString() == 'motis_synthetic') continue;
+      final departure = _journeyFirstRideDepartureLocal(journey);
+      if (departure == null) continue;
+      if (minDeparture == null || departure.isBefore(minDeparture)) {
+        minDeparture = departure;
+      }
+      if (maxDeparture == null || departure.isAfter(maxDeparture)) {
+        maxDeparture = departure;
+      }
+    }
+    return (minDeparture: minDeparture, maxDeparture: maxDeparture);
+  }
+
   static List<Map<String, dynamic>> _dedupeAndSortJourneys(
     List<Map<String, dynamic>> journeys,
   ) {
@@ -2050,6 +2068,8 @@ class TransportApi {
   static Future<List<Map<String, dynamic>>> _expandSyntheticSeedViaSharedFamily(
     _SyntheticSeed seed,
     List<Map<String, dynamic>> matchingFirstDepartures, {
+    DateTime? minSyntheticDeparture,
+    DateTime? maxSyntheticDeparture,
     void Function(List<Map<String, dynamic>> syntheticSoFar)? onProgress,
     bool Function()? shouldContinue,
   }) async {
@@ -2123,6 +2143,15 @@ class TransportApi {
       if (firstTripId == null || firstTripId.isEmpty) continue;
 
       final firstDepartureTime = _stopDepartureDateTimeLocal(departure);
+      if (firstDepartureTime == null) continue;
+      if (minSyntheticDeparture != null &&
+          firstDepartureTime.isBefore(minSyntheticDeparture)) {
+        continue;
+      }
+      if (maxSyntheticDeparture != null &&
+          firstDepartureTime.isAfter(maxSyntheticDeparture)) {
+        continue;
+      }
       final firstTripItinerary = await _fetchTripItineraryCached(firstTripId);
       if (firstTripItinerary == null) {
         continue;
@@ -2254,6 +2283,8 @@ class TransportApi {
     _SyntheticSeed seed,
     Station destination, {
     required bool nahverkehrOnly,
+    DateTime? minSyntheticDeparture,
+    DateTime? maxSyntheticDeparture,
     void Function(List<Map<String, dynamic>> syntheticSoFar)? onProgress,
     bool Function()? shouldContinue,
   }) async {
@@ -2302,6 +2333,15 @@ class TransportApi {
         tooEarly++;
         return false;
       }
+      if (minSyntheticDeparture != null &&
+          time.isBefore(minSyntheticDeparture)) {
+        tooEarly++;
+        return false;
+      }
+      if (maxSyntheticDeparture != null &&
+          time.isAfter(maxSyntheticDeparture)) {
+        return false;
+      }
       if (_stopDepartureLineKey(departure) != seed.lineKey) {
         lineMismatch++;
         return false;
@@ -2341,6 +2381,8 @@ class TransportApi {
       final sharedSynthetic = await _expandSyntheticSeedViaSharedFamily(
         seed,
         matchingDepartures,
+        minSyntheticDeparture: minSyntheticDeparture,
+        maxSyntheticDeparture: maxSyntheticDeparture,
         onProgress: onProgress,
         shouldContinue: shouldContinue,
       );
@@ -2504,6 +2546,7 @@ class TransportApi {
       'motis=$motisJourneys transferCandidates=$transferCandidates seeds=${seeds.length}',
     );
     if (seeds.isEmpty) return journeys;
+    final rideWindow = _baseRideDepartureWindow(journeys);
 
     final synthetic = <Map<String, dynamic>>[];
     for (final seed in seeds) {
@@ -2516,6 +2559,8 @@ class TransportApi {
           seed,
           to,
           nahverkehrOnly: nahverkehrOnly,
+          minSyntheticDeparture: rideWindow.minDeparture,
+          maxSyntheticDeparture: rideWindow.maxDeparture,
           onProgress: (seedSyntheticSoFar) {
             if (onProgress == null) return;
             final merged = _dedupeAndSortJourneys([
