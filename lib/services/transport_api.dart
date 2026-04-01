@@ -76,11 +76,8 @@ class TransportApi {
   static const Duration _syntheticStopDeparturesCacheTtl =
       Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
-  static const Duration _syntheticDepartureWindow = Duration(minutes: 30);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
-  static const int _maxSyntheticSeedGroups = 2;
-  static const int _maxSyntheticAlternativesPerSeed = 2;
-  static const int _maxSyntheticJourneysTotal = 4;
+  static const int _syntheticOnwardResultsPerDeparture = 6;
   static const List<String> _nonDeutschlandticketServiceTokens = [
     'ICE',
     'IC',
@@ -1720,15 +1717,26 @@ class TransportApi {
     _SyntheticSeed seed,
     Station destination, {
     required bool nahverkehrOnly,
-    required int remainingBudget,
   }) async {
-    if (remainingBudget <= 0) return const <Map<String, dynamic>>[];
+    final dayStart = DateTime(
+      seed.firstDeparture.year,
+      seed.firstDeparture.month,
+      seed.firstDeparture.day,
+    );
+    final dayEnd = DateTime(
+      seed.firstDeparture.year,
+      seed.firstDeparture.month,
+      seed.firstDeparture.day,
+      23,
+      59,
+      59,
+    );
 
     final departures = await _fetchMotisStopDeparturesWindow(
       seed.originStopId,
-      startLocal: seed.firstDeparture.subtract(const Duration(minutes: 1)),
-      endLocal: seed.firstDeparture.add(_syntheticDepartureWindow),
-      maxResults: 40,
+      startLocal: dayStart,
+      endLocal: dayEnd,
+      maxResults: 400,
     );
     if (departures.isEmpty) return const <Map<String, dynamic>>[];
 
@@ -1759,11 +1767,8 @@ class TransportApi {
 
     final synthetic = <Map<String, dynamic>>[];
     final seenTrips = <String>{};
-    final maxForSeed = math.min(_maxSyntheticAlternativesPerSeed, remainingBudget);
 
     for (final departure in matchingDepartures) {
-      if (synthetic.length >= maxForSeed) break;
-
       final tripId = _stopDepartureTripId(departure);
       if (tripId == null || !seenTrips.add(tripId)) continue;
 
@@ -1800,18 +1805,20 @@ class TransportApi {
         nahverkehrOnly: nahverkehrOnly,
         when: firstRideArrival.add(_syntheticTransferSlack),
         isArrival: false,
-        results: 1,
+        results: _syntheticOnwardResultsPerDeparture,
       );
       if (onwardJourneys.isEmpty) continue;
 
-      synthetic.add(
-        _buildSyntheticJourney(
-          seed,
-          syntheticFirstRide,
-          onwardJourneys.first,
-          tripId,
-        ),
-      );
+      for (final onwardJourney in onwardJourneys) {
+        synthetic.add(
+          _buildSyntheticJourney(
+            seed,
+            syntheticFirstRide,
+            onwardJourney,
+            tripId,
+          ),
+        );
+      }
     }
 
     return synthetic;
@@ -1834,20 +1841,16 @@ class TransportApi {
       final seed = _syntheticSeedFromJourney(journey);
       if (seed == null || !seenSeedKeys.add(seed.dedupeKey)) continue;
       seeds.add(seed);
-      if (seeds.length >= _maxSyntheticSeedGroups) break;
     }
     if (seeds.isEmpty) return journeys;
 
     final synthetic = <Map<String, dynamic>>[];
     for (final seed in seeds) {
-      final remainingBudget = _maxSyntheticJourneysTotal - synthetic.length;
-      if (remainingBudget <= 0) break;
       try {
         final expanded = await _expandSyntheticSeed(
           seed,
           to,
           nahverkehrOnly: nahverkehrOnly,
-          remainingBudget: remainingBudget,
         );
         synthetic.addAll(expanded);
       } catch (error) {
