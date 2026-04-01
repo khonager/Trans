@@ -21,6 +21,7 @@ class _SyntheticSeed {
   final Map<String, dynamic> journey;
   final Map<String, dynamic> firstRide;
   final Map<String, dynamic> transferRide;
+  final bool supportsSharedFamilyExpansion;
   final DateTime firstDeparture;
   final String originStopId;
   final String originStopName;
@@ -31,12 +32,18 @@ class _SyntheticSeed {
   final String transferStopName;
   final double? transferLat;
   final double? transferLng;
+  final String secondLineKey;
+  final String secondDirectionKey;
+  final String secondDestinationStopId;
+  final String secondDestinationStopName;
+  final List<Map<String, dynamic>> trailingLegs;
   final String dedupeKey;
 
   const _SyntheticSeed({
     required this.journey,
     required this.firstRide,
     required this.transferRide,
+    required this.supportsSharedFamilyExpansion,
     required this.firstDeparture,
     required this.originStopId,
     required this.originStopName,
@@ -47,6 +54,11 @@ class _SyntheticSeed {
     required this.transferStopName,
     required this.transferLat,
     required this.transferLng,
+    required this.secondLineKey,
+    required this.secondDirectionKey,
+    required this.secondDestinationStopId,
+    required this.secondDestinationStopName,
+    required this.trailingLegs,
     required this.dedupeKey,
   });
 }
@@ -1329,6 +1341,12 @@ class TransportApi {
     return text;
   }
 
+  static List<Map<String, dynamic>> _copyLegList(List? rawLegs) => rawLegs
+      ?.whereType<Map>()
+      .map((leg) => Map<String, dynamic>.from(leg))
+      .toList() ??
+      const <Map<String, dynamic>>[];
+
   static double? _locationLat(Map<String, dynamic>? location) {
     final loc = location?['location'] as Map<String, dynamic>?;
     return (loc?['latitude'] as num?)?.toDouble() ??
@@ -1351,17 +1369,23 @@ class TransportApi {
     final rawLegs = journey['legs'] as List?;
     if (rawLegs == null || rawLegs.isEmpty) return null;
 
-    final rideLegs = rawLegs
-        .whereType<Map>()
-        .map((leg) => Map<String, dynamic>.from(leg))
-        .where((leg) => leg['line'] != null)
-        .toList();
+    final mappedRawLegs = _copyLegList(rawLegs);
+    final rideIndices = <int>[];
+    for (var index = 0; index < mappedRawLegs.length; index++) {
+      if (mappedRawLegs[index]['line'] != null) {
+        rideIndices.add(index);
+      }
+    }
+    final rideLegs =
+        rideIndices.map((index) => mappedRawLegs[index]).toList(growable: false);
     if (rideLegs.length < 2) return null;
 
     final firstRide = rideLegs.first;
     final transferRide = rideLegs[1];
     final origin = (firstRide['origin'] as Map?)?.cast<String, dynamic>();
     final transfer = (transferRide['origin'] as Map?)?.cast<String, dynamic>();
+    final secondDestination =
+        (transferRide['destination'] as Map?)?.cast<String, dynamic>();
     if (origin == null || transfer == null) return null;
 
     final firstDeparture = _parseJourneyTimeLocal(
@@ -1379,11 +1403,27 @@ class TransportApi {
     final transferStopId = _stringOrNull(transfer['id']) ?? '';
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
+    final secondLineKey = _normalizeTransitKey(_journeyLegLineName(transferRide));
+    final secondDirectionKey = _normalizeTransitKey(transferRide['direction']);
+    final secondDestinationStopId =
+        _stringOrNull(secondDestination?['id']) ?? '';
+    final secondDestinationStopName =
+        _stringOrNull(secondDestination?['name']) ?? '';
+    final secondRideIndex = rideIndices[1];
+    final trailingLegs = secondRideIndex + 1 < mappedRawLegs.length
+        ? mappedRawLegs.sublist(secondRideIndex + 1)
+        : const <Map<String, dynamic>>[];
+    final supportsSharedFamilyExpansion = rideLegs.length == 2 &&
+        secondLineKey.isNotEmpty &&
+        secondDirectionKey.isNotEmpty &&
+        (secondDestinationStopId.isNotEmpty || secondDestinationStopName.isNotEmpty) &&
+        trailingLegs.every((leg) => leg['line'] == null);
 
     return _SyntheticSeed(
       journey: journey,
       firstRide: firstRide,
       transferRide: transferRide,
+      supportsSharedFamilyExpansion: supportsSharedFamilyExpansion,
       firstDeparture: firstDeparture,
       originStopId: originStopId,
       originStopName: _stringOrNull(origin['name']) ?? '',
@@ -1394,8 +1434,14 @@ class TransportApi {
       transferStopName: transferStopName,
       transferLat: _locationLat(transfer),
       transferLng: _locationLng(transfer),
+      secondLineKey: secondLineKey,
+      secondDirectionKey: secondDirectionKey,
+      secondDestinationStopId: secondDestinationStopId,
+      secondDestinationStopName: secondDestinationStopName,
+      trailingLegs: trailingLegs,
       dedupeKey:
-          '$originStopId|$lineKey|$directionKey|$transferStopId|$transferStopName',
+          '$originStopId|$lineKey|$directionKey|$transferStopId|$transferStopName'
+          '|$secondLineKey|$secondDirectionKey|$secondDestinationStopId|$secondDestinationStopName',
     );
   }
 
@@ -1592,7 +1638,25 @@ class TransportApi {
     _SyntheticSeed seed,
     Map<String, dynamic> tripItinerary,
     String tripId,
-  ) {
+  ) => _buildSyntheticRideSegment(
+        templateRide: seed.firstRide,
+        tripItinerary: tripItinerary,
+        tripId: tripId,
+        fromStopId: seed.originStopId,
+        fromStopName: seed.originStopName,
+        toStopId: seed.transferStopId,
+        toStopName: seed.transferStopName,
+      );
+
+  static Map<String, dynamic>? _buildSyntheticRideSegment({
+    required Map<String, dynamic> templateRide,
+    required Map<String, dynamic> tripItinerary,
+    required String tripId,
+    required String fromStopId,
+    required String fromStopName,
+    required String toStopId,
+    required String toStopName,
+  }) {
     final legs = (tripItinerary['legs'] as List?)
             ?.whereType<Map>()
             .map((leg) => Map<String, dynamic>.from(leg))
@@ -1602,39 +1666,39 @@ class TransportApi {
 
     for (final tripLeg in legs) {
       final sequence = _tripLegStopSequence(tripLeg);
-      final originIndex =
-          _tripStopIndex(sequence, seed.originStopId, seed.originStopName);
-      final transferIndex =
-          _tripStopIndex(sequence, seed.transferStopId, seed.transferStopName);
-      if (originIndex == -1 ||
-          transferIndex == -1 ||
-          transferIndex <= originIndex) {
+      final fromIndex = _tripStopIndex(sequence, fromStopId, fromStopName);
+      final toIndex = _tripStopIndex(sequence, toStopId, toStopName);
+      if (fromIndex == -1 || toIndex == -1 || toIndex <= fromIndex) {
         continue;
       }
 
-      final originStop = sequence[originIndex];
-      final transferStop = sequence[transferIndex];
+      final originStop = sequence[fromIndex];
+      final transferStop = sequence[toIndex];
       final departure = _stringOrNull(
-        originStop['departure'] ?? originStop['scheduledDeparture'],
+        originStop['departure'] ??
+            originStop['scheduledDeparture'] ??
+            originStop['arrival'] ??
+            originStop['scheduledArrival'],
       );
       final arrival = _stringOrNull(
-        transferStop['arrival'] ?? transferStop['scheduledArrival'],
+        transferStop['arrival'] ??
+            transferStop['scheduledArrival'] ??
+            transferStop['departure'] ??
+            transferStop['scheduledDeparture'],
       );
       if (departure == null || arrival == null) continue;
 
-      final line = (seed.firstRide['line'] as Map?)?.cast<String, dynamic>() !=
-              null
+      final line = (templateRide['line'] as Map?)?.cast<String, dynamic>() != null
           ? Map<String, dynamic>.from(
-              (seed.firstRide['line'] as Map).cast<String, dynamic>(),
+              (templateRide['line'] as Map).cast<String, dynamic>(),
             )
-          : <String, dynamic>{'name': _journeyLegLineName(seed.firstRide)};
+          : <String, dynamic>{'name': _journeyLegLineName(templateRide)};
       if (tripId.isNotEmpty) {
         line['tripId'] = tripId;
-        line['fahrtNr'] ??= tripId;
       }
 
       final intermediateStopovers = sequence
-          .sublist(originIndex + 1, transferIndex)
+          .sublist(fromIndex + 1, toIndex)
           .map(_journeyStopoverFromTripStop)
           .toList();
       final originPlace =
@@ -1648,29 +1712,84 @@ class TransportApi {
         'departure': departure,
         'arrival': arrival,
         'plannedDeparture':
-            originStop['scheduledDeparture'] ?? originStop['departure'],
+            originStop['scheduledDeparture'] ??
+                originStop['departure'] ??
+                originStop['scheduledArrival'] ??
+                originStop['arrival'],
         'plannedArrival':
-            transferStop['scheduledArrival'] ?? transferStop['arrival'],
+            transferStop['scheduledArrival'] ??
+                transferStop['arrival'] ??
+                transferStop['scheduledDeparture'] ??
+                transferStop['departure'],
         'departureDelay': _delaySecondsFromStrings(
-          originStop['scheduledDeparture']?.toString(),
-          originStop['departure']?.toString(),
+          (originStop['scheduledDeparture'] ?? originStop['scheduledArrival'])
+              ?.toString(),
+          (originStop['departure'] ?? originStop['arrival'])?.toString(),
         ),
         'arrivalDelay': _delaySecondsFromStrings(
-          transferStop['scheduledArrival']?.toString(),
-          transferStop['arrival']?.toString(),
+          (transferStop['scheduledArrival'] ??
+                  transferStop['scheduledDeparture'])
+              ?.toString(),
+          (transferStop['arrival'] ?? transferStop['departure'])?.toString(),
         ),
         'reachable': true,
         'line': line,
-        'direction': seed.firstRide['direction'],
+        'direction': templateRide['direction'],
         if (intermediateStopovers.isNotEmpty) 'stopovers': intermediateStopovers,
-        if (seed.firstRide['polyline'] != null) 'polyline': seed.firstRide['polyline'],
-        if (seed.firstRide['decodedPath'] != null)
-          'decodedPath': seed.firstRide['decodedPath'],
+        if (templateRide['polyline'] != null) 'polyline': templateRide['polyline'],
+        if (templateRide['decodedPath'] != null)
+          'decodedPath': templateRide['decodedPath'],
         'tripId': tripId,
       };
     }
 
     return null;
+  }
+
+  static String? _shiftIsoTimeString(Object? value, Duration delta) {
+    final parsed = _parseJourneyTimeLocal(value);
+    if (parsed == null) return value?.toString();
+    return parsed.add(delta).toIso8601String();
+  }
+
+  static Map<String, dynamic> _shiftLegTimes(
+    Map<String, dynamic> leg,
+    Duration delta,
+  ) {
+    final shifted = Map<String, dynamic>.from(leg);
+    for (final key in const [
+      'departure',
+      'arrival',
+      'plannedDeparture',
+      'plannedArrival',
+    ]) {
+      if (shifted.containsKey(key)) {
+        shifted[key] = _shiftIsoTimeString(shifted[key], delta);
+      }
+    }
+
+    final rawStopovers = shifted['stopovers'] as List?;
+    if (rawStopovers != null) {
+      shifted['stopovers'] = rawStopovers
+          .whereType<Map>()
+          .map((stopover) {
+            final mapped = Map<String, dynamic>.from(stopover);
+            for (final key in const [
+              'arrival',
+              'departure',
+              'plannedArrival',
+              'plannedDeparture',
+            ]) {
+              if (mapped.containsKey(key)) {
+                mapped[key] = _shiftIsoTimeString(mapped[key], delta);
+              }
+            }
+            return mapped;
+          })
+          .toList();
+    }
+
+    return shifted;
   }
 
   static String _journeyKey(Map<String, dynamic> journey) {
@@ -1749,6 +1868,217 @@ class TransportApi {
       'syntheticBaseDeparture': seed.firstDeparture.toUtc().toIso8601String(),
       'syntheticTripId': tripId,
     };
+  }
+
+  static Map<String, dynamic> _buildSyntheticJourneyFromLegs(
+    _SyntheticSeed seed,
+    List<Map<String, dynamic>> legs, {
+    required String firstTripId,
+    String? secondTripId,
+  }) {
+    final firstLeg = legs.first;
+    final lastLeg = legs.last;
+    return {
+      'type': 'journey',
+      'legs': legs,
+      'departure': firstLeg['departure'] ?? firstLeg['plannedDeparture'],
+      'arrival': lastLeg['arrival'] ??
+          lastLeg['plannedArrival'] ??
+          lastLeg['departure'] ??
+          lastLeg['plannedDeparture'],
+      'plannedDeparture':
+          firstLeg['plannedDeparture'] ?? firstLeg['departure'],
+      'plannedArrival': lastLeg['plannedArrival'] ??
+          lastLeg['arrival'] ??
+          lastLeg['plannedDeparture'] ??
+          lastLeg['departure'],
+      'source': 'motis_synthetic',
+      'synthetic': true,
+      'syntheticBaseDeparture': seed.firstDeparture.toUtc().toIso8601String(),
+      'syntheticTripId': firstTripId,
+      if (secondTripId != null) 'syntheticTransferTripId': secondTripId,
+    };
+  }
+
+  static Future<List<Map<String, dynamic>>> _expandSyntheticSeedViaSharedFamily(
+    _SyntheticSeed seed,
+    List<Map<String, dynamic>> matchingFirstDepartures, {
+    void Function(List<Map<String, dynamic>> syntheticSoFar)? onProgress,
+    bool Function()? shouldContinue,
+  }) async {
+    if (!seed.supportsSharedFamilyExpansion || seed.transferStopId.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final dayStart = DateTime(
+      seed.firstDeparture.year,
+      seed.firstDeparture.month,
+      seed.firstDeparture.day,
+    );
+    final dayEnd = DateTime(
+      seed.firstDeparture.year,
+      seed.firstDeparture.month,
+      seed.firstDeparture.day,
+      23,
+      59,
+      59,
+    );
+
+    final secondDepartures = await _fetchMotisStopDeparturesWindow(
+      seed.transferStopId,
+      startLocal: dayStart,
+      endLocal: dayEnd,
+      maxResults: 400,
+    );
+    final matchingSecondDepartures = secondDepartures.where((departure) {
+      final time = _stopDepartureDateTimeLocal(departure);
+      if (time == null) return false;
+      if (_stopDepartureLineKey(departure) != seed.secondLineKey) return false;
+      final directionKey = _stopDepartureDirectionKey(departure);
+      if (seed.secondDirectionKey.isNotEmpty &&
+          directionKey.isNotEmpty &&
+          directionKey != seed.secondDirectionKey) {
+        return false;
+      }
+      return _stopDepartureTripId(departure)?.isNotEmpty == true;
+    }).toList()
+      ..sort((a, b) {
+        final timeA = _stopDepartureDateTimeLocal(a);
+        final timeB = _stopDepartureDateTimeLocal(b);
+        if (timeA == null || timeB == null) return 0;
+        return timeA.compareTo(timeB);
+      });
+
+    if (matchingSecondDepartures.isEmpty) {
+      _syntheticLog(
+        'shared family unavailable: ${seed.dedupeKey} second departures=0',
+      );
+      return const <Map<String, dynamic>>[];
+    }
+
+    _syntheticLog(
+      'shared family ready: ${seed.dedupeKey} secondDepartures=${matchingSecondDepartures.length}',
+    );
+
+    final synthetic = <Map<String, dynamic>>[];
+    var lastProgressCount = 0;
+    final baseSecondArrival = _parseJourneyTimeLocal(
+      seed.transferRide['arrival'] ?? seed.transferRide['plannedArrival'],
+    );
+
+    for (final departure in matchingFirstDepartures) {
+      if (!(shouldContinue?.call() ?? true)) {
+        _syntheticLog('shared family aborted: ${seed.dedupeKey}');
+        break;
+      }
+
+      final firstTripId = _stopDepartureTripId(departure);
+      if (firstTripId == null || firstTripId.isEmpty) continue;
+
+      final firstDepartureTime = _stopDepartureDateTimeLocal(departure);
+      final firstTripItinerary = await _fetchTripItineraryCached(firstTripId);
+      if (firstTripItinerary == null) {
+        continue;
+      }
+
+      final syntheticFirstRide = _buildSyntheticFirstRide(
+        seed,
+        firstTripItinerary,
+        firstTripId,
+      );
+      if (syntheticFirstRide == null) {
+        continue;
+      }
+
+      final firstRideArrival = _parseJourneyTimeLocal(
+        syntheticFirstRide['arrival'] ?? syntheticFirstRide['plannedArrival'],
+      );
+      if (firstRideArrival == null) {
+        continue;
+      }
+
+      final earliestSecondDeparture =
+          firstRideArrival.add(_syntheticTransferSlack);
+      Map<String, dynamic>? secondDeparture;
+      for (final candidate in matchingSecondDepartures) {
+        final candidateTime = _stopDepartureDateTimeLocal(candidate);
+        if (candidateTime == null ||
+            candidateTime.isBefore(earliestSecondDeparture)) {
+          continue;
+        }
+        secondDeparture = candidate;
+        break;
+      }
+      if (secondDeparture == null) {
+        _syntheticLog(
+          'shared family trip $firstTripId ${_formatDebugTime(firstDepartureTime)} '
+          'skipped: no matching second departure after ${_formatDebugTime(firstRideArrival)}',
+        );
+        continue;
+      }
+
+      final secondTripId = _stopDepartureTripId(secondDeparture);
+      if (secondTripId == null || secondTripId.isEmpty) continue;
+      final secondTripItinerary = await _fetchTripItineraryCached(secondTripId);
+      if (secondTripItinerary == null) {
+        continue;
+      }
+
+      final syntheticSecondRide = _buildSyntheticRideSegment(
+        templateRide: seed.transferRide,
+        tripItinerary: secondTripItinerary,
+        tripId: secondTripId,
+        fromStopId: seed.transferStopId,
+        fromStopName: seed.transferStopName,
+        toStopId: seed.secondDestinationStopId,
+        toStopName: seed.secondDestinationStopName,
+      );
+      if (syntheticSecondRide == null) {
+        _syntheticLog(
+          'shared family trip $firstTripId -> $secondTripId skipped: '
+          'second trip does not map ${seed.transferStopName} -> ${seed.secondDestinationStopName}',
+        );
+        continue;
+      }
+
+      final legs = <Map<String, dynamic>>[
+        syntheticFirstRide,
+        syntheticSecondRide,
+      ];
+      final syntheticSecondArrival = _parseJourneyTimeLocal(
+        syntheticSecondRide['arrival'] ?? syntheticSecondRide['plannedArrival'],
+      );
+      if (baseSecondArrival != null &&
+          syntheticSecondArrival != null &&
+          seed.trailingLegs.isNotEmpty) {
+        final delta = syntheticSecondArrival.difference(baseSecondArrival);
+        legs.addAll(
+          seed.trailingLegs.map((leg) => _shiftLegTimes(leg, delta)),
+        );
+      }
+
+      synthetic.add(
+        _buildSyntheticJourneyFromLegs(
+          seed,
+          legs,
+          firstTripId: firstTripId,
+          secondTripId: secondTripId,
+        ),
+      );
+
+      final shouldEmitProgress =
+          synthetic.length - lastProgressCount >= _syntheticProgressBatchSize;
+      if ((shouldContinue?.call() ?? true) && shouldEmitProgress) {
+        lastProgressCount = synthetic.length;
+        onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
+      }
+    }
+
+    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+      onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
+    }
+
+    return synthetic;
   }
 
   static bool _journeyMatchesQueryWindow(
@@ -1859,6 +2189,24 @@ class TransportApi {
       'missingTime=$missingTime tooEarly=$tooEarly lineMismatch=$lineMismatch '
       'directionMismatch=$directionMismatch missingTripId=$missingTripId sameBaseTrip=$sameBaseTrip',
     );
+
+    if (seed.supportsSharedFamilyExpansion) {
+      final sharedSynthetic = await _expandSyntheticSeedViaSharedFamily(
+        seed,
+        matchingDepartures,
+        onProgress: onProgress,
+        shouldContinue: shouldContinue,
+      );
+      if (sharedSynthetic.isNotEmpty) {
+        _syntheticLog(
+          'seed done: generated=${sharedSynthetic.length} '
+          'shared family for ${_journeyLegLineName(seed.firstRide)} -> '
+          '${_journeyLegLineName(seed.transferRide)}',
+        );
+        return sharedSynthetic;
+      }
+      _syntheticLog('shared family fallback: ${seed.dedupeKey}');
+    }
 
     final synthetic = <Map<String, dynamic>>[];
     final seenTrips = <String>{};
