@@ -81,7 +81,7 @@ class TransportApi {
       Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
-  static const int _syntheticOnwardResultsPerDeparture = 6;
+  static const int _syntheticOnwardResultsPerDeparture = 1;
   static const List<String> _nonDeutschlandticketServiceTokens = [
     'ICE',
     'IC',
@@ -1934,21 +1934,20 @@ class TransportApi {
         continue;
       }
 
+      final onwardJourney = onwardJourneys.first;
       _syntheticLog(
         'trip $tripId ${_formatDebugTime(departureTime)} -> ${seed.transferStopName} '
-        '${_formatDebugTime(firstRideArrival)} onward=${onwardJourneys.length}',
+        '${_formatDebugTime(firstRideArrival)} onward=1/${onwardJourneys.length}',
       );
 
-      for (final onwardJourney in onwardJourneys) {
-        synthetic.add(
-          _buildSyntheticJourney(
-            seed,
-            syntheticFirstRide,
-            onwardJourney,
-            tripId,
-          ),
-        );
-      }
+      synthetic.add(
+        _buildSyntheticJourney(
+          seed,
+          syntheticFirstRide,
+          onwardJourney,
+          tripId,
+        ),
+      );
       if (shouldContinue?.call() ?? true) {
         onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
       }
