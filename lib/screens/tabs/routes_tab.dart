@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -526,6 +527,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
     });
+  }
+
+  Future<void> _copySyntheticDebugLogs() async {
+    final logText = TransportApi.syntheticDebugLogText();
+    await Clipboard.setData(ClipboardData(text: logText));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Synthetic debug logs copied'),
+      duration: Duration(seconds: 2),
+    ));
   }
 
   void _cancelRouteSearch() {
@@ -2518,7 +2529,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
     Journey? activeJourney;
-    Station? dest;
+    Station? dest = destination ?? _toStation;
 
     if (candidatesData != null) {
       for (var d in candidatesData) {
@@ -2526,13 +2537,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           candidates.add(_createJourney(d));
         } catch (e) {/* ignore */}
       }
-      if (candidates.isNotEmpty) {
+      if (candidates.isNotEmpty && dest == null) {
         final lastLeg = candidates.first.rawSource['legs'].last;
         final destinationMap =
             (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
                 const <String, dynamic>{};
-        final destinationId =
-            destinationMap['id']?.toString() ?? destination?.id ?? '';
+        final destinationId = destinationMap['id']?.toString() ?? '';
         if (destinationId.isEmpty) return id;
         dest = Station(
             id: destinationId,
@@ -2545,25 +2555,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         activeJourney = _createJourney(singleJourneyData);
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
-        final destinationMap =
-            (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
-                const <String, dynamic>{};
-        final destinationId =
-            destinationMap['id']?.toString() ?? destination?.id ?? '';
-        if (destinationId.isEmpty) return id;
-        dest = Station(
-            id: destinationId,
-            name: destinationMap['name']?.toString() ??
-                AppLocalizations.of(context)!.destinationLabel,
-            type: "station");
+        if (dest == null) {
+          final destinationMap =
+              (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
+                  const <String, dynamic>{};
+          final destinationId = destinationMap['id']?.toString() ?? '';
+          if (destinationId.isEmpty) return id;
+          dest = Station(
+              id: destinationId,
+              name: destinationMap['name']?.toString() ??
+                  AppLocalizations.of(context)!.destinationLabel,
+              type: "station");
+        }
       } catch (_) {
         return id;
       }
     }
 
     if (dest == null) return id;
-
-    if (_toStation != null) dest = _toStation;
 
     setState(() {
       _tabs.add(RouteTab(
@@ -2630,6 +2639,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _findRoutes() async {
     if (_isLoadingRoute) return;
+    TransportApi.clearSyntheticDebugLog();
+    TransportApi.addSyntheticDebugLog('ui: find routes tapped');
     final l10n = AppLocalizations.of(context)!;
     final searchToken = ++_nextRouteSearchToken;
     setState(() {
@@ -2657,7 +2668,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               type: 'location',
               latitude: pos.latitude,
               longitude: pos.longitude);
+          TransportApi.addSyntheticDebugLog(
+            'ui: using current location ${pos.latitude},${pos.longitude}',
+          );
         } else {
+          TransportApi.addSyntheticDebugLog('ui: current location unavailable');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(l10n.locationNotAvailable)));
@@ -2672,10 +2687,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (results.isNotEmpty) {
             from = results.first;
             _fromStation = from;
+            TransportApi.addSyntheticDebugLog(
+              'ui: resolved from=${from.name} (${from.id})',
+            );
           } else {
+            TransportApi.addSyntheticDebugLog('ui: failed to resolve from');
             throw l10n.startNotFound;
           }
         } catch (e) {
+          TransportApi.addSyntheticDebugLog('ui: from lookup error=$e');
           if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
@@ -2692,10 +2712,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             _toStation = results.first;
+            TransportApi.addSyntheticDebugLog(
+              'ui: resolved to=${_toStation!.name} (${_toStation!.id})',
+            );
           } else {
+            TransportApi.addSyntheticDebugLog('ui: failed to resolve to');
             throw l10n.destinationNotFound;
           }
         } catch (e) {
+          TransportApi.addSyntheticDebugLog('ui: to lookup error=$e');
           if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
@@ -2721,19 +2746,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
       // But searchJourneys handles 'when'.
+      TransportApi.addSyntheticDebugLog(
+        'ui: search request from=${from.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
+      );
       String? currentTabId;
       final res = await TransportApi.searchJourneys(from, _toStation!,
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival, onPartialResults: (partial) {
         if (!mounted || _isRouteSearchCancelled(searchToken)) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+          );
           return;
         }
         if (currentTabId == null) {
           currentTabId = _addJourneyTab(
               candidatesData: partial, origin: from, destination: _toStation);
+          TransportApi.addSyntheticDebugLog(
+            'ui: created tab id=$currentTabId partial=${partial.length}',
+          );
           _finishRouteSearchLoading(searchToken);
         } else {
+          TransportApi.addSyntheticDebugLog(
+            'ui: update tab id=$currentTabId partial=${partial.length}',
+          );
           _updateTabCandidates(currentTabId!, partial);
         }
       }).timeout(const Duration(seconds: 20));
@@ -2742,10 +2779,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       if (res.isNotEmpty) {
         if (currentTabId != null) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: final update tab id=$currentTabId results=${res.length}',
+          );
           _updateTabCandidates(currentTabId!, res);
         } else {
           currentTabId = _addJourneyTab(
               candidatesData: res, origin: from, destination: _toStation);
+          TransportApi.addSyntheticDebugLog(
+            'ui: created tab from final id=$currentTabId results=${res.length}',
+          );
           _finishRouteSearchLoading(searchToken);
         }
         if (_isRouteSearchCancelled(searchToken)) return;
@@ -2755,20 +2798,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (_isRouteSearchCancelled(searchToken) || !mounted) return;
         await _loadHistoryData(); // Refresh UI
       } else if (currentTabId == null && mounted) {
+        TransportApi.addSyntheticDebugLog('ui: no routes found');
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
       }
     } on TimeoutException catch (_) {
+      TransportApi.addSyntheticDebugLog('ui: search timed out');
       if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
+      TransportApi.addSyntheticDebugLog('ui: search error=$e');
       if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.serviceBusyMoment)));
       }
     } finally {
+      TransportApi.addSyntheticDebugLog('ui: search finished');
       _disposeRouteSearch(searchToken);
     }
   }
@@ -3271,6 +3318,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                     style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold)))),
+                    if (kDebugMode) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _copySyntheticDebugLogs,
+                          icon: const Icon(Icons.bug_report_outlined, size: 18),
+                          label: const Text('Copy Debug Logs'),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.favorites,
                         style: TextStyle(

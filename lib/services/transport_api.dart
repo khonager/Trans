@@ -69,6 +69,7 @@ class TransportApi {
       _tripItineraryCache = {};
   static final Map<String, Future<Map<String, dynamic>?>>
       _tripItineraryInFlight = {};
+  static final List<String> _syntheticDebugBuffer = <String>[];
 
   // Cache the User-Agent
   static String? _userAgent;
@@ -1258,9 +1259,29 @@ class TransportApi {
       normalizeServiceText(value);
 
   static void _syntheticLog(String message) {
-    if (kDebugMode) {
-      debugPrint('[synthetic] $message');
+    final line = '[synthetic] $message';
+    _syntheticDebugBuffer.add(line);
+    if (_syntheticDebugBuffer.length > 250) {
+      _syntheticDebugBuffer.removeRange(0, _syntheticDebugBuffer.length - 250);
     }
+    if (kDebugMode) {
+      debugPrint(line);
+    }
+  }
+
+  static void addSyntheticDebugLog(String message) {
+    _syntheticLog(message);
+  }
+
+  static void clearSyntheticDebugLog() {
+    _syntheticDebugBuffer.clear();
+  }
+
+  static String syntheticDebugLogText() {
+    if (_syntheticDebugBuffer.isEmpty) {
+      return '[synthetic] no synthetic debug logs captured yet';
+    }
+    return _syntheticDebugBuffer.join('\n');
   }
 
   static String _formatDebugTime(DateTime? time) {
@@ -1730,6 +1751,7 @@ class TransportApi {
     _SyntheticSeed seed,
     Station destination, {
     required bool nahverkehrOnly,
+    void Function(List<Map<String, dynamic>> syntheticSoFar)? onProgress,
   }) async {
     _syntheticLog(
       'seed start: ${seed.originStopName} ${_formatDebugTime(seed.firstDeparture)} '
@@ -1897,6 +1919,7 @@ class TransportApi {
           ),
         );
       }
+      onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
     _syntheticLog(
@@ -1913,6 +1936,7 @@ class TransportApi {
     List<Map<String, dynamic>> journeys, {
     required bool nahverkehrOnly,
     required bool isArrival,
+    void Function(List<Map<String, dynamic>> mergedJourneys)? onProgress,
   }) async {
     if (apiMode == 'v6' || isArrival || journeys.isEmpty) {
       return journeys;
@@ -1951,6 +1975,19 @@ class TransportApi {
           seed,
           to,
           nahverkehrOnly: nahverkehrOnly,
+          onProgress: (seedSyntheticSoFar) {
+            if (onProgress == null) return;
+            final merged = _dedupeAndSortJourneys([
+              ...journeys,
+              ...synthetic,
+              ...seedSyntheticSoFar,
+            ]);
+            _syntheticLog(
+              'augment progress ${from.name} -> ${to.name}: '
+              'seedPartial=${seedSyntheticSoFar.length} visible=${merged.length}',
+            );
+            onProgress(merged);
+          },
         );
         synthetic.addAll(expanded);
       } catch (error) {
@@ -2018,6 +2055,11 @@ class TransportApi {
     int results = 7,
     Function(List<Map<String, dynamic>>)? onPartialResults,
   }) async {
+    _syntheticLog(
+      'search start: mode=$apiMode from=${from.name} to=${to.name} '
+      'when=${when?.toIso8601String() ?? 'now'} arriveBy=$isArrival results=$results',
+    );
+
     // 1. STRICT V6 MODE
     if (apiMode == 'v6') {
       final res = await _searchJourneysV6(
@@ -2033,6 +2075,7 @@ class TransportApi {
         return j;
       }).toList();
       if (onPartialResults != null) onPartialResults(mapped);
+      _syntheticLog('search done: strict v6 returned=${mapped.length}');
       return mapped;
     }
 
@@ -2054,13 +2097,18 @@ class TransportApi {
           res,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
+          onProgress: onPartialResults,
         );
         if (onPartialResults != null && augmented.length > res.length) {
           onPartialResults(augmented);
         }
+        _syntheticLog(
+          'search done: strict motis base=${res.length} final=${augmented.length}',
+        );
         return augmented;
       } catch (e) {
         debugPrint('Transitous searchJourneys failed (strict mode): $e');
+        _syntheticLog('search fail: strict motis error=$e');
         rethrow;
       }
     }
@@ -2098,6 +2146,7 @@ class TransportApi {
         motisFuture.then((motisResults) {
           motisDone = true;
           if (motisResults.isNotEmpty) {
+            _syntheticLog('partial: motis=${motisResults.length}');
             onPartialResults(motisResults);
           }
         });
@@ -2110,11 +2159,15 @@ class TransportApi {
 
             if (!motisDone) {
               // DB finished before Motis! Show DB results first.
+              _syntheticLog('partial: v6=${v6Results.length} before motis');
               onPartialResults(v6Results);
             } else {
               // Motis is done, we need to merge DB with Motis results.
               motisFuture.then((motisResults) {
                 final merged = mergeResults(motisResults, v6Results);
+                _syntheticLog(
+                  'partial: merged motis=${motisResults.length} v6=${v6Results.length} total=${merged.length}',
+                );
                 onPartialResults(merged);
               });
             }
@@ -2131,10 +2184,15 @@ class TransportApi {
           baseResults,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
+          onProgress: onPartialResults,
         );
         if (augmented.length > baseResults.length) {
           onPartialResults(augmented);
         }
+        _syntheticLog(
+          'search done: auto(partial) motis=${resultsList[0].length} '
+          'v6=${resultsList[1].length} base=${baseResults.length} final=${augmented.length}',
+        );
         return augmented;
       } else {
         // Wait for both to complete
@@ -2151,19 +2209,27 @@ class TransportApi {
         final merged = mergeResults(motisResults, v6Results);
 
         if (merged.isEmpty) {
+          _syntheticLog('search done: auto merged empty');
           throw Exception("No routes found on either API");
         }
 
-        return _augmentJourneysWithSynthetic(
+        final augmented = await _augmentJourneysWithSynthetic(
           from,
           to,
           merged,
           nahverkehrOnly: nahverkehrOnly,
           isArrival: isArrival,
+          onProgress: onPartialResults,
         );
+        _syntheticLog(
+          'search done: auto motis=${motisResults.length} v6=${v6Results.length} '
+          'base=${merged.length} final=${augmented.length}',
+        );
+        return augmented;
       }
     } catch (e) {
       debugPrint('Hybrid searchJourneys critical failure: $e');
+      _syntheticLog('search fail: auto error=$e');
       return [];
     }
   }
