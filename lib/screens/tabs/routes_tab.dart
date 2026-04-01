@@ -2528,9 +2528,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       if (candidates.isNotEmpty) {
         final lastLeg = candidates.first.rawSource['legs'].last;
+        final destinationMap =
+            (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
+                const <String, dynamic>{};
+        final destinationId =
+            destinationMap['id']?.toString() ?? destination?.id ?? '';
+        if (destinationId.isEmpty) return id;
         dest = Station(
-            id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ??
+            id: destinationId,
+            name: destinationMap['name']?.toString() ??
                 AppLocalizations.of(context)!.destinationLabel,
             type: "station");
       }
@@ -2539,9 +2545,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         activeJourney = _createJourney(singleJourneyData);
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
+        final destinationMap =
+            (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
+                const <String, dynamic>{};
+        final destinationId =
+            destinationMap['id']?.toString() ?? destination?.id ?? '';
+        if (destinationId.isEmpty) return id;
         dest = Station(
-            id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ??
+            id: destinationId,
+            name: destinationMap['name']?.toString() ??
                 AppLocalizations.of(context)!.destinationLabel,
             type: "station");
       } catch (_) {
@@ -2714,14 +2726,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival, onPartialResults: (partial) {
-        if (!mounted ||
-            currentTabId != null ||
-            _isRouteSearchCancelled(searchToken)) {
+        if (!mounted || _isRouteSearchCancelled(searchToken)) {
           return;
         }
-        currentTabId = _addJourneyTab(
-            candidatesData: partial, origin: from, destination: _toStation);
-        _finishRouteSearchLoading(searchToken);
+        if (currentTabId == null) {
+          currentTabId = _addJourneyTab(
+              candidatesData: partial, origin: from, destination: _toStation);
+          _finishRouteSearchLoading(searchToken);
+        } else {
+          _updateTabCandidates(currentTabId!, partial);
+        }
       }).timeout(const Duration(seconds: 20));
 
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;

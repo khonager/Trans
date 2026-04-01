@@ -1257,6 +1257,19 @@ class TransportApi {
   static String _normalizeTransitKey(Object? value) =>
       normalizeServiceText(value);
 
+  static void _syntheticLog(String message) {
+    if (kDebugMode) {
+      debugPrint('[synthetic] $message');
+    }
+  }
+
+  static String _formatDebugTime(DateTime? time) {
+    if (time == null) return '??:??';
+    final hh = time.hour.toString().padLeft(2, '0');
+    final mm = time.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
   static String _journeyLegLineName(Map<String, dynamic> leg) =>
       (leg['line'] as Map<String, dynamic>?)?['name']?.toString().trim() ?? '';
 
@@ -1718,6 +1731,12 @@ class TransportApi {
     Station destination, {
     required bool nahverkehrOnly,
   }) async {
+    _syntheticLog(
+      'seed start: ${seed.originStopName} ${_formatDebugTime(seed.firstDeparture)} '
+      '${_journeyLegLineName(seed.firstRide)} -> ${seed.firstRide['direction'] ?? '?'} '
+      'transfer=${seed.transferStopName}',
+    );
+
     final dayStart = DateTime(
       seed.firstDeparture.year,
       seed.firstDeparture.month,
@@ -1740,22 +1759,43 @@ class TransportApi {
     );
     if (departures.isEmpty) return const <Map<String, dynamic>>[];
 
+    var missingTime = 0;
+    var tooEarly = 0;
+    var lineMismatch = 0;
+    var directionMismatch = 0;
+    var missingTripId = 0;
+    var sameBaseTrip = 0;
+
     final matchingDepartures = departures.where((departure) {
       final time = _stopDepartureDateTimeLocal(departure);
-      if (time == null ||
-          !time.isAfter(seed.firstDeparture.add(const Duration(seconds: 30)))) {
+      if (time == null) {
+        missingTime++;
         return false;
       }
-      if (_stopDepartureLineKey(departure) != seed.lineKey) return false;
+      if (!time.isAfter(seed.firstDeparture.add(const Duration(seconds: 30)))) {
+        tooEarly++;
+        return false;
+      }
+      if (_stopDepartureLineKey(departure) != seed.lineKey) {
+        lineMismatch++;
+        return false;
+      }
       final directionKey = _stopDepartureDirectionKey(departure);
       if (seed.directionKey.isNotEmpty &&
           directionKey.isNotEmpty &&
           directionKey != seed.directionKey) {
+        directionMismatch++;
         return false;
       }
       final tripId = _stopDepartureTripId(departure);
-      if (tripId == null || tripId.isEmpty) return false;
-      if (seed.baseTripId != null && seed.baseTripId == tripId) return false;
+      if (tripId == null || tripId.isEmpty) {
+        missingTripId++;
+        return false;
+      }
+      if (seed.baseTripId != null && seed.baseTripId == tripId) {
+        sameBaseTrip++;
+        return false;
+      }
       return true;
     }).toList()
       ..sort((a, b) {
@@ -1765,6 +1805,12 @@ class TransportApi {
         return timeA.compareTo(timeB);
       });
 
+    _syntheticLog(
+      'seed departures: raw=${departures.length} matching=${matchingDepartures.length} '
+      'missingTime=$missingTime tooEarly=$tooEarly lineMismatch=$lineMismatch '
+      'directionMismatch=$directionMismatch missingTripId=$missingTripId sameBaseTrip=$sameBaseTrip',
+    );
+
     final synthetic = <Map<String, dynamic>>[];
     final seenTrips = <String>{};
 
@@ -1772,22 +1818,43 @@ class TransportApi {
       final tripId = _stopDepartureTripId(departure);
       if (tripId == null || !seenTrips.add(tripId)) continue;
 
+      final departureTime = _stopDepartureDateTimeLocal(departure);
+
       final tripItinerary = await _fetchTripItineraryCached(tripId);
-      if (tripItinerary == null) continue;
+      if (tripItinerary == null) {
+        _syntheticLog(
+          'trip $tripId ${_formatDebugTime(departureTime)} skipped: no trip itinerary',
+        );
+        continue;
+      }
 
       final syntheticFirstRide = _buildSyntheticFirstRide(
         seed,
         tripItinerary,
         tripId,
       );
-      if (syntheticFirstRide == null) continue;
+      if (syntheticFirstRide == null) {
+        _syntheticLog(
+          'trip $tripId ${_formatDebugTime(departureTime)} skipped: '
+          'trip does not map ${seed.originStopName} -> ${seed.transferStopName}',
+        );
+        continue;
+      }
 
       final firstRideArrival = _parseJourneyTimeLocal(
         syntheticFirstRide['arrival'] ?? syntheticFirstRide['plannedArrival'],
       );
-      if (firstRideArrival == null) continue;
+      if (firstRideArrival == null) {
+        _syntheticLog(
+          'trip $tripId ${_formatDebugTime(departureTime)} skipped: no forced-arrival time',
+        );
+        continue;
+      }
       if (seed.transferStopId.isEmpty &&
           (seed.transferLat == null || seed.transferLng == null)) {
+        _syntheticLog(
+          'trip $tripId ${_formatDebugTime(departureTime)} skipped: transfer station lacks id/coords',
+        );
         continue;
       }
 
@@ -1807,7 +1874,18 @@ class TransportApi {
         isArrival: false,
         results: _syntheticOnwardResultsPerDeparture,
       );
-      if (onwardJourneys.isEmpty) continue;
+      if (onwardJourneys.isEmpty) {
+        _syntheticLog(
+          'trip $tripId ${_formatDebugTime(departureTime)} -> ${seed.transferStopName} '
+          '${_formatDebugTime(firstRideArrival)} skipped: onward search returned 0',
+        );
+        continue;
+      }
+
+      _syntheticLog(
+        'trip $tripId ${_formatDebugTime(departureTime)} -> ${seed.transferStopName} '
+        '${_formatDebugTime(firstRideArrival)} onward=${onwardJourneys.length}',
+      );
 
       for (final onwardJourney in onwardJourneys) {
         synthetic.add(
@@ -1820,6 +1898,11 @@ class TransportApi {
         );
       }
     }
+
+    _syntheticLog(
+      'seed done: generated=${synthetic.length} '
+      'for ${_journeyLegLineName(seed.firstRide)} -> ${seed.transferStopName}',
+    );
 
     return synthetic;
   }
@@ -1835,13 +1918,30 @@ class TransportApi {
       return journeys;
     }
 
+    var motisJourneys = 0;
+    var transferCandidates = 0;
     final seeds = <_SyntheticSeed>[];
     final seenSeedKeys = <String>{};
     for (final journey in journeys) {
+      if (journey['source'] == 'motis') {
+        motisJourneys++;
+        final rawLegs = journey['legs'] as List?;
+        final rideCount =
+            rawLegs
+                ?.whereType<Map>()
+                .where((leg) => leg['line'] != null)
+                .length ??
+            0;
+        if (rideCount >= 2) transferCandidates++;
+      }
       final seed = _syntheticSeedFromJourney(journey);
       if (seed == null || !seenSeedKeys.add(seed.dedupeKey)) continue;
       seeds.add(seed);
     }
+    _syntheticLog(
+      'augment ${from.name} -> ${to.name}: base=${journeys.length} '
+      'motis=$motisJourneys transferCandidates=$transferCandidates seeds=${seeds.length}',
+    );
     if (seeds.isEmpty) return journeys;
 
     final synthetic = <Map<String, dynamic>>[];
@@ -1858,8 +1958,16 @@ class TransportApi {
       }
     }
 
+    _syntheticLog(
+      'augment result ${from.name} -> ${to.name}: synthetic=${synthetic.length}',
+    );
+
     if (synthetic.isEmpty) return journeys;
-    return _dedupeAndSortJourneys([...journeys, ...synthetic]);
+    final merged = _dedupeAndSortJourneys([...journeys, ...synthetic]);
+    _syntheticLog(
+      'augment merged ${from.name} -> ${to.name}: final=${merged.length}',
+    );
+    return merged;
   }
 
   /// Get nearby stops by coordinates
