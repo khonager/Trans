@@ -42182,7 +42182,7 @@ for(;;)switch(s){case 0:m=$.cm()
 l=m.b
 l===$&&B.c()
 s=3
-return B.k(l.gdd().DL(B.a3(["username",c],t.N,t.z),a,null,b),$async$afC)
+return B.k(l.gdd().DL(B.a3(["username",c],t.N,t.z),a,"https://khonager.github.io/Trans/",b),$async$afC)
 case 3:p=e.b
 l=p!=null
 if(l){o=p.cy
