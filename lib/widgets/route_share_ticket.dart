@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:trans/config/app_config.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/utils/format_utils.dart';
 
@@ -224,7 +225,7 @@ class RouteShareTicket extends StatelessWidget {
                     ),
                     // Functional QR Code
                     QrImageView(
-                      data: "https://khonager.github.io/Trans/",
+                      data: AppConfig.webBaseUrl,
                       version: QrVersions.auto,
                       size: 60.0,
                       backgroundColor: Colors.transparent,

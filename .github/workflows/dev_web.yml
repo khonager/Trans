@@ -31,7 +31,7 @@ jobs:
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
       - name: Build Web Release
-        run: flutter build web --release --dart-define=IS_DEV=true --base-href "/${{ github.event.repository.name }}/dev/"
+        run: flutter build web --release --dart-define=IS_DEV=true --base-href "/dev/"
 
       - name: Deploy to GitHub Pages (Dev)
         uses: peaceiris/actions-gh-pages@v3

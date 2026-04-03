@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui'; // Needed for PointerDeviceKind
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
@@ -11,37 +12,85 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
+import 'utils/app_error.dart';
 
-void main() async {
+enum StartupAuthNotice {
+  emailConfirmed,
+  emailConfirmationFailed,
+}
+
+Future<void> main() async {
   usePathUrlStrategy();
   WidgetsFlutterBinding.ensureInitialized();
 
-  bool initFailed = false;
-  String? initError;
+  FlutterError.onError = (details) {
+    AppError.log(
+      details.exception,
+      stackTrace: details.stack,
+      source: 'FlutterError.onError',
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    AppError.log(
+      error,
+      stackTrace: stack,
+      source: 'PlatformDispatcher.onError',
+    );
+    return true;
+  };
 
-  try {
-    await dotenv.load(fileName: ".env");
+  await runZonedGuarded(() async {
+    bool initFailed = false;
+    String? initError;
+    StartupAuthNotice? startupAuthNotice;
 
-    await Supabase.initialize(
-      url: AppConfig.supabaseUrl,
-      anonKey: AppConfig.supabaseAnonKey,
+    try {
+      await dotenv.load(fileName: ".env");
+
+      await Supabase.initialize(
+        url: AppConfig.supabaseUrl,
+        anonKey: AppConfig.supabaseAnonKey,
+      );
+
+      try {
+        final didConfirm =
+            await SupabaseService.handleInitialSignupConfirmation();
+        if (didConfirm) {
+          startupAuthNotice = StartupAuthNotice.emailConfirmed;
+        }
+      } catch (e, st) {
+        startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
+        AppError.log(
+          e,
+          stackTrace: st,
+          source: 'signup confirmation callback',
+        );
+      }
+
+      await SupabaseService.init();
+    } catch (e, st) {
+      initFailed = true;
+      initError = e.toString();
+      AppError.log(e, stackTrace: st, source: 'main initialization');
+    }
+
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+      ),
     );
 
-    await SupabaseService.init();
-  } catch (e) {
-    initFailed = true;
-    initError = e.toString();
-    debugPrint("Initialization Failed: $e");
-  }
-
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-    ),
-  );
-
-  runApp(TransApp(initFailed: initFailed, initError: initError));
+    runApp(
+      TransApp(
+        initFailed: initFailed,
+        initError: initError,
+        startupAuthNotice: startupAuthNotice,
+      ),
+    );
+  }, (error, stack) {
+    AppError.log(error, stackTrace: stack, source: 'runZonedGuarded');
+  });
 }
 
 // FIX: Enable Mouse Dragging for Web/Desktop
@@ -59,7 +108,14 @@ class CustomScrollBehavior extends MaterialScrollBehavior {
 class TransApp extends StatefulWidget {
   final bool initFailed;
   final String? initError;
-  const TransApp({super.key, this.initFailed = false, this.initError});
+  final StartupAuthNotice? startupAuthNotice;
+
+  const TransApp({
+    super.key,
+    this.initFailed = false,
+    this.initError,
+    this.startupAuthNotice,
+  });
 
   @override
   State<TransApp> createState() => _TransAppState();
@@ -79,6 +135,9 @@ class _TransAppState extends State<TransApp> {
     _readPreferences(); // Show immediate local state
     _initSync(); // Start cloud sync
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showStartupAuthNotice();
+    });
   }
 
   @override
@@ -89,6 +148,24 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _initSync() async {
     await SupabaseService.loadAndSyncSettings();
+  }
+
+  void _showStartupAuthNotice() {
+    if (!mounted || widget.startupAuthNotice == null) return;
+
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final message = switch (widget.startupAuthNotice!) {
+      StartupAuthNotice.emailConfirmed => isGerman
+          ? 'E-Mail bestaetigt. Du bist jetzt angemeldet.'
+          : 'Email confirmed. You are now signed in.',
+      StartupAuthNotice.emailConfirmationFailed => isGerman
+          ? 'E-Mail-Bestaetigung fehlgeschlagen. Bitte Link erneut oeffnen oder eine neue E-Mail anfordern.'
+          : 'Email confirmation failed. Please open the link again or request a new email.',
+    };
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _readPreferences() async {

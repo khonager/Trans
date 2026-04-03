@@ -20,6 +20,22 @@ enum RouteSortOption {
   leastWalking,
 }
 
+bool _shouldDisplaySummaryTripId(String? tripId) {
+  final normalizedTripId = tripId?.trim();
+  if (normalizedTripId == null || normalizedTripId.isEmpty) return false;
+  if (normalizedTripId.length > 10) return false;
+  if (normalizedTripId.contains('_') ||
+      normalizedTripId.contains(':') ||
+      normalizedTripId.contains(' ') ||
+      normalizedTripId.toLowerCase().contains('de-delfi')) {
+    return false;
+  }
+  if (!RegExp(r'^[A-Za-z0-9-]+$').hasMatch(normalizedTripId)) {
+    return false;
+  }
+  return RegExp(r'\d').hasMatch(normalizedTripId);
+}
+
 class RouteResultsView extends StatefulWidget {
   final List<Journey> candidates;
   final Function(Journey) onSelect;
@@ -28,6 +44,8 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onLoadLater;
   final Future<void> Function()? onRefresh;
   final bool showTrainNumbers;
+  final Color? loadingIndicatorColor;
+  final bool isBackgroundLoading;
 
   const RouteResultsView({
     super.key,
@@ -38,6 +56,8 @@ class RouteResultsView extends StatefulWidget {
     this.onLoadLater,
     this.onRefresh,
     this.showTrainNumbers = false,
+    this.loadingIndicatorColor,
+    this.isBackgroundLoading = false,
   });
 
   @override
@@ -278,10 +298,25 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 ],
               ),
             ),
+            if (widget.isBackgroundLoading &&
+                !_isLoadingMoreEarlier &&
+                !_isLoadingMoreLater)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: widget.loadingIndicatorColor,
+                  ),
+                ),
+              ),
 
             // List of Routes
             Expanded(
               child: RefreshIndicator(
+                color: widget.loadingIndicatorColor,
                 onRefresh: widget.onRefresh ?? () async {},
                 child: ListView.builder(
                   padding: const EdgeInsets.fromLTRB(
@@ -295,11 +330,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         child: Padding(
                           padding: const EdgeInsets.only(bottom: 8.0),
                           child: _isLoadingMoreEarlier
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 24,
                                   height: 24,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: widget.loadingIndicatorColor,
+                                  ))
                               : _LoadTrigger(
                                   label:
                                       AppLocalizations.of(context)!.loadEarlier,
@@ -316,11 +353,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         child: Padding(
                           padding: const EdgeInsets.only(top: 8.0),
                           child: _isLoadingMoreLater
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 24,
                                   height: 24,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: widget.loadingIndicatorColor,
+                                  ))
                               : _LoadTrigger(
                                   label:
                                       AppLocalizations.of(context)!.loadLater,
@@ -486,6 +525,13 @@ class _JourneyCard extends StatelessWidget {
     final depStr = DateFormat('HH:mm').format(journey.departure);
     final arrStr = DateFormat('HH:mm').format(journey.arrival);
     final durStr = FormatUtils.formatDuration(journey.duration.inMinutes);
+    final isSynthetic = journey.source == 'motis_synthetic';
+    final badgeLabel = isSynthetic
+        ? 'TRANS/SYN'
+        : (journey.source == 'motis' ? 'TRANS' : 'DB');
+    final badgeColor = isSynthetic
+        ? Colors.green
+        : (journey.source == 'motis' ? Colors.blue : Colors.red);
 
     return GestureDetector(
       onTap: onTap,
@@ -610,15 +656,11 @@ class _JourneyCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                            color: journey.source == 'motis'
-                                ? Colors.blue.withValues(alpha: 0.2)
-                                : Colors.red.withValues(alpha: 0.2),
+                            color: badgeColor.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4)),
-                        child: Text(journey.source == 'motis' ? 'TRANS' : 'DB',
+                        child: Text(badgeLabel,
                             style: TextStyle(
-                                color: journey.source == 'motis'
-                                    ? Colors.blue
-                                    : Colors.red,
+                                color: badgeColor,
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold))),
                     const SizedBox(height: 8),
@@ -649,6 +691,10 @@ class _JourneyCard extends StatelessWidget {
                   .take(4)
                   .map((step) {
                 String displayLine = step.line.trim();
+                final displayableTripId =
+                    _shouldDisplaySummaryTripId(step.tripId)
+                        ? step.tripId!.trim()
+                        : null;
                 // Clean train numbers if disabled
                 if (!showTrainNumbers) {
                   final regexParens = RegExp(r'\s*\(\d+\)$');
@@ -659,9 +705,9 @@ class _JourneyCard extends StatelessWidget {
                   }
                 } else {
                   // Ensure it's there if enabled
-                  if (step.tripId != null &&
-                      !displayLine.contains(step.tripId!)) {
-                    displayLine += " (${step.tripId})";
+                  if (displayableTripId != null &&
+                      !displayLine.contains(displayableTripId)) {
+                    displayLine += " ($displayableTripId)";
                   }
                 }
 

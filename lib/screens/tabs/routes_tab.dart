@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,12 +16,13 @@ import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/services/favorites_policy.dart';
 import 'package:trans/services/notification_manager.dart';
+import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/format_utils.dart';
-import 'package:trans/utils/app_error.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
@@ -73,6 +75,22 @@ String formatRideLineWithPlatform(String line, String? platform) {
 
 final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
 
+bool _shouldDisplayTripId(String? tripId) {
+  final normalizedTripId = tripId?.trim();
+  if (normalizedTripId == null || normalizedTripId.isEmpty) return false;
+  if (normalizedTripId.length > 10) return false;
+  if (normalizedTripId.contains('_') ||
+      normalizedTripId.contains(':') ||
+      normalizedTripId.contains(' ') ||
+      normalizedTripId.toLowerCase().contains('de-delfi')) {
+    return false;
+  }
+  if (!RegExp(r'^[A-Za-z0-9-]+$').hasMatch(normalizedTripId)) {
+    return false;
+  }
+  return RegExp(r'\d').hasMatch(normalizedTripId);
+}
+
 @visibleForTesting
 String formatRideDisplayLine({
   required String line,
@@ -83,6 +101,8 @@ String formatRideDisplayLine({
 }) {
   String baseLine = line.trim();
   final normalizedTripId = tripId?.trim();
+  final displayableTripId =
+      _shouldDisplayTripId(normalizedTripId) ? normalizedTripId : null;
   if (!showTrainNumbers) {
     baseLine =
         baseLine.replaceAll(_embeddedNumericParenthesesPattern, '').trim();
@@ -102,10 +122,9 @@ String formatRideDisplayLine({
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
-      normalizedTripId != null &&
-      normalizedTripId.isNotEmpty &&
-      !displayLine.contains(normalizedTripId)) {
-    return '$displayLine ($normalizedTripId)';
+      displayableTripId != null &&
+      !displayLine.contains(displayableTripId)) {
+    return '$displayLine ($displayableTripId)';
   }
 
   return displayLine;
@@ -201,6 +220,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   int _nextRouteSearchToken = 0;
   int? _activeRouteSearchToken;
   final Set<int> _cancelledRouteSearchTokens = <int>{};
+  Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
   DateTime? _selectedDate;
@@ -508,14 +528,46 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isRouteSearchCancelled(int token) =>
       _cancelledRouteSearchTokens.contains(token);
 
-  void _finishRouteSearchLoading(int token) {
+  void _releaseBlockingRouteLoad(int token) {
     if (!mounted || _activeRouteSearchToken != token || !_isLoadingRoute) {
       return;
     }
     setState(() {
-      _activeRouteSearchToken = null;
       _isLoadingRoute = false;
     });
+  }
+
+  void _cancelActiveBackgroundRouteSearch() {
+    final token = _activeRouteSearchToken;
+    if (token == null || _isLoadingRoute) return;
+    _cancelledRouteSearchTokens.add(token);
+    if (!mounted) return;
+    setState(() {
+      _activeRouteSearchToken = null;
+      _activeRouteLoadPhases = <String>{};
+    });
+  }
+
+  void _setRouteLoadPhasesForToken(int token, Set<String> phases) {
+    if (!mounted ||
+        _activeRouteSearchToken != token ||
+        _isRouteSearchCancelled(token)) {
+      return;
+    }
+    setState(() => _activeRouteLoadPhases = phases);
+  }
+
+  Color _routeLoadingColor(TransColors colors) {
+    if (_activeRouteLoadPhases.contains(TransportApi.loadPhaseSynthetic)) {
+      return Colors.green;
+    }
+    if (_activeRouteLoadPhases.contains(TransportApi.loadPhaseMotis)) {
+      return Colors.blue;
+    }
+    if (_activeRouteLoadPhases.contains(TransportApi.loadPhaseV6)) {
+      return Colors.red;
+    }
+    return colors.searchBtnText;
   }
 
   void _disposeRouteSearch(int token) {
@@ -524,7 +576,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
+      _activeRouteLoadPhases = <String>{};
     });
+  }
+
+  Future<void> _copySyntheticDebugLogs() async {
+    final logText = TransportApi.syntheticDebugLogText();
+    await Clipboard.setData(ClipboardData(text: logText));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Synthetic debug logs copied'),
+      duration: Duration(seconds: 2),
+    ));
   }
 
   void _cancelRouteSearch() {
@@ -535,6 +598,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
+      _activeRouteLoadPhases = <String>{};
     });
   }
 
@@ -635,8 +699,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     {
       final prefs = await SharedPreferences.getInstance();
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+      final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+          WakeAlarmSettings.defaultSoundId;
       await NotificationManager.updateWakeAlarmChannel(
-          _getVibrationPattern(patternName));
+        WakeAlarmSettings.vibrationPatternForId(patternName),
+        soundId: soundId,
+      );
     }
 
     // 3. Configure Background Location (Foreground Service)
@@ -1151,6 +1219,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
+    if (!isSupportedFavorite(fav)) {
+      await FavoritesManager.deleteFavorite(fav.id);
+      if (mounted) {
+        await _loadFavorites();
+      }
+      return;
+    }
+
     // Capture the active field BEFORE async operations or state clearing
     final currentField = _activeSearchField;
 
@@ -1159,45 +1235,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _activeSearchField = '';
     });
     FocusScope.of(context).unfocus();
-    Station? target;
-    if (fav.type == 'station') {
-      target = fav.station;
-      if (target == null) {
-        _showEditFavoriteDialog(fav);
-        return;
-      }
-    } else if (fav.type == 'friend' && fav.friendId != null) {
-      setState(() => _isLoadingRoute = true);
-      try {
-        final data = await SupabaseService.client
-            .from('user_locations')
-            .select()
-            .eq('user_id', fav.friendId!)
-            .maybeSingle();
-        if (data != null) {
-          final stops = await TransportApi.getNearbyStops(
-              data['latitude'], data['longitude']);
-          if (mounted && stops.isNotEmpty) target = stops.first;
-        }
-      } catch (e, st) {
-        if (!mounted) return;
-        AppError.showSnackBar(
-          context,
-          error: e,
-          stackTrace: st,
-          source: 'resolve friend favorite location',
-        );
-      } finally {
-        if (mounted) setState(() => _isLoadingRoute = false);
-      }
+    final target = fav.station;
+    if (target == null) {
+      _showEditFavoriteDialog(fav);
+      return;
     }
 
-    if (target != null && mounted) {
+    if (mounted) {
       setState(() {
         if (currentField == 'from') {
           _fromStation = target;
           _fromUsesCurrentLocation = false;
-          _fromController.text = target!.name;
+          _fromController.text = target.name;
           if (_toStation == null) {
             _activeSearchField = 'to';
             _toFocusNode.requestFocus();
@@ -1205,7 +1254,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           }
         } else if (currentField == 'to') {
           _toStation = target;
-          _toController.text = target!.name;
+          _toController.text = target.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
           if (_fromStation == null && _effectiveCurrentPosition == null) {
             _activeSearchField = 'from';
@@ -1214,11 +1263,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else {
           if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
-            _toController.text = target!.name;
+            _toController.text = target.name;
           } else {
             _fromStation = target;
             _fromUsesCurrentLocation = false;
-            _fromController.text = target!.name;
+            _fromController.text = target.name;
             _toFocusNode.requestFocus();
             _scrollToTop();
           }
@@ -2532,7 +2581,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
     Journey? activeJourney;
-    Station? dest;
+    Station? dest = destination ?? _toStation;
 
     if (candidatesData != null) {
       for (var d in candidatesData) {
@@ -2540,11 +2589,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           candidates.add(_createJourney(d));
         } catch (e) {/* ignore */}
       }
-      if (candidates.isNotEmpty) {
+      if (candidates.isNotEmpty && dest == null) {
         final lastLeg = candidates.first.rawSource['legs'].last;
+        final destinationMap =
+            (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
+                const <String, dynamic>{};
+        final destinationId = destinationMap['id']?.toString() ?? '';
+        if (destinationId.isEmpty) return id;
         dest = Station(
-            id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ??
+            id: destinationId,
+            name: destinationMap['name']?.toString() ??
                 AppLocalizations.of(context)!.destinationLabel,
             type: "station");
       }
@@ -2553,19 +2607,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         activeJourney = _createJourney(singleJourneyData);
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
-        dest = Station(
-            id: lastLeg['destination']['id'],
-            name: lastLeg['destination']['name'] ??
-                AppLocalizations.of(context)!.destinationLabel,
-            type: "station");
+        if (dest == null) {
+          final destinationMap =
+              (lastLeg['destination'] as Map?)?.cast<String, dynamic>() ??
+                  const <String, dynamic>{};
+          final destinationId = destinationMap['id']?.toString() ?? '';
+          if (destinationId.isEmpty) return id;
+          dest = Station(
+              id: destinationId,
+              name: destinationMap['name']?.toString() ??
+                  AppLocalizations.of(context)!.destinationLabel,
+              type: "station");
+        }
       } catch (_) {
         return id;
       }
     }
 
     if (dest == null) return id;
-
-    if (_toStation != null) dest = _toStation;
 
     setState(() {
       _tabs.add(RouteTab(
@@ -2631,7 +2690,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _findRoutes() async {
+    _cancelActiveBackgroundRouteSearch();
     if (_isLoadingRoute) return;
+    TransportApi.clearSyntheticDebugLog();
+    TransportApi.addSyntheticDebugLog('ui: find routes tapped');
     final l10n = AppLocalizations.of(context)!;
     final searchToken = ++_nextRouteSearchToken;
     setState(() {
@@ -2659,7 +2721,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               type: 'location',
               latitude: pos.latitude,
               longitude: pos.longitude);
+          TransportApi.addSyntheticDebugLog(
+            'ui: using current location ${pos.latitude},${pos.longitude}',
+          );
         } else {
+          TransportApi.addSyntheticDebugLog('ui: current location unavailable');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(l10n.locationNotAvailable)));
@@ -2674,10 +2740,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (results.isNotEmpty) {
             from = results.first;
             _fromStation = from;
+            TransportApi.addSyntheticDebugLog(
+              'ui: resolved from=${from.name} (${from.id})',
+            );
           } else {
+            TransportApi.addSyntheticDebugLog('ui: failed to resolve from');
             throw l10n.startNotFound;
           }
         } catch (e) {
+          TransportApi.addSyntheticDebugLog('ui: from lookup error=$e');
           if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
@@ -2694,10 +2765,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           if (_isRouteSearchCancelled(searchToken) || !mounted) return;
           if (results.isNotEmpty) {
             _toStation = results.first;
+            TransportApi.addSyntheticDebugLog(
+              'ui: resolved to=${_toStation!.name} (${_toStation!.id})',
+            );
           } else {
+            TransportApi.addSyntheticDebugLog('ui: failed to resolve to');
             throw l10n.destinationNotFound;
           }
         } catch (e) {
+          TransportApi.addSyntheticDebugLog('ui: to lookup error=$e');
           if (!_isRouteSearchCancelled(searchToken) && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(
@@ -2709,6 +2785,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         return;
       }
     }
+    String? currentTabId;
+    var hasDisplayedResults = false;
     try {
       DateTime when;
       if (_selectedDate != null) {
@@ -2723,30 +2801,55 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
       // But searchJourneys handles 'when'.
-      String? currentTabId;
+      TransportApi.addSyntheticDebugLog(
+        'ui: search request from=${from.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
+      );
       final res = await TransportApi.searchJourneys(from, _toStation!,
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
-          isArrival: _isArrival, onPartialResults: (partial) {
-        if (!mounted ||
-            currentTabId != null ||
-            _isRouteSearchCancelled(searchToken)) {
+          isArrival: _isArrival,
+          onLoadStateChanged: (phases) =>
+              _setRouteLoadPhasesForToken(searchToken, phases),
+          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+          onPartialResults: (partial) {
+        if (!mounted || _isRouteSearchCancelled(searchToken)) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+          );
           return;
         }
-        currentTabId = _addJourneyTab(
-            candidatesData: partial, origin: from, destination: _toStation);
-        _finishRouteSearchLoading(searchToken);
+        hasDisplayedResults = true;
+        if (currentTabId == null) {
+          currentTabId = _addJourneyTab(
+              candidatesData: partial, origin: from, destination: _toStation);
+          TransportApi.addSyntheticDebugLog(
+            'ui: created tab id=$currentTabId partial=${partial.length}',
+          );
+        } else {
+          TransportApi.addSyntheticDebugLog(
+            'ui: update tab id=$currentTabId partial=${partial.length}',
+          );
+          _updateTabCandidates(currentTabId!, partial);
+        }
+        _releaseBlockingRouteLoad(searchToken);
       }).timeout(const Duration(seconds: 20));
 
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;
 
       if (res.isNotEmpty) {
+        hasDisplayedResults = true;
         if (currentTabId != null) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: final update tab id=$currentTabId results=${res.length}',
+          );
           _updateTabCandidates(currentTabId!, res);
         } else {
           currentTabId = _addJourneyTab(
               candidatesData: res, origin: from, destination: _toStation);
-          _finishRouteSearchLoading(searchToken);
+          TransportApi.addSyntheticDebugLog(
+            'ui: created tab from final id=$currentTabId results=${res.length}',
+          );
+          _releaseBlockingRouteLoad(searchToken);
         }
         if (_isRouteSearchCancelled(searchToken)) return;
         await SearchHistoryManager.saveJourney(from, _toStation!);
@@ -2755,138 +2858,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (_isRouteSearchCancelled(searchToken) || !mounted) return;
         await _loadHistoryData(); // Refresh UI
       } else if (currentTabId == null && mounted) {
+        TransportApi.addSyntheticDebugLog('ui: no routes found');
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
       }
     } on TimeoutException catch (_) {
-      if (!_isRouteSearchCancelled(searchToken) && mounted) {
+      _cancelledRouteSearchTokens.add(searchToken);
+      TransportApi.addSyntheticDebugLog(
+        'ui: search timed out visibleResults=$hasDisplayedResults',
+      );
+      if (!_isRouteSearchCancelled(searchToken) &&
+          mounted &&
+          !hasDisplayedResults) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
+      TransportApi.addSyntheticDebugLog('ui: search error=$e');
       if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.serviceBusyMoment)));
       }
     } finally {
+      TransportApi.addSyntheticDebugLog('ui: search finished');
       _disposeRouteSearch(searchToken);
-    }
-  }
-
-  List<int> _getVibrationPattern(String patternName) {
-    switch (patternName) {
-      case 'heartbeat':
-        return [0, 100, 100, 250, 600, 100, 100, 250];
-      case 'tick':
-        return [0, 30];
-      case 'mario':
-        return [0, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 200];
-      case 'fox':
-        return [
-          0,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          150,
-          100,
-          150,
-          100,
-          150,
-          100,
-          400
-        ];
-      case 'imperial':
-        return [
-          0,
-          450,
-          150,
-          450,
-          150,
-          450,
-          150,
-          350,
-          100,
-          150,
-          450,
-          150,
-          350,
-          100,
-          150,
-          450
-        ];
-      case 'potter':
-        return [
-          0,
-          150,
-          350,
-          150,
-          100,
-          150,
-          100,
-          150,
-          100,
-          400,
-          300,
-          300,
-          150,
-          400
-        ];
-      case 'indy':
-        return [0, 150, 50, 80, 50, 150, 100, 500, 400, 150, 50, 80, 100, 600];
-      case 'mission':
-        return [
-          0,
-          250,
-          250,
-          250,
-          250,
-          120,
-          120,
-          120,
-          120,
-          250,
-          250,
-          250,
-          250,
-          120,
-          120,
-          120,
-          120
-        ];
-      case 'terminator':
-        return [0, 250, 250, 250, 400, 200, 200, 250, 200, 250];
-      case 'future':
-        return [0, 150, 150, 150, 150, 300, 200, 100, 50, 100, 50, 400];
-      case 'eva':
-        return [
-          0,
-          100,
-          100,
-          100,
-          100,
-          250,
-          100,
-          100,
-          100,
-          100,
-          100,
-          100,
-          250,
-          100,
-          100
-        ];
-      case 'pokemon':
-        return [0, 100, 100, 100, 100, 300, 150, 100, 100, 300];
-      case 'titan':
-        return [0, 200, 150, 200, 150, 250, 250, 400, 400, 600];
-      case 'bebop':
-        return [0, 150, 400, 150, 400, 150, 400, 150, 600, 1000];
-      default:
-        return [0, 500];
     }
   }
 
@@ -2896,7 +2891,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final prefs = await SharedPreferences.getInstance();
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
-      final pattern = _getVibrationPattern(patternName);
+      final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
 
       if (await Vibration.hasAmplitudeControl()) {
         final intensities = List<int>.generate(
@@ -2910,37 +2905,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
-  DarwinNotificationDetails _buildWakeAlarmIosDetails() {
-    // iOS doesn't expose custom background vibration patterns for local
-    // notifications, so use the strongest non-critical delivery mode we can.
-    return const DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-      presentBanner: true,
-      presentList: true,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    );
-  }
-
   Future<void> _showNotification() async {
     final prefs = await SharedPreferences.getInstance();
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
-    final pattern = _getVibrationPattern(patternName);
-    // Android vibrationPattern uses Int64List in milliseconds.
-    // The channel was already recreated with this pattern in _startWakeAlarm
-    // so the pattern is honoured even when the screen is off.
-    final androidDetails = AndroidNotificationDetails(
-      'wake_alarm_channel',
-      'Wake Alarm',
-      channelDescription: 'Alarms for arriving at station',
-      importance: Importance.max,
-      priority: Priority.high,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(pattern),
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+    final androidDetails = NotificationManager.buildWakeAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
       fullScreenIntent: true,
     );
-    final iosDetails = _buildWakeAlarmIosDetails();
+    final iosDetails =
+        NotificationManager.buildWakeAlarmIosDetails(soundId: soundId);
     final details =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(
@@ -3376,7 +3353,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     SizedBox(
                         width: double.infinity,
                         height: 56,
-                        child: ElevatedButton(
+                        child: Builder(builder: (context) {
+                          return ElevatedButton(
                             onPressed: _isLoadingRoute
                                 ? _cancelRouteSearch
                                 : (canSearch ? _findRoutes : null),
@@ -3389,12 +3367,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                 ? Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      const SizedBox(
+                                      SizedBox(
                                           width: 24,
                                           height: 24,
                                           child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: Colors.white)),
+                                              color: colors.searchBtnText)),
                                       const SizedBox(width: 12),
                                       Text(AppLocalizations.of(context)!.cancel,
                                           style: const TextStyle(
@@ -3405,7 +3383,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                 : Text(AppLocalizations.of(context)!.findRoutes,
                                     style: TextStyle(
                                         fontSize: 16,
-                                        fontWeight: FontWeight.bold)))),
+                                        fontWeight: FontWeight.bold)));
+                        })),
+                    if (kDebugMode) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _copySyntheticDebugLogs,
+                          icon: const Icon(Icons.bug_report_outlined, size: 18),
+                          label: const Text('Copy Debug Logs'),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.favorites,
                         style: TextStyle(
@@ -3444,9 +3434,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               }
                               final fav = _favorites[idx];
                               IconData icon = Icons.star;
-                              if (fav.type == 'friend') {
-                                icon = Icons.person;
-                              } else if (fav.label.toLowerCase() == 'home') {
+                              if (fav.label.toLowerCase() == 'home') {
                                 icon = Icons.home;
                               } else if (fav.label.toLowerCase() == 'work') {
                                 icon = Icons.work;
@@ -3456,12 +3444,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                     (i) => i.codePoint == fav.iconCode,
                                     orElse: () => Icons.star);
                               }
-                              Color bg = fav.type == 'friend'
-                                  ? colors.favFriendBg
-                                  : colors.favStationBg;
-                              Color fg = fav.type == 'friend'
-                                  ? colors.favFriendIcon
-                                  : colors.favStationIcon;
                               return GestureDetector(
                                   onTap: () => _onFavoriteTap(fav),
                                   onLongPress: () =>
@@ -3474,10 +3456,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                             width: 48,
                                             height: 48,
                                             decoration: BoxDecoration(
-                                                color: bg,
+                                                color: colors.favStationBg,
                                                 shape: BoxShape.circle),
                                             child: Icon(icon,
-                                                color: fg, size: 20)),
+                                                color: colors.favStationIcon,
+                                                size: 20)),
                                         const SizedBox(height: 4),
                                         Text(fav.label,
                                             style: TextStyle(
@@ -4194,7 +4177,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _loadMoreRoutes(RouteTab route, {required bool earlier}) async {
+    _cancelActiveBackgroundRouteSearch();
     if (_isLoadingRoute) return;
+    final loadToken = ++_nextRouteSearchToken;
 
     // Determine reference time
     DateTime refDate;
@@ -4213,14 +4198,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       isArrival = false; // Find connections departing after the last one
     }
 
-    setState(() => _isLoadingRoute = true);
+    setState(() {
+      _activeRouteSearchToken = loadToken;
+      _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
+    });
 
     try {
       final Station? originStation = route.origin ?? _fromStation;
       if (originStation == null) throw Exception("Origin station lost");
+      final visibleResults = Completer<void>();
 
       void appendResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty || !mounted) return;
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(loadToken)) {
+          return;
+        }
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -4229,7 +4223,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         setState(() {
-          _isLoadingRoute = false;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4252,19 +4245,40 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
           }
         });
+        _releaseBlockingRouteLoad(loadToken);
+        if (!visibleResults.isCompleted) {
+          visibleResults.complete();
+        }
       }
 
-      final newResults = await TransportApi.searchJourneys(
-        originStation,
-        route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate,
-        isArrival: isArrival,
-        results: 5,
-        onPartialResults: appendResults,
+      unawaited(
+        TransportApi.searchJourneys(
+          originStation,
+          route.destination,
+          nahverkehrOnly: widget.onlyNahverkehr,
+          when: refDate,
+          isArrival: isArrival,
+          results: 5,
+          onLoadStateChanged: (phases) =>
+              _setRouteLoadPhasesForToken(loadToken, phases),
+          shouldContinue: () => !_isRouteSearchCancelled(loadToken),
+          onPartialResults: appendResults,
+        ).then((newResults) {
+          if (_isRouteSearchCancelled(loadToken) || !mounted) return;
+          appendResults(newResults);
+          if (!visibleResults.isCompleted) {
+            visibleResults.complete();
+          }
+        }).catchError((error) {
+          if (!visibleResults.isCompleted) {
+            visibleResults.completeError(error);
+          }
+        }).whenComplete(() {
+          _disposeRouteSearch(loadToken);
+        }),
       );
 
-      appendResults(newResults);
+      await visibleResults.future;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -4272,7 +4286,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 .couldNotLoadMoreRoutes(e.toString()))));
       }
     } finally {
-      if (mounted) setState(() => _isLoadingRoute = false);
+      _releaseBlockingRouteLoad(loadToken);
     }
   }
 
@@ -4284,6 +4298,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
     });
 
     try {
@@ -4327,8 +4342,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         hasRefreshResults = true;
 
         setState(() {
-          _isLoadingRoute = false;
-          _activeRouteSearchToken = null;
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
@@ -4344,6 +4357,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         when: refDate,
         isArrival: false,
         results: 5,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(refreshToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(refreshToken),
         onPartialResults: handleResults,
       );
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
@@ -4500,6 +4516,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
     });
 
     try {
@@ -4542,8 +4559,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final updatedSignature = _savedJourneyRealtimeSignature(upd);
           final hasChanged = updatedSignature != previousSignature;
           setState(() {
-            _isLoadingRoute = false;
-            _activeRouteSearchToken = null;
             final freshIdx = _tabs.indexWhere((t) => t.id == route.id);
             if (freshIdx != -1) {
               final latest = _tabs[freshIdx];
@@ -4580,6 +4595,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isArrival: false,
         // We only need a compact window around the active trip to merge live updates.
         results: _activeJourneyRefreshWindowSize,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(refreshToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(refreshToken),
         onPartialResults: handleResults,
       );
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
@@ -4632,11 +4650,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         onLoadLater: () => _loadMoreRoutes(route, earlier: false),
         onRefresh: () => _refreshRoutes(route),
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
+        loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
+        isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
       );
     }
 
     final colors = TransColors.of(context);
     return RefreshIndicator(
+      color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
       child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -5231,9 +5252,7 @@ class _EditFavoriteDialog extends StatefulWidget {
 class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   late TextEditingController _labelCtrl;
   final TextEditingController _searchCtrl = TextEditingController();
-  late String _currentType;
   Station? _selectedStation;
-  String? _selectedFriendId;
   int? _selectedIconCode;
   List<Station> _suggestions = [];
   Timer? _debounce;
@@ -5244,9 +5263,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   void initState() {
     super.initState();
     _labelCtrl = TextEditingController(text: widget.favorite.label);
-    _currentType = widget.favorite.type;
     _selectedStation = widget.favorite.station;
-    _selectedFriendId = widget.favorite.friendId;
     _selectedIconCode = widget.favorite.iconCode;
   }
 
@@ -5288,29 +5305,6 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                       labelText:
                           AppLocalizations.of(context)!.favoriteLabelHint)),
               const SizedBox(height: 10),
-              Row(children: [
-                Expanded(
-                    child: RadioGroup<String>(
-                  groupValue: _currentType,
-                  onChanged: (val) =>
-                      setState(() => _currentType = val ?? _currentType),
-                  child: RadioListTile<String>(
-                      title: Text(AppLocalizations.of(context)!.station),
-                      value: 'station',
-                      contentPadding: EdgeInsets.zero),
-                )),
-                Expanded(
-                    child: RadioGroup<String>(
-                  groupValue: _currentType,
-                  onChanged: (val) =>
-                      setState(() => _currentType = val ?? _currentType),
-                  child: RadioListTile<String>(
-                      title: Text(AppLocalizations.of(context)!.friend),
-                      value: 'friend',
-                      contentPadding: EdgeInsets.zero),
-                )),
-              ]),
-              const SizedBox(height: 10),
               SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -5333,113 +5327,88 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     isSelected ? Colors.white : Colors.grey)));
                   }).toList())),
               const SizedBox(height: 10),
-              if (_currentType == 'station') ...[
-                if (_selectedStation != null)
-                  ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.train, color: Colors.indigo),
-                      title: Text(_selectedStation!.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      trailing: IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => setState(() {
-                                _selectedStation = null;
-                                _searchCtrl.clear();
-                                _suggestions = [];
-                              })))
-                else ...[
-                  TextField(
-                    controller: _searchCtrl,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context)!.searchStationName,
-                        prefixIcon: const Icon(Icons.search),
-                        suffix: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: _isLoading
-                                ? const CircularProgressIndicator(
-                                    strokeWidth: 2)
-                                : null)),
-                    onChanged: (val) {
-                      final sanitizedQuery = val.trim();
-                      if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      if (sanitizedQuery.isEmpty) {
-                        _searchRequestToken++;
-                        if (mounted) setState(() => _suggestions = []);
-                        return;
-                      }
-                      final requestToken = ++_searchRequestToken;
-                      _debounce =
-                          Timer(const Duration(milliseconds: 400), () async {
-                        if (!mounted) return;
-                        setState(() => _isLoading = true);
-                        try {
-                          final res =
-                              await TransportApi.searchStations(sanitizedQuery)
-                                  .timeout(const Duration(seconds: 10));
-                          if (requestToken != _searchRequestToken) return;
-                          if (mounted) {
-                            setState(() {
-                              _suggestions = res;
-                              _isLoading = false;
-                            });
-                          }
-                        } catch (e) {
-                          if (requestToken != _searchRequestToken) return;
-                          if (mounted) setState(() => _isLoading = false);
-                        }
-                      });
-                    },
-                  ),
-                  if (_suggestions.isNotEmpty)
-                    Container(
-                        height: 150,
-                        margin: const EdgeInsets.only(top: 8),
-                        decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white10),
-                            borderRadius: BorderRadius.circular(8)),
-                        child: ListView.builder(
-                            itemCount: _suggestions.length,
-                            itemBuilder: (context, idx) {
-                              final s = _suggestions[idx];
-                              return ListTile(
-                                  dense: true,
-                                  title: Text(s.name),
-                                  onTap: () {
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _selectedStation = s;
-                                      _suggestions = [];
-                                      if (_labelCtrl.text.isEmpty) {
-                                        _labelCtrl.text = s.name;
-                                      }
-                                    });
-                                  });
-                            }))
-                ]
-              ],
-              if (_currentType == 'friend') ...[
+              if (_selectedStation != null)
+                ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.train, color: Colors.indigo),
+                    title: Text(_selectedStation!.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    trailing: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() {
+                              _selectedStation = null;
+                              _searchCtrl.clear();
+                              _suggestions = [];
+                            })))
+              else ...[
                 TextField(
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context)!.searchFriendUsername),
-                    onSubmitted: (val) async {
-                      final res = await SupabaseService.searchUsers(val);
-                      if (res.isNotEmpty && mounted) {
-                        setState(() {
-                          _selectedFriendId = res.first['id'];
-                          if (_labelCtrl.text.isEmpty) {
-                            _labelCtrl.text = res.first['username'];
-                          }
-                        });
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                      labelText:
+                          AppLocalizations.of(context)!.searchStationName,
+                      prefixIcon: const Icon(Icons.search),
+                      suffix: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: _isLoading
+                              ? const CircularProgressIndicator(strokeWidth: 2)
+                              : null)),
+                  onChanged: (val) {
+                    final sanitizedQuery = val.trim();
+                    if (_debounce?.isActive ?? false) _debounce!.cancel();
+                    if (sanitizedQuery.isEmpty) {
+                      _searchRequestToken++;
+                      if (mounted) setState(() => _suggestions = []);
+                      return;
+                    }
+                    final requestToken = ++_searchRequestToken;
+                    _debounce =
+                        Timer(const Duration(milliseconds: 400), () async {
+                      if (!mounted) return;
+                      setState(() => _isLoading = true);
+                      try {
+                        final res = await TransportApi.searchStations(
+                          sanitizedQuery,
+                        ).timeout(const Duration(seconds: 10));
+                        if (requestToken != _searchRequestToken) return;
+                        if (mounted) {
+                          setState(() {
+                            _suggestions = res;
+                            _isLoading = false;
+                          });
+                        }
+                      } catch (e) {
+                        if (requestToken != _searchRequestToken) return;
+                        if (mounted) setState(() => _isLoading = false);
                       }
-                    }),
-                if (_selectedFriendId != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(AppLocalizations.of(context)!.friendSelected,
-                          style: const TextStyle(color: Colors.green))),
+                    });
+                  },
+                ),
+                if (_suggestions.isNotEmpty)
+                  Container(
+                      height: 150,
+                      margin: const EdgeInsets.only(top: 8),
+                      decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white10),
+                          borderRadius: BorderRadius.circular(8)),
+                      child: ListView.builder(
+                          itemCount: _suggestions.length,
+                          itemBuilder: (context, idx) {
+                            final s = _suggestions[idx];
+                            return ListTile(
+                                dense: true,
+                                title: Text(s.name),
+                                onTap: () {
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _selectedStation = s;
+                                    _suggestions = [];
+                                    if (_labelCtrl.text.isEmpty) {
+                                      _labelCtrl.text = s.name;
+                                    }
+                                  });
+                                });
+                          }))
               ],
               const SizedBox(height: 20),
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -5468,9 +5437,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                                     .toString()
                                 : widget.favorite.id,
                             label: _labelCtrl.text,
-                            type: _currentType,
+                            type: kSupportedFavoriteType,
                             station: _selectedStation,
-                            friendId: _selectedFriendId,
                             iconCode: _selectedIconCode);
                         await FavoritesManager.saveFavorite(newFav);
                         if (context.mounted) Navigator.pop(context, true);

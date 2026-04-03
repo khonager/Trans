@@ -8,7 +8,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import '../config/app_config.dart';
+import 'favorites_policy.dart';
 import 'notification_manager.dart';
+import '../utils/app_error.dart';
 
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
@@ -38,31 +41,41 @@ class SupabaseService {
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final msg in data) {
-            if (msg['receiver_id'] != user.id) continue;
-            final created = DateTime.parse(msg['created_at']);
-            // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
-            if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
-              // Simple dedupe by ID hash or just rely on OS to update if ID is same
-              // If we really want to avoid re-notifying for the same message we've already shown in this session,
-              // we could keep a Set<String> _notifiedMessageIds.
-              // For now, the time check is a crude but effective filter for "live" updates.
-
-              String body = 'You received a secure message.';
-              // If it's NOT encrypted, show content. If it IS, keeping it generic is safer/easier unless we decrypt here.
-              // Decryption requires keys which depends on sender.
-              if (msg['is_encrypted'] == false) {
-                body = msg['content'];
-              }
-
-              NotificationManager.showNotification(
-                id: msg['id'].hashCode,
-                title: 'New Private Message',
-                body: body,
-                channelId: 'private_messages',
-                channelName: 'Private Messages',
+            try {
+              if (msg['receiver_id'] != user.id) continue;
+              final created = _tryParseTimestamp(
+                msg['created_at'],
+                source: 'messages.created_at',
               );
+              if (created == null) continue;
+
+              // Only notify for messages received in the last 30 seconds (prevent old msg spam on restart)
+              if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+                String body = 'You received a secure message.';
+                if (msg['is_encrypted'] == false) {
+                  body = (msg['content'] ?? body).toString();
+                }
+
+                NotificationManager.showNotification(
+                  id: msg['id'].hashCode,
+                  title: 'New Private Message',
+                  body: body,
+                  channelId: 'private_messages',
+                  channelName: 'Private Messages',
+                );
+              }
+            } catch (e, st) {
+              AppError.log(e,
+                  stackTrace: st,
+                  source: 'SupabaseService._startMessageListener');
             }
           }
+        }, onError: (error, stackTrace) {
+          AppError.log(
+            error,
+            stackTrace: stackTrace is StackTrace ? stackTrace : null,
+            source: 'SupabaseService._startMessageListener.onError',
+          );
         });
   }
 
@@ -78,27 +91,117 @@ class SupabaseService {
         .limit(5)
         .listen((List<Map<String, dynamic>> data) {
           for (final req in data) {
-            if (req['receiver_id'] != user.id || req['status'] != 'pending') {
-              continue;
-            }
+            try {
+              if (req['receiver_id'] != user.id || req['status'] != 'pending') {
+                continue;
+              }
 
-            final created = DateTime.parse(req['created_at']);
-            if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
-              NotificationManager.showNotification(
-                id: req['id'].hashCode,
-                title: 'New Friend Request',
-                body: 'Someone wants to be your friend!',
-                channelId: 'friend_requests',
-                channelName: 'Friend Requests',
+              final created = _tryParseTimestamp(
+                req['created_at'],
+                source: 'friend_requests.created_at',
               );
+              if (created == null) continue;
+
+              if (DateTime.now().toUtc().difference(created).inSeconds < 30) {
+                NotificationManager.showNotification(
+                  id: req['id'].hashCode,
+                  title: 'New Friend Request',
+                  body: 'Someone wants to be your friend!',
+                  channelId: 'friend_requests',
+                  channelName: 'Friend Requests',
+                );
+              }
+            } catch (e, st) {
+              AppError.log(e,
+                  stackTrace: st,
+                  source: 'SupabaseService._startFriendRequestListener');
             }
           }
+        }, onError: (error, stackTrace) {
+          AppError.log(
+            error,
+            stackTrace: stackTrace is StackTrace ? stackTrace : null,
+            source: 'SupabaseService._startFriendRequestListener.onError',
+          );
         });
+  }
+
+  static DateTime? _tryParseTimestamp(
+    dynamic raw, {
+    required String source,
+  }) {
+    if (raw == null) {
+      AppError.log('Missing timestamp', source: source);
+      return null;
+    }
+
+    try {
+      return DateTime.parse(raw.toString()).toUtc();
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: source);
+      return null;
+    }
   }
 
   @visibleForTesting
   static void triggerFriendsListRefresh() {
     friendsListRefresh.value++;
+  }
+
+  @visibleForTesting
+  static OtpType? otpTypeFromString(String? value) {
+    switch (value) {
+      case 'signup':
+        return OtpType.signup;
+      case 'invite':
+        return OtpType.invite;
+      case 'magiclink':
+        return OtpType.magiclink;
+      case 'recovery':
+        return OtpType.recovery;
+      case 'email':
+        return OtpType.email;
+      case 'email_change':
+      case 'emailChange':
+        return OtpType.emailChange;
+      case 'phone_change':
+      case 'phoneChange':
+        return OtpType.phoneChange;
+      case 'sms':
+        return OtpType.sms;
+      default:
+        return null;
+    }
+  }
+
+  static Future<bool> handleInitialSignupConfirmation() async {
+    if (!kIsWeb) return false;
+
+    final uri = Uri.base;
+    final isConfirmPath = uri.path.endsWith('/auth/confirm');
+    final tokenHash = uri.queryParameters['token_hash'];
+    final otpType = otpTypeFromString(uri.queryParameters['type']);
+
+    if (!isConfirmPath ||
+        tokenHash == null ||
+        tokenHash.isEmpty ||
+        otpType != OtpType.signup) {
+      return false;
+    }
+
+    await client.auth.verifyOTP(
+      tokenHash: tokenHash,
+      type: OtpType.signup,
+    );
+
+    if (currentUser != null) {
+      _startMessageListener();
+      _startFriendRequestListener();
+      await loadAndSyncSettings();
+      triggerFriendsListRefresh();
+    }
+
+    return true;
   }
 
   // --- AUTH ---
@@ -210,11 +313,11 @@ class SupabaseService {
   }
 
   static Future<void> resetPassword(String email) async {
-    // configured Site URL (which should be https://khonager.github.io/Trans).
+    // configured Site URL (which should be AppConfig.webBaseUrl).
     // This allows the link to work on devices without the app (opens web app),
     // and devices with the app can intercept it via Universal Links / App Links.
-    const redirectUrl = 'https://khonager.github.io/Trans/';
-    await client.auth.resetPasswordForEmail(email, redirectTo: redirectUrl);
+    await client.auth
+        .resetPasswordForEmail(email, redirectTo: AppConfig.webBaseUrl);
   }
 
   static Future<void> updateThemeColor(int colorValue) async {
@@ -256,9 +359,10 @@ class SupabaseService {
       List<Map<String, dynamic>> favorites) async {
     final user = currentUser;
     if (user == null) return;
+    final sanitizedFavorites = sanitizeFavoritePayloads(favorites);
     await client
         .from('profiles')
-        .update({'favorites': favorites}).eq('id', user.id);
+        .update({'favorites': sanitizedFavorites}).eq('id', user.id);
   }
 
   static Future<void> updatePreviousSearches(List<dynamic> searches) async {
@@ -288,7 +392,8 @@ class SupabaseService {
           .eq('id', user.id)
           .single();
       final settings = data['settings'] as Map<String, dynamic>? ?? {};
-      final favorites = data['favorites'] as List<dynamic>? ?? [];
+      final favorites =
+          sanitizeFavoritePayloads(data['favorites'] as List<dynamic>? ?? []);
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
@@ -316,6 +421,9 @@ class SupabaseService {
       if (settings.containsKey('vibration_intensity')) {
         await prefs.setInt(
             'vibration_intensity', settings['vibration_intensity']);
+      }
+      if (settings.containsKey('wake_alarm_sound')) {
+        await prefs.setString('wake_alarm_sound', settings['wake_alarm_sound']);
       }
       if (settings.containsKey('alarm_stops_before')) {
         await prefs.setInt(
@@ -353,11 +461,9 @@ class SupabaseService {
         await prefs.setString('locale_code', settings['locale_code']);
       }
 
-      if (favorites.isNotEmpty) {
-        final List<String> favs =
-            favorites.map((f) => json.encode(f)).toList().cast<String>();
-        await prefs.setStringList('saved_favorites', favs);
-      }
+      final List<String> favs =
+          favorites.map((f) => json.encode(f)).toList().cast<String>();
+      await prefs.setStringList('saved_favorites', favs);
 
       // Notify app to reload settings
       settingsRefreshNotifier.value++;
