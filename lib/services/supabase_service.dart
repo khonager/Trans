@@ -178,7 +178,10 @@ class SupabaseService {
     final normalizedPath = uri.path.endsWith('/')
         ? uri.path.substring(0, uri.path.length - 1)
         : uri.path;
-    return normalizedPath.endsWith(AppConfig.authConfirmPath);
+    final hasTokenHash = (uri.queryParameters['token_hash'] ?? '').isNotEmpty;
+    final isRootPath = normalizedPath.isEmpty || normalizedPath == '/';
+    return hasTokenHash &&
+        (normalizedPath.endsWith(AppConfig.authConfirmPath) || isRootPath);
   }
 
   static Future<OtpType?> handleAuthConfirmUri(Uri uri) async {
