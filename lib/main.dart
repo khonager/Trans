@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui'; // Needed for PointerDeviceKind
 import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 import 'package:flutter/material.dart';

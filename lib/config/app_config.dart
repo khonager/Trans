@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 
 class AppConfig {
   static const String webBaseUrl = 'https://trans.khonager.de/';
+  static const String authRedirectBaseUrl = 'https://trans.khonager.de';
+  static const String authConfirmPath = '/auth/confirm';
 
   static String get supabaseUrl {
     // 1. Try finding it in .env (Local Dev)

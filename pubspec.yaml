@@ -34,6 +34,7 @@ dependencies:
   supabase_flutter: ^2.0.0
   image_picker: ^1.0.7
   flutter_dotenv: ^6.0.0
+  app_links: ^6.4.1
 
   # UPDATED VERSION
   dynamic_color: ^1.6.0
