@@ -477,7 +477,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         await SupabaseService.deleteAccount();
                         if (ctx.mounted) {
                           Navigator.pop(ctx);
-                          if (mounted) setState(() {});
+                          if (mounted) {
+                            final isGerman =
+                                Localizations.localeOf(context).languageCode ==
+                                    'de';
+                            _showMessage(isGerman
+                                ? 'Konto dauerhaft geloescht.'
+                                : 'Account permanently deleted.');
+                            setState(() {});
+                          }
                         }
                       } catch (e, st) {
                         if (!ctx.mounted) return;
