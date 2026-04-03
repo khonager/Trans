@@ -150,7 +150,9 @@ class SupabaseService {
   // --- AUTH ---
   static Future<bool> signUp(
       String email, String password, String username) async {
-    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
+    const webRedirectUrl = 'https://khonager.github.io/Trans/';
+    String? redirectUrl =
+        kIsWeb ? webRedirectUrl : 'io.supabase.trans://login-callback';
     final response = await client.auth.signUp(
       email: email,
       password: password,
