@@ -43,7 +43,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="khonager.github.io" android:pathPrefix="/Trans" />
+                <data android:scheme="https" android:host="trans.khonager.de" android:pathPrefix="/auth" />
             </intent-filter>
         </activity>
         

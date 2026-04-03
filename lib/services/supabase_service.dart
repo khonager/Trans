@@ -174,24 +174,27 @@ class SupabaseService {
     }
   }
 
-  static Future<bool> handleInitialSignupConfirmation() async {
-    if (!kIsWeb) return false;
+  static bool isAuthConfirmUri(Uri uri) {
+    final normalizedPath = uri.path.endsWith('/')
+        ? uri.path.substring(0, uri.path.length - 1)
+        : uri.path;
+    return normalizedPath.endsWith(AppConfig.authConfirmPath);
+  }
 
-    final uri = Uri.base;
-    final isConfirmPath = uri.path.endsWith('/auth/confirm');
+  static Future<OtpType?> handleAuthConfirmUri(Uri uri) async {
     final tokenHash = uri.queryParameters['token_hash'];
     final otpType = otpTypeFromString(uri.queryParameters['type']);
 
-    if (!isConfirmPath ||
+    if (!isAuthConfirmUri(uri) ||
         tokenHash == null ||
         tokenHash.isEmpty ||
-        otpType != OtpType.signup) {
-      return false;
+        otpType == null) {
+      return null;
     }
 
     await client.auth.verifyOTP(
       tokenHash: tokenHash,
-      type: OtpType.signup,
+      type: otpType,
     );
 
     if (currentUser != null) {
@@ -201,18 +204,17 @@ class SupabaseService {
       triggerFriendsListRefresh();
     }
 
-    return true;
+    return otpType;
   }
 
   // --- AUTH ---
   static Future<bool> signUp(
       String email, String password, String username) async {
-    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
     final response = await client.auth.signUp(
       email: email,
       password: password,
       data: {'username': username},
-      emailRedirectTo: redirectUrl,
+      emailRedirectTo: AppConfig.authRedirectBaseUrl,
     );
     final user = response.user;
     final bool likelyExistingAccount =
@@ -313,11 +315,10 @@ class SupabaseService {
   }
 
   static Future<void> resetPassword(String email) async {
-    // configured Site URL (which should be AppConfig.webBaseUrl).
-    // This allows the link to work on devices without the app (opens web app),
-    // and devices with the app can intercept it via Universal Links / App Links.
-    await client.auth
-        .resetPasswordForEmail(email, redirectTo: AppConfig.webBaseUrl);
+    await client.auth.resetPasswordForEmail(
+      email,
+      redirectTo: AppConfig.authRedirectBaseUrl,
+    );
   }
 
   static Future<void> updateThemeColor(int colorValue) async {
