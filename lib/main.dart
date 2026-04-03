@@ -45,6 +45,7 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     bool initFailed = false;
     String? initError;
+    StartupAuthNotice? startupAuthNotice;
 
     try {
       await dotenv.load(fileName: ".env");
@@ -53,6 +54,24 @@ Future<void> main() async {
         url: AppConfig.supabaseUrl,
         anonKey: AppConfig.supabaseAnonKey,
       );
+
+      if (kIsWeb) {
+        try {
+          final otpType = await SupabaseService.handleAuthConfirmUri(Uri.base);
+          if (otpType == OtpType.signup) {
+            startupAuthNotice = StartupAuthNotice.emailConfirmed;
+          } else if (otpType == OtpType.emailChange) {
+            startupAuthNotice = StartupAuthNotice.emailUpdated;
+          }
+        } catch (e, st) {
+          startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
+          AppError.log(
+            e,
+            stackTrace: st,
+            source: 'web auth confirm startup',
+          );
+        }
+      }
 
       await SupabaseService.init();
     } catch (e, st) {
@@ -72,6 +91,7 @@ Future<void> main() async {
       TransApp(
         initFailed: initFailed,
         initError: initError,
+        startupAuthNotice: startupAuthNotice,
       ),
     );
   }, (error, stack) {
@@ -94,11 +114,13 @@ class CustomScrollBehavior extends MaterialScrollBehavior {
 class TransApp extends StatefulWidget {
   final bool initFailed;
   final String? initError;
+  final StartupAuthNotice? startupAuthNotice;
 
   const TransApp({
     super.key,
     this.initFailed = false,
     this.initError,
+    this.startupAuthNotice,
   });
 
   @override
@@ -121,7 +143,12 @@ class _TransAppState extends State<TransApp> {
     _readPreferences(); // Show immediate local state
     _initSync(); // Start cloud sync
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initAuthLinks());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (widget.startupAuthNotice != null) {
+        await _showStartupAuthNotice(widget.startupAuthNotice!);
+      }
+      await _initAuthLinks();
+    });
   }
 
   @override
@@ -157,7 +184,6 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _initAuthLinks() async {
     if (kIsWeb) {
-      await _processAuthUri(Uri.base);
       return;
     }
 
