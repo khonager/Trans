@@ -2,6 +2,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
+  static const String webBaseUrl = 'https://trans.khonager.de/';
+
   static String get supabaseUrl {
     // 1. Try finding it in .env (Local Dev)
     final url = dotenv.env['SUPABASE_URL'];

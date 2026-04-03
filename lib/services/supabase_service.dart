@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import '../config/app_config.dart';
 import 'favorites_policy.dart';
 import 'notification_manager.dart';
 import '../utils/app_error.dart';
@@ -312,11 +313,11 @@ class SupabaseService {
   }
 
   static Future<void> resetPassword(String email) async {
-    // configured Site URL (which should be https://khonager.github.io/Trans).
+    // configured Site URL (which should be AppConfig.webBaseUrl).
     // This allows the link to work on devices without the app (opens web app),
     // and devices with the app can intercept it via Universal Links / App Links.
-    const redirectUrl = 'https://khonager.github.io/Trans/';
-    await client.auth.resetPasswordForEmail(email, redirectTo: redirectUrl);
+    await client.auth
+        .resetPasswordForEmail(email, redirectTo: AppConfig.webBaseUrl);
   }
 
   static Future<void> updateThemeColor(int colorValue) async {
