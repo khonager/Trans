@@ -42383,7 +42383,7 @@ var $async$afC=B.t(function(b,c){if(b===1)return B.u(c,r)
 for(;;)switch(s){case 0:q=$.cl().b
 q===$&&B.c()
 s=2
-return B.k(q.gd7().IC(a,"https://khonager.github.io/Trans/"),$async$afC)
+return B.k(q.gd7().IC(a,"https://trans.khonager.de/"),$async$afC)
 case 2:return B.v(null,r)}})
 return B.w($async$afC,r)},
 afI(a){var s=0,r=B.x(t.H),q,p,o,n
@@ -170394,7 +170394,7 @@ r=l.a
 q=B.a0(r)
 r=B.H(new B.h_(new B.ay(r,new B.aV3(),q.i("ay<1>")),new B.aV4(p,a),q.i("h_<1,n>")),t.l7)
 r.push(A.A3)
-r.push(B.bh(B.b([B.bl(B.b([B.G(B.D(a,A.f,n).gars(),o,o,o,o,B.ab(o,o,B.cd(4284900966),o,o,o,o,o,o,o,o,8,o,o,A.cF,o,o,!0,o,o,o,o,o,o,o,o),o,o,o),A.pj,B.G(p.e.toUpperCase(),o,o,o,o,A.iOD,o,o,o)],m),A.a3,A.l,A.p,0,A.y),B.G(B.nV(A.b.N(l.d.a,6e7)).toUpperCase(),o,o,o,o,A.iO9,o,o,o),new B.R3("https://khonager.github.io/Trans/",A.Q,-1,60,A.iIg,A.iIe,o)],m),A.r,A.ct,A.p,0,o,o))
+r.push(B.bh(B.b([B.bl(B.b([B.G(B.D(a,A.f,n).gars(),o,o,o,o,B.ab(o,o,B.cd(4284900966),o,o,o,o,o,o,o,o,8,o,o,A.cF,o,o,!0,o,o,o,o,o,o,o,o),o,o,o),A.pj,B.G(p.e.toUpperCase(),o,o,o,o,A.iOD,o,o,o)],m),A.a3,A.l,A.p,0,A.y),B.G(B.nV(A.b.N(l.d.a,6e7)).toUpperCase(),o,o,o,o,A.iO9,o,o,o),new B.R3("https://trans.khonager.de/",A.Q,-1,60,A.iIg,A.iIe,o)],m),A.r,A.ct,A.p,0,o,o))
 return B.b1(o,B.bl(B.b([k,s,B.b1(o,B.bl(r,A.a3,A.l,A.p,0,A.y),A.m,A.q9,o,o,o,o,o,A.bWT,o,o,o)],m),A.r,A.l,A.ae,0,A.y),A.m,A.Cr,o,o,o,o,o,o,o,o,600)},
 aF7(a){var s,r=null,q=J.dX(40,t.l7)
 for(s=0;s<40;++s)q[s]=new B.nR(1,A.jV,B.b1(r,r,A.m,A.b.P(s,2)===0?A.vQ:A.Q,r,r,r,1.5,A.Dt,r,r,r,r),r)
