@@ -178,8 +178,14 @@ class SupabaseService {
     final normalizedPath = uri.path.endsWith('/')
         ? uri.path.substring(0, uri.path.length - 1)
         : uri.path;
+    final configuredBasePath = Uri.parse(AppConfig.webBaseUrl).path;
+    final normalizedBasePath = configuredBasePath.endsWith('/')
+        ? configuredBasePath.substring(0, configuredBasePath.length - 1)
+        : configuredBasePath;
     final hasTokenHash = (uri.queryParameters['token_hash'] ?? '').isNotEmpty;
-    final isRootPath = normalizedPath.isEmpty || normalizedPath == '/';
+    final isRootPath = normalizedPath.isEmpty ||
+        normalizedPath == '/' ||
+        normalizedPath == normalizedBasePath;
     return hasTokenHash &&
         (normalizedPath.endsWith(AppConfig.authConfirmPath) || isRootPath);
   }
