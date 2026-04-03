@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "BC9ZAMTAAW.de.khonager.trans.ios",
+        "paths": [
+          "/auth/*"
+        ]
+      }
+    ]
+  }
+}
