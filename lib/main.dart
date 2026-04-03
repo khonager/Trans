@@ -14,6 +14,11 @@ import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
 import 'utils/app_error.dart';
 
+enum StartupAuthNotice {
+  emailConfirmed,
+  emailConfirmationFailed,
+}
+
 Future<void> main() async {
   usePathUrlStrategy();
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +42,7 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     bool initFailed = false;
     String? initError;
+    StartupAuthNotice? startupAuthNotice;
 
     try {
       await dotenv.load(fileName: ".env");
@@ -45,6 +51,21 @@ Future<void> main() async {
         url: AppConfig.supabaseUrl,
         anonKey: AppConfig.supabaseAnonKey,
       );
+
+      try {
+        final didConfirm =
+            await SupabaseService.handleInitialSignupConfirmation();
+        if (didConfirm) {
+          startupAuthNotice = StartupAuthNotice.emailConfirmed;
+        }
+      } catch (e, st) {
+        startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
+        AppError.log(
+          e,
+          stackTrace: st,
+          source: 'signup confirmation callback',
+        );
+      }
 
       await SupabaseService.init();
     } catch (e, st) {
@@ -60,7 +81,13 @@ Future<void> main() async {
       ),
     );
 
-    runApp(TransApp(initFailed: initFailed, initError: initError));
+    runApp(
+      TransApp(
+        initFailed: initFailed,
+        initError: initError,
+        startupAuthNotice: startupAuthNotice,
+      ),
+    );
   }, (error, stack) {
     AppError.log(error, stackTrace: stack, source: 'runZonedGuarded');
   });
@@ -81,7 +108,14 @@ class CustomScrollBehavior extends MaterialScrollBehavior {
 class TransApp extends StatefulWidget {
   final bool initFailed;
   final String? initError;
-  const TransApp({super.key, this.initFailed = false, this.initError});
+  final StartupAuthNotice? startupAuthNotice;
+
+  const TransApp({
+    super.key,
+    this.initFailed = false,
+    this.initError,
+    this.startupAuthNotice,
+  });
 
   @override
   State<TransApp> createState() => _TransAppState();
@@ -101,6 +135,9 @@ class _TransAppState extends State<TransApp> {
     _readPreferences(); // Show immediate local state
     _initSync(); // Start cloud sync
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showStartupAuthNotice();
+    });
   }
 
   @override
@@ -111,6 +148,24 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _initSync() async {
     await SupabaseService.loadAndSyncSettings();
+  }
+
+  void _showStartupAuthNotice() {
+    if (!mounted || widget.startupAuthNotice == null) return;
+
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final message = switch (widget.startupAuthNotice!) {
+      StartupAuthNotice.emailConfirmed => isGerman
+          ? 'E-Mail bestaetigt. Du bist jetzt angemeldet.'
+          : 'Email confirmed. You are now signed in.',
+      StartupAuthNotice.emailConfirmationFailed => isGerman
+          ? 'E-Mail-Bestaetigung fehlgeschlagen. Bitte Link erneut oeffnen oder eine neue E-Mail anfordern.'
+          : 'Email confirmation failed. Please open the link again or request a new email.',
+    };
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   Future<void> _readPreferences() async {

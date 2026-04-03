@@ -147,12 +147,66 @@ class SupabaseService {
     friendsListRefresh.value++;
   }
 
+  @visibleForTesting
+  static OtpType? otpTypeFromString(String? value) {
+    switch (value) {
+      case 'signup':
+        return OtpType.signup;
+      case 'invite':
+        return OtpType.invite;
+      case 'magiclink':
+        return OtpType.magiclink;
+      case 'recovery':
+        return OtpType.recovery;
+      case 'email':
+        return OtpType.email;
+      case 'email_change':
+      case 'emailChange':
+        return OtpType.emailChange;
+      case 'phone_change':
+      case 'phoneChange':
+        return OtpType.phoneChange;
+      case 'sms':
+        return OtpType.sms;
+      default:
+        return null;
+    }
+  }
+
+  static Future<bool> handleInitialSignupConfirmation() async {
+    if (!kIsWeb) return false;
+
+    final uri = Uri.base;
+    final isConfirmPath = uri.path.endsWith('/auth/confirm');
+    final tokenHash = uri.queryParameters['token_hash'];
+    final otpType = otpTypeFromString(uri.queryParameters['type']);
+
+    if (!isConfirmPath ||
+        tokenHash == null ||
+        tokenHash.isEmpty ||
+        otpType != OtpType.signup) {
+      return false;
+    }
+
+    await client.auth.verifyOTP(
+      tokenHash: tokenHash,
+      type: OtpType.signup,
+    );
+
+    if (currentUser != null) {
+      _startMessageListener();
+      _startFriendRequestListener();
+      await loadAndSyncSettings();
+      triggerFriendsListRefresh();
+    }
+
+    return true;
+  }
+
   // --- AUTH ---
   static Future<bool> signUp(
       String email, String password, String username) async {
-    const webRedirectUrl = 'https://khonager.github.io/Trans/';
-    String? redirectUrl =
-        kIsWeb ? webRedirectUrl : 'io.supabase.trans://login-callback';
+    String? redirectUrl = kIsWeb ? null : 'io.supabase.trans://login-callback';
     final response = await client.auth.signUp(
       email: email,
       password: password,
