@@ -79,6 +79,7 @@
             gsettings-desktop-schemas # Required for file chooser settings schema
             geoclue2 # Required for geolocator
             github-cli # wrapper for git auth
+            supabase-cli
             nspr
             nss
           ]);
@@ -113,6 +114,7 @@
             cmake
             ninja
             cocoapods # Required for iOS development on macOS
+            supabase-cli
           ];
 
           shellHook = ''
