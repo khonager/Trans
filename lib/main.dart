@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui'; // Needed for PointerDeviceKind
+import 'package:app_links/app_links.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ import 'utils/app_error.dart';
 
 enum StartupAuthNotice {
   emailConfirmed,
+  emailUpdated,
   emailConfirmationFailed,
 }
 
@@ -42,7 +44,6 @@ Future<void> main() async {
   await runZonedGuarded(() async {
     bool initFailed = false;
     String? initError;
-    StartupAuthNotice? startupAuthNotice;
 
     try {
       await dotenv.load(fileName: ".env");
@@ -51,21 +52,6 @@ Future<void> main() async {
         url: AppConfig.supabaseUrl,
         anonKey: AppConfig.supabaseAnonKey,
       );
-
-      try {
-        final didConfirm =
-            await SupabaseService.handleInitialSignupConfirmation();
-        if (didConfirm) {
-          startupAuthNotice = StartupAuthNotice.emailConfirmed;
-        }
-      } catch (e, st) {
-        startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
-        AppError.log(
-          e,
-          stackTrace: st,
-          source: 'signup confirmation callback',
-        );
-      }
 
       await SupabaseService.init();
     } catch (e, st) {
@@ -85,7 +71,6 @@ Future<void> main() async {
       TransApp(
         initFailed: initFailed,
         initError: initError,
-        startupAuthNotice: startupAuthNotice,
       ),
     );
   }, (error, stack) {
@@ -108,13 +93,11 @@ class CustomScrollBehavior extends MaterialScrollBehavior {
 class TransApp extends StatefulWidget {
   final bool initFailed;
   final String? initError;
-  final StartupAuthNotice? startupAuthNotice;
 
   const TransApp({
     super.key,
     this.initFailed = false,
     this.initError,
-    this.startupAuthNotice,
   });
 
   @override
@@ -122,12 +105,14 @@ class TransApp extends StatefulWidget {
 }
 
 class _TransAppState extends State<TransApp> {
+  final AppLinks _appLinks = AppLinks();
   ThemeMode _themeMode = ThemeMode.light;
   bool _useSystemTheme = false;
   bool _onlyNahverkehr = false;
   bool _isGhostMode = false;
   Color _themeColor = appThemeColors[0];
   Locale? _locale;
+  StreamSubscription<Uri>? _authLinkSubscription;
 
   @override
   void initState() {
@@ -135,13 +120,12 @@ class _TransAppState extends State<TransApp> {
     _readPreferences(); // Show immediate local state
     _initSync(); // Start cloud sync
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showStartupAuthNotice();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initAuthLinks());
   }
 
   @override
   void dispose() {
+    _authLinkSubscription?.cancel();
     SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
     super.dispose();
   }
@@ -150,14 +134,16 @@ class _TransAppState extends State<TransApp> {
     await SupabaseService.loadAndSyncSettings();
   }
 
-  void _showStartupAuthNotice() {
-    if (!mounted || widget.startupAuthNotice == null) return;
-
+  Future<void> _showStartupAuthNotice(StartupAuthNotice notice) async {
+    if (!mounted) return;
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    final message = switch (widget.startupAuthNotice!) {
+    final message = switch (notice) {
       StartupAuthNotice.emailConfirmed => isGerman
           ? 'E-Mail bestaetigt. Du bist jetzt angemeldet.'
           : 'Email confirmed. You are now signed in.',
+      StartupAuthNotice.emailUpdated => isGerman
+          ? 'E-Mail-Adresse bestaetigt und aktualisiert.'
+          : 'Email address confirmed and updated.',
       StartupAuthNotice.emailConfirmationFailed => isGerman
           ? 'E-Mail-Bestaetigung fehlgeschlagen. Bitte Link erneut oeffnen oder eine neue E-Mail anfordern.'
           : 'Email confirmation failed. Please open the link again or request a new email.',
@@ -166,6 +152,56 @@ class _TransAppState extends State<TransApp> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  Future<void> _initAuthLinks() async {
+    if (kIsWeb) {
+      await _processAuthUri(Uri.base);
+      return;
+    }
+
+    try {
+      final initialUri = await _appLinks.getInitialLink();
+      if (initialUri != null) {
+        await _processAuthUri(initialUri);
+      }
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'initial auth link');
+    }
+
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      (uri) {
+        unawaited(_processAuthUri(uri));
+      },
+      onError: (error, stackTrace) {
+        AppError.log(
+          error,
+          stackTrace: stackTrace is StackTrace ? stackTrace : null,
+          source: 'auth link stream',
+        );
+      },
+    );
+  }
+
+  Future<void> _processAuthUri(Uri uri) async {
+    try {
+      final otpType = await SupabaseService.handleAuthConfirmUri(uri);
+      if (otpType == null) return;
+
+      switch (otpType) {
+        case OtpType.signup:
+          await _showStartupAuthNotice(StartupAuthNotice.emailConfirmed);
+        case OtpType.emailChange:
+          await _showStartupAuthNotice(StartupAuthNotice.emailUpdated);
+        case OtpType.recovery:
+          break;
+        default:
+          break;
+      }
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'auth confirm callback');
+      await _showStartupAuthNotice(StartupAuthNotice.emailConfirmationFailed);
+    }
   }
 
   Future<void> _readPreferences() async {
