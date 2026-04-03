@@ -2,9 +2,15 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/foundation.dart';
 
 class AppConfig {
-  static const String webBaseUrl = 'https://trans.khonager.de/';
-  static const String authRedirectBaseUrl = 'https://trans.khonager.de';
+  static const bool isDevBuild =
+      bool.fromEnvironment('IS_DEV', defaultValue: false);
   static const String authConfirmPath = '/auth/confirm';
+
+  static String get webBaseUrl => isDevBuild
+      ? 'https://trans.khonager.de/dev/'
+      : 'https://trans.khonager.de/';
+
+  static String get authRedirectBaseUrl => webBaseUrl;
 
   static String get supabaseUrl {
     // 1. Try finding it in .env (Local Dev)
