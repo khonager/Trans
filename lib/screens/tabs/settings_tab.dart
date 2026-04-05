@@ -29,11 +29,6 @@ String deleteAccountErrorMessage(
   return fallbackMessage;
 }
 
-enum _LoginMethod {
-  emailPassword,
-  phoneOtp,
-}
-
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
@@ -80,12 +75,8 @@ class _SettingsTabState extends State<SettingsTab> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _phoneOtpCtrl = TextEditingController();
 
   bool _isLoginMode = true;
-  _LoginMethod _loginMethod = _LoginMethod.emailPassword;
-  bool _phoneOtpSent = false;
 
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _myLocation;
@@ -112,8 +103,6 @@ class _SettingsTabState extends State<SettingsTab> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
-    _phoneCtrl.dispose();
-    _phoneOtpCtrl.dispose();
     super.dispose();
   }
 
@@ -809,11 +798,6 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _submitAuth() async {
     if (_isAuthSubmitting) return;
 
-    if (_isLoginMode && _loginMethod == _LoginMethod.phoneOtp) {
-      await _submitPhoneAuth();
-      return;
-    }
-
     final l10n = AppLocalizations.of(context)!;
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
@@ -910,133 +894,6 @@ class _SettingsTabState extends State<SettingsTab> {
 
   bool _looksLikeEmail(String value) {
     return value.contains('@') && value.contains('.');
-  }
-
-  bool _looksLikePhone(String value) {
-    return RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(_normalizedPhone(value));
-  }
-
-  String _normalizedPhone(String value) {
-    return value.replaceAll(RegExp(r'[\s().-]'), '');
-  }
-
-  String get _phoneFieldLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Telefonnummer' : 'Phone number';
-  }
-
-  String get _phoneFormatHint {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman
-        ? 'Mit Laendervorwahl, z. B. +49123456789'
-        : 'With country code, e.g. +49123456789';
-  }
-
-  String get _oneTimeCodeLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'SMS-Code' : 'SMS code';
-  }
-
-  String get _sendCodeLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Code senden' : 'Send code';
-  }
-
-  String get _verifyCodeLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Code bestaetigen' : 'Verify code';
-  }
-
-  String get _resendCodeLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Code erneut senden' : 'Resend code';
-  }
-
-  String get _phoneCodeSentMessage {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman
-        ? 'SMS-Code gesendet. Bitte gib ihn ein, um dich anzumelden.'
-        : 'SMS code sent. Enter it to sign in.';
-  }
-
-  String get _phoneSignedInMessage {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman
-        ? 'Du wurdest per Telefonnummer angemeldet.'
-        : 'You are now signed in with your phone number.';
-  }
-
-  Future<void> _submitPhoneAuth() async {
-    final phone = _normalizedPhone(_phoneCtrl.text.trim());
-    final otp = _phoneOtpCtrl.text.trim();
-
-    if (phone.isEmpty) {
-      _showMessage(
-        _requiredFieldMessage(_phoneFieldLabel),
-        reportable: true,
-        source: 'phone auth validation',
-      );
-      return;
-    }
-
-    if (!_looksLikePhone(phone)) {
-      _showMessage(
-        _phoneFormatHint,
-        reportable: true,
-        source: 'phone auth validation',
-      );
-      return;
-    }
-
-    if (_phoneOtpSent && otp.isEmpty) {
-      _showMessage(
-        _requiredFieldMessage(_oneTimeCodeLabel),
-        reportable: true,
-        source: 'phone auth validation',
-      );
-      return;
-    }
-
-    if (mounted) {
-      setState(() => _isAuthSubmitting = true);
-    } else {
-      _isAuthSubmitting = true;
-    }
-
-    try {
-      if (!_phoneOtpSent) {
-        await _requestPhoneOtp(phone);
-        if (!mounted) return;
-        setState(() => _phoneOtpSent = true);
-        _showMessage(_phoneCodeSentMessage);
-        return;
-      }
-
-      await SupabaseService.verifyPhoneOtp(phone, otp);
-      _phoneOtpCtrl.clear();
-      await _loadProfile();
-      if (!mounted) return;
-      setState(() => _phoneOtpSent = false);
-      _showMessage(_phoneSignedInMessage);
-    } catch (e, st) {
-      if (!mounted) return;
-      AppError.showSnackBar(
-        context,
-        error: e,
-        stackTrace: st,
-        source: _phoneOtpSent ? 'verify phone otp' : 'send phone otp',
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isAuthSubmitting = false);
-      } else {
-        _isAuthSubmitting = false;
-      }
-    }
-  }
-
-  Future<void> _requestPhoneOtp(String phone) async {
-    await SupabaseService.sendPhoneOtp(phone);
   }
 
   String _requiredFieldMessage(String fieldName) {
@@ -1773,56 +1630,16 @@ class _SettingsTabState extends State<SettingsTab> {
             ],
             selected: {_isLoginMode},
             onSelectionChanged: (selection) {
-              setState(() {
-                _isLoginMode = selection.first;
-                if (!_isLoginMode) {
-                  _loginMethod = _LoginMethod.emailPassword;
-                  _phoneOtpSent = false;
-                  _phoneOtpCtrl.clear();
-                }
-              });
+              setState(() => _isLoginMode = selection.first);
             },
           ),
           const SizedBox(height: 14),
-          if (_isLoginMode) ...[
-            SegmentedButton<_LoginMethod>(
-              segments: [
-                ButtonSegment<_LoginMethod>(
-                  value: _LoginMethod.emailPassword,
-                  label: Text(AppLocalizations.of(context)!.emailSettings),
-                ),
-                ButtonSegment<_LoginMethod>(
-                  value: _LoginMethod.phoneOtp,
-                  label: Text(_phoneFieldLabel),
-                ),
-              ],
-              selected: {_loginMethod},
-              onSelectionChanged: (selection) {
-                setState(() {
-                  _loginMethod = selection.first;
-                  _phoneOtpSent = false;
-                  _phoneOtpCtrl.clear();
-                });
-              },
-            ),
-            const SizedBox(height: 14),
-          ],
-          if (!_isLoginMode || _loginMethod == _LoginMethod.emailPassword) ...[
-            TextField(
-                controller: _emailCtrl,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                    hintText: AppLocalizations.of(context)!.emailSettings)),
-          ] else ...[
-            TextField(
-              controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              textInputAction:
-                  _phoneOtpSent ? TextInputAction.next : TextInputAction.done,
-              decoration: InputDecoration(hintText: _phoneFormatHint),
-            ),
-          ],
+          TextField(
+              controller: _emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(
+                  hintText: AppLocalizations.of(context)!.emailSettings)),
           if (!_isLoginMode) ...[
             const SizedBox(height: 10),
             TextField(
@@ -1832,34 +1649,24 @@ class _SettingsTabState extends State<SettingsTab> {
                     hintText: AppLocalizations.of(context)!.usernameSignUp)),
           ],
           const SizedBox(height: 10),
-          if (!_isLoginMode || _loginMethod == _LoginMethod.emailPassword) ...[
-            TextField(
-                controller: _passwordCtrl,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _submitAuth(),
-                obscureText: _obscureAuthPassword,
-                decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.password,
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscureAuthPassword
-                        ? Icons.visibility
-                        : Icons.visibility_off),
-                    onPressed: () {
-                      setState(
-                          () => _obscureAuthPassword = !_obscureAuthPassword);
-                    },
-                  ),
-                )),
-          ] else if (_phoneOtpSent) ...[
-            TextField(
-              controller: _phoneOtpCtrl,
-              keyboardType: TextInputType.number,
+          TextField(
+              controller: _passwordCtrl,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submitAuth(),
-              decoration: InputDecoration(hintText: _oneTimeCodeLabel),
-            ),
-          ],
-          if (_isLoginMode && _loginMethod == _LoginMethod.emailPassword)
+              obscureText: _obscureAuthPassword,
+              decoration: InputDecoration(
+                hintText: AppLocalizations.of(context)!.password,
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureAuthPassword
+                      ? Icons.visibility
+                      : Icons.visibility_off),
+                  onPressed: () {
+                    setState(
+                        () => _obscureAuthPassword = !_obscureAuthPassword);
+                  },
+                ),
+              )),
+          if (_isLoginMode)
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
@@ -1878,56 +1685,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Text(_isLoginMode
-                    ? _loginMethod == _LoginMethod.phoneOtp
-                        ? (_phoneOtpSent ? _verifyCodeLabel : _sendCodeLabel)
-                        : AppLocalizations.of(context)!.login
+                    ? AppLocalizations.of(context)!.login
                     : AppLocalizations.of(context)!.signUp),
           ),
-          if (_isLoginMode &&
-              _loginMethod == _LoginMethod.phoneOtp &&
-              _phoneOtpSent)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _isAuthSubmitting
-                    ? null
-                    : () async {
-                        final phone = _normalizedPhone(_phoneCtrl.text.trim());
-                        if (!_looksLikePhone(phone)) {
-                          _showMessage(
-                            _phoneFormatHint,
-                            reportable: true,
-                            source: 'phone auth validation',
-                          );
-                          return;
-                        }
-
-                        setState(() => _isAuthSubmitting = true);
-                        try {
-                          await _requestPhoneOtp(phone);
-                          _showMessage(_phoneCodeSentMessage);
-                        } catch (e, st) {
-                          if (!context.mounted) return;
-                          AppError.showSnackBar(
-                            context,
-                            error: e,
-                            stackTrace: st,
-                            source: 'resend phone otp',
-                          );
-                        } finally {
-                          if (mounted) {
-                            setState(() => _isAuthSubmitting = false);
-                          } else {
-                            _isAuthSubmitting = false;
-                          }
-                        }
-                      },
-                child: Text(
-                  _resendCodeLabel,
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
-            ),
         ],
       ),
     );

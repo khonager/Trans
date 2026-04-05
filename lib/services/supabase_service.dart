@@ -309,22 +309,6 @@ class SupabaseService {
     await _finishSignIn();
   }
 
-  static Future<void> sendPhoneOtp(String phone) async {
-    await client.auth.signInWithOtp(
-      phone: phone,
-      shouldCreateUser: false,
-    );
-  }
-
-  static Future<void> verifyPhoneOtp(String phone, String token) async {
-    await client.auth.verifyOTP(
-      phone: phone,
-      token: token,
-      type: OtpType.sms,
-    );
-    await _finishSignIn();
-  }
-
   static Future<void> _ensureProfileRow(String userId,
       {String? username}) async {
     try {
