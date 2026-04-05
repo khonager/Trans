@@ -63,7 +63,7 @@ Future<void> main() async {
             startupAuthNotice = StartupAuthNotice.emailConfirmed;
           } else if (otpType == OtpType.emailChange) {
             startupAuthNotice = StartupAuthNotice.emailUpdated;
-          } else if (otpType == OtpType.magiclink) {
+          } else if (otpType == OtpType.magiclink || otpType == OtpType.email) {
             startupAuthNotice = StartupAuthNotice.magicLinkSignedIn;
           }
         } catch (e, st) {
@@ -227,6 +227,7 @@ class _TransAppState extends State<TransApp> {
         case OtpType.emailChange:
           await _showStartupAuthNotice(StartupAuthNotice.emailUpdated);
         case OtpType.magiclink:
+        case OtpType.email:
           await _showStartupAuthNotice(StartupAuthNotice.magicLinkSignedIn);
         case OtpType.recovery:
           break;
