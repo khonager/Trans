@@ -12,6 +12,9 @@ class AppConfig {
 
   static String get authRedirectBaseUrl => webBaseUrl;
 
+  static String get authOAuthRedirectUrl =>
+      kIsWeb ? webBaseUrl : 'io.supabase.trans://login-callback/';
+
   static String get supabaseUrl {
     // 1. Try finding it in .env (Local Dev)
     final url = dotenv.env['SUPABASE_URL'];

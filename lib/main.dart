@@ -170,16 +170,16 @@ class _TransAppState extends State<TransApp> {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     final message = switch (notice) {
       StartupAuthNotice.emailConfirmed => isGerman
-          ? 'E-Mail bestaetigt. Du bist jetzt angemeldet.'
+          ? 'E-Mail bestätigt. Du bist jetzt angemeldet.'
           : 'Email confirmed. You are now signed in.',
       StartupAuthNotice.emailUpdated => isGerman
-          ? 'E-Mail-Adresse bestaetigt und aktualisiert.'
+          ? 'E-Mail-Adresse bestätigt und aktualisiert.'
           : 'Email address confirmed and updated.',
       StartupAuthNotice.emailConfirmationFailed => isGerman
-          ? 'E-Mail-Bestaetigung fehlgeschlagen. Bitte Link erneut oeffnen oder eine neue E-Mail anfordern.'
+          ? 'E-Mail-Bestätigung fehlgeschlagen. Bitte Link erneut öffnen oder eine neue E-Mail anfordern.'
           : 'Email confirmation failed. Please open the link again or request a new email.',
       StartupAuthNotice.magicLinkSignedIn => isGerman
-          ? 'Du wurdest ueber den Magic Link angemeldet.'
+          ? 'Du wurdest über den Magic Link angemeldet.'
           : 'You were signed in through the magic link.',
     };
 
