@@ -20,6 +20,7 @@ enum StartupAuthNotice {
   emailConfirmed,
   emailUpdated,
   emailConfirmationFailed,
+  magicLinkSignedIn,
 }
 
 Future<void> main() async {
@@ -57,11 +58,13 @@ Future<void> main() async {
 
       if (kIsWeb) {
         try {
-          final otpType = await SupabaseService.handleAuthConfirmUri(Uri.base);
+          final otpType = await SupabaseService.handleAuthCallbackUri(Uri.base);
           if (otpType == OtpType.signup) {
             startupAuthNotice = StartupAuthNotice.emailConfirmed;
           } else if (otpType == OtpType.emailChange) {
             startupAuthNotice = StartupAuthNotice.emailUpdated;
+          } else if (otpType == OtpType.magiclink) {
+            startupAuthNotice = StartupAuthNotice.magicLinkSignedIn;
           }
         } catch (e, st) {
           startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
@@ -175,6 +178,9 @@ class _TransAppState extends State<TransApp> {
       StartupAuthNotice.emailConfirmationFailed => isGerman
           ? 'E-Mail-Bestaetigung fehlgeschlagen. Bitte Link erneut oeffnen oder eine neue E-Mail anfordern.'
           : 'Email confirmation failed. Please open the link again or request a new email.',
+      StartupAuthNotice.magicLinkSignedIn => isGerman
+          ? 'Du wurdest ueber den Magic Link angemeldet.'
+          : 'You were signed in through the magic link.',
     };
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -212,7 +218,7 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _processAuthUri(Uri uri) async {
     try {
-      final otpType = await SupabaseService.handleAuthConfirmUri(uri);
+      final otpType = await SupabaseService.handleAuthCallbackUri(uri);
       if (otpType == null) return;
 
       switch (otpType) {
@@ -220,6 +226,8 @@ class _TransAppState extends State<TransApp> {
           await _showStartupAuthNotice(StartupAuthNotice.emailConfirmed);
         case OtpType.emailChange:
           await _showStartupAuthNotice(StartupAuthNotice.emailUpdated);
+        case OtpType.magiclink:
+          await _showStartupAuthNotice(StartupAuthNotice.magicLinkSignedIn);
         case OtpType.recovery:
           break;
         default:
