@@ -5,6 +5,10 @@ workflows:
     instance_type: mac_mini_m1
 
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: de.khonager.trans.ios
+
       groups:
         # You'll create this group in Codemagic UI with your secrets
         - app_store_credentials
