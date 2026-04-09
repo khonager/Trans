@@ -64,7 +64,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - YOUR_EMAIL@example.com
+          - support@khonager.de
         notify:
           success: true
           failure: true
@@ -75,8 +75,9 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
 
-        # Submit to TestFlight only (not App Store review)
-        submit_to_testflight: true
+        # Upload to App Store Connect, but don't auto-submit for external
+        # TestFlight review until Beta App Information is filled in there.
+        submit_to_testflight: false
         submit_to_app_store: false
 
   ios-development:
