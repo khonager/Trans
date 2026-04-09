@@ -43,6 +43,10 @@ workflows:
 
       - name: Flutter build ipa
         script: |
+          # iOS project only has the default Runner scheme.
+          # Remove implicit Flutter flavor from pubspec for this CI build.
+          awk '!/^[[:space:]]*default-flavor:[[:space:]]*stable[[:space:]]*$/' pubspec.yaml > pubspec.yaml.tmp
+          mv pubspec.yaml.tmp pubspec.yaml
           flutter build ipa --release \
             --no-tree-shake-icons \
             --build-name=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//') \
@@ -113,6 +117,10 @@ workflows:
 
       - name: Build iOS without signing (for testing)
         script: |
+          # iOS project only has the default Runner scheme.
+          # Remove implicit Flutter flavor from pubspec for this CI build.
+          awk '!/^[[:space:]]*default-flavor:[[:space:]]*stable[[:space:]]*$/' pubspec.yaml > pubspec.yaml.tmp
+          mv pubspec.yaml.tmp pubspec.yaml
           flutter build ios --release --no-codesign
 
     artifacts:
