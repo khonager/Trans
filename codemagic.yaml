@@ -5,6 +5,10 @@ workflows:
     instance_type: mac_mini_m1
 
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: de.khonager.trans.ios
+
       groups:
         # You'll create this group in Codemagic UI with your secrets
         - app_store_credentials
@@ -43,6 +47,10 @@ workflows:
 
       - name: Flutter build ipa
         script: |
+          # iOS project only has the default Runner scheme.
+          # Remove implicit Flutter flavor from pubspec for this CI build.
+          awk '!/^[[:space:]]*default-flavor:[[:space:]]*stable[[:space:]]*$/' pubspec.yaml > pubspec.yaml.tmp
+          mv pubspec.yaml.tmp pubspec.yaml
           flutter build ipa --release \
             --no-tree-shake-icons \
             --build-name=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//') \
@@ -56,7 +64,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - YOUR_EMAIL@example.com
+          - support@khonager.de
         notify:
           success: true
           failure: true
@@ -67,8 +75,9 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
 
-        # Submit to TestFlight only (not App Store review)
-        submit_to_testflight: true
+        # Upload to App Store Connect, but don't auto-submit for external
+        # TestFlight review until Beta App Information is filled in there.
+        submit_to_testflight: false
         submit_to_app_store: false
 
   ios-development:
@@ -113,6 +122,10 @@ workflows:
 
       - name: Build iOS without signing (for testing)
         script: |
+          # iOS project only has the default Runner scheme.
+          # Remove implicit Flutter flavor from pubspec for this CI build.
+          awk '!/^[[:space:]]*default-flavor:[[:space:]]*stable[[:space:]]*$/' pubspec.yaml > pubspec.yaml.tmp
+          mv pubspec.yaml.tmp pubspec.yaml
           flutter build ios --release --no-codesign
 
     artifacts:

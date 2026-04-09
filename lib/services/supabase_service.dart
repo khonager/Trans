@@ -174,6 +174,31 @@ class SupabaseService {
     }
   }
 
+  static Map<String, String> _fragmentParameters(Uri uri) {
+    final fragment = uri.fragment;
+    if (fragment.isEmpty) return const {};
+
+    try {
+      return Uri.splitQueryString(fragment);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  static String? _uriParameter(Uri uri, String key) {
+    final queryValue = uri.queryParameters[key];
+    if (queryValue != null && queryValue.isNotEmpty) {
+      return queryValue;
+    }
+
+    final fragmentValue = _fragmentParameters(uri)[key];
+    if (fragmentValue != null && fragmentValue.isNotEmpty) {
+      return fragmentValue;
+    }
+
+    return null;
+  }
+
   static bool isAuthConfirmUri(Uri uri) {
     final normalizedPath = uri.path.endsWith('/')
         ? uri.path.substring(0, uri.path.length - 1)
@@ -182,7 +207,7 @@ class SupabaseService {
     final normalizedBasePath = configuredBasePath.endsWith('/')
         ? configuredBasePath.substring(0, configuredBasePath.length - 1)
         : configuredBasePath;
-    final hasTokenHash = (uri.queryParameters['token_hash'] ?? '').isNotEmpty;
+    final hasTokenHash = (_uriParameter(uri, 'token_hash') ?? '').isNotEmpty;
     final isRootPath = normalizedPath.isEmpty ||
         normalizedPath == '/' ||
         normalizedPath == normalizedBasePath;
@@ -190,15 +215,45 @@ class SupabaseService {
         (normalizedPath.endsWith(AppConfig.authConfirmPath) || isRootPath);
   }
 
-  static Future<OtpType?> handleAuthConfirmUri(Uri uri) async {
-    final tokenHash = uri.queryParameters['token_hash'];
-    final otpType = otpTypeFromString(uri.queryParameters['type']);
+  static bool isAuthSessionUri(Uri uri) {
+    final fragmentParameters = _fragmentParameters(uri);
+    final hasAccessToken =
+        (fragmentParameters['access_token'] ?? '').isNotEmpty;
+    final hasAuthCode = (uri.queryParameters['code'] ?? '').isNotEmpty;
+    final hasErrorDescription =
+        (fragmentParameters['error_description'] ?? '').isNotEmpty;
+    return hasAccessToken || hasAuthCode || hasErrorDescription;
+  }
+
+  static Future<void> _finishSignIn() async {
+    final user = currentUser;
+    if (user != null) {
+      final username = user.userMetadata?['username']?.toString();
+      await _ensureProfileRow(user.id, username: username);
+    }
+    _startMessageListener();
+    _startFriendRequestListener();
+    await loadAndSyncSettings();
+    triggerFriendsListRefresh();
+  }
+
+  static Future<OtpType?> handleAuthCallbackUri(Uri uri) async {
+    final tokenHash = _uriParameter(uri, 'token_hash');
+    final otpType = otpTypeFromString(_uriParameter(uri, 'type'));
 
     if (!isAuthConfirmUri(uri) ||
         tokenHash == null ||
         tokenHash.isEmpty ||
         otpType == null) {
-      return null;
+      if (!isAuthSessionUri(uri)) {
+        return null;
+      }
+
+      await client.auth.getSessionFromUrl(uri);
+      if (currentUser != null) {
+        await _finishSignIn();
+      }
+      return otpType;
     }
 
     await client.auth.verifyOTP(
@@ -207,10 +262,7 @@ class SupabaseService {
     );
 
     if (currentUser != null) {
-      _startMessageListener();
-      _startFriendRequestListener();
-      await loadAndSyncSettings();
-      triggerFriendsListRefresh();
+      await _finishSignIn();
     }
 
     return otpType;
@@ -254,15 +306,29 @@ class SupabaseService {
 
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
-    final user = currentUser;
-    if (user != null) {
-      final username = user.userMetadata?['username']?.toString();
-      await _ensureProfileRow(user.id, username: username);
+    await _finishSignIn();
+  }
+
+  static Future<void> signInWithGoogle() async {
+    final launched = await client.auth.signInWithOAuth(
+      OAuthProvider.google,
+      redirectTo: AppConfig.authOAuthRedirectUrl,
+    );
+
+    if (!launched) {
+      throw 'Could not start Google sign-in.';
     }
-    _startMessageListener();
-    _startFriendRequestListener();
-    await loadAndSyncSettings();
-    triggerFriendsListRefresh();
+  }
+
+  static Future<void> signInWithApple() async {
+    final launched = await client.auth.signInWithOAuth(
+      OAuthProvider.apple,
+      redirectTo: AppConfig.authOAuthRedirectUrl,
+    );
+
+    if (!launched) {
+      throw 'Could not start Apple sign-in.';
+    }
   }
 
   static Future<void> _ensureProfileRow(String userId,

@@ -896,6 +896,86 @@ class _SettingsTabState extends State<SettingsTab> {
     return value.contains('@') && value.contains('.');
   }
 
+  bool get _supportsOAuthSignIn {
+    if (kIsWeb) return true;
+
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => true,
+      TargetPlatform.iOS => true,
+      TargetPlatform.macOS => true,
+      _ => false,
+    };
+  }
+
+  String get _continueWithGoogleLabel {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman ? 'Mit Google fortfahren' : 'Continue with Google';
+  }
+
+  String get _continueWithAppleLabel {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman ? 'Mit Apple fortfahren' : 'Continue with Apple';
+  }
+
+  String get _orLabel {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman ? 'oder' : 'or';
+  }
+
+  String get _continueInBrowserMessage {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return isGerman
+        ? 'Fahre im Browser fort, um die Anmeldung abzuschließen.'
+        : 'Continue in your browser to finish signing in.';
+  }
+
+  Future<void> _startGoogleSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithGoogle,
+      source: 'sign in with google',
+    );
+  }
+
+  Future<void> _startAppleSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithApple,
+      source: 'sign in with apple',
+    );
+  }
+
+  Future<void> _startOAuthSignIn({
+    required Future<void> Function() action,
+    required String source,
+  }) async {
+    if (_isAuthSubmitting) return;
+
+    if (mounted) {
+      setState(() => _isAuthSubmitting = true);
+    } else {
+      _isAuthSubmitting = true;
+    }
+
+    try {
+      await action();
+      if (!mounted) return;
+      _showMessage(_continueInBrowserMessage);
+    } catch (e, st) {
+      if (!mounted) return;
+      AppError.showSnackBar(
+        context,
+        error: e,
+        stackTrace: st,
+        source: source,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isAuthSubmitting = false);
+      } else {
+        _isAuthSubmitting = false;
+      }
+    }
+  }
+
   String _requiredFieldMessage(String fieldName) {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return isGerman
@@ -1637,8 +1717,7 @@ class _SettingsTabState extends State<SettingsTab> {
           TextField(
               controller: _emailCtrl,
               keyboardType: TextInputType.emailAddress,
-              textInputAction:
-                  _isLoginMode ? TextInputAction.next : TextInputAction.next,
+              textInputAction: TextInputAction.next,
               decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.emailSettings)),
           if (!_isLoginMode) ...[
@@ -1689,6 +1768,50 @@ class _SettingsTabState extends State<SettingsTab> {
                     ? AppLocalizations.of(context)!.login
                     : AppLocalizations.of(context)!.signUp),
           ),
+          if (_supportsOAuthSignIn) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(child: Divider(color: colors.divider)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    _orLabel,
+                    style: TextStyle(color: colors.textSecondary),
+                  ),
+                ),
+                Expanded(child: Divider(color: colors.divider)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
+              icon: Container(
+                width: 20,
+                height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: colors.divider),
+                ),
+                child: const Text(
+                  'G',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              label: Text(_continueWithGoogleLabel),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
+              icon: const Icon(Icons.apple),
+              label: Text(_continueWithAppleLabel),
+            ),
+          ],
         ],
       ),
     );

@@ -10,7 +10,11 @@ class AppConfig {
       ? 'https://trans.khonager.de/dev/'
       : 'https://trans.khonager.de/';
 
-  static String get authRedirectBaseUrl => webBaseUrl;
+  static String get authRedirectBaseUrl =>
+      kIsWeb ? webBaseUrl : 'io.supabase.trans://login-callback/';
+
+  static String get authOAuthRedirectUrl =>
+      kIsWeb ? webBaseUrl : 'io.supabase.trans://login-callback/';
 
   static String get supabaseUrl {
     // 1. Try finding it in .env (Local Dev)
