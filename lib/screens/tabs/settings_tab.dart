@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1796,22 +1797,11 @@ class _SettingsTabState extends State<SettingsTab> {
             const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
-              icon: Container(
+              icon: Image.asset(
+                'assets/google_g_logo.png',
                 width: 20,
                 height: 20,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: colors.divider),
-                ),
-                child: const Text(
-                  'G',
-                  style: TextStyle(
-                    color: Colors.blue,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                filterQuality: FilterQuality.high,
               ),
               label: Text(_continueWithGoogleLabel),
             ),
