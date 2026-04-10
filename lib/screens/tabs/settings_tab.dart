@@ -1795,19 +1795,65 @@ class _SettingsTabState extends State<SettingsTab> {
               ],
             ),
             const SizedBox(height: 16),
-            OutlinedButton.icon(
+            OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
-              icon: Image.asset(
-                'assets/google_g_logo.png',
-                width: 20,
-                height: 20,
-                filterQuality: FilterQuality.high,
-              ),
-              label: Text(_continueWithGoogleLabel),
+              child: _buildGoogleSignInLabel(colors),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildGoogleSignInLabel(TransColors colors) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final baseStyle = TextStyle(color: colors.textPrimary);
+
+    if (isGerman) {
+      return Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Mit '),
+            _googleWordSpan(),
+            const TextSpan(text: ' fortfahren'),
+          ],
+        ),
+      );
+    }
+
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          const TextSpan(text: 'Continue with '),
+          _googleWordSpan(),
+        ],
+      ),
+    );
+  }
+
+  TextSpan _googleWordSpan() {
+    const letters = [
+      ('G', Color(0xFF4285F4)),
+      ('o', Color(0xFFEA4335)),
+      ('o', Color(0xFFFBBC05)),
+      ('g', Color(0xFF4285F4)),
+      ('l', Color(0xFF34A853)),
+      ('e', Color(0xFFEA4335)),
+    ];
+
+    return TextSpan(
+      children: [
+        for (final (letter, color) in letters)
+          TextSpan(
+            text: letter,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+      ],
     );
   }
 
