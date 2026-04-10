@@ -94,7 +94,7 @@ class NotificationManager {
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
-      playSound: true,
+      playSound: sound.playSound,
       sound: sound.androidSound,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(vibrationPattern),
@@ -114,7 +114,7 @@ class NotificationManager {
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
       priority: Priority.high,
-      playSound: true,
+      playSound: sound.playSound,
       sound: sound.androidSound,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(vibrationPattern),
@@ -131,11 +131,11 @@ class NotificationManager {
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: true,
+      presentSound: sound.playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: sound.fileName,
+      sound: sound.playSound ? sound.fileName : null,
     );
   }
 

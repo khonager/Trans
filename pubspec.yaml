@@ -112,6 +112,7 @@ flutter:
 
   assets:
     - assets/
+    - assets/sounds/
     - lib/assets/
     - .env
     - lib/assets/logo.png
