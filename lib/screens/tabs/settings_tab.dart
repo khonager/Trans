@@ -935,11 +935,6 @@ class _SettingsTabState extends State<SettingsTab> {
     return isGerman ? 'Mit Google fortfahren' : 'Continue with Google';
   }
 
-  String get _continueWithAppleLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Mit Apple fortfahren' : 'Continue with Apple';
-  }
-
   String get _orLabel {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return isGerman ? 'oder' : 'or';
@@ -956,13 +951,6 @@ class _SettingsTabState extends State<SettingsTab> {
     await _startOAuthSignIn(
       action: SupabaseService.signInWithGoogle,
       source: 'sign in with google',
-    );
-  }
-
-  Future<void> _startAppleSignIn() async {
-    await _startOAuthSignIn(
-      action: SupabaseService.signInWithApple,
-      source: 'sign in with apple',
     );
   }
 
@@ -1826,12 +1814,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ),
               label: Text(_continueWithGoogleLabel),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
-              icon: const Icon(Icons.apple),
-              label: Text(_continueWithAppleLabel),
             ),
           ],
         ],
