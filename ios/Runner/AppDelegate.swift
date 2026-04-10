@@ -5,52 +5,53 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var wakeAlarmPreviewPlayer: AVAudioPlayer?
+  private var wakeAlarmPreviewChannel: FlutterMethodChannel?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let channel = FlutterMethodChannel(
-        name: "de.khonager.trans/wake_alarm_preview",
-        binaryMessenger: controller.binaryMessenger
-      )
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 
-      channel.setMethodCallHandler { [weak self] call, result in
-        switch call.method {
-        case "play":
-          guard
-            let arguments = call.arguments as? [String: Any],
-            let path = arguments["path"] as? String
-          else {
-            result(FlutterError(
-              code: "missing_path",
-              message: "Missing preview sound path.",
-              details: nil
-            ))
-            return
-          }
+  private func registerWakeAlarmPreviewChannel(binaryMessenger: FlutterBinaryMessenger) {
+    wakeAlarmPreviewChannel = FlutterMethodChannel(
+      name: "de.khonager.trans/wake_alarm_preview",
+      binaryMessenger: binaryMessenger
+    )
 
-          do {
-            try self?.playWakeAlarmPreview(path: path)
-            result(nil)
-          } catch {
-            result(FlutterError(
-              code: "play_failed",
-              message: error.localizedDescription,
-              details: nil
-            ))
-          }
-        case "stop":
-          self?.stopWakeAlarmPreview()
-          result(nil)
-        default:
-          result(FlutterMethodNotImplemented)
+    wakeAlarmPreviewChannel?.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "play":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let path = arguments["path"] as? String
+        else {
+          result(FlutterError(
+            code: "missing_path",
+            message: "Missing preview sound path.",
+            details: nil
+          ))
+          return
         }
+
+        do {
+          try self?.playWakeAlarmPreview(path: path)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "play_failed",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      case "stop":
+        self?.stopWakeAlarmPreview()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
       }
     }
-
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   private func playWakeAlarmPreview(path: String) throws {
@@ -59,9 +60,23 @@ import UIKit
     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
     try AVAudioSession.sharedInstance().setActive(true)
 
+    if AVAudioSession.sharedInstance().outputVolume == 0 {
+      throw NSError(
+        domain: "WakeAlarmPreview",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Your iPhone output volume is set to 0."]
+      )
+    }
+
     let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
     player.prepareToPlay()
-    player.play()
+    if !player.play() {
+      throw NSError(
+        domain: "WakeAlarmPreview",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "iOS refused to start audio playback."]
+      )
+    }
     wakeAlarmPreviewPlayer = player
   }
 
@@ -72,5 +87,8 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    registerWakeAlarmPreviewChannel(
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
   }
 }

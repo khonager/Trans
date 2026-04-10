@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -251,14 +252,36 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _previewWakeAlarmSound() async {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
-    await NotificationManager.previewWakeAlarm(
-      title: l10n.wakeAlarmPreviewTitle,
-      body: l10n.wakeAlarmPreviewBody,
-      soundId: _wakeAlarmSound,
-      vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
-        _vibrationPattern,
-      ),
-    );
+    try {
+      await NotificationManager.previewWakeAlarm(
+        title: l10n.wakeAlarmPreviewTitle,
+        body: l10n.wakeAlarmPreviewBody,
+        soundId: _wakeAlarmSound,
+        vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
+          _vibrationPattern,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_wakeAlarmPreviewErrorMessage(error))),
+      );
+    }
+  }
+
+  String _wakeAlarmPreviewErrorMessage(Object error) {
+    if (error is PlatformException) {
+      final message = error.message;
+      if (message != null && message.isNotEmpty) {
+        return 'Could not play the alarm preview: $message';
+      }
+    }
+
+    if (error is StateError) {
+      return error.message;
+    }
+
+    return 'Could not play the alarm preview. Check your output volume and audio route.';
   }
 
   void _showIosVibrationAvailabilityMessage() {

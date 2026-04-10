@@ -102,6 +102,11 @@ class WakeAlarmPreviewPlayer {
       await _channel.invokeMethod<void>('play', {'path': path});
       return true;
     } on MissingPluginException {
+      if (Platform.isIOS || Platform.isAndroid) {
+        throw StateError(
+          'The native alarm preview player was not registered. Restart the app and try again.',
+        );
+      }
       return false;
     }
   }
