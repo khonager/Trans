@@ -164,9 +164,9 @@ class _SettingsTabState extends State<SettingsTab> {
       setState(() {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
-        _wakeAlarmSound =
-            prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
-                WakeAlarmSettings.defaultSoundId;
+        _wakeAlarmSound = WakeAlarmSettings.soundIdForPreference(
+          prefs.getString(WakeAlarmSettings.soundPreferenceKey),
+        );
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =

@@ -27,14 +27,10 @@ class WakeAlarmSoundOption {
 
 class WakeAlarmSettings {
   static const String soundPreferenceKey = 'wake_alarm_sound';
-  static const String defaultSoundId = 'system_default';
+  static const String defaultSoundId = 'station_chime';
   static const String silentSoundId = 'silent';
 
   static const List<WakeAlarmSoundOption> soundOptions = [
-    WakeAlarmSoundOption(
-      id: defaultSoundId,
-      label: 'System Default',
-    ),
     WakeAlarmSoundOption(
       id: silentSoundId,
       label: 'None',
@@ -69,8 +65,14 @@ class WakeAlarmSettings {
   static WakeAlarmSoundOption soundForId(String? id) {
     return soundOptions.firstWhere(
       (option) => option.id == id,
-      orElse: () => soundOptions.first,
+      orElse: () => soundOptions.firstWhere(
+        (option) => option.id == defaultSoundId,
+      ),
     );
+  }
+
+  static String soundIdForPreference(String? id) {
+    return soundForId(id).id;
   }
 
   static List<WakeAlarmSoundOption> get bundledSoundOptions => soundOptions
