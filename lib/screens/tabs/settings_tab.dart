@@ -1383,7 +1383,6 @@ class _SettingsTabState extends State<SettingsTab> {
                       if (val == null) return;
                       setState(() => _wakeAlarmSound = val);
                       await _persistWakeAlarmSoundSetting();
-                      await _previewWakeAlarmSound();
                     },
                   ),
                 ],
