@@ -54,6 +54,7 @@ workflows:
           flutter build ipa --release \
             --no-tree-shake-icons \
             --build-name=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//') \
+            --build-number=$(grep '^version:' pubspec.yaml | sed 's/.*+//') \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
