@@ -58,13 +58,16 @@ Future<void> main() async {
 
       if (kIsWeb) {
         try {
-          final otpType = await SupabaseService.handleAuthCallbackUri(Uri.base);
-          if (otpType == OtpType.signup) {
-            startupAuthNotice = StartupAuthNotice.emailConfirmed;
-          } else if (otpType == OtpType.emailChange) {
-            startupAuthNotice = StartupAuthNotice.emailUpdated;
-          } else if (otpType == OtpType.magiclink || otpType == OtpType.email) {
-            startupAuthNotice = StartupAuthNotice.magicLinkSignedIn;
+          if (SupabaseService.shouldHandleAuthCallbackManually(Uri.base)) {
+            final otpType = await SupabaseService.handleAuthCallbackUri(Uri.base);
+            if (otpType == OtpType.signup) {
+              startupAuthNotice = StartupAuthNotice.emailConfirmed;
+            } else if (otpType == OtpType.emailChange) {
+              startupAuthNotice = StartupAuthNotice.emailUpdated;
+            } else if (otpType == OtpType.magiclink ||
+                otpType == OtpType.email) {
+              startupAuthNotice = StartupAuthNotice.magicLinkSignedIn;
+            }
           }
         } catch (e, st) {
           startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;

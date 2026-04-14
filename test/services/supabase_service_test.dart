@@ -19,4 +19,35 @@ void main() {
       expect(SupabaseService.otpTypeFromString('unknown'), isNull);
     });
   });
+
+  group('shouldHandleAuthCallbackManually', () {
+    test('handles email confirmation token links manually', () {
+      expect(
+        SupabaseService.shouldHandleAuthCallbackManually(
+          Uri.parse(
+            'https://trans.khonager.de/auth/confirm?token_hash=abc&type=signup',
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not manually handle oauth pkce code links', () {
+      expect(
+        SupabaseService.shouldHandleAuthCallbackManually(
+          Uri.parse('https://trans.khonager.de/?code=abc'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not manually handle implicit session fragments', () {
+      expect(
+        SupabaseService.shouldHandleAuthCallbackManually(
+          Uri.parse('https://trans.khonager.de/#access_token=abc'),
+        ),
+        isFalse,
+      );
+    });
+  });
 }
