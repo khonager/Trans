@@ -759,7 +759,8 @@ class AppLocalizationsDe extends AppLocalizations {
   String get vibrationIntensity => 'Vibrationsintensität';
 
   @override
-  String get iosWakeAlarmVibrationNoticeTitle => 'iPhone-Benachrichtigungslimit';
+  String get iosWakeAlarmVibrationNoticeTitle =>
+      'iPhone-Benachrichtigungslimit';
 
   @override
   String get iosWakeAlarmVibrationNoticeBody =>
