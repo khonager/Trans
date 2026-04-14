@@ -43,10 +43,10 @@ class WakeAlarmCustomSoundService {
   }) async {
     final sourceFile = File(sourcePath);
     if (!await sourceFile.exists()) {
-      throw const FileSystemException('Selected file no longer exists.');
+      throw StateError('Selected file no longer exists.');
     }
     if (!await _isSupportedAudioFile(sourceFile, originalFileName ?? sourcePath)) {
-      throw const FileSystemException(
+      throw StateError(
         'Please choose an audio file such as MP3, WAV, M4A, OGG, FLAC, AIFF, AAC, or CAF.',
       );
     }
@@ -60,17 +60,18 @@ class WakeAlarmCustomSoundService {
     }
 
     final extension = _normalizedExtension(originalFileName ?? sourcePath);
-    final storedFileName = 'custom_alarm_sound.$extension';
+    final customId = 'custom_${DateTime.now().microsecondsSinceEpoch}';
+    final storedFileName = '${customId}_sound.$extension';
     final storedFile = File('${soundsDirectory.path}/$storedFileName');
     await sourceFile.copy(storedFile.path);
 
     final label = _displayLabel(originalFileName ?? sourcePath);
-    await WakeAlarmSettings.setCustomSound(
+    return WakeAlarmSettings.addCustomSound(
+      id: customId,
       localFilePath: storedFile.path,
       fileName: storedFileName,
       label: label,
     );
-    return WakeAlarmSettings.soundForId(WakeAlarmSettings.customSoundId);
   }
 
   static String _normalizedExtension(String path) {
@@ -96,22 +97,23 @@ class WakeAlarmCustomSoundService {
     return '${compact.substring(0, 21).trimRight()}...';
   }
 
-  static Future<void> deleteCustomSound() async {
-    final localPath = WakeAlarmSettings.soundOptions
-        .where((option) => option.id == WakeAlarmSettings.customSoundId)
-        .map((option) => option.localFilePath)
-        .cast<String?>()
-        .firstWhere(
-          (path) => path != null && path.isNotEmpty,
-          orElse: () => null,
-        );
-    if (localPath != null) {
+  static Future<void> deleteCustomSound(WakeAlarmSoundOption sound) async {
+    final localPath = sound.localFilePath;
+    if (localPath != null && localPath.isNotEmpty) {
       final file = File(localPath);
       if (await file.exists()) {
         await file.delete();
       }
     }
-    await WakeAlarmSettings.clearCustomSound();
+    final fileName = sound.fileName;
+    if (fileName != null && Platform.isIOS) {
+      final libraryDirectory = await getLibraryDirectory();
+      final darwinFile = File('${libraryDirectory.path}/Sounds/$fileName');
+      if (await darwinFile.exists()) {
+        await darwinFile.delete();
+      }
+    }
+    await WakeAlarmSettings.removeCustomSound(sound.id);
   }
 
   static Future<bool> _isSupportedAudioFile(File file, String name) async {

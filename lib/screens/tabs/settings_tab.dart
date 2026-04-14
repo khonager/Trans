@@ -76,7 +76,6 @@ class SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<SettingsTab> {
   static const String _pickCustomSoundValue = '__pick_custom_sound__';
-  static const String _removeCustomSoundValue = '__remove_custom_sound__';
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -262,10 +261,6 @@ class _SettingsTabState extends State<SettingsTab> {
       await _pickCustomWakeAlarmSound();
       return;
     }
-    if (value == _removeCustomSoundValue) {
-      await _removeCustomWakeAlarmSound();
-      return;
-    }
 
     setState(() => _wakeAlarmSound = value);
     await _persistWakeAlarmSoundSetting();
@@ -280,30 +275,31 @@ class _SettingsTabState extends State<SettingsTab> {
       await _persistWakeAlarmSoundSetting();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Custom alarm sound set to "${sound.label}".')),
+        SnackBar(
+          content: Text(
+            'Custom alarm sound set to "${sound.label}". Long-press its name to remove it.',
+          ),
+        ),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not import that audio file: $error')),
+        SnackBar(content: Text(_customSoundImportErrorMessage(error))),
       );
     }
   }
 
-  Future<void> _removeCustomWakeAlarmSound() async {
+  Future<void> _removeSelectedCustomWakeAlarmSound() async {
+    final selectedSound = WakeAlarmSettings.soundForId(_wakeAlarmSound);
+    if (!selectedSound.isCustomSound) return;
+
     try {
-      final wasUsingCustom = _wakeAlarmSound == WakeAlarmSettings.customSoundId;
-      await WakeAlarmCustomSoundService.deleteCustomSound();
+      await WakeAlarmCustomSoundService.deleteCustomSound(selectedSound);
       if (!mounted) return;
 
-      final nextSound = wasUsingCustom
-          ? WakeAlarmSettings.defaultSoundId
-          : _wakeAlarmSound;
-      setState(() => _wakeAlarmSound = nextSound);
-      if (wasUsingCustom) {
-        await _persistWakeAlarmSoundSetting();
-        if (!mounted) return;
-      }
+      setState(() => _wakeAlarmSound = WakeAlarmSettings.defaultSoundId);
+      await _persistWakeAlarmSoundSetting();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Custom alarm sound removed.')),
       );
@@ -313,6 +309,13 @@ class _SettingsTabState extends State<SettingsTab> {
         SnackBar(content: Text('Could not remove the custom sound: $error')),
       );
     }
+  }
+
+  String _customSoundImportErrorMessage(Object error) {
+    if (error is StateError) {
+      return 'Could not import that audio file: ${error.message}';
+    }
+    return 'Could not import that audio file.';
   }
 
   Future<void> _persistAlarmDeliverySettings() async {
@@ -1746,11 +1749,21 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               title: Text(AppLocalizations.of(context)!.alarmSound,
                   style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(
-                WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
-                style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              subtitle: InkWell(
+                onLongPress:
+                    WakeAlarmSettings.isCustomSoundId(_wakeAlarmSound)
+                        ? _removeSelectedCustomWakeAlarmSound
+                        : null,
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
               trailing: Wrap(
                 crossAxisAlignment: WrapCrossAlignment.center,
@@ -1784,18 +1797,6 @@ class _SettingsTabState extends State<SettingsTab> {
                     value: _wakeAlarmSound,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    selectedItemBuilder: (context) => [
-                      ...WakeAlarmSettings.soundOptions.map(
-                        (option) => SizedBox(
-                          width: 150,
-                          child: Text(
-                            option.label,
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                      ),
-                    ],
                     items: [
                       ...WakeAlarmSettings.soundOptions.map(
                         (option) => DropdownMenuItem(
@@ -1814,11 +1815,6 @@ class _SettingsTabState extends State<SettingsTab> {
                         const DropdownMenuItem(
                           value: _pickCustomSoundValue,
                           child: Text('Add custom audio...'),
-                        ),
-                      if (!kIsWeb && WakeAlarmSettings.hasCustomSound)
-                        const DropdownMenuItem(
-                          value: _removeCustomSoundValue,
-                          child: Text('Remove custom audio'),
                         ),
                     ],
                     onChanged: (val) async {
