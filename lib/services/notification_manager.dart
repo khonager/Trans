@@ -11,6 +11,7 @@ import 'wake_alarm_sound_storage.dart';
 class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  static const int wakeAlarmPreviewNotificationId = 9001;
   static const String wakeAlarmChannelId = 'wake_alarm_channel';
   static const String leaveAlarmChannelId = 'saved_route_leave_alarm_channel';
   static const String leaveCountdownChannelId =
@@ -278,14 +279,15 @@ class NotificationManager {
     bool soundEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: soundEnabled && sound.playSound,
+      presentSound: playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: soundEnabled && sound.playSound ? sound.fileName : null,
+      sound: _darwinSoundName(sound, soundEnabled: playSound),
     );
   }
 
@@ -377,15 +379,31 @@ class NotificationManager {
     bool soundEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: soundEnabled && sound.playSound,
+      presentSound: playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: soundEnabled && sound.playSound ? sound.fileName : null,
+      sound: _darwinSoundName(sound, soundEnabled: playSound),
     );
+  }
+
+  static String? _darwinSoundName(
+    WakeAlarmSoundOption sound, {
+    required bool soundEnabled,
+  }) {
+    if (!soundEnabled || !sound.playSound) return null;
+
+    // Imported/custom files are less reliable on iOS scheduling, so fall back
+    // to the platform default notification sound instead of risking silence.
+    if (defaultTargetPlatform == TargetPlatform.iOS && sound.isCustomSound) {
+      return null;
+    }
+
+    return sound.fileName;
   }
 
   static Future<void> previewWakeAlarm({
@@ -411,7 +429,7 @@ class NotificationManager {
     );
 
     await _notifications.show(
-      id: 9001,
+      id: wakeAlarmPreviewNotificationId,
       title: title,
       body: body,
       notificationDetails: details,
@@ -420,7 +438,7 @@ class NotificationManager {
 
   static Future<void> stopWakeAlarmPreview() async {
     await WakeAlarmPreviewPlayer.stop();
-    await _notifications.cancel(id: 9001);
+    await _notifications.cancel(id: wakeAlarmPreviewNotificationId);
   }
 
   static Future<void> _ensureDarwinWakeAlarmSounds() async {
@@ -478,5 +496,9 @@ class NotificationManager {
       payload: payload,
       androidScheduleMode: androidScheduleMode,
     );
+  }
+
+  static Future<void> cancelNotification({required int id}) async {
+    await _notifications.cancel(id: id);
   }
 }
