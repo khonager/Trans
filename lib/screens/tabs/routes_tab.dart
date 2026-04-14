@@ -247,6 +247,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _savedJourneyLiveCountdownTicker;
   final Map<String, String> _savedJourneyLiveCountdownTexts =
       <String, String>{};
+  final Set<String> _savedJourneyTriggeredReminderKeys = <String>{};
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
@@ -1474,6 +1475,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return '$hh:$mm:$ss';
   }
 
+  String _savedJourneyReminderTriggerKey(String key, int minutes) {
+    return '$key::$minutes';
+  }
+
   DateTime? _savedJourneyReminderTriggerLocal(Map<String, dynamic> item) {
     final minutes = _savedJourneyReminderMinutes(item);
     final departure = _savedJourneyDepartureLocal(item);
@@ -1620,13 +1625,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     for (final item in _savedJourneys) {
       final key = _savedJourneyUiKey(item);
       final triggerAt = _savedJourneyReminderTriggerLocal(item);
-      if (key == null || triggerAt == null) continue;
+      final minutes = _savedJourneyReminderMinutes(item);
+      if (key == null || triggerAt == null || minutes == null) continue;
+      final triggerKey = _savedJourneyReminderTriggerKey(key, minutes);
 
       if (triggerAt.isAfter(now)) {
         activeKeys.add(key);
+        _savedJourneyTriggeredReminderKeys.remove(triggerKey);
         await _showSavedJourneyLiveCountdownNotification(item, triggerAt);
       } else {
         _savedJourneyLiveCountdownTexts.remove(key);
+        if (_savedJourneyTriggeredReminderKeys.add(triggerKey)) {
+          unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
+        }
       }
     }
 
@@ -1675,6 +1686,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       unawaited(_cancelSavedJourneyReminderNotification(key));
       unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
       _savedJourneyLiveCountdownTexts.remove(key);
+      _savedJourneyTriggeredReminderKeys
+          .removeWhere((entry) => entry.startsWith('$key::'));
     }
 
     _savedReminderPickerVisibleFor.removeWhere((k) => !activeKeys.contains(k));
@@ -2104,7 +2117,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }) async {
     final key = _savedJourneyUiKey(item);
     if (key == null) return;
+    final triggerKey = _savedJourneyReminderTriggerKey(key, minutes);
     _savedJourneyLiveCountdownTexts.remove(key);
+    _savedJourneyTriggeredReminderKeys.add(triggerKey);
     await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
     await _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes);
     _syncSavedJourneyLiveCountdownTicker();
@@ -2188,6 +2203,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       updatedItem.remove('leaveReminderMinutes');
     } else {
       updatedItem['leaveReminderMinutes'] = minutes;
+    }
+    if (selectedKey != null) {
+      _savedJourneyTriggeredReminderKeys
+          .removeWhere((entry) => entry.startsWith('$selectedKey::'));
     }
 
     if (!mounted) return;
