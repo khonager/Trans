@@ -329,8 +329,8 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  Future<void> _testLeaveVibration() async {
-    if (kIsWeb || !_leaveAlarmVibrationEnabled) return;
+  Future<void> _testAlarmVibration({required bool enabled}) async {
+    if (kIsWeb || !enabled) return;
     if (!await Vibration.hasVibrator()) return;
 
     final pattern = WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
@@ -402,14 +402,14 @@ class _SettingsTabState extends State<SettingsTab> {
       await NotificationManager.previewWakeAlarm(
         title: 'Manual leave timer',
         body: 'Hidden timer finished.',
-        soundId: _leaveAlarmSoundEnabled
+        soundId: _wakeAlarmSoundEnabled
             ? _wakeAlarmSound
             : WakeAlarmSettings.silentSoundId,
         vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
           _vibrationPattern,
         ),
       );
-      await _testLeaveVibration();
+      await _testAlarmVibration(enabled: _wakeAlarmVibrationEnabled);
       _hiddenManualAlarmTarget = null;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
