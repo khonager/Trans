@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Returning to Trans</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f5f4ef;
+      color: #172016;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      max-width: 30rem;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 1rem;
+      font-size: 1.5rem;
+    }
+
+    p {
+      margin: 0.5rem 0;
+      line-height: 1.5;
+    }
+
+    a {
+      color: inherit;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Returning to Trans…</h1>
+    <p>If the app does not open automatically, use the link below.</p>
+    <p><a id="open-app-link" href="#">Open Trans</a></p>
+    <p>You can close this page after the app opens.</p>
+  </main>
+
+  <script>
+    (function () {
+      var deepLink = 'io.supabase.trans://login-callback/' +
+          window.location.search + window.location.hash;
+      var link = document.getElementById('open-app-link');
+      link.href = deepLink;
+
+      window.location.replace(deepLink);
+
+      window.setTimeout(function () {
+        try {
+          window.close();
+        } catch (_) {}
+      }, 300);
+    })();
+  </script>
+</body>
+</html>
