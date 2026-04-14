@@ -27,6 +27,14 @@ class WakeAlarmSoundOption {
 
 class WakeAlarmSettings {
   static const String soundPreferenceKey = 'wake_alarm_sound';
+  static const String wakeSoundEnabledPreferenceKey =
+      'wake_alarm_sound_enabled';
+  static const String wakeVibrationEnabledPreferenceKey =
+      'wake_alarm_vibration_enabled';
+  static const String leaveSoundEnabledPreferenceKey =
+      'leave_alarm_sound_enabled';
+  static const String leaveVibrationEnabledPreferenceKey =
+      'leave_alarm_vibration_enabled';
   static const String defaultSoundId = 'station_chime';
   static const String silentSoundId = 'silent';
 

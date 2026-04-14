@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 import 'wake_alarm_settings.dart';
 import 'wake_alarm_preview_player.dart';
@@ -8,6 +11,18 @@ import 'wake_alarm_sound_storage.dart';
 class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  static const String wakeAlarmChannelId = 'wake_alarm_channel';
+  static const String leaveAlarmChannelId = 'saved_route_leave_alarm_channel';
+  static const String leaveCountdownChannelId =
+      'saved_route_leave_countdown_channel';
+  static const MethodChannel _timezoneChannel =
+      MethodChannel('de.khonager.trans/device_timezone');
+  static bool _timezonesInitialized = false;
+  static bool _requestedExactAlarmPermission = false;
+  static bool _requestedFullScreenIntentPermission = false;
+  static bool _requestedNotificationPolicyAccess = false;
+  static bool _hasFullScreenIntentPermission = false;
+  static bool _hasNotificationPolicyAccess = false;
 
   static Future<void> init() async {
     const androidSettings =
@@ -23,6 +38,7 @@ class NotificationManager {
         android: androidSettings, iOS: iosSettings, linux: linuxSettings);
 
     await _notifications.initialize(settings: initSettings);
+    await _configureLocalTimezone();
     await _ensureDarwinWakeAlarmSounds();
 
     // Create Channels (Android)
@@ -46,12 +62,30 @@ class NotificationManager {
       ));
       await androidImplementation
           .createNotificationChannel(const AndroidNotificationChannel(
-        'wake_alarm_channel',
+        wakeAlarmChannelId,
         'Wake Alarm',
         description: 'Alarms for arriving at station',
         importance: Importance.max,
         enableVibration: true,
         audioAttributesUsage: AudioAttributesUsage.alarm,
+      ));
+      await androidImplementation
+          .createNotificationChannel(const AndroidNotificationChannel(
+        leaveAlarmChannelId,
+        'Saved Route Reminders',
+        description: 'Alarm-style reminders for saved-route departure times',
+        importance: Importance.max,
+        enableVibration: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+      ));
+      await androidImplementation
+          .createNotificationChannel(const AndroidNotificationChannel(
+        leaveCountdownChannelId,
+        'Saved Route Countdown',
+        description: 'Live countdown reminders for saved routes',
+        importance: Importance.low,
+        playSound: false,
+        enableVibration: false,
       ));
     }
   }
@@ -72,6 +106,110 @@ class NotificationManager {
     }
   }
 
+  static Future<void> _configureLocalTimezone() async {
+    if (_timezonesInitialized) return;
+
+    tz_data.initializeTimeZones();
+    try {
+      final timezoneName = await _timezoneChannel.invokeMethod<String>('get');
+      if (timezoneName != null && timezoneName.isNotEmpty) {
+        tz.setLocalLocation(tz.getLocation(timezoneName));
+      }
+    } catch (error) {
+      debugPrint('Falling back to UTC timezone for notifications: $error');
+    }
+    _timezonesInitialized = true;
+  }
+
+  static Future<tz.TZDateTime> zonedDateTimeFromLocal(DateTime dateTime) async {
+    await _configureLocalTimezone();
+    return tz.TZDateTime.from(dateTime, tz.local);
+  }
+
+  static Future<bool> canScheduleExactAlarms() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return true;
+    try {
+      return await androidImplementation.canScheduleExactNotifications() ??
+          true;
+    } catch (error) {
+      debugPrint('Exact alarm availability check failed: $error');
+      return true;
+    }
+  }
+
+  static Future<bool> requestExactAlarmPermissionIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return true;
+
+    final canSchedule = await canScheduleExactAlarms();
+    if (canSchedule) return true;
+    if (_requestedExactAlarmPermission) return false;
+
+    try {
+      _requestedExactAlarmPermission = true;
+      final granted =
+          await androidImplementation.requestExactAlarmsPermission() ?? false;
+      if (granted) {
+        return await canScheduleExactAlarms();
+      }
+      return false;
+    } catch (error) {
+      debugPrint('Exact alarm permission request failed: $error');
+      return false;
+    }
+  }
+
+  static Future<bool> requestFullScreenIntentPermissionIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return false;
+    if (_hasFullScreenIntentPermission) return true;
+    if (_requestedFullScreenIntentPermission) return false;
+
+    try {
+      _requestedFullScreenIntentPermission = true;
+      _hasFullScreenIntentPermission =
+          await androidImplementation.requestFullScreenIntentPermission() ??
+              false;
+      return _hasFullScreenIntentPermission;
+    } catch (error) {
+      debugPrint('Full-screen intent permission request failed: $error');
+      return false;
+    }
+  }
+
+  static Future<bool> requestNotificationPolicyAccessIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return false;
+
+    try {
+      final hasAccess =
+          await androidImplementation.hasNotificationPolicyAccess() ?? false;
+      _hasNotificationPolicyAccess = hasAccess;
+      if (hasAccess) return true;
+      if (_requestedNotificationPolicyAccess) return false;
+
+      _requestedNotificationPolicyAccess = true;
+      final granted =
+          await androidImplementation.requestNotificationPolicyAccess() ?? false;
+      if (!granted) return false;
+      _hasNotificationPolicyAccess =
+          await androidImplementation.hasNotificationPolicyAccess() ?? false;
+      return _hasNotificationPolicyAccess;
+    } catch (error) {
+      debugPrint('Notification policy access request failed: $error');
+      return false;
+    }
+  }
+
   /// Recreates the wake_alarm_channel with [vibrationPattern] so that
   /// background notifications use the user's custom vibration.
   /// On Android 8.0+ channel settings are immutable after first creation,
@@ -80,6 +218,8 @@ class NotificationManager {
   static Future<void> updateWakeAlarmChannel(
     List<int> vibrationPattern, {
     required String soundId,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
   }) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final androidImplementation =
@@ -87,18 +227,20 @@ class NotificationManager {
             AndroidFlutterLocalNotificationsPlugin>();
     if (androidImplementation == null) return;
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     await androidImplementation.deleteNotificationChannel(
-        channelId: 'wake_alarm_channel');
+        channelId: wakeAlarmChannelId);
     await androidImplementation
         .createNotificationChannel(AndroidNotificationChannel(
-      'wake_alarm_channel',
+      wakeAlarmChannelId,
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
-      playSound: sound.playSound,
-      sound: sound.androidSound,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(vibrationPattern),
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
       audioAttributesUsage: AudioAttributesUsage.alarm,
     ));
   }
@@ -107,18 +249,22 @@ class NotificationManager {
     required List<int> vibrationPattern,
     required String soundId,
     bool fullScreenIntent = false,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     return AndroidNotificationDetails(
-      'wake_alarm_channel',
+      wakeAlarmChannelId,
       'Wake Alarm',
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
       priority: Priority.high,
-      playSound: sound.playSound,
-      sound: sound.androidSound,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(vibrationPattern),
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
       fullScreenIntent: fullScreenIntent,
       category: AndroidNotificationCategory.alarm,
       audioAttributesUsage: AudioAttributesUsage.alarm,
@@ -127,16 +273,115 @@ class NotificationManager {
 
   static DarwinNotificationDetails buildWakeAlarmIosDetails({
     required String soundId,
+    bool soundEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: sound.playSound,
+      presentSound: soundEnabled && sound.playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: sound.playSound ? sound.fileName : null,
+      sound: soundEnabled && sound.playSound ? sound.fileName : null,
+    );
+  }
+
+  static Future<void> updateLeaveAlarmChannel(
+    List<int> vibrationPattern, {
+    required String soundId,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
+    bool? bypassDnd,
+  }) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
+    final shouldBypassDnd = bypassDnd ?? _hasNotificationPolicyAccess;
+    await androidImplementation.deleteNotificationChannel(
+        channelId: leaveAlarmChannelId);
+    await androidImplementation
+        .createNotificationChannel(AndroidNotificationChannel(
+      leaveAlarmChannelId,
+      'Saved Route Reminders',
+      description: 'Alarm-style reminders for saved-route departure times',
+      importance: Importance.max,
+      bypassDnd: shouldBypassDnd,
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    ));
+  }
+
+  static AndroidNotificationDetails buildLeaveAlarmAndroidDetails({
+    required List<int> vibrationPattern,
+    required String soundId,
+    bool fullScreenIntent = false,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
+    bool channelBypassDnd = false,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
+    return AndroidNotificationDetails(
+      leaveAlarmChannelId,
+      'Saved Route Reminders',
+      channelDescription: 'Alarm-style reminders for saved-route departure times',
+      importance: Importance.max,
+      priority: Priority.high,
+      channelBypassDnd: channelBypassDnd,
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
+      fullScreenIntent: fullScreenIntent,
+      category: AndroidNotificationCategory.alarm,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    );
+  }
+
+  static Future<void> updateLeaveCountdownChannel() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+
+    await androidImplementation.deleteNotificationChannel(
+        channelId: leaveCountdownChannelId);
+    await androidImplementation
+        .createNotificationChannel(const AndroidNotificationChannel(
+      leaveCountdownChannelId,
+      'Saved Route Countdown',
+      description: 'Live countdown reminders for saved routes',
+      importance: Importance.low,
+      playSound: false,
+      enableVibration: false,
+      audioAttributesUsage: AudioAttributesUsage.notification,
+    ));
+  }
+
+  static DarwinNotificationDetails buildLeaveAlarmIosDetails({
+    required String soundId,
+    bool soundEnabled = true,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    return DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: soundEnabled && sound.playSound,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      sound: soundEnabled && sound.playSound ? sound.fileName : null,
     );
   }
 
@@ -198,5 +443,28 @@ class NotificationManager {
         body: body,
         notificationDetails: details,
         payload: payload);
+  }
+
+  static Future<void> scheduleNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledAt,
+    required NotificationDetails details,
+    String? payload,
+    AndroidScheduleMode androidScheduleMode =
+        AndroidScheduleMode.exactAllowWhileIdle,
+  }) async {
+    await _configureLocalTimezone();
+    final scheduledDate = await zonedDateTimeFromLocal(scheduledAt);
+    await _notifications.zonedSchedule(
+      id: id,
+      title: title,
+      body: body,
+      scheduledDate: scheduledDate,
+      notificationDetails: details,
+      payload: payload,
+      androidScheduleMode: androidScheduleMode,
+    );
   }
 }

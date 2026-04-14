@@ -6,6 +6,7 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var wakeAlarmPreviewPlayer: AVAudioPlayer?
   private var wakeAlarmPreviewChannel: FlutterMethodChannel?
+  private var deviceTimezoneChannel: FlutterMethodChannel?
 
   override func application(
     _ application: UIApplication,
@@ -54,6 +55,22 @@ import UIKit
     }
   }
 
+  private func registerDeviceTimezoneChannel(binaryMessenger: FlutterBinaryMessenger) {
+    deviceTimezoneChannel = FlutterMethodChannel(
+      name: "de.khonager.trans/device_timezone",
+      binaryMessenger: binaryMessenger
+    )
+
+    deviceTimezoneChannel?.setMethodCallHandler { call, result in
+      switch call.method {
+      case "get":
+        result(TimeZone.current.identifier)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
   private func playWakeAlarmPreview(path: String) throws {
     stopWakeAlarmPreview()
 
@@ -88,6 +105,9 @@ import UIKit
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     registerWakeAlarmPreviewChannel(
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    registerDeviceTimezoneChannel(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
   }

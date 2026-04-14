@@ -11,6 +11,7 @@ import 'package:encrypt/encrypt.dart' as enc;
 import '../config/app_config.dart';
 import 'favorites_policy.dart';
 import 'notification_manager.dart';
+import 'wake_alarm_settings.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
@@ -487,6 +488,34 @@ class SupabaseService {
       }
       if (settings.containsKey('wake_alarm_sound')) {
         await prefs.setString('wake_alarm_sound', settings['wake_alarm_sound']);
+      }
+      if (settings
+          .containsKey(WakeAlarmSettings.wakeSoundEnabledPreferenceKey)) {
+        await prefs.setBool(
+          WakeAlarmSettings.wakeSoundEnabledPreferenceKey,
+          settings[WakeAlarmSettings.wakeSoundEnabledPreferenceKey],
+        );
+      }
+      if (settings
+          .containsKey(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey)) {
+        await prefs.setBool(
+          WakeAlarmSettings.wakeVibrationEnabledPreferenceKey,
+          settings[WakeAlarmSettings.wakeVibrationEnabledPreferenceKey],
+        );
+      }
+      if (settings
+          .containsKey(WakeAlarmSettings.leaveSoundEnabledPreferenceKey)) {
+        await prefs.setBool(
+          WakeAlarmSettings.leaveSoundEnabledPreferenceKey,
+          settings[WakeAlarmSettings.leaveSoundEnabledPreferenceKey],
+        );
+      }
+      if (settings
+          .containsKey(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey)) {
+        await prefs.setBool(
+          WakeAlarmSettings.leaveVibrationEnabledPreferenceKey,
+          settings[WakeAlarmSettings.leaveVibrationEnabledPreferenceKey],
+        );
       }
       if (settings.containsKey('alarm_stops_before')) {
         await prefs.setInt(

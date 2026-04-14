@@ -18,6 +18,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/favorites_policy.dart';
 import 'package:trans/services/notification_manager.dart';
+import 'package:trans/services/wake_alarm_preview_player.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
@@ -247,6 +248,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _savedJourneyLiveCountdownTicker;
   final Map<String, String> _savedJourneyLiveCountdownTexts =
       <String, String>{};
+  final Set<String> _savedJourneyTriggeredReminderKeys = <String>{};
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
@@ -701,9 +703,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
           WakeAlarmSettings.defaultSoundId;
+      final wakeSoundEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ??
+              true;
+      final wakeVibrationEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+              true;
       await NotificationManager.updateWakeAlarmChannel(
         WakeAlarmSettings.vibrationPatternForId(patternName),
         soundId: soundId,
+        soundEnabled: wakeSoundEnabled,
+        vibrationEnabled: wakeVibrationEnabled,
       );
     }
 
@@ -1451,6 +1461,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return (key.hashCode ^ (minutes * 97)) & 0x7fffffff;
   }
 
+  int _savedJourneyLiveCountdownNotificationId(String key, int minutes) {
+    return (key.hashCode ^ (minutes * 193) ^ 0x2fffffff) & 0x7fffffff;
+  }
+
   String _formatCountdown(Duration duration) {
     final totalSeconds = duration.inSeconds.clamp(0, 999999);
     final hours = totalSeconds ~/ 3600;
@@ -1460,6 +1474,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final mm = minutes.toString().padLeft(2, '0');
     final ss = seconds.toString().padLeft(2, '0');
     return '$hh:$mm:$ss';
+  }
+
+  String _savedJourneyReminderTriggerKey(String key, int minutes) {
+    return '$key::$minutes';
   }
 
   DateTime? _savedJourneyReminderTriggerLocal(Map<String, dynamic> item) {
@@ -1531,9 +1549,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           id: _savedJourneyReminderNotificationId(key, minutes));
       return;
     }
-    for (final candidate in const [5, 15, 30]) {
+    for (final candidate in const [1, 2, 3, 5, 10, 15, 20, 30]) {
       await _notificationsPlugin.cancel(
           id: _savedJourneyReminderNotificationId(key, candidate));
+    }
+  }
+
+  Future<void> _cancelSavedJourneyLiveCountdownNotification(
+    String key, {
+    int? minutes,
+  }) async {
+    if (minutes != null) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyLiveCountdownNotificationId(key, minutes));
+      return;
+    }
+    for (final candidate in const [1, 2, 3, 5, 10, 15, 20, 30]) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyLiveCountdownNotificationId(key, candidate));
     }
   }
 
@@ -1561,7 +1594,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
 
     final androidDetails = AndroidNotificationDetails(
-      'saved_route_leave_channel',
+      NotificationManager.leaveCountdownChannelId,
       'Saved Route Reminders',
       channelDescription: 'Live countdown reminders for saved routes',
       importance: Importance.low,
@@ -1579,7 +1612,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
 
     await _notificationsPlugin.show(
-      id: _savedJourneyReminderNotificationId(key, minutes),
+      id: _savedJourneyLiveCountdownNotificationId(key, minutes),
       title: 'Leave in $countdownText',
       body: '$routeLabel (timer: ${minutes}min)',
       notificationDetails: details,
@@ -1593,13 +1626,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     for (final item in _savedJourneys) {
       final key = _savedJourneyUiKey(item);
       final triggerAt = _savedJourneyReminderTriggerLocal(item);
-      if (key == null || triggerAt == null) continue;
+      final minutes = _savedJourneyReminderMinutes(item);
+      if (key == null || triggerAt == null || minutes == null) continue;
+      final triggerKey = _savedJourneyReminderTriggerKey(key, minutes);
 
       if (triggerAt.isAfter(now)) {
         activeKeys.add(key);
+        _savedJourneyTriggeredReminderKeys.remove(triggerKey);
         await _showSavedJourneyLiveCountdownNotification(item, triggerAt);
       } else {
         _savedJourneyLiveCountdownTexts.remove(key);
+        if (_savedJourneyTriggeredReminderKeys.add(triggerKey)) {
+          unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
+        }
       }
     }
 
@@ -1608,7 +1647,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .toList();
     for (final key in staleKeys) {
       _savedJourneyLiveCountdownTexts.remove(key);
-      await _cancelSavedJourneyReminderNotification(key);
+      await _cancelSavedJourneyLiveCountdownNotification(key);
     }
   }
 
@@ -1627,7 +1666,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final keys = _savedJourneyLiveCountdownTexts.keys.toList();
     _savedJourneyLiveCountdownTexts.clear();
     for (final key in keys) {
-      unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
     }
   }
 
@@ -1646,7 +1685,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     for (final key in staleKeys) {
       _savedJourneyReminderTimers.remove(key)?.cancel();
       unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
       _savedJourneyLiveCountdownTexts.remove(key);
+      _savedJourneyTriggeredReminderKeys
+          .removeWhere((entry) => entry.startsWith('$key::'));
     }
 
     _savedReminderPickerVisibleFor.removeWhere((k) => !activeKeys.contains(k));
@@ -1936,66 +1978,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
-  void _scheduleSavedJourneyReminder(
-    Map<String, dynamic> item, {
-    bool fireImmediatelyIfDue = false,
-  }) {
-    final key = _savedJourneyUiKey(item);
-    if (key == null) return;
-
-    _savedJourneyReminderTimers.remove(key)?.cancel();
-
-    final minutes = _savedJourneyReminderMinutes(item);
-    if (minutes == null) {
-      unawaited(_cancelSavedJourneyReminderNotification(key));
-      _savedJourneyLiveCountdownTexts.remove(key);
-      _syncSavedJourneyLiveCountdownTicker();
-      return;
-    }
-
-    final departure = _savedJourneyDepartureLocal(item);
-    if (departure == null) {
-      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
-      _savedJourneyLiveCountdownTexts.remove(key);
-      _syncSavedJourneyLiveCountdownTicker();
-      return;
-    }
-    final now = DateTime.now();
-    if (departure.isBefore(now)) {
-      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
-      _savedJourneyLiveCountdownTexts.remove(key);
-      _syncSavedJourneyLiveCountdownTicker();
-      return;
-    }
-
-    final triggerAt = departure.subtract(Duration(minutes: minutes));
-    if (!triggerAt.isAfter(now)) {
-      _savedJourneyLiveCountdownTexts.remove(key);
-      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
-      if (fireImmediatelyIfDue) {
-        unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
-      }
-      _syncSavedJourneyLiveCountdownTicker();
-      return;
-    }
-
-    _savedJourneyReminderTimers[key] = Timer(triggerAt.difference(now), () {
-      _savedJourneyReminderTimers.remove(key);
-      unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
-    });
-    _syncSavedJourneyLiveCountdownTicker();
-  }
-
-  Future<void> _fireSavedJourneyReminder({
-    required Map<String, dynamic> item,
-    required int minutes,
-  }) async {
-    final key = _savedJourneyUiKey(item);
-    if (key == null) return;
-    _savedJourneyLiveCountdownTexts.remove(key);
-    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
-    _syncSavedJourneyLiveCountdownTicker();
-
+  ({String title, String body}) _savedJourneyReminderContent(
+    Map<String, dynamic> item,
+    int minutes,
+  ) {
     final fromMap = item['from'];
     final toMap = item['to'];
     final fromName =
@@ -2006,25 +1992,185 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final departure = _savedJourneyDepartureLocal(item);
     final departureLabel =
         departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
+    return (
+      title: 'Leave soon',
+      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+    );
+  }
 
-    final androidDetails = AndroidNotificationDetails(
-      'saved_route_leave_channel',
-      'Saved Route Reminders',
-      channelDescription: 'Reminders for saved-route departure times',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: true,
+  void _scheduleSavedJourneyReminder(
+    Map<String, dynamic> item, {
+    bool fireImmediatelyIfDue = false,
+  }) async {
+    final key = _savedJourneyUiKey(item);
+    if (key == null) return;
+
+    _savedJourneyReminderTimers.remove(key)?.cancel();
+
+    final minutes = _savedJourneyReminderMinutes(item);
+    if (minutes == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    final departure = _savedJourneyDepartureLocal(item);
+    if (departure == null) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+    final now = DateTime.now();
+    if (departure.isBefore(now)) {
+      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
+      _savedJourneyLiveCountdownTexts.remove(key);
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    final triggerAt = departure.subtract(Duration(minutes: minutes));
+    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
+    if (!triggerAt.isAfter(now)) {
+      _savedJourneyLiveCountdownTexts.remove(key);
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
+      if (fireImmediatelyIfDue) {
+        unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
+      }
+      _syncSavedJourneyLiveCountdownTicker();
+      return;
+    }
+
+    final content = _savedJourneyReminderContent(item, minutes);
+    final prefs = await SharedPreferences.getInstance();
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final leaveSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ?? true;
+    final leaveVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+    await NotificationManager.requestPermissions();
+    final canScheduleExactAlarms =
+        await NotificationManager.requestExactAlarmPermissionIfNeeded();
+    final hasFullScreenIntentPermission =
+        await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
+    await NotificationManager.updateLeaveAlarmChannel(
+      pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+    );
+    final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
+      fullScreenIntent: hasFullScreenIntentPermission,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(),
+      iOS: NotificationManager.buildLeaveAlarmIosDetails(
+        soundId: soundId,
+        soundEnabled: leaveSoundEnabled,
+      ),
+      linux: const LinuxNotificationDetails(),
+    );
+    await NotificationManager.scheduleNotification(
+      id: _savedJourneyReminderNotificationId(key, minutes),
+      title: content.title,
+      body: content.body,
+      scheduledAt: triggerAt,
+      details: details,
+      androidScheduleMode: canScheduleExactAlarms
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle,
+    );
+    _syncSavedJourneyLiveCountdownTicker();
+
+    if (!canScheduleExactAlarms && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Android blocked exact alarms for this reminder. Open "Alarms & reminders" for Trans to make leave alerts reliable.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _fireSavedJourneyReminder({
+    required Map<String, dynamic> item,
+    required int minutes,
+  }) async {
+    final key = _savedJourneyUiKey(item);
+    if (key == null) return;
+    final triggerKey = _savedJourneyReminderTriggerKey(key, minutes);
+    _savedJourneyLiveCountdownTexts.remove(key);
+    _savedJourneyTriggeredReminderKeys.add(triggerKey);
+    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
+    await _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes);
+    _syncSavedJourneyLiveCountdownTicker();
+    final content = _savedJourneyReminderContent(item, minutes);
+    final prefs = await SharedPreferences.getInstance();
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final leaveSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ?? true;
+    final leaveVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+    final toMap = item['to'];
+    final toName = toMap is Map
+        ? (toMap['name']?.toString() ?? 'Destination')
+        : 'Destination';
+    await NotificationManager.requestPermissions();
+    final hasFullScreenIntentPermission =
+        await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
+    await _triggerLeaveReminderForegroundAlert(
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+      vibrationPattern: pattern,
+    );
+
+    await NotificationManager.updateLeaveAlarmChannel(
+      pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+    );
+    final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
+      fullScreenIntent: hasFullScreenIntentPermission,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: NotificationManager.buildLeaveAlarmIosDetails(
+        soundId: soundId,
+        soundEnabled: leaveSoundEnabled,
+      ),
       linux: const LinuxNotificationDetails(),
     );
 
     await _notificationsPlugin.show(
       id: _savedJourneyReminderNotificationId(key, minutes),
-      title: 'Leave soon',
-      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+      title: content.title,
+      body: content.body,
       notificationDetails: details,
     );
 
@@ -2057,6 +2203,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     } else {
       updatedItem['leaveReminderMinutes'] = minutes;
     }
+    if (selectedKey != null) {
+      _savedJourneyTriggeredReminderKeys
+          .removeWhere((entry) => entry.startsWith('$selectedKey::'));
+    }
 
     if (!mounted) return;
     setState(() {
@@ -2079,6 +2229,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         previousMinutes != null &&
         previousMinutes != minutes) {
       unawaited(_cancelSavedJourneyReminderNotification(selectedKey,
+          minutes: previousMinutes));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(selectedKey,
           minutes: previousMinutes));
     }
 
@@ -2812,27 +2964,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _setRouteLoadPhasesForToken(searchToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(searchToken),
           onPartialResults: (partial) {
-        if (!mounted || _isRouteSearchCancelled(searchToken)) {
-          TransportApi.addSyntheticDebugLog(
-            'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
-          );
-          return;
-        }
-        hasDisplayedResults = true;
-        if (currentTabId == null) {
-          currentTabId = _addJourneyTab(
-              candidatesData: partial, origin: from, destination: _toStation);
-          TransportApi.addSyntheticDebugLog(
-            'ui: created tab id=$currentTabId partial=${partial.length}',
-          );
-        } else {
-          TransportApi.addSyntheticDebugLog(
-            'ui: update tab id=$currentTabId partial=${partial.length}',
-          );
-          _updateTabCandidates(currentTabId!, partial);
-        }
-        _releaseBlockingRouteLoad(searchToken);
-      }).timeout(const Duration(seconds: 20));
+            if (!mounted || _isRouteSearchCancelled(searchToken)) {
+              TransportApi.addSyntheticDebugLog(
+                'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+              );
+              return;
+            }
+            hasDisplayedResults = true;
+            if (currentTabId == null) {
+              currentTabId = _addJourneyTab(
+                  candidatesData: partial,
+                  origin: from,
+                  destination: _toStation);
+              TransportApi.addSyntheticDebugLog(
+                'ui: created tab id=$currentTabId partial=${partial.length}',
+              );
+            } else {
+              TransportApi.addSyntheticDebugLog(
+                'ui: update tab id=$currentTabId partial=${partial.length}',
+              );
+              _updateTabCandidates(currentTabId!, partial);
+            }
+            _releaseBlockingRouteLoad(searchToken);
+          }).timeout(const Duration(seconds: 20));
 
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;
 
@@ -2889,6 +3043,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator()) {
       final prefs = await SharedPreferences.getInstance();
+      final wakeVibrationEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+              true;
+      if (!wakeVibrationEnabled) return;
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
       final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
@@ -2905,19 +3063,60 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _triggerLeaveReminderForegroundAlert({
+    required String soundId,
+    required bool soundEnabled,
+    required bool vibrationEnabled,
+    required List<int> vibrationPattern,
+  }) async {
+    if (kIsWeb) return;
+
+    if (soundEnabled) {
+      final sound = WakeAlarmSettings.soundForId(soundId);
+      await WakeAlarmPreviewPlayer.play(sound);
+    }
+
+    if (!vibrationEnabled) return;
+    if (!await Vibration.hasVibrator()) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final intensity = prefs.getInt('vibration_intensity') ?? 128;
+    if (await Vibration.hasAmplitudeControl()) {
+      final intensities = List<int>.generate(
+        vibrationPattern.length,
+        (i) => i.isEven ? 0 : intensity,
+      );
+      Vibration.vibrate(
+        pattern: vibrationPattern,
+        intensities: intensities,
+      );
+    } else {
+      Vibration.vibrate(pattern: vibrationPattern);
+    }
+  }
+
   Future<void> _showNotification() async {
     final prefs = await SharedPreferences.getInstance();
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
     final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
         WakeAlarmSettings.defaultSoundId;
+    final wakeSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ?? true;
+    final wakeVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+            true;
     final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
     final androidDetails = NotificationManager.buildWakeAlarmAndroidDetails(
       vibrationPattern: pattern,
       soundId: soundId,
       fullScreenIntent: true,
+      soundEnabled: wakeSoundEnabled,
+      vibrationEnabled: wakeVibrationEnabled,
     );
-    final iosDetails =
-        NotificationManager.buildWakeAlarmIosDetails(soundId: soundId);
+    final iosDetails = NotificationManager.buildWakeAlarmIosDetails(
+      soundId: soundId,
+      soundEnabled: wakeSoundEnabled,
+    );
     final details =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(
@@ -3355,35 +3554,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         height: 56,
                         child: Builder(builder: (context) {
                           return ElevatedButton(
-                            onPressed: _isLoadingRoute
-                                ? _cancelRouteSearch
-                                : (canSearch ? _findRoutes : null),
-                            style: ElevatedButton.styleFrom(
-                                backgroundColor: colors.searchBtnBg,
-                                foregroundColor: colors.searchBtnText,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16))),
-                            child: _isLoadingRoute
-                                ? Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: colors.searchBtnText)),
-                                      const SizedBox(width: 12),
-                                      Text(AppLocalizations.of(context)!.cancel,
-                                          style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold))
-                                    ],
-                                  )
-                                : Text(AppLocalizations.of(context)!.findRoutes,
-                                    style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold)));
+                              onPressed: _isLoadingRoute
+                                  ? _cancelRouteSearch
+                                  : (canSearch ? _findRoutes : null),
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor: colors.searchBtnBg,
+                                  foregroundColor: colors.searchBtnText,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16))),
+                              child: _isLoadingRoute
+                                  ? Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: colors.searchBtnText)),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                            AppLocalizations.of(context)!
+                                                .cancel,
+                                            style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold))
+                                      ],
+                                    )
+                                  : Text(
+                                      AppLocalizations.of(context)!.findRoutes,
+                                      style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold)));
                         })),
                     if (kDebugMode) ...[
                       const SizedBox(height: 8),
@@ -4210,9 +4413,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final visibleResults = Completer<void>();
 
       void appendResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty ||
-            !mounted ||
-            _isRouteSearchCancelled(loadToken)) {
+        if (partial.isEmpty || !mounted || _isRouteSearchCancelled(loadToken)) {
           return;
         }
         final List<Journey> newJourneys = [];

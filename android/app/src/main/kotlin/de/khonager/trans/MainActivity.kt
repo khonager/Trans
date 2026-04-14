@@ -2,19 +2,22 @@ package de.khonager.trans
 
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import java.util.TimeZone
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var wakeAlarmPreviewPlayer: MediaPlayer? = null
+    private val wakeAlarmPreviewChannel = "de.khonager.trans/wake_alarm_preview"
+    private val deviceTimezoneChannel = "de.khonager.trans/device_timezone"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "de.khonager.trans/wake_alarm_preview"
+            wakeAlarmPreviewChannel
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "play" -> {
@@ -35,6 +38,16 @@ class MainActivity : FlutterActivity() {
                     stopWakeAlarmPreview()
                     result.success(null)
                 }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            deviceTimezoneChannel
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "get" -> result.success(TimeZone.getDefault().id)
                 else -> result.notImplemented()
             }
         }

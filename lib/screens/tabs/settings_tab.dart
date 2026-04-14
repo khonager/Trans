@@ -74,6 +74,18 @@ class SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<SettingsTab> {
+  static const List<int> _hiddenManualTimerSecondOptions = [
+    5,
+    10,
+    15,
+    30,
+    45,
+    60,
+    90,
+    120,
+    180,
+    300,
+  ];
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
@@ -88,12 +100,18 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _isDevBuild = const bool.fromEnvironment('IS_DEV', defaultValue: false);
   bool _isUnstableBuild =
       const bool.fromEnvironment('IS_UNSTABLE', defaultValue: false);
+  Timer? _hiddenManualAlarmTimer;
+  DateTime? _hiddenManualAlarmTarget;
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
   String _wakeAlarmSound = WakeAlarmSettings.defaultSoundId;
+  bool _wakeAlarmSoundEnabled = true;
+  bool _wakeAlarmVibrationEnabled = true;
+  bool _leaveAlarmSoundEnabled = true;
+  bool _leaveAlarmVibrationEnabled = true;
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
@@ -101,6 +119,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   @override
   void dispose() {
+    _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
@@ -169,6 +188,18 @@ class _SettingsTabState extends State<SettingsTab> {
         _wakeAlarmSound = WakeAlarmSettings.soundIdForPreference(
           prefs.getString(WakeAlarmSettings.soundPreferenceKey),
         );
+        _wakeAlarmSoundEnabled =
+            prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ??
+                true;
+        _wakeAlarmVibrationEnabled = prefs
+                .getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+            true;
+        _leaveAlarmSoundEnabled =
+            prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ??
+                true;
+        _leaveAlarmVibrationEnabled = prefs.getBool(
+                WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =
@@ -189,6 +220,14 @@ class _SettingsTabState extends State<SettingsTab> {
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
   }
 
@@ -202,6 +241,46 @@ class _SettingsTabState extends State<SettingsTab> {
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
+    );
+  }
+
+  Future<void> _persistAlarmDeliverySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey,
+        _wakeAlarmSoundEnabled);
+    await prefs.setBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey,
+        _wakeAlarmVibrationEnabled);
+    await prefs.setBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey,
+        _leaveAlarmSoundEnabled);
+    await prefs.setBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey,
+        _leaveAlarmVibrationEnabled);
+    await SupabaseService.updateSettings({
+      WakeAlarmSettings.wakeSoundEnabledPreferenceKey: _wakeAlarmSoundEnabled,
+      WakeAlarmSettings.wakeVibrationEnabledPreferenceKey:
+          _wakeAlarmVibrationEnabled,
+      WakeAlarmSettings.leaveSoundEnabledPreferenceKey: _leaveAlarmSoundEnabled,
+      WakeAlarmSettings.leaveVibrationEnabledPreferenceKey:
+          _leaveAlarmVibrationEnabled,
+    });
+    await NotificationManager.updateWakeAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
   }
 
@@ -250,6 +329,22 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
+  Future<void> _testAlarmVibration({required bool enabled}) async {
+    if (kIsWeb || !enabled) return;
+    if (!await Vibration.hasVibrator()) return;
+
+    final pattern = WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
+    if (await Vibration.hasAmplitudeControl()) {
+      final intensities = List<int>.generate(
+        pattern.length,
+        (i) => i.isEven ? 0 : _vibrationIntensity,
+      );
+      Vibration.vibrate(pattern: pattern, intensities: intensities);
+    } else {
+      Vibration.vibrate(pattern: pattern);
+    }
+  }
+
   Future<void> _previewWakeAlarmSound() async {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
@@ -283,6 +378,223 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     return 'Could not play the alarm preview. Check your output volume and audio route.';
+  }
+
+  bool get _showPreviewTooltip {
+    if (kIsWeb) return true;
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+        return false;
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+    }
+  }
+
+  Future<void> _triggerHiddenManualLeaveTimer() async {
+    if (!mounted) return;
+
+    try {
+      await NotificationManager.previewWakeAlarm(
+        title: 'Manual leave timer',
+        body: 'Hidden timer finished.',
+        soundId: _wakeAlarmSoundEnabled
+            ? _wakeAlarmSound
+            : WakeAlarmSettings.silentSoundId,
+        vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
+          _vibrationPattern,
+        ),
+      );
+      await _testAlarmVibration(enabled: _wakeAlarmVibrationEnabled);
+      _hiddenManualAlarmTarget = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Manual leave timer fired.')),
+      );
+    } catch (error) {
+      _hiddenManualAlarmTarget = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _wakeAlarmPreviewErrorMessage(error),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _scheduleHiddenManualLeaveTimer(DateTime target) {
+    _hiddenManualAlarmTimer?.cancel();
+    final now = DateTime.now();
+    final delay = target.difference(now);
+    final safeDelay = delay.isNegative ? Duration.zero : delay;
+    _hiddenManualAlarmTarget = target;
+    _hiddenManualAlarmTimer = Timer(safeDelay, () {
+      unawaited(_triggerHiddenManualLeaveTimer());
+    });
+  }
+
+  Future<void> _showHiddenManualTimerDialog() async {
+    if (kIsWeb || !mounted) return;
+
+    final now = DateTime.now();
+    var useCountdown = true;
+    var countdownSeconds = 10;
+    TimeOfDay selectedTime = TimeOfDay.fromDateTime(
+      now.add(const Duration(minutes: 1)),
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> pickTime() async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: selectedTime,
+              );
+              if (picked == null) return;
+              setDialogState(() => selectedTime = picked);
+            }
+
+            final selectedLabel = useCountdown
+                ? 'Countdown: ${countdownSeconds}s'
+                : 'At ${selectedTime.format(context)}';
+
+            return AlertDialog(
+              title: const Text('Hidden timer'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('Countdown'),
+                        icon: Icon(Icons.timer_outlined),
+                      ),
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('Alarm time'),
+                        icon: Icon(Icons.schedule),
+                      ),
+                    ],
+                    selected: {useCountdown},
+                    onSelectionChanged: (selection) {
+                      setDialogState(
+                        () => useCountdown = selection.first,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  if (useCountdown)
+                    DropdownButton<int>(
+                      value: countdownSeconds,
+                      isExpanded: true,
+                      items: _hiddenManualTimerSecondOptions
+                          .map(
+                            (seconds) => DropdownMenuItem<int>(
+                              value: seconds,
+                              child: Text('$seconds seconds'),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => countdownSeconds = value);
+                      },
+                    ),
+                  if (!useCountdown)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Time'),
+                      subtitle: Text(selectedTime.format(context)),
+                      trailing: const Icon(Icons.schedule),
+                      onTap: pickTime,
+                    ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Will fire: $selectedLabel',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                if (_hiddenManualAlarmTarget != null)
+                  TextButton(
+                    onPressed: () {
+                      _hiddenManualAlarmTimer?.cancel();
+                      _hiddenManualAlarmTimer = null;
+                      _hiddenManualAlarmTarget = null;
+                      Navigator.of(dialogContext).pop(false);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Hidden timer cancelled.')),
+                      );
+                    },
+                    child: const Text('Clear'),
+                  ),
+                FilledButton(
+                  onPressed: () {
+                    final now = DateTime.now();
+                    final target = useCountdown
+                        ? now.add(Duration(seconds: countdownSeconds))
+                        : DateTime(
+                            now.year,
+                            now.month,
+                            now.day,
+                            selectedTime.hour,
+                            selectedTime.minute,
+                          ).isAfter(now)
+                            ? DateTime(
+                                now.year,
+                                now.month,
+                                now.day,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              )
+                            : DateTime(
+                                now.year,
+                                now.month,
+                                now.day + 1,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              );
+                    _scheduleHiddenManualLeaveTimer(target);
+                    Navigator.of(dialogContext).pop(true);
+                  },
+                  child: const Text('Start'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted || _hiddenManualAlarmTarget == null) {
+      return;
+    }
+
+    final target = _hiddenManualAlarmTarget!;
+    final modeLabel = target.difference(DateTime.now()).inHours < 24
+        ? 'Hidden timer set for ${TimeOfDay.fromDateTime(target).format(context)}'
+        : 'Hidden timer scheduled';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(modeLabel)),
+    );
   }
 
   void _showIosVibrationAvailabilityMessage() {
@@ -1062,6 +1374,13 @@ class _SettingsTabState extends State<SettingsTab> {
     final user = SupabaseService.currentUser;
     final colors = TransColors.of(context);
     final primaryColor = Theme.of(context).primaryColor;
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final wakeAlarmLabel = isGerman ? 'Weckalarm' : 'Wake Alarm';
+    final leaveReminderLabel =
+        isGerman ? 'Abfahrts-Erinnerung' : 'Leave Reminder';
+    final soundEnabledLabel = isGerman ? 'Ton aktiviert' : 'Sound enabled';
+    final vibrationEnabledLabel =
+        isGerman ? 'Vibration aktiviert' : 'Vibration enabled';
 
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
@@ -1373,11 +1692,28 @@ class _SettingsTabState extends State<SettingsTab> {
                 spacing: 8,
                 children: [
                   if (!kIsWeb)
-                    IconButton(
-                      tooltip: AppLocalizations.of(context)!.previewSound,
-                      onPressed: _previewWakeAlarmSound,
-                      icon: Icon(Icons.play_arrow_rounded,
-                          color: colors.textPrimary),
+                    Builder(
+                      builder: (context) {
+                        final previewButton = InkResponse(
+                          radius: 24,
+                          onTap: _previewWakeAlarmSound,
+                          onLongPress: _showHiddenManualTimerDialog,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              Icons.play_arrow_rounded,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        );
+
+                        if (!_showPreviewTooltip) return previewButton;
+
+                        return Tooltip(
+                          message: AppLocalizations.of(context)!.previewSound,
+                          child: previewButton,
+                        );
+                      },
                     ),
                   DropdownButton<String>(
                     value: _wakeAlarmSound,
@@ -1451,8 +1787,8 @@ class _SettingsTabState extends State<SettingsTab> {
                     value: _vibrationIntensity.toDouble(),
                     min: 1,
                     max: 255,
-                    activeColor: primaryColor,
-                    thumbColor: primaryColor,
+                    activeColor: colors.effectiveSeed,
+                    thumbColor: colors.effectiveSeed,
                     onChanged: (val) {
                       setState(() => _vibrationIntensity = val.toInt());
                     },
@@ -1478,6 +1814,40 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
               ),
             Divider(color: colors.divider),
+            ListTile(
+              title: Text(wakeAlarmLabel,
+                  style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            SwitchListTile(
+              title: Text(soundEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmSoundEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmSoundEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(vibrationEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmVibrationEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmVibrationEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
             SwitchListTile(
               title: Text(AppLocalizations.of(context)!.alwaysWakeMe,
                   style: TextStyle(color: colors.textPrimary)),
@@ -1489,6 +1859,40 @@ class _SettingsTabState extends State<SettingsTab> {
                 return null;
               }),
               onChanged: widget.onAlwaysWakeMeChanged,
+            ),
+            Divider(color: colors.divider),
+            ListTile(
+              title: Text(leaveReminderLabel,
+                  style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            SwitchListTile(
+              title: Text(soundEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _leaveAlarmSoundEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _leaveAlarmSoundEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(vibrationEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _leaveAlarmVibrationEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _leaveAlarmVibrationEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
             ),
           ]),
 
