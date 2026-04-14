@@ -26,6 +26,8 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Trans needs access to your photo library so you can select and upload ticket QR-Codes for scanning and store them in the app.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<!-- Supabase Deep Link -->
