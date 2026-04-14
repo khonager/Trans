@@ -54,6 +54,7 @@ dependencies:
   google_mlkit_barcode_scanning: ^0.14.2
   image_cropper: ^11.0.0
   image: ^4.8.0
+  file_picker: ^11.0.2
   # Linux/Desktop Support
   zxing_lib: ^1.1.4
   crop_your_image: ^2.0.0

@@ -1,4 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class WakeAlarmSoundOption {
   const WakeAlarmSoundOption({
@@ -7,6 +8,7 @@ class WakeAlarmSoundOption {
     this.playSound = true,
     this.fileName,
     this.androidResourceName,
+    this.localFilePath,
   });
 
   final String id;
@@ -14,19 +16,32 @@ class WakeAlarmSoundOption {
   final bool playSound;
   final String? fileName;
   final String? androidResourceName;
+  final String? localFilePath;
 
   bool get isBundledSound =>
       playSound && fileName != null && androidResourceName != null;
 
+  bool get isCustomSound => playSound && localFilePath != null;
+
   String? get assetPath => fileName == null ? null : 'assets/sounds/$fileName';
 
-  AndroidNotificationSound? get androidSound => androidResourceName == null
-      ? null
-      : RawResourceAndroidNotificationSound(androidResourceName!);
+  AndroidNotificationSound? get androidSound {
+    if (androidResourceName != null) {
+      return RawResourceAndroidNotificationSound(androidResourceName!);
+    }
+    if (localFilePath != null) {
+      return UriAndroidNotificationSound(Uri.file(localFilePath!).toString());
+    }
+    return null;
+  }
 }
 
 class WakeAlarmSettings {
   static const String soundPreferenceKey = 'wake_alarm_sound';
+  static const String customSoundPathPreferenceKey = 'wake_alarm_custom_path';
+  static const String customSoundLabelPreferenceKey = 'wake_alarm_custom_label';
+  static const String customSoundFileNamePreferenceKey =
+      'wake_alarm_custom_file_name';
   static const String wakeSoundEnabledPreferenceKey =
       'wake_alarm_sound_enabled';
   static const String wakeVibrationEnabledPreferenceKey =
@@ -37,8 +52,9 @@ class WakeAlarmSettings {
       'leave_alarm_vibration_enabled';
   static const String defaultSoundId = 'station_chime';
   static const String silentSoundId = 'silent';
+  static const String customSoundId = 'custom';
 
-  static const List<WakeAlarmSoundOption> soundOptions = [
+  static const List<WakeAlarmSoundOption> _bundledSoundOptions = [
     WakeAlarmSoundOption(
       id: silentSoundId,
       label: 'None',
@@ -70,7 +86,20 @@ class WakeAlarmSettings {
     ),
   ];
 
+  static WakeAlarmSoundOption? _customSoundOption;
+
+  static List<WakeAlarmSoundOption> get soundOptions {
+    final options = <WakeAlarmSoundOption>[
+      ..._bundledSoundOptions,
+      if (_customSoundOption != null) _customSoundOption!,
+    ];
+    return List.unmodifiable(options);
+  }
+
   static WakeAlarmSoundOption soundForId(String? id) {
+    if (id == customSoundId && _customSoundOption != null) {
+      return _customSoundOption!;
+    }
     return soundOptions.firstWhere(
       (option) => option.id == id,
       orElse: () => soundOptions.firstWhere(
@@ -80,12 +109,53 @@ class WakeAlarmSettings {
   }
 
   static String soundIdForPreference(String? id) {
+    if (id == customSoundId && _customSoundOption != null) {
+      return customSoundId;
+    }
     return soundForId(id).id;
   }
 
   static List<WakeAlarmSoundOption> get bundledSoundOptions => soundOptions
       .where((option) => option.isBundledSound)
       .toList(growable: false);
+
+  static bool get hasCustomSound => _customSoundOption != null;
+
+  static Future<void> loadPersistedCustomSound() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString(customSoundPathPreferenceKey);
+    final label = prefs.getString(customSoundLabelPreferenceKey);
+    final fileName = prefs.getString(customSoundFileNamePreferenceKey);
+
+    if (path == null || path.isEmpty || fileName == null || fileName.isEmpty) {
+      _customSoundOption = null;
+      return;
+    }
+
+    _customSoundOption = WakeAlarmSoundOption(
+      id: customSoundId,
+      label: label?.isNotEmpty == true ? label! : 'Custom audio',
+      fileName: fileName,
+      localFilePath: path,
+    );
+  }
+
+  static Future<void> setCustomSound({
+    required String localFilePath,
+    required String fileName,
+    required String label,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(customSoundPathPreferenceKey, localFilePath);
+    await prefs.setString(customSoundFileNamePreferenceKey, fileName);
+    await prefs.setString(customSoundLabelPreferenceKey, label);
+    _customSoundOption = WakeAlarmSoundOption(
+      id: customSoundId,
+      label: label,
+      fileName: fileName,
+      localFilePath: localFilePath,
+    );
+  }
 
   static List<int> vibrationPatternForId(String patternName) {
     switch (patternName) {

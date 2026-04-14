@@ -25,6 +25,7 @@ class NotificationManager {
   static bool _hasNotificationPolicyAccess = false;
 
   static Future<void> init() async {
+    await WakeAlarmSettings.loadPersistedCustomSound();
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
@@ -417,7 +418,11 @@ class NotificationManager {
 
   static Future<void> _ensureDarwinWakeAlarmSounds() async {
     if (defaultTargetPlatform != TargetPlatform.iOS) return;
-    await ensureDarwinWakeAlarmSounds(WakeAlarmSettings.bundledSoundOptions);
+    await ensureDarwinWakeAlarmSounds(WakeAlarmSettings.soundOptions);
+  }
+
+  static Future<void> prepareAlarmSounds() async {
+    await _ensureDarwinWakeAlarmSounds();
   }
 
   static Future<void> showNotification({

@@ -8,6 +8,7 @@ import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
 import '../../services/supabase_service.dart';
+import '../../services/wake_alarm_custom_sound_service.dart';
 import '../../services/wake_alarm_settings.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
@@ -74,6 +75,7 @@ class SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<SettingsTab> {
+  static const String _pickCustomSoundValue = '__pick_custom_sound__';
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -180,6 +182,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _loadSettings() async {
+    await WakeAlarmSettings.loadPersistedCustomSound();
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
@@ -238,6 +241,7 @@ class _SettingsTabState extends State<SettingsTab> {
     await SupabaseService.updateSettings({
       WakeAlarmSettings.soundPreferenceKey: _wakeAlarmSound,
     });
+    await NotificationManager.prepareAlarmSounds();
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
@@ -250,6 +254,35 @@ class _SettingsTabState extends State<SettingsTab> {
       soundEnabled: _leaveAlarmSoundEnabled,
       vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
+  }
+
+  Future<void> _selectWakeAlarmSound(String value) async {
+    if (value == _pickCustomSoundValue) {
+      await _pickCustomWakeAlarmSound();
+      return;
+    }
+
+    setState(() => _wakeAlarmSound = value);
+    await _persistWakeAlarmSoundSetting();
+  }
+
+  Future<void> _pickCustomWakeAlarmSound() async {
+    try {
+      final sound = await WakeAlarmCustomSoundService.pickAndImport();
+      if (sound == null || !mounted) return;
+
+      setState(() => _wakeAlarmSound = sound.id);
+      await _persistWakeAlarmSoundSetting();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Custom alarm sound set to "${sound.label}".')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import that audio file: $error')),
+      );
+    }
   }
 
   Future<void> _persistAlarmDeliverySettings() async {
@@ -1719,18 +1752,22 @@ class _SettingsTabState extends State<SettingsTab> {
                     value: _wakeAlarmSound,
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: WakeAlarmSettings.soundOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option.id,
-                            child: Text(option.label),
-                          ),
-                        )
-                        .toList(growable: false),
+                    items: [
+                      ...WakeAlarmSettings.soundOptions.map(
+                        (option) => DropdownMenuItem(
+                          value: option.id,
+                          child: Text(option.label),
+                        ),
+                      ),
+                      if (!kIsWeb)
+                        const DropdownMenuItem(
+                          value: _pickCustomSoundValue,
+                          child: Text('Add custom audio...'),
+                        ),
+                    ],
                     onChanged: (val) async {
                       if (val == null) return;
-                      setState(() => _wakeAlarmSound = val);
-                      await _persistWakeAlarmSoundSetting();
+                      await _selectWakeAlarmSound(val);
                     },
                   ),
                 ],
