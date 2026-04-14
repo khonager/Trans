@@ -1522,8 +1522,8 @@ class _SettingsTabState extends State<SettingsTab> {
                     value: _vibrationIntensity.toDouble(),
                     min: 1,
                     max: 255,
-                    activeColor: primaryColor,
-                    thumbColor: primaryColor,
+                    activeColor: colors.effectiveSeed,
+                    thumbColor: colors.effectiveSeed,
                     onChanged: (val) {
                       setState(() => _vibrationIntensity = val.toInt());
                     },
