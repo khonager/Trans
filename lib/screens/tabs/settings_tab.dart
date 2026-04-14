@@ -1433,26 +1433,6 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
             ListTile(
-              title: Text(wakeAlarmLabel,
-                  style: TextStyle(
-                      color: colors.textSecondary,
-                      fontWeight: FontWeight.w600)),
-            ),
-            SwitchListTile(
-              title: Text(soundEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _wakeAlarmSoundEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _wakeAlarmSoundEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
-            ),
-            Divider(color: colors.divider),
-            ListTile(
               title: Text(AppLocalizations.of(context)!.alarmSound,
                   style: TextStyle(color: colors.textPrimary)),
               subtitle: Text(
@@ -1490,20 +1470,6 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ],
               ),
-            ),
-            Divider(color: colors.divider),
-            SwitchListTile(
-              title: Text(vibrationEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _wakeAlarmVibrationEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _wakeAlarmVibrationEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
             ),
             Divider(color: colors.divider),
             ListTile(
@@ -1584,6 +1550,53 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
             Divider(color: colors.divider),
             ListTile(
+              title: Text(wakeAlarmLabel,
+                  style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            SwitchListTile(
+              title: Text(soundEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmSoundEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmSoundEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(vibrationEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmVibrationEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmVibrationEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(AppLocalizations.of(context)!.alwaysWakeMe,
+                  style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text(AppLocalizations.of(context)!.turnOnAlarmDefault,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              value: widget.alwaysWakeMe,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: widget.onAlwaysWakeMeChanged,
+            ),
+            Divider(color: colors.divider),
+            ListTile(
               title: Text(leaveReminderLabel,
                   style: TextStyle(
                       color: colors.textSecondary,
@@ -1615,19 +1628,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 setState(() => _leaveAlarmVibrationEnabled = val);
                 await _persistAlarmDeliverySettings();
               },
-            ),
-            Divider(color: colors.divider),
-            SwitchListTile(
-              title: Text(AppLocalizations.of(context)!.alwaysWakeMe,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(AppLocalizations.of(context)!.turnOnAlarmDefault,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              value: widget.alwaysWakeMe,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: widget.onAlwaysWakeMeChanged,
             ),
           ]),
 
