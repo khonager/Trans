@@ -108,7 +108,6 @@ flutter_launcher_icons:
   adaptive_icon_foreground: "assets/icon.png"
 
 flutter:
-  default-flavor: stable
   generate: true
   uses-material-design: true
 
