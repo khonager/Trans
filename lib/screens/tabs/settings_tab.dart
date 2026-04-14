@@ -114,6 +114,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _wakeAlarmVibrationEnabled = true;
   bool _leaveAlarmSoundEnabled = true;
   bool _leaveAlarmVibrationEnabled = true;
+  bool _isWakeAlarmPreviewPlaying = false;
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
@@ -262,6 +263,13 @@ class _SettingsTabState extends State<SettingsTab> {
       return;
     }
 
+    if (_isWakeAlarmPreviewPlaying) {
+      await NotificationManager.stopWakeAlarmPreview();
+      if (mounted) {
+        setState(() => _isWakeAlarmPreviewPlaying = false);
+      }
+    }
+
     setState(() => _wakeAlarmSound = value);
     await _persistWakeAlarmSoundSetting();
   }
@@ -277,7 +285,7 @@ class _SettingsTabState extends State<SettingsTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Custom alarm sound set to "${sound.label}". Long-press its name to remove it.',
+            'Custom alarm sound set to "${sound.label}". Tap the trash icon in the picker to remove it.',
           ),
         ),
       );
@@ -289,16 +297,20 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  Future<void> _removeSelectedCustomWakeAlarmSound() async {
-    final selectedSound = WakeAlarmSettings.soundForId(_wakeAlarmSound);
-    if (!selectedSound.isCustomSound) return;
+  Future<void> _removeCustomWakeAlarmSound(WakeAlarmSoundOption sound) async {
+    if (!sound.isCustomSound) return;
 
     try {
-      await WakeAlarmCustomSoundService.deleteCustomSound(selectedSound);
+      await WakeAlarmCustomSoundService.deleteCustomSound(sound);
       if (!mounted) return;
 
-      setState(() => _wakeAlarmSound = WakeAlarmSettings.defaultSoundId);
-      await _persistWakeAlarmSoundSetting();
+      final wasSelected = _wakeAlarmSound == sound.id;
+      if (wasSelected) {
+        setState(() => _wakeAlarmSound = WakeAlarmSettings.defaultSoundId);
+        await _persistWakeAlarmSoundSetting();
+      } else {
+        setState(() {});
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Custom alarm sound removed.')),
@@ -415,6 +427,13 @@ class _SettingsTabState extends State<SettingsTab> {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
     try {
+      if (_isWakeAlarmPreviewPlaying) {
+        await NotificationManager.stopWakeAlarmPreview();
+        if (!mounted) return;
+        setState(() => _isWakeAlarmPreviewPlaying = false);
+        return;
+      }
+
       await NotificationManager.previewWakeAlarm(
         title: l10n.wakeAlarmPreviewTitle,
         body: l10n.wakeAlarmPreviewBody,
@@ -423,8 +442,11 @@ class _SettingsTabState extends State<SettingsTab> {
           _vibrationPattern,
         ),
       );
+      if (!mounted) return;
+      setState(() => _isWakeAlarmPreviewPlaying = true);
     } catch (error) {
       if (!mounted) return;
+      setState(() => _isWakeAlarmPreviewPlaying = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_wakeAlarmPreviewErrorMessage(error))),
       );
@@ -1772,19 +1794,13 @@ class _SettingsTabState extends State<SettingsTab> {
                   );
                 },
               ),
-              subtitle: InkWell(
-                onLongPress: WakeAlarmSettings.isCustomSoundId(_wakeAlarmSound)
-                    ? _removeSelectedCustomWakeAlarmSound
-                    : null,
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+              subtitle: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               trailing: DropdownButton<String>(
@@ -1819,11 +1835,40 @@ class _SettingsTabState extends State<SettingsTab> {
                       value: option.id,
                       child: SizedBox(
                         width: 170,
-                        child: Text(
-                          option.label,
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
+                        child: option.isCustomSound
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      option.label,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () async {
+                                      Navigator.of(context).pop();
+                                      await _removeCustomWakeAlarmSound(
+                                        option,
+                                      );
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 8),
+                                      child: Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                option.label,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                       ),
                     ),
                   ),
@@ -1836,6 +1881,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 onChanged: (val) async {
                   if (val == null) return;
                   await _selectWakeAlarmSound(val);
+                  if (!mounted) return;
+                  setState(() => _isWakeAlarmPreviewPlaying = false);
                 },
               ),
             ),

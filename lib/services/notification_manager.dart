@@ -200,7 +200,8 @@ class NotificationManager {
 
       _requestedNotificationPolicyAccess = true;
       final granted =
-          await androidImplementation.requestNotificationPolicyAccess() ?? false;
+          await androidImplementation.requestNotificationPolicyAccess() ??
+              false;
       if (!granted) return false;
       _hasNotificationPolicyAccess =
           await androidImplementation.hasNotificationPolicyAccess() ?? false;
@@ -334,7 +335,8 @@ class NotificationManager {
     return AndroidNotificationDetails(
       leaveAlarmChannelId,
       'Saved Route Reminders',
-      channelDescription: 'Alarm-style reminders for saved-route departure times',
+      channelDescription:
+          'Alarm-style reminders for saved-route departure times',
       importance: Importance.max,
       priority: Priority.high,
       channelBypassDnd: channelBypassDnd,
@@ -414,6 +416,11 @@ class NotificationManager {
       body: body,
       notificationDetails: details,
     );
+  }
+
+  static Future<void> stopWakeAlarmPreview() async {
+    await WakeAlarmPreviewPlayer.stop();
+    await _notifications.cancel(id: 9001);
   }
 
   static Future<void> _ensureDarwinWakeAlarmSounds() async {
