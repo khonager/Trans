@@ -109,8 +109,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final AuthChangeEvent event = data.event;
       if (event == AuthChangeEvent.passwordRecovery) {
         _handlePasswordRecovery();
+        return;
+      }
+
+      if (event == AuthChangeEvent.signedIn ||
+          event == AuthChangeEvent.initialSession) {
+        unawaited(_prepareSignedInState());
+      }
+
+      if (event == AuthChangeEvent.signedIn ||
+          event == AuthChangeEvent.signedOut ||
+          event == AuthChangeEvent.initialSession ||
+          event == AuthChangeEvent.userUpdated) {
+        if (mounted) {
+          setState(() {});
+        }
       }
     });
+  }
+
+  Future<void> _prepareSignedInState() async {
+    try {
+      await SupabaseService.ensureCurrentUserReady();
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'HomeScreen auth listener');
+    }
   }
 
   void _handlePasswordRecovery() {

@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:vibration/vibration.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -18,6 +17,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/favorites_policy.dart';
 import 'package:trans/services/notification_manager.dart';
+import 'package:trans/services/foreground_haptics.dart';
 import 'package:trans/services/wake_alarm_preview_player.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
@@ -3041,26 +3041,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _triggerVibration() async {
     if (kIsWeb) return;
-    if (await Vibration.hasVibrator()) {
-      final prefs = await SharedPreferences.getInstance();
-      final wakeVibrationEnabled =
-          prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
-              true;
-      if (!wakeVibrationEnabled) return;
-      final patternName = prefs.getString('vibration_pattern') ?? 'standard';
-      final intensity = prefs.getInt('vibration_intensity') ?? 128;
-      final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+    if (!await ForegroundHaptics.hasVibrator()) return;
 
-      if (await Vibration.hasAmplitudeControl()) {
-        final intensities = List<int>.generate(
-          pattern.length,
-          (i) => i.isEven ? 0 : intensity,
-        );
-        Vibration.vibrate(pattern: pattern, intensities: intensities);
-      } else {
-        Vibration.vibrate(pattern: pattern);
-      }
-    }
+    final prefs = await SharedPreferences.getInstance();
+    final wakeVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+            true;
+    if (!wakeVibrationEnabled) return;
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final intensity = prefs.getInt('vibration_intensity') ?? 128;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
+
+    await ForegroundHaptics.vibratePattern(
+      pattern,
+      intensity: intensity,
+    );
   }
 
   Future<void> _triggerLeaveReminderForegroundAlert({
@@ -3077,22 +3072,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     if (!vibrationEnabled) return;
-    if (!await Vibration.hasVibrator()) return;
+    if (!await ForegroundHaptics.hasVibrator()) return;
 
     final prefs = await SharedPreferences.getInstance();
     final intensity = prefs.getInt('vibration_intensity') ?? 128;
-    if (await Vibration.hasAmplitudeControl()) {
-      final intensities = List<int>.generate(
-        vibrationPattern.length,
-        (i) => i.isEven ? 0 : intensity,
-      );
-      Vibration.vibrate(
-        pattern: vibrationPattern,
-        intensities: intensities,
-      );
-    } else {
-      Vibration.vibrate(pattern: vibrationPattern);
-    }
+    await ForegroundHaptics.vibratePattern(
+      vibrationPattern,
+      intensity: intensity,
+    );
   }
 
   Future<void> _showNotification() async {

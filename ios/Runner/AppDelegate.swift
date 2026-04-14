@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import Flutter
 import UIKit
 
@@ -7,6 +8,8 @@ import UIKit
   private var wakeAlarmPreviewPlayer: AVAudioPlayer?
   private var wakeAlarmPreviewChannel: FlutterMethodChannel?
   private var deviceTimezoneChannel: FlutterMethodChannel?
+  private var iosHapticsChannel: FlutterMethodChannel?
+  private var pendingHapticWorkItems: [DispatchWorkItem] = []
 
   override func application(
     _ application: UIApplication,
@@ -71,6 +74,35 @@ import UIKit
     }
   }
 
+  private func registerIosHapticsChannel(binaryMessenger: FlutterBinaryMessenger) {
+    iosHapticsChannel = FlutterMethodChannel(
+      name: "de.khonager.trans/ios_haptics",
+      binaryMessenger: binaryMessenger
+    )
+
+    iosHapticsChannel?.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "vibratePattern":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let pattern = arguments["pattern"] as? [NSNumber]
+        else {
+          result(FlutterError(
+            code: "invalid_pattern",
+            message: "Missing vibration pattern.",
+            details: nil
+          ))
+          return
+        }
+
+        self?.playForegroundHapticPattern(pattern.map { $0.doubleValue / 1000.0 })
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
   private func playWakeAlarmPreview(path: String) throws {
     stopWakeAlarmPreview()
 
@@ -102,12 +134,45 @@ import UIKit
     wakeAlarmPreviewPlayer = nil
   }
 
+  private func playForegroundHapticPattern(_ pattern: [TimeInterval]) {
+    cancelPendingHaptics()
+
+    guard !pattern.isEmpty else { return }
+
+    var elapsed: TimeInterval = 0
+    var scheduledPulse = false
+    for (index, segment) in pattern.enumerated() {
+      if !index.isMultiple(of: 2) {
+        let workItem = DispatchWorkItem {
+          AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
+        }
+        pendingHapticWorkItems.append(workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + elapsed, execute: workItem)
+        scheduledPulse = true
+      }
+
+      elapsed += max(segment, 0)
+    }
+
+    if !scheduledPulse {
+      AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
+    }
+  }
+
+  private func cancelPendingHaptics() {
+    pendingHapticWorkItems.forEach { $0.cancel() }
+    pendingHapticWorkItems.removeAll()
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     registerWakeAlarmPreviewChannel(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     registerDeviceTimezoneChannel(
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    registerIosHapticsChannel(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
   }

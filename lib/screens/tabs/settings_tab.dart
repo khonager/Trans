@@ -5,9 +5,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
+import '../../services/foreground_haptics.dart';
 import '../../services/supabase_service.dart';
 import '../../services/wake_alarm_custom_sound_service.dart';
 import '../../services/wake_alarm_settings.dart';
@@ -126,6 +126,7 @@ class _SettingsTabState extends State<SettingsTab> {
   void dispose() {
     _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
+    SupabaseService.settingsRefreshNotifier.removeListener(_handleSettingsRefresh);
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
@@ -135,10 +136,16 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   void initState() {
     super.initState();
+    SupabaseService.settingsRefreshNotifier.addListener(_handleSettingsRefresh);
     _loadProfile();
     _loadSettings();
     _loadVersion();
     _subscribeToLocation();
+  }
+
+  void _handleSettingsRefresh() {
+    unawaited(_loadProfile());
+    unawaited(_loadSettings());
   }
 
   Future<void> _loadVersion() async {
@@ -394,35 +401,24 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _testVibration() async {
     if (kIsWeb) return;
-    if (await Vibration.hasVibrator()) {
-      final pattern =
-          WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
+    if (!await ForegroundHaptics.hasVibrator()) return;
 
-      if (await Vibration.hasAmplitudeControl()) {
-        // Correctly set intensity to 0 for pauses (even indices) and _vibrationIntensity for vibrations (odd indices)
-        final intensities = List<int>.generate(
-            pattern.length, (i) => i.isEven ? 0 : _vibrationIntensity);
-        Vibration.vibrate(pattern: pattern, intensities: intensities);
-      } else {
-        Vibration.vibrate(pattern: pattern);
-      }
-    }
+    final pattern = WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
+    await ForegroundHaptics.vibratePattern(
+      pattern,
+      intensity: _vibrationIntensity,
+    );
   }
 
   Future<void> _testAlarmVibration({required bool enabled}) async {
     if (kIsWeb || !enabled) return;
-    if (!await Vibration.hasVibrator()) return;
+    if (!await ForegroundHaptics.hasVibrator()) return;
 
     final pattern = WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
-    if (await Vibration.hasAmplitudeControl()) {
-      final intensities = List<int>.generate(
-        pattern.length,
-        (i) => i.isEven ? 0 : _vibrationIntensity,
-      );
-      Vibration.vibrate(pattern: pattern, intensities: intensities);
-    } else {
-      Vibration.vibrate(pattern: pattern);
-    }
+    await ForegroundHaptics.vibratePattern(
+      pattern,
+      intensity: _vibrationIntensity,
+    );
   }
 
   Future<void> _previewWakeAlarmSound() async {
@@ -1373,14 +1369,10 @@ class _SettingsTabState extends State<SettingsTab> {
     return switch (defaultTargetPlatform) {
       TargetPlatform.android => true,
       TargetPlatform.iOS => true,
+      TargetPlatform.linux => true,
       TargetPlatform.macOS => true,
       _ => false,
     };
-  }
-
-  String get _continueWithGoogleLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Mit Google fortfahren' : 'Continue with Google';
   }
 
   String get _orLabel {

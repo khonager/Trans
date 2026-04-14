@@ -22,6 +22,8 @@ class SupabaseService {
   static final ValueNotifier<int> settingsRefreshNotifier = ValueNotifier(0);
   static StreamSubscription? _friendReqSubscription;
   static StreamSubscription? _msgSubscription;
+  static Future<void>? _pendingSignInPreparation;
+  static String? _preparedUserId;
 
   // --- INITIALIZATION ---
   static Future<void> init() async {
@@ -244,6 +246,36 @@ class SupabaseService {
     triggerFriendsListRefresh();
   }
 
+  static Future<void> ensureCurrentUserReady() async {
+    final user = currentUser;
+    if (user == null) {
+      _preparedUserId = null;
+      return;
+    }
+
+    if (_preparedUserId == user.id) {
+      return;
+    }
+
+    final pending = _pendingSignInPreparation;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+
+    final preparation = _finishSignIn();
+    _pendingSignInPreparation = preparation;
+
+    try {
+      await preparation;
+      _preparedUserId = user.id;
+    } finally {
+      if (identical(_pendingSignInPreparation, preparation)) {
+        _pendingSignInPreparation = null;
+      }
+    }
+  }
+
   static Future<OtpType?> handleAuthCallbackUri(Uri uri) async {
     final tokenHash = _uriParameter(uri, 'token_hash');
     final otpType = otpTypeFromString(_uriParameter(uri, 'type'));
@@ -261,10 +293,31 @@ class SupabaseService {
     );
 
     if (currentUser != null) {
-      await _finishSignIn();
+      await ensureCurrentUserReady();
     }
 
     return otpType;
+  }
+
+  static Future<bool> handleAuthSessionUri(Uri uri) async {
+    if (!isAuthSessionUri(uri)) {
+      return false;
+    }
+
+    // Give supabase_flutter's built-in deep-link observer a chance to consume
+    // the callback first. This fallback covers cases where the app was cold-
+    // started from an OAuth redirect and we already consumed the initial link.
+    if (!kIsWeb) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (currentUser != null) {
+        await ensureCurrentUserReady();
+        return true;
+      }
+    }
+
+    await client.auth.getSessionFromUrl(uri);
+    await ensureCurrentUserReady();
+    return true;
   }
 
   // --- AUTH ---
@@ -296,22 +349,37 @@ class SupabaseService {
     }
 
     if (currentUser != null) {
-      _startMessageListener();
-      _startFriendRequestListener();
-      triggerFriendsListRefresh();
+      await ensureCurrentUserReady();
     }
     return true;
   }
 
   static Future<void> signIn(String email, String password) async {
     await client.auth.signInWithPassword(email: email, password: password);
-    await _finishSignIn();
+    await ensureCurrentUserReady();
+  }
+
+  static String _oauthRedirectUrlForCurrentPlatform() {
+    if (!kIsWeb &&
+        (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return Uri.parse(AppConfig.webBaseUrl)
+          .resolve('oauth-callback.html')
+          .toString();
+    }
+
+    return AppConfig.authOAuthRedirectUrl;
   }
 
   static Future<void> signInWithGoogle() async {
     final launched = await client.auth.signInWithOAuth(
       OAuthProvider.google,
-      redirectTo: AppConfig.authOAuthRedirectUrl,
+      redirectTo: _oauthRedirectUrlForCurrentPlatform(),
+      // Signing out of Supabase does not clear Google's Safari session on iOS,
+      // so force the account chooser instead of silently reusing the last one.
+      queryParams: const {'prompt': 'select_account'},
+      authScreenLaunchMode: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
+          ? LaunchMode.externalApplication
+          : LaunchMode.platformDefault,
     );
 
     if (!launched) {
@@ -334,6 +402,8 @@ class SupabaseService {
   static Future<void> signOut() async {
     _msgSubscription?.cancel();
     _friendReqSubscription?.cancel();
+    _preparedUserId = null;
+    _pendingSignInPreparation = null;
     await client.auth.signOut();
     triggerFriendsListRefresh();
   }
