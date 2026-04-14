@@ -74,6 +74,18 @@ class SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<SettingsTab> {
+  static const List<int> _hiddenManualTimerSecondOptions = [
+    5,
+    10,
+    15,
+    30,
+    45,
+    60,
+    90,
+    120,
+    180,
+    300,
+  ];
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
@@ -88,6 +100,8 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _isDevBuild = const bool.fromEnvironment('IS_DEV', defaultValue: false);
   bool _isUnstableBuild =
       const bool.fromEnvironment('IS_UNSTABLE', defaultValue: false);
+  Timer? _hiddenManualAlarmTimer;
+  DateTime? _hiddenManualAlarmTarget;
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
 
@@ -105,6 +119,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   @override
   void dispose() {
+    _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
@@ -314,6 +329,22 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
+  Future<void> _testLeaveVibration() async {
+    if (kIsWeb || !_leaveAlarmVibrationEnabled) return;
+    if (!await Vibration.hasVibrator()) return;
+
+    final pattern = WakeAlarmSettings.vibrationPatternForId(_vibrationPattern);
+    if (await Vibration.hasAmplitudeControl()) {
+      final intensities = List<int>.generate(
+        pattern.length,
+        (i) => i.isEven ? 0 : _vibrationIntensity,
+      );
+      Vibration.vibrate(pattern: pattern, intensities: intensities);
+    } else {
+      Vibration.vibrate(pattern: pattern);
+    }
+  }
+
   Future<void> _previewWakeAlarmSound() async {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
@@ -347,6 +378,207 @@ class _SettingsTabState extends State<SettingsTab> {
     }
 
     return 'Could not play the alarm preview. Check your output volume and audio route.';
+  }
+
+  Future<void> _triggerHiddenManualLeaveTimer() async {
+    if (!mounted) return;
+
+    try {
+      await NotificationManager.previewWakeAlarm(
+        title: 'Manual leave timer',
+        body: 'Hidden timer finished.',
+        soundId: _leaveAlarmSoundEnabled
+            ? _wakeAlarmSound
+            : WakeAlarmSettings.silentSoundId,
+        vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
+          _vibrationPattern,
+        ),
+      );
+      await _testLeaveVibration();
+      _hiddenManualAlarmTarget = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Manual leave timer fired.')),
+      );
+    } catch (error) {
+      _hiddenManualAlarmTarget = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _wakeAlarmPreviewErrorMessage(error),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _scheduleHiddenManualLeaveTimer(DateTime target) {
+    _hiddenManualAlarmTimer?.cancel();
+    final now = DateTime.now();
+    final delay = target.difference(now);
+    final safeDelay = delay.isNegative ? Duration.zero : delay;
+    _hiddenManualAlarmTarget = target;
+    _hiddenManualAlarmTimer = Timer(safeDelay, () {
+      unawaited(_triggerHiddenManualLeaveTimer());
+    });
+  }
+
+  Future<void> _showHiddenManualTimerDialog() async {
+    if (kIsWeb || !mounted) return;
+
+    final now = DateTime.now();
+    var useCountdown = true;
+    var countdownSeconds = 10;
+    TimeOfDay selectedTime = TimeOfDay.fromDateTime(
+      now.add(const Duration(minutes: 1)),
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> pickTime() async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: selectedTime,
+              );
+              if (picked == null) return;
+              setDialogState(() => selectedTime = picked);
+            }
+
+            final selectedLabel = useCountdown
+                ? 'Countdown: ${countdownSeconds}s'
+                : 'At ${selectedTime.format(context)}';
+
+            return AlertDialog(
+              title: const Text('Hidden timer'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('Countdown'),
+                        icon: Icon(Icons.timer_outlined),
+                      ),
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('Alarm time'),
+                        icon: Icon(Icons.schedule),
+                      ),
+                    ],
+                    selected: {useCountdown},
+                    onSelectionChanged: (selection) {
+                      setDialogState(
+                        () => useCountdown = selection.first,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  if (useCountdown)
+                    DropdownButton<int>(
+                      value: countdownSeconds,
+                      isExpanded: true,
+                      items: _hiddenManualTimerSecondOptions
+                          .map(
+                            (seconds) => DropdownMenuItem<int>(
+                              value: seconds,
+                              child: Text('$seconds seconds'),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => countdownSeconds = value);
+                      },
+                    ),
+                  if (!useCountdown)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Time'),
+                      subtitle: Text(selectedTime.format(context)),
+                      trailing: const Icon(Icons.schedule),
+                      onTap: pickTime,
+                    ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Will fire: $selectedLabel',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                if (_hiddenManualAlarmTarget != null)
+                  TextButton(
+                    onPressed: () {
+                      _hiddenManualAlarmTimer?.cancel();
+                      _hiddenManualAlarmTimer = null;
+                      _hiddenManualAlarmTarget = null;
+                      Navigator.of(dialogContext).pop(false);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Hidden timer cancelled.')),
+                      );
+                    },
+                    child: const Text('Clear'),
+                  ),
+                FilledButton(
+                  onPressed: () {
+                    final now = DateTime.now();
+                    final target = useCountdown
+                        ? now.add(Duration(seconds: countdownSeconds))
+                        : DateTime(
+                            now.year,
+                            now.month,
+                            now.day,
+                            selectedTime.hour,
+                            selectedTime.minute,
+                          ).isAfter(now)
+                            ? DateTime(
+                                now.year,
+                                now.month,
+                                now.day,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              )
+                            : DateTime(
+                                now.year,
+                                now.month,
+                                now.day + 1,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              );
+                    _scheduleHiddenManualLeaveTimer(target);
+                    Navigator.of(dialogContext).pop(true);
+                  },
+                  child: const Text('Start'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted || _hiddenManualAlarmTarget == null) {
+      return;
+    }
+
+    final target = _hiddenManualAlarmTarget!;
+    final modeLabel = target.difference(DateTime.now()).inHours < 24
+        ? 'Hidden timer set for ${TimeOfDay.fromDateTime(target).format(context)}'
+        : 'Hidden timer scheduled';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(modeLabel)),
+    );
   }
 
   void _showIosVibrationAvailabilityMessage() {
@@ -1444,11 +1676,14 @@ class _SettingsTabState extends State<SettingsTab> {
                 spacing: 8,
                 children: [
                   if (!kIsWeb)
-                    IconButton(
-                      tooltip: AppLocalizations.of(context)!.previewSound,
-                      onPressed: _previewWakeAlarmSound,
-                      icon: Icon(Icons.play_arrow_rounded,
-                          color: colors.textPrimary),
+                    GestureDetector(
+                      onLongPress: _showHiddenManualTimerDialog,
+                      child: IconButton(
+                        tooltip: AppLocalizations.of(context)!.previewSound,
+                        onPressed: _previewWakeAlarmSound,
+                        icon: Icon(Icons.play_arrow_rounded,
+                            color: colors.textPrimary),
+                      ),
                     ),
                   DropdownButton<String>(
                     value: _wakeAlarmSound,
