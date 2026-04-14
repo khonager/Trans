@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -164,9 +166,9 @@ class _SettingsTabState extends State<SettingsTab> {
       setState(() {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
         _vibrationIntensity = prefs.getInt('vibration_intensity') ?? 128;
-        _wakeAlarmSound =
-            prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
-                WakeAlarmSettings.defaultSoundId;
+        _wakeAlarmSound = WakeAlarmSettings.soundIdForPreference(
+          prefs.getString(WakeAlarmSettings.soundPreferenceKey),
+        );
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =
@@ -251,14 +253,36 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _previewWakeAlarmSound() async {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
-    await NotificationManager.previewWakeAlarm(
-      title: l10n.wakeAlarmPreviewTitle,
-      body: l10n.wakeAlarmPreviewBody,
-      soundId: _wakeAlarmSound,
-      vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
-        _vibrationPattern,
-      ),
-    );
+    try {
+      await NotificationManager.previewWakeAlarm(
+        title: l10n.wakeAlarmPreviewTitle,
+        body: l10n.wakeAlarmPreviewBody,
+        soundId: _wakeAlarmSound,
+        vibrationPattern: WakeAlarmSettings.vibrationPatternForId(
+          _vibrationPattern,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_wakeAlarmPreviewErrorMessage(error))),
+      );
+    }
+  }
+
+  String _wakeAlarmPreviewErrorMessage(Object error) {
+    if (error is PlatformException) {
+      final message = error.message;
+      if (message != null && message.isNotEmpty) {
+        return 'Could not play the alarm preview: $message';
+      }
+    }
+
+    if (error is StateError) {
+      return error.message;
+    }
+
+    return 'Could not play the alarm preview. Check your output volume and audio route.';
   }
 
   void _showIosVibrationAvailabilityMessage() {
@@ -912,11 +936,6 @@ class _SettingsTabState extends State<SettingsTab> {
     return isGerman ? 'Mit Google fortfahren' : 'Continue with Google';
   }
 
-  String get _continueWithAppleLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Mit Apple fortfahren' : 'Continue with Apple';
-  }
-
   String get _orLabel {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return isGerman ? 'oder' : 'or';
@@ -933,13 +952,6 @@ class _SettingsTabState extends State<SettingsTab> {
     await _startOAuthSignIn(
       action: SupabaseService.signInWithGoogle,
       source: 'sign in with google',
-    );
-  }
-
-  Future<void> _startAppleSignIn() async {
-    await _startOAuthSignIn(
-      action: SupabaseService.signInWithApple,
-      source: 'sign in with apple',
     );
   }
 
@@ -1383,7 +1395,6 @@ class _SettingsTabState extends State<SettingsTab> {
                       if (val == null) return;
                       setState(() => _wakeAlarmSound = val);
                       await _persistWakeAlarmSoundSetting();
-                      await _previewWakeAlarmSound();
                     },
                   ),
                 ],
@@ -1784,36 +1795,65 @@ class _SettingsTabState extends State<SettingsTab> {
               ],
             ),
             const SizedBox(height: 16),
-            OutlinedButton.icon(
+            OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
-              icon: Container(
-                width: 20,
-                height: 20,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: colors.divider),
-                ),
-                child: const Text(
-                  'G',
-                  style: TextStyle(
-                    color: Colors.blue,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              label: Text(_continueWithGoogleLabel),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
-              icon: const Icon(Icons.apple),
-              label: Text(_continueWithAppleLabel),
+              child: _buildGoogleSignInLabel(colors),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildGoogleSignInLabel(TransColors colors) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final baseStyle = TextStyle(color: colors.textPrimary);
+
+    if (isGerman) {
+      return Text.rich(
+        TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Mit '),
+            _googleWordSpan(),
+            const TextSpan(text: ' fortfahren'),
+          ],
+        ),
+      );
+    }
+
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          const TextSpan(text: 'Continue with '),
+          _googleWordSpan(),
+        ],
+      ),
+    );
+  }
+
+  TextSpan _googleWordSpan() {
+    const letters = [
+      ('G', Color(0xFF4285F4)),
+      ('o', Color(0xFFEA4335)),
+      ('o', Color(0xFFFBBC05)),
+      ('g', Color(0xFF4285F4)),
+      ('l', Color(0xFF34A853)),
+      ('e', Color(0xFFEA4335)),
+    ];
+
+    return TextSpan(
+      children: [
+        for (final (letter, color) in letters)
+          TextSpan(
+            text: letter,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+      ],
     );
   }
 

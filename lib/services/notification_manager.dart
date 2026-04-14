@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'wake_alarm_settings.dart';
+import 'wake_alarm_preview_player.dart';
 import 'wake_alarm_sound_storage.dart';
 
 class NotificationManager {
@@ -94,7 +95,7 @@ class NotificationManager {
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
-      playSound: true,
+      playSound: sound.playSound,
       sound: sound.androidSound,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(vibrationPattern),
@@ -114,7 +115,7 @@ class NotificationManager {
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
       priority: Priority.high,
-      playSound: true,
+      playSound: sound.playSound,
       sound: sound.androidSound,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(vibrationPattern),
@@ -131,11 +132,11 @@ class NotificationManager {
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: true,
+      presentSound: sound.playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: sound.fileName,
+      sound: sound.playSound ? sound.fileName : null,
     );
   }
 
@@ -145,6 +146,10 @@ class NotificationManager {
     required String soundId,
     required List<int> vibrationPattern,
   }) async {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    if (await WakeAlarmPreviewPlayer.play(sound)) return;
+    if (kIsWeb) return;
+
     await _ensureDarwinWakeAlarmSounds();
     await requestPermissions();
     await updateWakeAlarmChannel(vibrationPattern, soundId: soundId);

@@ -4,17 +4,19 @@ class WakeAlarmSoundOption {
   const WakeAlarmSoundOption({
     required this.id,
     required this.label,
+    this.playSound = true,
     this.fileName,
     this.androidResourceName,
   });
 
   final String id;
   final String label;
+  final bool playSound;
   final String? fileName;
   final String? androidResourceName;
 
-  bool get usesPlatformDefault =>
-      fileName == null || androidResourceName == null;
+  bool get isBundledSound =>
+      playSound && fileName != null && androidResourceName != null;
 
   String? get assetPath => fileName == null ? null : 'assets/sounds/$fileName';
 
@@ -25,12 +27,14 @@ class WakeAlarmSoundOption {
 
 class WakeAlarmSettings {
   static const String soundPreferenceKey = 'wake_alarm_sound';
-  static const String defaultSoundId = 'system_default';
+  static const String defaultSoundId = 'station_chime';
+  static const String silentSoundId = 'silent';
 
   static const List<WakeAlarmSoundOption> soundOptions = [
     WakeAlarmSoundOption(
-      id: defaultSoundId,
-      label: 'System Default',
+      id: silentSoundId,
+      label: 'None',
+      playSound: false,
     ),
     WakeAlarmSoundOption(
       id: 'station_chime',
@@ -61,12 +65,18 @@ class WakeAlarmSettings {
   static WakeAlarmSoundOption soundForId(String? id) {
     return soundOptions.firstWhere(
       (option) => option.id == id,
-      orElse: () => soundOptions.first,
+      orElse: () => soundOptions.firstWhere(
+        (option) => option.id == defaultSoundId,
+      ),
     );
   }
 
+  static String soundIdForPreference(String? id) {
+    return soundForId(id).id;
+  }
+
   static List<WakeAlarmSoundOption> get bundledSoundOptions => soundOptions
-      .where((option) => !option.usesPlatformDefault)
+      .where((option) => option.isBundledSound)
       .toList(growable: false);
 
   static List<int> vibrationPatternForId(String patternName) {
