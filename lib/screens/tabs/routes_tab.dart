@@ -701,9 +701,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
           WakeAlarmSettings.defaultSoundId;
+      final wakeSoundEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ??
+              true;
+      final wakeVibrationEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+              true;
       await NotificationManager.updateWakeAlarmChannel(
         WakeAlarmSettings.vibrationPatternForId(patternName),
         soundId: soundId,
+        soundEnabled: wakeSoundEnabled,
+        vibrationEnabled: wakeVibrationEnabled,
       );
     }
 
@@ -2027,25 +2035,35 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     final content = _savedJourneyReminderContent(item, minutes);
+    final prefs = await SharedPreferences.getInstance();
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final leaveSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ?? true;
+    final leaveVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
     await NotificationManager.requestPermissions();
     await NotificationManager.requestExactAlarmPermissionIfNeeded();
-    final androidDetails = AndroidNotificationDetails(
-      'saved_route_leave_channel',
-      'Saved Route Reminders',
-      channelDescription: 'Reminders for saved-route departure times',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: true,
+    await NotificationManager.updateLeaveAlarmChannel(
+      pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+    );
+    final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        presentBanner: true,
-        presentList: true,
-        interruptionLevel: InterruptionLevel.timeSensitive,
+      iOS: NotificationManager.buildLeaveAlarmIosDetails(
+        soundId: soundId,
+        soundEnabled: leaveSoundEnabled,
       ),
       linux: const LinuxNotificationDetails(),
     );
@@ -2070,22 +2088,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes);
     _syncSavedJourneyLiveCountdownTicker();
     final content = _savedJourneyReminderContent(item, minutes);
+    final prefs = await SharedPreferences.getInstance();
+    final patternName = prefs.getString('vibration_pattern') ?? 'standard';
+    final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
+        WakeAlarmSettings.defaultSoundId;
+    final leaveSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ?? true;
+    final leaveVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
+    final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
     final toMap = item['to'];
     final toName = toMap is Map
         ? (toMap['name']?.toString() ?? 'Destination')
         : 'Destination';
 
-    final androidDetails = AndroidNotificationDetails(
-      'saved_route_leave_channel',
-      'Saved Route Reminders',
-      channelDescription: 'Reminders for saved-route departure times',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: true,
+    await NotificationManager.updateLeaveAlarmChannel(
+      pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+    );
+    final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
+      vibrationPattern: pattern,
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(),
+      iOS: NotificationManager.buildLeaveAlarmIosDetails(
+        soundId: soundId,
+        soundEnabled: leaveSoundEnabled,
+      ),
       linux: const LinuxNotificationDetails(),
     );
 
@@ -2961,6 +2996,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (kIsWeb) return;
     if (await Vibration.hasVibrator()) {
       final prefs = await SharedPreferences.getInstance();
+      final wakeVibrationEnabled =
+          prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+              true;
+      if (!wakeVibrationEnabled) return;
       final patternName = prefs.getString('vibration_pattern') ?? 'standard';
       final intensity = prefs.getInt('vibration_intensity') ?? 128;
       final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
@@ -2982,14 +3021,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final patternName = prefs.getString('vibration_pattern') ?? 'standard';
     final soundId = prefs.getString(WakeAlarmSettings.soundPreferenceKey) ??
         WakeAlarmSettings.defaultSoundId;
+    final wakeSoundEnabled =
+        prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ?? true;
+    final wakeVibrationEnabled =
+        prefs.getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+            true;
     final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
     final androidDetails = NotificationManager.buildWakeAlarmAndroidDetails(
       vibrationPattern: pattern,
       soundId: soundId,
       fullScreenIntent: true,
+      soundEnabled: wakeSoundEnabled,
+      vibrationEnabled: wakeVibrationEnabled,
     );
-    final iosDetails =
-        NotificationManager.buildWakeAlarmIosDetails(soundId: soundId);
+    final iosDetails = NotificationManager.buildWakeAlarmIosDetails(
+      soundId: soundId,
+      soundEnabled: wakeSoundEnabled,
+    );
     final details =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(

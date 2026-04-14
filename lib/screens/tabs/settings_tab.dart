@@ -94,6 +94,10 @@ class _SettingsTabState extends State<SettingsTab> {
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
   String _wakeAlarmSound = WakeAlarmSettings.defaultSoundId;
+  bool _wakeAlarmSoundEnabled = true;
+  bool _wakeAlarmVibrationEnabled = true;
+  bool _leaveAlarmSoundEnabled = true;
+  bool _leaveAlarmVibrationEnabled = true;
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
@@ -169,6 +173,18 @@ class _SettingsTabState extends State<SettingsTab> {
         _wakeAlarmSound = WakeAlarmSettings.soundIdForPreference(
           prefs.getString(WakeAlarmSettings.soundPreferenceKey),
         );
+        _wakeAlarmSoundEnabled =
+            prefs.getBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey) ??
+                true;
+        _wakeAlarmVibrationEnabled = prefs
+                .getBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey) ??
+            true;
+        _leaveAlarmSoundEnabled =
+            prefs.getBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey) ??
+                true;
+        _leaveAlarmVibrationEnabled = prefs.getBool(
+                WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
+            true;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =
@@ -189,6 +205,14 @@ class _SettingsTabState extends State<SettingsTab> {
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
   }
 
@@ -202,6 +226,46 @@ class _SettingsTabState extends State<SettingsTab> {
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
+    );
+  }
+
+  Future<void> _persistAlarmDeliverySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(WakeAlarmSettings.wakeSoundEnabledPreferenceKey,
+        _wakeAlarmSoundEnabled);
+    await prefs.setBool(WakeAlarmSettings.wakeVibrationEnabledPreferenceKey,
+        _wakeAlarmVibrationEnabled);
+    await prefs.setBool(WakeAlarmSettings.leaveSoundEnabledPreferenceKey,
+        _leaveAlarmSoundEnabled);
+    await prefs.setBool(WakeAlarmSettings.leaveVibrationEnabledPreferenceKey,
+        _leaveAlarmVibrationEnabled);
+    await SupabaseService.updateSettings({
+      WakeAlarmSettings.wakeSoundEnabledPreferenceKey: _wakeAlarmSoundEnabled,
+      WakeAlarmSettings.wakeVibrationEnabledPreferenceKey:
+          _wakeAlarmVibrationEnabled,
+      WakeAlarmSettings.leaveSoundEnabledPreferenceKey: _leaveAlarmSoundEnabled,
+      WakeAlarmSettings.leaveVibrationEnabledPreferenceKey:
+          _leaveAlarmVibrationEnabled,
+    });
+    await NotificationManager.updateWakeAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _wakeAlarmSoundEnabled,
+      vibrationEnabled: _wakeAlarmVibrationEnabled,
+    );
+    await NotificationManager.updateLeaveAlarmChannel(
+      WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
+      soundId: _wakeAlarmSound,
+      soundEnabled: _leaveAlarmSoundEnabled,
+      vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
   }
 
@@ -1062,6 +1126,13 @@ class _SettingsTabState extends State<SettingsTab> {
     final user = SupabaseService.currentUser;
     final colors = TransColors.of(context);
     final primaryColor = Theme.of(context).primaryColor;
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    final wakeAlarmLabel = isGerman ? 'Weckalarm' : 'Wake Alarm';
+    final leaveReminderLabel =
+        isGerman ? 'Abfahrts-Erinnerung' : 'Leave Reminder';
+    final soundEnabledLabel = isGerman ? 'Ton aktiviert' : 'Sound enabled';
+    final vibrationEnabledLabel =
+        isGerman ? 'Vibration aktiviert' : 'Vibration enabled';
 
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
@@ -1362,6 +1433,26 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
             ListTile(
+              title: Text(wakeAlarmLabel,
+                  style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            SwitchListTile(
+              title: Text(soundEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmSoundEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmSoundEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            ListTile(
               title: Text(AppLocalizations.of(context)!.alarmSound,
                   style: TextStyle(color: colors.textPrimary)),
               subtitle: Text(
@@ -1399,6 +1490,20 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ],
               ),
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(vibrationEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _wakeAlarmVibrationEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _wakeAlarmVibrationEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
             ),
             Divider(color: colors.divider),
             ListTile(
@@ -1477,6 +1582,40 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ),
               ),
+            Divider(color: colors.divider),
+            ListTile(
+              title: Text(leaveReminderLabel,
+                  style: TextStyle(
+                      color: colors.textSecondary,
+                      fontWeight: FontWeight.w600)),
+            ),
+            SwitchListTile(
+              title: Text(soundEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _leaveAlarmSoundEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _leaveAlarmSoundEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
+            Divider(color: colors.divider),
+            SwitchListTile(
+              title: Text(vibrationEnabledLabel,
+                  style: TextStyle(color: colors.textPrimary)),
+              value: _leaveAlarmVibrationEnabled,
+              thumbColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return primaryColor;
+                return null;
+              }),
+              onChanged: (val) async {
+                setState(() => _leaveAlarmVibrationEnabled = val);
+                await _persistAlarmDeliverySettings();
+              },
+            ),
             Divider(color: colors.divider),
             SwitchListTile(
               title: Text(AppLocalizations.of(context)!.alwaysWakeMe,

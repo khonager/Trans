@@ -119,6 +119,8 @@ class NotificationManager {
   static Future<void> updateWakeAlarmChannel(
     List<int> vibrationPattern, {
     required String soundId,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
   }) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final androidImplementation =
@@ -126,6 +128,7 @@ class NotificationManager {
             AndroidFlutterLocalNotificationsPlugin>();
     if (androidImplementation == null) return;
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     await androidImplementation.deleteNotificationChannel(
         channelId: 'wake_alarm_channel');
     await androidImplementation
@@ -134,10 +137,11 @@ class NotificationManager {
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
-      playSound: sound.playSound,
-      sound: sound.androidSound,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(vibrationPattern),
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
       audioAttributesUsage: AudioAttributesUsage.alarm,
     ));
   }
@@ -146,18 +150,22 @@ class NotificationManager {
     required List<int> vibrationPattern,
     required String soundId,
     bool fullScreenIntent = false,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
     return AndroidNotificationDetails(
       'wake_alarm_channel',
       'Wake Alarm',
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
       priority: Priority.high,
-      playSound: sound.playSound,
-      sound: sound.androidSound,
-      enableVibration: true,
-      vibrationPattern: Int64List.fromList(vibrationPattern),
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
       fullScreenIntent: fullScreenIntent,
       category: AndroidNotificationCategory.alarm,
       audioAttributesUsage: AudioAttributesUsage.alarm,
@@ -166,16 +174,85 @@ class NotificationManager {
 
   static DarwinNotificationDetails buildWakeAlarmIosDetails({
     required String soundId,
+    bool soundEnabled = true,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
     return DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: sound.playSound,
+      presentSound: soundEnabled && sound.playSound,
       presentBanner: true,
       presentList: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
-      sound: sound.playSound ? sound.fileName : null,
+      sound: soundEnabled && sound.playSound ? sound.fileName : null,
+    );
+  }
+
+  static Future<void> updateLeaveAlarmChannel(
+    List<int> vibrationPattern, {
+    required String soundId,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
+  }) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
+    await androidImplementation.deleteNotificationChannel(
+        channelId: 'saved_route_leave_channel');
+    await androidImplementation
+        .createNotificationChannel(AndroidNotificationChannel(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      description: 'Reminders for saved-route departure times',
+      importance: Importance.high,
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    ));
+  }
+
+  static AndroidNotificationDetails buildLeaveAlarmAndroidDetails({
+    required List<int> vibrationPattern,
+    required String soundId,
+    bool soundEnabled = true,
+    bool vibrationEnabled = true,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    final playSound = soundEnabled && sound.playSound;
+    return AndroidNotificationDetails(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      channelDescription: 'Reminders for saved-route departure times',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: playSound,
+      sound: playSound ? sound.androidSound : null,
+      enableVibration: vibrationEnabled,
+      vibrationPattern:
+          vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
+    );
+  }
+
+  static DarwinNotificationDetails buildLeaveAlarmIosDetails({
+    required String soundId,
+    bool soundEnabled = true,
+  }) {
+    final sound = WakeAlarmSettings.soundForId(soundId);
+    return DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: soundEnabled && sound.playSound,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      sound: soundEnabled && sound.playSound ? sound.fileName : null,
     );
   }
 
