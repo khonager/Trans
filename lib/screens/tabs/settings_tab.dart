@@ -380,6 +380,21 @@ class _SettingsTabState extends State<SettingsTab> {
     return 'Could not play the alarm preview. Check your output volume and audio route.';
   }
 
+  bool get _showPreviewTooltip {
+    if (kIsWeb) return true;
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+        return false;
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+    }
+  }
+
   Future<void> _triggerHiddenManualLeaveTimer() async {
     if (!mounted) return;
 
@@ -525,7 +540,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       Navigator.of(dialogContext).pop(false);
                       if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Hidden timer cancelled.')),
+                        const SnackBar(
+                            content: Text('Hidden timer cancelled.')),
                       );
                     },
                     child: const Text('Clear'),
@@ -1676,20 +1692,28 @@ class _SettingsTabState extends State<SettingsTab> {
                 spacing: 8,
                 children: [
                   if (!kIsWeb)
-                    InkResponse(
-                      radius: 24,
-                      onTap: _previewWakeAlarmSound,
-                      onLongPress: _showHiddenManualTimerDialog,
-                      child: Tooltip(
-                        message: AppLocalizations.of(context)!.previewSound,
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(
-                            Icons.play_arrow_rounded,
-                            color: colors.textPrimary,
+                    Builder(
+                      builder: (context) {
+                        final previewButton = InkResponse(
+                          radius: 24,
+                          onTap: _previewWakeAlarmSound,
+                          onLongPress: _showHiddenManualTimerDialog,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              Icons.play_arrow_rounded,
+                              color: colors.textPrimary,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+
+                        if (!_showPreviewTooltip) return previewButton;
+
+                        return Tooltip(
+                          message: AppLocalizations.of(context)!.previewSound,
+                          child: previewButton,
+                        );
+                      },
                     ),
                   DropdownButton<String>(
                     value: _wakeAlarmSound,
