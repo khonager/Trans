@@ -25,6 +25,7 @@ class NotificationManager {
   static bool _hasNotificationPolicyAccess = false;
 
   static Future<void> init() async {
+    await WakeAlarmSettings.loadPersistedCustomSound();
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
@@ -199,7 +200,8 @@ class NotificationManager {
 
       _requestedNotificationPolicyAccess = true;
       final granted =
-          await androidImplementation.requestNotificationPolicyAccess() ?? false;
+          await androidImplementation.requestNotificationPolicyAccess() ??
+              false;
       if (!granted) return false;
       _hasNotificationPolicyAccess =
           await androidImplementation.hasNotificationPolicyAccess() ?? false;
@@ -333,7 +335,8 @@ class NotificationManager {
     return AndroidNotificationDetails(
       leaveAlarmChannelId,
       'Saved Route Reminders',
-      channelDescription: 'Alarm-style reminders for saved-route departure times',
+      channelDescription:
+          'Alarm-style reminders for saved-route departure times',
       importance: Importance.max,
       priority: Priority.high,
       channelBypassDnd: channelBypassDnd,
@@ -415,9 +418,18 @@ class NotificationManager {
     );
   }
 
+  static Future<void> stopWakeAlarmPreview() async {
+    await WakeAlarmPreviewPlayer.stop();
+    await _notifications.cancel(id: 9001);
+  }
+
   static Future<void> _ensureDarwinWakeAlarmSounds() async {
     if (defaultTargetPlatform != TargetPlatform.iOS) return;
-    await ensureDarwinWakeAlarmSounds(WakeAlarmSettings.bundledSoundOptions);
+    await ensureDarwinWakeAlarmSounds(WakeAlarmSettings.soundOptions);
+  }
+
+  static Future<void> prepareAlarmSounds() async {
+    await _ensureDarwinWakeAlarmSounds();
   }
 
   static Future<void> showNotification({

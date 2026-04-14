@@ -14,11 +14,21 @@ Future<void> ensureDarwinWakeAlarmSounds(
   }
 
   for (final sound in sounds) {
-    final assetPath = sound.assetPath;
     final fileName = sound.fileName;
-    if (assetPath == null || fileName == null) continue;
+    if (fileName == null) continue;
 
     final file = File('${soundsDirectory.path}/$fileName');
+    final localFilePath = sound.localFilePath;
+    if (localFilePath != null && localFilePath.isNotEmpty) {
+      final source = File(localFilePath);
+      if (await source.exists()) {
+        await source.copy(file.path);
+      }
+      continue;
+    }
+
+    final assetPath = sound.assetPath;
+    if (assetPath == null) continue;
     if (await file.exists()) continue;
 
     final byteData = await rootBundle.load(assetPath);

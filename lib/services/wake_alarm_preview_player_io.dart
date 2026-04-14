@@ -18,6 +18,47 @@ class WakeAlarmPreviewPlayer {
       return true;
     }
 
+    final localFilePath = sound.localFilePath;
+    if (localFilePath != null && localFilePath.isNotEmpty) {
+      final file = File(localFilePath);
+      if (await file.exists()) {
+        if (Platform.isAndroid || Platform.isIOS) {
+          return _playWithMethodChannel(file.path);
+        }
+        if (Platform.isLinux) {
+          return _playWithDesktopCommand([
+            ['pw-play', file.path],
+            ['paplay', file.path],
+            ['aplay', file.path],
+            ['canberra-gtk-play', '-f', file.path],
+          ]);
+        }
+        if (Platform.isMacOS) {
+          return _playWithDesktopCommand([
+            ['afplay', file.path],
+          ]);
+        }
+        if (Platform.isWindows) {
+          return _playWithDesktopCommand([
+            [
+              'powershell.exe',
+              '-NoProfile',
+              '-Command',
+              '(New-Object Media.SoundPlayer \$args[0]).PlaySync()',
+              file.path,
+            ],
+            [
+              'powershell',
+              '-NoProfile',
+              '-Command',
+              '(New-Object Media.SoundPlayer \$args[0]).PlaySync()',
+              file.path,
+            ],
+          ]);
+        }
+      }
+    }
+
     final fileName = sound.fileName;
     final assetPath = sound.assetPath;
     if (fileName == null || assetPath == null) return false;

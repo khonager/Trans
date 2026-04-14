@@ -8,6 +8,7 @@ import 'package:vibration/vibration.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
 import '../../services/supabase_service.dart';
+import '../../services/wake_alarm_custom_sound_service.dart';
 import '../../services/wake_alarm_settings.dart';
 import '../../services/history_manager.dart';
 import '../../config/app_theme.dart';
@@ -74,6 +75,7 @@ class SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<SettingsTab> {
+  static const String _pickCustomSoundValue = '__pick_custom_sound__';
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -112,6 +114,7 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _wakeAlarmVibrationEnabled = true;
   bool _leaveAlarmSoundEnabled = true;
   bool _leaveAlarmVibrationEnabled = true;
+  bool _isWakeAlarmPreviewPlaying = false;
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
@@ -180,6 +183,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _loadSettings() async {
+    await WakeAlarmSettings.loadPersistedCustomSound();
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
@@ -238,6 +242,7 @@ class _SettingsTabState extends State<SettingsTab> {
     await SupabaseService.updateSettings({
       WakeAlarmSettings.soundPreferenceKey: _wakeAlarmSound,
     });
+    await NotificationManager.prepareAlarmSounds();
     await NotificationManager.updateWakeAlarmChannel(
       WakeAlarmSettings.vibrationPatternForId(_vibrationPattern),
       soundId: _wakeAlarmSound,
@@ -250,6 +255,79 @@ class _SettingsTabState extends State<SettingsTab> {
       soundEnabled: _leaveAlarmSoundEnabled,
       vibrationEnabled: _leaveAlarmVibrationEnabled,
     );
+  }
+
+  Future<void> _selectWakeAlarmSound(String value) async {
+    if (value == _pickCustomSoundValue) {
+      await _pickCustomWakeAlarmSound();
+      return;
+    }
+
+    if (_isWakeAlarmPreviewPlaying) {
+      await NotificationManager.stopWakeAlarmPreview();
+      if (mounted) {
+        setState(() => _isWakeAlarmPreviewPlaying = false);
+      }
+    }
+
+    setState(() => _wakeAlarmSound = value);
+    await _persistWakeAlarmSoundSetting();
+  }
+
+  Future<void> _pickCustomWakeAlarmSound() async {
+    try {
+      final sound = await WakeAlarmCustomSoundService.pickAndImport();
+      if (sound == null || !mounted) return;
+
+      setState(() => _wakeAlarmSound = sound.id);
+      await _persistWakeAlarmSoundSetting();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Custom alarm sound set to "${sound.label}". Tap the trash icon in the picker to remove it.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_customSoundImportErrorMessage(error))),
+      );
+    }
+  }
+
+  Future<void> _removeCustomWakeAlarmSound(WakeAlarmSoundOption sound) async {
+    if (!sound.isCustomSound) return;
+
+    try {
+      await WakeAlarmCustomSoundService.deleteCustomSound(sound);
+      if (!mounted) return;
+
+      final wasSelected = _wakeAlarmSound == sound.id;
+      if (wasSelected) {
+        setState(() => _wakeAlarmSound = WakeAlarmSettings.defaultSoundId);
+        await _persistWakeAlarmSoundSetting();
+      } else {
+        setState(() {});
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Custom alarm sound removed.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not remove the custom sound: $error')),
+      );
+    }
+  }
+
+  String _customSoundImportErrorMessage(Object error) {
+    if (error is StateError) {
+      return 'Could not import that audio file: ${error.message}';
+    }
+    return 'Could not import that audio file.';
   }
 
   Future<void> _persistAlarmDeliverySettings() async {
@@ -349,6 +427,13 @@ class _SettingsTabState extends State<SettingsTab> {
     if (kIsWeb) return;
     final l10n = AppLocalizations.of(context)!;
     try {
+      if (_isWakeAlarmPreviewPlaying) {
+        await NotificationManager.stopWakeAlarmPreview();
+        if (!mounted) return;
+        setState(() => _isWakeAlarmPreviewPlaying = false);
+        return;
+      }
+
       await NotificationManager.previewWakeAlarm(
         title: l10n.wakeAlarmPreviewTitle,
         body: l10n.wakeAlarmPreviewBody,
@@ -357,8 +442,11 @@ class _SettingsTabState extends State<SettingsTab> {
           _vibrationPattern,
         ),
       );
+      if (!mounted) return;
+      setState(() => _isWakeAlarmPreviewPlaying = true);
     } catch (error) {
       if (!mounted) return;
+      setState(() => _isWakeAlarmPreviewPlaying = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_wakeAlarmPreviewErrorMessage(error))),
       );
@@ -1681,59 +1769,121 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
             ListTile(
-              title: Text(AppLocalizations.of(context)!.alarmSound,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(
-                WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
-                style: TextStyle(fontSize: 12, color: colors.textSecondary),
-              ),
-              trailing: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                children: [
-                  if (!kIsWeb)
-                    Builder(
-                      builder: (context) {
-                        final previewButton = InkResponse(
-                          radius: 24,
-                          onTap: _previewWakeAlarmSound,
-                          onLongPress: _showHiddenManualTimerDialog,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              Icons.play_arrow_rounded,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                        );
-
-                        if (!_showPreviewTooltip) return previewButton;
-
-                        return Tooltip(
-                          message: AppLocalizations.of(context)!.previewSound,
-                          child: previewButton,
-                        );
-                      },
+              title: Builder(
+                builder: (context) {
+                  final alarmSoundTitle = InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: kIsWeb ? null : _previewWakeAlarmSound,
+                    onLongPress: kIsWeb ? null : _showHiddenManualTimerDialog,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        AppLocalizations.of(context)!.alarmSound,
+                        style: TextStyle(color: colors.textPrimary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  DropdownButton<String>(
-                    value: _wakeAlarmSound,
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
-                    items: WakeAlarmSettings.soundOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option.id,
-                            child: Text(option.label),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (val) async {
-                      if (val == null) return;
-                      setState(() => _wakeAlarmSound = val);
-                      await _persistWakeAlarmSoundSetting();
-                    },
+                  );
+
+                  if (kIsWeb || !_showPreviewTooltip) return alarmSoundTitle;
+
+                  return Tooltip(
+                    message: AppLocalizations.of(context)!.previewSound,
+                    child: alarmSoundTitle,
+                  );
+                },
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              trailing: DropdownButton<String>(
+                value: _wakeAlarmSound,
+                dropdownColor: colors.cardBg,
+                underline: const SizedBox(),
+                isDense: true,
+                selectedItemBuilder: (context) => [
+                  ...WakeAlarmSettings.soundOptions.map(
+                    (option) => SizedBox(
+                      width: 120,
+                      child: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
                   ),
+                  if (!kIsWeb)
+                    const SizedBox(
+                      width: 120,
+                      child: Text(
+                        'Add custom audio...',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
                 ],
+                items: [
+                  ...WakeAlarmSettings.soundOptions.map(
+                    (option) => DropdownMenuItem(
+                      value: option.id,
+                      child: SizedBox(
+                        width: 170,
+                        child: option.isCustomSound
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      option.label,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () async {
+                                      Navigator.of(context).pop();
+                                      await _removeCustomWakeAlarmSound(
+                                        option,
+                                      );
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 8),
+                                      child: Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                option.label,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                      ),
+                    ),
+                  ),
+                  if (!kIsWeb)
+                    const DropdownMenuItem(
+                      value: _pickCustomSoundValue,
+                      child: Text('Add custom audio...'),
+                    ),
+                ],
+                onChanged: (val) async {
+                  if (val == null) return;
+                  await _selectWakeAlarmSound(val);
+                  if (!mounted) return;
+                  setState(() => _isWakeAlarmPreviewPlaying = false);
+                },
               ),
             ),
             Divider(color: colors.divider),
