@@ -1588,7 +1588,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final routeLabel = fromName.isEmpty ? toName : '$fromName -> $toName';
 
     final androidDetails = AndroidNotificationDetails(
-      'saved_route_leave_channel',
+      NotificationManager.leaveCountdownChannelId,
       'Saved Route Reminders',
       channelDescription: 'Live countdown reminders for saved routes',
       importance: Importance.low,
@@ -2046,18 +2046,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             true;
     final pattern = WakeAlarmSettings.vibrationPatternForId(patternName);
     await NotificationManager.requestPermissions();
-    await NotificationManager.requestExactAlarmPermissionIfNeeded();
+    final canScheduleExactAlarms =
+        await NotificationManager.requestExactAlarmPermissionIfNeeded();
+    final hasNotificationPolicyAccess =
+        await NotificationManager.requestNotificationPolicyAccessIfNeeded();
+    final hasFullScreenIntentPermission =
+        await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
     await NotificationManager.updateLeaveAlarmChannel(
       pattern,
       soundId: soundId,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
+      bypassDnd: hasNotificationPolicyAccess,
     );
     final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
       vibrationPattern: pattern,
       soundId: soundId,
+      fullScreenIntent: hasFullScreenIntentPermission,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
+      channelBypassDnd: hasNotificationPolicyAccess,
     );
     final details = NotificationDetails(
       android: androidDetails,
@@ -2073,8 +2081,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       body: content.body,
       scheduledAt: triggerAt,
       details: details,
+      androidScheduleMode: canScheduleExactAlarms
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle,
     );
     _syncSavedJourneyLiveCountdownTicker();
+
+    if (!canScheduleExactAlarms && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Android blocked exact alarms for this reminder. Open "Alarms & reminders" for Trans to make leave alerts reliable.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _fireSavedJourneyReminder({
@@ -2102,18 +2123,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final toName = toMap is Map
         ? (toMap['name']?.toString() ?? 'Destination')
         : 'Destination';
+    await NotificationManager.requestPermissions();
+    final hasNotificationPolicyAccess =
+        await NotificationManager.requestNotificationPolicyAccessIfNeeded();
+    final hasFullScreenIntentPermission =
+        await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
 
     await NotificationManager.updateLeaveAlarmChannel(
       pattern,
       soundId: soundId,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
+      bypassDnd: hasNotificationPolicyAccess,
     );
     final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
       vibrationPattern: pattern,
       soundId: soundId,
+      fullScreenIntent: hasFullScreenIntentPermission,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
+      channelBypassDnd: hasNotificationPolicyAccess,
     );
     final details = NotificationDetails(
       android: androidDetails,

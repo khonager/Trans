@@ -11,9 +11,18 @@ import 'wake_alarm_sound_storage.dart';
 class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  static const String wakeAlarmChannelId = 'wake_alarm_channel';
+  static const String leaveAlarmChannelId = 'saved_route_leave_alarm_channel';
+  static const String leaveCountdownChannelId =
+      'saved_route_leave_countdown_channel';
   static const MethodChannel _timezoneChannel =
       MethodChannel('de.khonager.trans/device_timezone');
   static bool _timezonesInitialized = false;
+  static bool _requestedExactAlarmPermission = false;
+  static bool _requestedFullScreenIntentPermission = false;
+  static bool _requestedNotificationPolicyAccess = false;
+  static bool _hasFullScreenIntentPermission = false;
+  static bool _hasNotificationPolicyAccess = false;
 
   static Future<void> init() async {
     const androidSettings =
@@ -53,12 +62,30 @@ class NotificationManager {
       ));
       await androidImplementation
           .createNotificationChannel(const AndroidNotificationChannel(
-        'wake_alarm_channel',
+        wakeAlarmChannelId,
         'Wake Alarm',
         description: 'Alarms for arriving at station',
         importance: Importance.max,
         enableVibration: true,
         audioAttributesUsage: AudioAttributesUsage.alarm,
+      ));
+      await androidImplementation
+          .createNotificationChannel(const AndroidNotificationChannel(
+        leaveAlarmChannelId,
+        'Saved Route Reminders',
+        description: 'Alarm-style reminders for saved-route departure times',
+        importance: Importance.max,
+        enableVibration: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+      ));
+      await androidImplementation
+          .createNotificationChannel(const AndroidNotificationChannel(
+        leaveCountdownChannelId,
+        'Saved Route Countdown',
+        description: 'Live countdown reminders for saved routes',
+        importance: Importance.low,
+        playSound: false,
+        enableVibration: false,
       ));
     }
   }
@@ -99,15 +126,87 @@ class NotificationManager {
     return tz.TZDateTime.from(dateTime, tz.local);
   }
 
-  static Future<void> requestExactAlarmPermissionIfNeeded() async {
+  static Future<bool> canScheduleExactAlarms() async {
     final androidImplementation =
         _notifications.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-    if (androidImplementation == null) return;
+    if (androidImplementation == null) return true;
     try {
-      await androidImplementation.requestExactAlarmsPermission();
+      return await androidImplementation.canScheduleExactNotifications() ??
+          true;
+    } catch (error) {
+      debugPrint('Exact alarm availability check failed: $error');
+      return true;
+    }
+  }
+
+  static Future<bool> requestExactAlarmPermissionIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return true;
+
+    final canSchedule = await canScheduleExactAlarms();
+    if (canSchedule) return true;
+    if (_requestedExactAlarmPermission) return false;
+
+    try {
+      _requestedExactAlarmPermission = true;
+      final granted =
+          await androidImplementation.requestExactAlarmsPermission() ?? false;
+      if (granted) {
+        return await canScheduleExactAlarms();
+      }
+      return false;
     } catch (error) {
       debugPrint('Exact alarm permission request failed: $error');
+      return false;
+    }
+  }
+
+  static Future<bool> requestFullScreenIntentPermissionIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return false;
+    if (_hasFullScreenIntentPermission) return true;
+    if (_requestedFullScreenIntentPermission) return false;
+
+    try {
+      _requestedFullScreenIntentPermission = true;
+      _hasFullScreenIntentPermission =
+          await androidImplementation.requestFullScreenIntentPermission() ??
+              false;
+      return _hasFullScreenIntentPermission;
+    } catch (error) {
+      debugPrint('Full-screen intent permission request failed: $error');
+      return false;
+    }
+  }
+
+  static Future<bool> requestNotificationPolicyAccessIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return false;
+
+    try {
+      final hasAccess =
+          await androidImplementation.hasNotificationPolicyAccess() ?? false;
+      _hasNotificationPolicyAccess = hasAccess;
+      if (hasAccess) return true;
+      if (_requestedNotificationPolicyAccess) return false;
+
+      _requestedNotificationPolicyAccess = true;
+      final granted =
+          await androidImplementation.requestNotificationPolicyAccess() ?? false;
+      if (!granted) return false;
+      _hasNotificationPolicyAccess =
+          await androidImplementation.hasNotificationPolicyAccess() ?? false;
+      return _hasNotificationPolicyAccess;
+    } catch (error) {
+      debugPrint('Notification policy access request failed: $error');
+      return false;
     }
   }
 
@@ -130,10 +229,10 @@ class NotificationManager {
     final sound = WakeAlarmSettings.soundForId(soundId);
     final playSound = soundEnabled && sound.playSound;
     await androidImplementation.deleteNotificationChannel(
-        channelId: 'wake_alarm_channel');
+        channelId: wakeAlarmChannelId);
     await androidImplementation
         .createNotificationChannel(AndroidNotificationChannel(
-      'wake_alarm_channel',
+      wakeAlarmChannelId,
       'Wake Alarm',
       description: 'Alarms for arriving at station',
       importance: Importance.max,
@@ -156,7 +255,7 @@ class NotificationManager {
     final sound = WakeAlarmSettings.soundForId(soundId);
     final playSound = soundEnabled && sound.playSound;
     return AndroidNotificationDetails(
-      'wake_alarm_channel',
+      wakeAlarmChannelId,
       'Wake Alarm',
       channelDescription: 'Alarms for arriving at station',
       importance: Importance.max,
@@ -193,6 +292,7 @@ class NotificationManager {
     required String soundId,
     bool soundEnabled = true,
     bool vibrationEnabled = true,
+    bool? bypassDnd,
   }) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final androidImplementation =
@@ -201,14 +301,16 @@ class NotificationManager {
     if (androidImplementation == null) return;
     final sound = WakeAlarmSettings.soundForId(soundId);
     final playSound = soundEnabled && sound.playSound;
+    final shouldBypassDnd = bypassDnd ?? _hasNotificationPolicyAccess;
     await androidImplementation.deleteNotificationChannel(
-        channelId: 'saved_route_leave_channel');
+        channelId: leaveAlarmChannelId);
     await androidImplementation
         .createNotificationChannel(AndroidNotificationChannel(
-      'saved_route_leave_channel',
+      leaveAlarmChannelId,
       'Saved Route Reminders',
-      description: 'Reminders for saved-route departure times',
-      importance: Importance.high,
+      description: 'Alarm-style reminders for saved-route departure times',
+      importance: Importance.max,
+      bypassDnd: shouldBypassDnd,
       playSound: playSound,
       sound: playSound ? sound.androidSound : null,
       enableVibration: vibrationEnabled,
@@ -221,23 +323,50 @@ class NotificationManager {
   static AndroidNotificationDetails buildLeaveAlarmAndroidDetails({
     required List<int> vibrationPattern,
     required String soundId,
+    bool fullScreenIntent = false,
     bool soundEnabled = true,
     bool vibrationEnabled = true,
+    bool channelBypassDnd = false,
   }) {
     final sound = WakeAlarmSettings.soundForId(soundId);
     final playSound = soundEnabled && sound.playSound;
     return AndroidNotificationDetails(
-      'saved_route_leave_channel',
+      leaveAlarmChannelId,
       'Saved Route Reminders',
-      channelDescription: 'Reminders for saved-route departure times',
-      importance: Importance.high,
+      channelDescription: 'Alarm-style reminders for saved-route departure times',
+      importance: Importance.max,
       priority: Priority.high,
+      channelBypassDnd: channelBypassDnd,
       playSound: playSound,
       sound: playSound ? sound.androidSound : null,
       enableVibration: vibrationEnabled,
       vibrationPattern:
           vibrationEnabled ? Int64List.fromList(vibrationPattern) : null,
+      fullScreenIntent: fullScreenIntent,
+      category: AndroidNotificationCategory.alarm,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
     );
+  }
+
+  static Future<void> updateLeaveCountdownChannel() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+
+    await androidImplementation.deleteNotificationChannel(
+        channelId: leaveCountdownChannelId);
+    await androidImplementation
+        .createNotificationChannel(const AndroidNotificationChannel(
+      leaveCountdownChannelId,
+      'Saved Route Countdown',
+      description: 'Live countdown reminders for saved routes',
+      importance: Importance.low,
+      playSound: false,
+      enableVibration: false,
+      audioAttributesUsage: AudioAttributesUsage.notification,
+    ));
   }
 
   static DarwinNotificationDetails buildLeaveAlarmIosDetails({
@@ -323,6 +452,8 @@ class NotificationManager {
     required DateTime scheduledAt,
     required NotificationDetails details,
     String? payload,
+    AndroidScheduleMode androidScheduleMode =
+        AndroidScheduleMode.exactAllowWhileIdle,
   }) async {
     await _configureLocalTimezone();
     final scheduledDate = await zonedDateTimeFromLocal(scheduledAt);
@@ -333,7 +464,7 @@ class NotificationManager {
       scheduledDate: scheduledDate,
       notificationDetails: details,
       payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: androidScheduleMode,
     );
   }
 }
