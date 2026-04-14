@@ -225,6 +225,12 @@ class SupabaseService {
     return hasAccessToken || hasAuthCode || hasErrorDescription;
   }
 
+  static bool shouldHandleAuthCallbackManually(Uri uri) {
+    // supabase_flutter already consumes OAuth/deep-link session callbacks.
+    // We only manually handle OTP confirmation links that include token_hash.
+    return isAuthConfirmUri(uri);
+  }
+
   static Future<void> _finishSignIn() async {
     final user = currentUser;
     if (user != null) {
@@ -241,18 +247,10 @@ class SupabaseService {
     final tokenHash = _uriParameter(uri, 'token_hash');
     final otpType = otpTypeFromString(_uriParameter(uri, 'type'));
 
-    if (!isAuthConfirmUri(uri) ||
+    if (!shouldHandleAuthCallbackManually(uri) ||
         tokenHash == null ||
         tokenHash.isEmpty ||
         otpType == null) {
-      if (!isAuthSessionUri(uri)) {
-        return null;
-      }
-
-      await client.auth.getSessionFromUrl(uri);
-      if (currentUser != null) {
-        await _finishSignIn();
-      }
       return otpType;
     }
 
