@@ -59,7 +59,8 @@ Future<void> main() async {
       if (kIsWeb) {
         try {
           if (SupabaseService.shouldHandleAuthCallbackManually(Uri.base)) {
-            final otpType = await SupabaseService.handleAuthCallbackUri(Uri.base);
+            final otpType =
+                await SupabaseService.handleAuthCallbackUri(Uri.base);
             if (otpType == OtpType.signup) {
               startupAuthNotice = StartupAuthNotice.emailConfirmed;
             } else if (otpType == OtpType.emailChange) {
@@ -222,24 +223,29 @@ class _TransAppState extends State<TransApp> {
   Future<void> _processAuthUri(Uri uri) async {
     try {
       final otpType = await SupabaseService.handleAuthCallbackUri(uri);
-      if (otpType == null) return;
-
-      switch (otpType) {
-        case OtpType.signup:
-          await _showStartupAuthNotice(StartupAuthNotice.emailConfirmed);
-        case OtpType.emailChange:
-          await _showStartupAuthNotice(StartupAuthNotice.emailUpdated);
-        case OtpType.magiclink:
-        case OtpType.email:
-          await _showStartupAuthNotice(StartupAuthNotice.magicLinkSignedIn);
-        case OtpType.recovery:
-          break;
-        default:
-          break;
+      if (otpType != null) {
+        switch (otpType) {
+          case OtpType.signup:
+            await _showStartupAuthNotice(StartupAuthNotice.emailConfirmed);
+          case OtpType.emailChange:
+            await _showStartupAuthNotice(StartupAuthNotice.emailUpdated);
+          case OtpType.magiclink:
+          case OtpType.email:
+            await _showStartupAuthNotice(StartupAuthNotice.magicLinkSignedIn);
+          case OtpType.recovery:
+            break;
+          default:
+            break;
+        }
+        return;
       }
+
+      await SupabaseService.handleAuthSessionUri(uri);
     } catch (e, st) {
       AppError.log(e, stackTrace: st, source: 'auth confirm callback');
-      await _showStartupAuthNotice(StartupAuthNotice.emailConfirmationFailed);
+      if (SupabaseService.shouldHandleAuthCallbackManually(uri)) {
+        await _showStartupAuthNotice(StartupAuthNotice.emailConfirmationFailed);
+      }
     }
   }
 
