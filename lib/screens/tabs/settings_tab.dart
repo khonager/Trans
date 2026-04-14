@@ -1676,13 +1676,19 @@ class _SettingsTabState extends State<SettingsTab> {
                 spacing: 8,
                 children: [
                   if (!kIsWeb)
-                    GestureDetector(
+                    InkResponse(
+                      radius: 24,
+                      onTap: _previewWakeAlarmSound,
                       onLongPress: _showHiddenManualTimerDialog,
-                      child: IconButton(
-                        tooltip: AppLocalizations.of(context)!.previewSound,
-                        onPressed: _previewWakeAlarmSound,
-                        icon: Icon(Icons.play_arrow_rounded,
-                            color: colors.textPrimary),
+                      child: Tooltip(
+                        message: AppLocalizations.of(context)!.previewSound,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            Icons.play_arrow_rounded,
+                            color: colors.textPrimary,
+                          ),
+                        ),
                       ),
                     ),
                   DropdownButton<String>(
