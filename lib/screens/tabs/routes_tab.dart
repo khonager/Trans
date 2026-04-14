@@ -18,6 +18,7 @@ import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/favorites_policy.dart';
 import 'package:trans/services/notification_manager.dart';
+import 'package:trans/services/wake_alarm_preview_player.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
@@ -2061,8 +2062,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await NotificationManager.requestPermissions();
     final canScheduleExactAlarms =
         await NotificationManager.requestExactAlarmPermissionIfNeeded();
-    final hasNotificationPolicyAccess =
-        await NotificationManager.requestNotificationPolicyAccessIfNeeded();
     final hasFullScreenIntentPermission =
         await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
     await NotificationManager.updateLeaveAlarmChannel(
@@ -2070,7 +2069,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       soundId: soundId,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
-      bypassDnd: hasNotificationPolicyAccess,
     );
     final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
       vibrationPattern: pattern,
@@ -2078,7 +2076,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       fullScreenIntent: hasFullScreenIntentPermission,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
-      channelBypassDnd: hasNotificationPolicyAccess,
     );
     final details = NotificationDetails(
       android: androidDetails,
@@ -2139,17 +2136,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         ? (toMap['name']?.toString() ?? 'Destination')
         : 'Destination';
     await NotificationManager.requestPermissions();
-    final hasNotificationPolicyAccess =
-        await NotificationManager.requestNotificationPolicyAccessIfNeeded();
     final hasFullScreenIntentPermission =
         await NotificationManager.requestFullScreenIntentPermissionIfNeeded();
+    await _triggerLeaveReminderForegroundAlert(
+      soundId: soundId,
+      soundEnabled: leaveSoundEnabled,
+      vibrationEnabled: leaveVibrationEnabled,
+      vibrationPattern: pattern,
+    );
 
     await NotificationManager.updateLeaveAlarmChannel(
       pattern,
       soundId: soundId,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
-      bypassDnd: hasNotificationPolicyAccess,
     );
     final androidDetails = NotificationManager.buildLeaveAlarmAndroidDetails(
       vibrationPattern: pattern,
@@ -2157,7 +2157,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       fullScreenIntent: hasFullScreenIntentPermission,
       soundEnabled: leaveSoundEnabled,
       vibrationEnabled: leaveVibrationEnabled,
-      channelBypassDnd: hasNotificationPolicyAccess,
     );
     final details = NotificationDetails(
       android: androidDetails,
@@ -3061,6 +3060,38 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       } else {
         Vibration.vibrate(pattern: pattern);
       }
+    }
+  }
+
+  Future<void> _triggerLeaveReminderForegroundAlert({
+    required String soundId,
+    required bool soundEnabled,
+    required bool vibrationEnabled,
+    required List<int> vibrationPattern,
+  }) async {
+    if (kIsWeb) return;
+
+    if (soundEnabled) {
+      final sound = WakeAlarmSettings.soundForId(soundId);
+      await WakeAlarmPreviewPlayer.play(sound);
+    }
+
+    if (!vibrationEnabled) return;
+    if (!await Vibration.hasVibrator()) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final intensity = prefs.getInt('vibration_intensity') ?? 128;
+    if (await Vibration.hasAmplitudeControl()) {
+      final intensities = List<int>.generate(
+        vibrationPattern.length,
+        (i) => i.isEven ? 0 : intensity,
+      );
+      Vibration.vibrate(
+        pattern: vibrationPattern,
+        intensities: intensities,
+      );
+    } else {
+      Vibration.vibrate(pattern: vibrationPattern);
     }
   }
 
