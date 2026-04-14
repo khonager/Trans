@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -76,6 +77,7 @@ class SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<SettingsTab> {
   static const String _pickCustomSoundValue = '__pick_custom_sound__';
+  static const int _hiddenManualAlarmNotificationId = 9002;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -516,12 +518,46 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
-  void _scheduleHiddenManualLeaveTimer(DateTime target) {
+  Future<void> _cancelHiddenManualLeaveTimer() async {
     _hiddenManualAlarmTimer?.cancel();
+    _hiddenManualAlarmTimer = null;
+    await NotificationManager.cancelNotification(
+      id: _hiddenManualAlarmNotificationId,
+    );
+    _hiddenManualAlarmTarget = null;
+  }
+
+  Future<void> _scheduleHiddenManualLeaveTimer(DateTime target) async {
+    await _cancelHiddenManualLeaveTimer();
     final now = DateTime.now();
     final delay = target.difference(now);
     final safeDelay = delay.isNegative ? Duration.zero : delay;
     _hiddenManualAlarmTarget = target;
+
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await NotificationManager.requestPermissions();
+      await NotificationManager.scheduleNotification(
+        id: _hiddenManualAlarmNotificationId,
+        title: 'Manual leave timer',
+        body: 'Hidden timer finished.',
+        scheduledAt: target,
+        details: NotificationDetails(
+          iOS: NotificationManager.buildWakeAlarmIosDetails(
+            soundId: _wakeAlarmSound,
+            soundEnabled: _wakeAlarmSoundEnabled,
+          ),
+        ),
+      );
+
+      // Keep lightweight local state while the app remains active. The real
+      // notification is handled by iOS, so this timer only clears stale UI.
+      _hiddenManualAlarmTimer = Timer(safeDelay, () {
+        _hiddenManualAlarmTimer = null;
+        _hiddenManualAlarmTarget = null;
+      });
+      return;
+    }
+
     _hiddenManualAlarmTimer = Timer(safeDelay, () {
       unawaited(_triggerHiddenManualLeaveTimer());
     });
@@ -529,6 +565,17 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _showHiddenManualTimerDialog() async {
     if (kIsWeb || !mounted) return;
+
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final materialLocalizations = MaterialLocalizations.of(context);
+    final alwaysUse24HourFormat = MediaQuery.alwaysUse24HourFormatOf(context);
+
+    if (_hiddenManualAlarmTarget case final target?
+        when !target.isAfter(DateTime.now())) {
+      _hiddenManualAlarmTimer?.cancel();
+      _hiddenManualAlarmTimer = null;
+      _hiddenManualAlarmTarget = null;
+    }
 
     final now = DateTime.now();
     var useCountdown = true;
@@ -621,13 +668,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 if (_hiddenManualAlarmTarget != null)
                   TextButton(
-                    onPressed: () {
-                      _hiddenManualAlarmTimer?.cancel();
-                      _hiddenManualAlarmTimer = null;
-                      _hiddenManualAlarmTarget = null;
-                      Navigator.of(dialogContext).pop(false);
+                    onPressed: () async {
+                      final navigator = Navigator.of(dialogContext);
+                      await _cancelHiddenManualLeaveTimer();
+                      navigator.pop(false);
                       if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      scaffoldMessenger.showSnackBar(
                         const SnackBar(
                             content: Text('Hidden timer cancelled.')),
                       );
@@ -635,7 +681,8 @@ class _SettingsTabState extends State<SettingsTab> {
                     child: const Text('Clear'),
                   ),
                 FilledButton(
-                  onPressed: () {
+                  onPressed: () async {
+                    final navigator = Navigator.of(dialogContext);
                     final now = DateTime.now();
                     final target = useCountdown
                         ? now.add(Duration(seconds: countdownSeconds))
@@ -656,12 +703,12 @@ class _SettingsTabState extends State<SettingsTab> {
                             : DateTime(
                                 now.year,
                                 now.month,
-                                now.day + 1,
-                                selectedTime.hour,
-                                selectedTime.minute,
-                              );
-                    _scheduleHiddenManualLeaveTimer(target);
-                    Navigator.of(dialogContext).pop(true);
+                            now.day + 1,
+                            selectedTime.hour,
+                            selectedTime.minute,
+                          );
+                    await _scheduleHiddenManualLeaveTimer(target);
+                    navigator.pop(true);
                   },
                   child: const Text('Start'),
                 ),
@@ -678,9 +725,9 @@ class _SettingsTabState extends State<SettingsTab> {
 
     final target = _hiddenManualAlarmTarget!;
     final modeLabel = target.difference(DateTime.now()).inHours < 24
-        ? 'Hidden timer set for ${TimeOfDay.fromDateTime(target).format(context)}'
+        ? 'Hidden timer set for ${materialLocalizations.formatTimeOfDay(TimeOfDay.fromDateTime(target), alwaysUse24HourFormat: alwaysUse24HourFormat)}'
         : 'Hidden timer scheduled';
-    ScaffoldMessenger.of(context).showSnackBar(
+    scaffoldMessenger.showSnackBar(
       SnackBar(content: Text(modeLabel)),
     );
   }

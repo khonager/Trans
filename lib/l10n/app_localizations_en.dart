@@ -754,11 +754,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get vibrationIntensity => 'Vibration Intensity';
 
   @override
-  String get iosWakeAlarmVibrationNoticeTitle => 'iPhone vibration limit';
+  String get iosWakeAlarmVibrationNoticeTitle => 'iPhone notification limit';
 
   @override
   String get iosWakeAlarmVibrationNoticeBody =>
-      'On iPhone, custom vibration patterns only work while the app is open. For the full wake-alarm experience, an Android phone is recommended.';
+      'On iPhone, custom notification sounds and custom vibration only work while you are actively using the app. If the app is just sitting in the background, they will not work. For the full wake-alarm experience, an Android phone is recommended.';
 
   @override
   String get alwaysWakeMe => 'Always Wake Me';
