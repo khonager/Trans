@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 import 'wake_alarm_settings.dart';
 import 'wake_alarm_preview_player.dart';
@@ -8,6 +11,9 @@ import 'wake_alarm_sound_storage.dart';
 class NotificationManager {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  static const MethodChannel _timezoneChannel =
+      MethodChannel('de.khonager.trans/device_timezone');
+  static bool _timezonesInitialized = false;
 
   static Future<void> init() async {
     const androidSettings =
@@ -23,6 +29,7 @@ class NotificationManager {
         android: androidSettings, iOS: iosSettings, linux: linuxSettings);
 
     await _notifications.initialize(settings: initSettings);
+    await _configureLocalTimezone();
     await _ensureDarwinWakeAlarmSounds();
 
     // Create Channels (Android)
@@ -69,6 +76,38 @@ class NotificationManager {
     if (iosImplementation != null) {
       await iosImplementation.requestPermissions(
           alert: true, badge: true, sound: true);
+    }
+  }
+
+  static Future<void> _configureLocalTimezone() async {
+    if (_timezonesInitialized) return;
+
+    tz_data.initializeTimeZones();
+    try {
+      final timezoneName = await _timezoneChannel.invokeMethod<String>('get');
+      if (timezoneName != null && timezoneName.isNotEmpty) {
+        tz.setLocalLocation(tz.getLocation(timezoneName));
+      }
+    } catch (error) {
+      debugPrint('Falling back to UTC timezone for notifications: $error');
+    }
+    _timezonesInitialized = true;
+  }
+
+  static Future<tz.TZDateTime> zonedDateTimeFromLocal(DateTime dateTime) async {
+    await _configureLocalTimezone();
+    return tz.TZDateTime.from(dateTime, tz.local);
+  }
+
+  static Future<void> requestExactAlarmPermissionIfNeeded() async {
+    final androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImplementation == null) return;
+    try {
+      await androidImplementation.requestExactAlarmsPermission();
+    } catch (error) {
+      debugPrint('Exact alarm permission request failed: $error');
     }
   }
 
@@ -198,5 +237,26 @@ class NotificationManager {
         body: body,
         notificationDetails: details,
         payload: payload);
+  }
+
+  static Future<void> scheduleNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledAt,
+    required NotificationDetails details,
+    String? payload,
+  }) async {
+    await _configureLocalTimezone();
+    final scheduledDate = await zonedDateTimeFromLocal(scheduledAt);
+    await _notifications.zonedSchedule(
+      id: id,
+      title: title,
+      body: body,
+      scheduledDate: scheduledDate,
+      notificationDetails: details,
+      payload: payload,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
   }
 }

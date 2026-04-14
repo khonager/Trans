@@ -1451,6 +1451,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return (key.hashCode ^ (minutes * 97)) & 0x7fffffff;
   }
 
+  int _savedJourneyLiveCountdownNotificationId(String key, int minutes) {
+    return (key.hashCode ^ (minutes * 193) ^ 0x2fffffff) & 0x7fffffff;
+  }
+
   String _formatCountdown(Duration duration) {
     final totalSeconds = duration.inSeconds.clamp(0, 999999);
     final hours = totalSeconds ~/ 3600;
@@ -1531,9 +1535,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           id: _savedJourneyReminderNotificationId(key, minutes));
       return;
     }
-    for (final candidate in const [5, 15, 30]) {
+    for (final candidate in const [1, 2, 3, 5, 10, 15, 20, 30]) {
       await _notificationsPlugin.cancel(
           id: _savedJourneyReminderNotificationId(key, candidate));
+    }
+  }
+
+  Future<void> _cancelSavedJourneyLiveCountdownNotification(
+    String key, {
+    int? minutes,
+  }) async {
+    if (minutes != null) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyLiveCountdownNotificationId(key, minutes));
+      return;
+    }
+    for (final candidate in const [1, 2, 3, 5, 10, 15, 20, 30]) {
+      await _notificationsPlugin.cancel(
+          id: _savedJourneyLiveCountdownNotificationId(key, candidate));
     }
   }
 
@@ -1579,7 +1598,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
 
     await _notificationsPlugin.show(
-      id: _savedJourneyReminderNotificationId(key, minutes),
+      id: _savedJourneyLiveCountdownNotificationId(key, minutes),
       title: 'Leave in $countdownText',
       body: '$routeLabel (timer: ${minutes}min)',
       notificationDetails: details,
@@ -1608,7 +1627,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .toList();
     for (final key in staleKeys) {
       _savedJourneyLiveCountdownTexts.remove(key);
-      await _cancelSavedJourneyReminderNotification(key);
+      await _cancelSavedJourneyLiveCountdownNotification(key);
     }
   }
 
@@ -1627,7 +1646,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final keys = _savedJourneyLiveCountdownTexts.keys.toList();
     _savedJourneyLiveCountdownTexts.clear();
     for (final key in keys) {
-      unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
     }
   }
 
@@ -1646,6 +1665,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     for (final key in staleKeys) {
       _savedJourneyReminderTimers.remove(key)?.cancel();
       unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
       _savedJourneyLiveCountdownTexts.remove(key);
     }
 
@@ -1936,10 +1956,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  ({String title, String body}) _savedJourneyReminderContent(
+    Map<String, dynamic> item,
+    int minutes,
+  ) {
+    final fromMap = item['from'];
+    final toMap = item['to'];
+    final fromName =
+        fromMap is Map ? (fromMap['name']?.toString() ?? 'Start') : 'Start';
+    final toName = toMap is Map
+        ? (toMap['name']?.toString() ?? 'Destination')
+        : 'Destination';
+    final departure = _savedJourneyDepartureLocal(item);
+    final departureLabel =
+        departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
+    return (
+      title: 'Leave soon',
+      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+    );
+  }
+
   void _scheduleSavedJourneyReminder(
     Map<String, dynamic> item, {
     bool fireImmediatelyIfDue = false,
-  }) {
+  }) async {
     final key = _savedJourneyUiKey(item);
     if (key == null) return;
 
@@ -1948,6 +1988,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final minutes = _savedJourneyReminderMinutes(item);
     if (minutes == null) {
       unawaited(_cancelSavedJourneyReminderNotification(key));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(key));
       _savedJourneyLiveCountdownTexts.remove(key);
       _syncSavedJourneyLiveCountdownTicker();
       return;
@@ -1956,6 +1997,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final departure = _savedJourneyDepartureLocal(item);
     if (departure == null) {
       unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
       _savedJourneyLiveCountdownTexts.remove(key);
       _syncSavedJourneyLiveCountdownTicker();
       return;
@@ -1963,15 +2006,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final now = DateTime.now();
     if (departure.isBefore(now)) {
       unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
       _savedJourneyLiveCountdownTexts.remove(key);
       _syncSavedJourneyLiveCountdownTicker();
       return;
     }
 
     final triggerAt = departure.subtract(Duration(minutes: minutes));
+    await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
     if (!triggerAt.isAfter(now)) {
       _savedJourneyLiveCountdownTexts.remove(key);
-      unawaited(_cancelSavedJourneyReminderNotification(key, minutes: minutes));
+      unawaited(
+          _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes));
       if (fireImmediatelyIfDue) {
         unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
       }
@@ -1979,10 +2026,36 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return;
     }
 
-    _savedJourneyReminderTimers[key] = Timer(triggerAt.difference(now), () {
-      _savedJourneyReminderTimers.remove(key);
-      unawaited(_fireSavedJourneyReminder(item: item, minutes: minutes));
-    });
+    final content = _savedJourneyReminderContent(item, minutes);
+    await NotificationManager.requestPermissions();
+    await NotificationManager.requestExactAlarmPermissionIfNeeded();
+    final androidDetails = AndroidNotificationDetails(
+      'saved_route_leave_channel',
+      'Saved Route Reminders',
+      channelDescription: 'Reminders for saved-route departure times',
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+    );
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        presentBanner: true,
+        presentList: true,
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      ),
+      linux: const LinuxNotificationDetails(),
+    );
+    await NotificationManager.scheduleNotification(
+      id: _savedJourneyReminderNotificationId(key, minutes),
+      title: content.title,
+      body: content.body,
+      scheduledAt: triggerAt,
+      details: details,
+    );
     _syncSavedJourneyLiveCountdownTicker();
   }
 
@@ -1994,18 +2067,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (key == null) return;
     _savedJourneyLiveCountdownTexts.remove(key);
     await _cancelSavedJourneyReminderNotification(key, minutes: minutes);
+    await _cancelSavedJourneyLiveCountdownNotification(key, minutes: minutes);
     _syncSavedJourneyLiveCountdownTicker();
-
-    final fromMap = item['from'];
+    final content = _savedJourneyReminderContent(item, minutes);
     final toMap = item['to'];
-    final fromName =
-        fromMap is Map ? (fromMap['name']?.toString() ?? 'Start') : 'Start';
     final toName = toMap is Map
         ? (toMap['name']?.toString() ?? 'Destination')
         : 'Destination';
-    final departure = _savedJourneyDepartureLocal(item);
-    final departureLabel =
-        departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
 
     final androidDetails = AndroidNotificationDetails(
       'saved_route_leave_channel',
@@ -2023,8 +2091,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     await _notificationsPlugin.show(
       id: _savedJourneyReminderNotificationId(key, minutes),
-      title: 'Leave soon',
-      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+      title: content.title,
+      body: content.body,
       notificationDetails: details,
     );
 
@@ -2079,6 +2147,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         previousMinutes != null &&
         previousMinutes != minutes) {
       unawaited(_cancelSavedJourneyReminderNotification(selectedKey,
+          minutes: previousMinutes));
+      unawaited(_cancelSavedJourneyLiveCountdownNotification(selectedKey,
           minutes: previousMinutes));
     }
 
@@ -2812,27 +2882,29 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _setRouteLoadPhasesForToken(searchToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(searchToken),
           onPartialResults: (partial) {
-        if (!mounted || _isRouteSearchCancelled(searchToken)) {
-          TransportApi.addSyntheticDebugLog(
-            'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
-          );
-          return;
-        }
-        hasDisplayedResults = true;
-        if (currentTabId == null) {
-          currentTabId = _addJourneyTab(
-              candidatesData: partial, origin: from, destination: _toStation);
-          TransportApi.addSyntheticDebugLog(
-            'ui: created tab id=$currentTabId partial=${partial.length}',
-          );
-        } else {
-          TransportApi.addSyntheticDebugLog(
-            'ui: update tab id=$currentTabId partial=${partial.length}',
-          );
-          _updateTabCandidates(currentTabId!, partial);
-        }
-        _releaseBlockingRouteLoad(searchToken);
-      }).timeout(const Duration(seconds: 20));
+            if (!mounted || _isRouteSearchCancelled(searchToken)) {
+              TransportApi.addSyntheticDebugLog(
+                'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+              );
+              return;
+            }
+            hasDisplayedResults = true;
+            if (currentTabId == null) {
+              currentTabId = _addJourneyTab(
+                  candidatesData: partial,
+                  origin: from,
+                  destination: _toStation);
+              TransportApi.addSyntheticDebugLog(
+                'ui: created tab id=$currentTabId partial=${partial.length}',
+              );
+            } else {
+              TransportApi.addSyntheticDebugLog(
+                'ui: update tab id=$currentTabId partial=${partial.length}',
+              );
+              _updateTabCandidates(currentTabId!, partial);
+            }
+            _releaseBlockingRouteLoad(searchToken);
+          }).timeout(const Duration(seconds: 20));
 
       if (_isRouteSearchCancelled(searchToken) || !mounted) return;
 
@@ -3355,35 +3427,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         height: 56,
                         child: Builder(builder: (context) {
                           return ElevatedButton(
-                            onPressed: _isLoadingRoute
-                                ? _cancelRouteSearch
-                                : (canSearch ? _findRoutes : null),
-                            style: ElevatedButton.styleFrom(
-                                backgroundColor: colors.searchBtnBg,
-                                foregroundColor: colors.searchBtnText,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16))),
-                            child: _isLoadingRoute
-                                ? Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: colors.searchBtnText)),
-                                      const SizedBox(width: 12),
-                                      Text(AppLocalizations.of(context)!.cancel,
-                                          style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold))
-                                    ],
-                                  )
-                                : Text(AppLocalizations.of(context)!.findRoutes,
-                                    style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold)));
+                              onPressed: _isLoadingRoute
+                                  ? _cancelRouteSearch
+                                  : (canSearch ? _findRoutes : null),
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor: colors.searchBtnBg,
+                                  foregroundColor: colors.searchBtnText,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16))),
+                              child: _isLoadingRoute
+                                  ? Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: colors.searchBtnText)),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                            AppLocalizations.of(context)!
+                                                .cancel,
+                                            style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold))
+                                      ],
+                                    )
+                                  : Text(
+                                      AppLocalizations.of(context)!.findRoutes,
+                                      style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold)));
                         })),
                     if (kDebugMode) ...[
                       const SizedBox(height: 8),
@@ -4210,9 +4286,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final visibleResults = Completer<void>();
 
       void appendResults(List<Map<String, dynamic>> partial) {
-        if (partial.isEmpty ||
-            !mounted ||
-            _isRouteSearchCancelled(loadToken)) {
+        if (partial.isEmpty || !mounted || _isRouteSearchCancelled(loadToken)) {
           return;
         }
         final List<Journey> newJourneys = [];
