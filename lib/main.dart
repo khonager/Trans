@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui'; // Needed for PointerDeviceKind
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,7 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'services/supabase_service.dart';
+import 'services/linux_url_scheme_registration.dart';
 import 'utils/app_error.dart';
 
 enum StartupAuthNotice {
@@ -81,6 +83,10 @@ Future<void> main() async {
       }
 
       await SupabaseService.init();
+
+      if (!kIsWeb && Platform.isLinux) {
+        await LinuxUrlSchemeRegistration.ensureRegistered();
+      }
     } catch (e, st) {
       initFailed = true;
       initError = e.toString();

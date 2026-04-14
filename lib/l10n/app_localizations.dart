@@ -1415,13 +1415,13 @@ abstract class AppLocalizations {
   /// No description provided for @iosWakeAlarmVibrationNoticeTitle.
   ///
   /// In en, this message translates to:
-  /// **'iPhone notification limit'**
+  /// **'iPhone vibration limit'**
   String get iosWakeAlarmVibrationNoticeTitle;
 
   /// No description provided for @iosWakeAlarmVibrationNoticeBody.
   ///
   /// In en, this message translates to:
-  /// **'On iPhone, custom notification sounds and custom vibration only work while you are actively using the app. If the app is just sitting in the background, they will not work. For the full wake-alarm experience, an Android phone is recommended.'**
+  /// **'On iPhone, custom notification sounds work. Custom vibration only works while you are actively using the app. If the app is in the background, you will only get the sound.'**
   String get iosWakeAlarmVibrationNoticeBody;
 
   /// No description provided for @alwaysWakeMe.

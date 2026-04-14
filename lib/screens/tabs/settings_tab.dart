@@ -126,6 +126,7 @@ class _SettingsTabState extends State<SettingsTab> {
   void dispose() {
     _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
+    SupabaseService.settingsRefreshNotifier.removeListener(_handleSettingsRefresh);
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
@@ -135,10 +136,16 @@ class _SettingsTabState extends State<SettingsTab> {
   @override
   void initState() {
     super.initState();
+    SupabaseService.settingsRefreshNotifier.addListener(_handleSettingsRefresh);
     _loadProfile();
     _loadSettings();
     _loadVersion();
     _subscribeToLocation();
+  }
+
+  void _handleSettingsRefresh() {
+    unawaited(_loadProfile());
+    unawaited(_loadSettings());
   }
 
   Future<void> _loadVersion() async {
@@ -1362,14 +1369,10 @@ class _SettingsTabState extends State<SettingsTab> {
     return switch (defaultTargetPlatform) {
       TargetPlatform.android => true,
       TargetPlatform.iOS => true,
+      TargetPlatform.linux => true,
       TargetPlatform.macOS => true,
       _ => false,
     };
-  }
-
-  String get _continueWithGoogleLabel {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return isGerman ? 'Mit Google fortfahren' : 'Continue with Google';
   }
 
   String get _orLabel {

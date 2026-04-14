@@ -359,10 +359,24 @@ class SupabaseService {
     await ensureCurrentUserReady();
   }
 
+  static String _oauthRedirectUrlForCurrentPlatform() {
+    if (!kIsWeb &&
+        (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return Uri.parse(AppConfig.webBaseUrl)
+          .resolve('oauth-callback.html')
+          .toString();
+    }
+
+    return AppConfig.authOAuthRedirectUrl;
+  }
+
   static Future<void> signInWithGoogle() async {
     final launched = await client.auth.signInWithOAuth(
       OAuthProvider.google,
-      redirectTo: AppConfig.authOAuthRedirectUrl,
+      redirectTo: _oauthRedirectUrlForCurrentPlatform(),
+      // Signing out of Supabase does not clear Google's Safari session on iOS,
+      // so force the account chooser instead of silently reusing the last one.
+      queryParams: const {'prompt': 'select_account'},
       authScreenLaunchMode: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
           ? LaunchMode.externalApplication
           : LaunchMode.platformDefault,
