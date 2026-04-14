@@ -759,12 +759,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get vibrationIntensity => 'Vibrationsintensität';
 
   @override
-  String get iosWakeAlarmVibrationNoticeTitle =>
-      'iPhone-Benachrichtigungslimit';
+  String get iosWakeAlarmVibrationNoticeTitle => 'iPhone-Vibrationslimit';
 
   @override
   String get iosWakeAlarmVibrationNoticeBody =>
-      'Auf dem iPhone funktionieren benutzerdefinierte Benachrichtigungstöne und benutzerdefinierte Vibration nur, solange du die App aktiv benutzt. Wenn die App nur im Hintergrund geöffnet ist, funktionieren sie nicht. Für das volle Weckalarm-Erlebnis wird ein Android-Handy empfohlen.';
+      'Auf dem iPhone funktionieren benutzerdefinierte Benachrichtigungstöne. Benutzerdefinierte Vibration funktioniert nur, solange du die App aktiv benutzt. Wenn die App im Hintergrund ist, bekommst du nur den Ton.';
 
   @override
   String get alwaysWakeMe => 'Immer wecken';
