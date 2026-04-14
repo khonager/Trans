@@ -1747,13 +1747,35 @@ class _SettingsTabState extends State<SettingsTab> {
                     onChanged: (val) => _saveAlarmThreshold(val!))),
             Divider(color: colors.divider),
             ListTile(
-              title: Text(AppLocalizations.of(context)!.alarmSound,
-                  style: TextStyle(color: colors.textPrimary)),
+              title: Builder(
+                builder: (context) {
+                  final alarmSoundTitle = InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: kIsWeb ? null : _previewWakeAlarmSound,
+                    onLongPress: kIsWeb ? null : _showHiddenManualTimerDialog,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        AppLocalizations.of(context)!.alarmSound,
+                        style: TextStyle(color: colors.textPrimary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+
+                  if (kIsWeb || !_showPreviewTooltip) return alarmSoundTitle;
+
+                  return Tooltip(
+                    message: AppLocalizations.of(context)!.previewSound,
+                    child: alarmSoundTitle,
+                  );
+                },
+              ),
               subtitle: InkWell(
-                onLongPress:
-                    WakeAlarmSettings.isCustomSoundId(_wakeAlarmSound)
-                        ? _removeSelectedCustomWakeAlarmSound
-                        : null,
+                onLongPress: WakeAlarmSettings.isCustomSoundId(_wakeAlarmSound)
+                    ? _removeSelectedCustomWakeAlarmSound
+                    : null,
                 borderRadius: BorderRadius.circular(6),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1765,64 +1787,56 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ),
               ),
-              trailing: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                children: [
-                  if (!kIsWeb)
-                    Builder(
-                      builder: (context) {
-                        final previewButton = InkResponse(
-                          radius: 24,
-                          onTap: _previewWakeAlarmSound,
-                          onLongPress: _showHiddenManualTimerDialog,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              Icons.play_arrow_rounded,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                        );
-
-                        if (!_showPreviewTooltip) return previewButton;
-
-                        return Tooltip(
-                          message: AppLocalizations.of(context)!.previewSound,
-                          child: previewButton,
-                        );
-                      },
+              trailing: DropdownButton<String>(
+                value: _wakeAlarmSound,
+                dropdownColor: colors.cardBg,
+                underline: const SizedBox(),
+                isDense: true,
+                selectedItemBuilder: (context) => [
+                  ...WakeAlarmSettings.soundOptions.map(
+                    (option) => SizedBox(
+                      width: 120,
+                      child: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                     ),
-                  DropdownButton<String>(
-                    value: _wakeAlarmSound,
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
-                    items: [
-                      ...WakeAlarmSettings.soundOptions.map(
-                        (option) => DropdownMenuItem(
-                          value: option.id,
-                          child: SizedBox(
-                            width: 170,
-                            child: Text(
-                              option.label,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            ),
-                          ),
+                  ),
+                  if (!kIsWeb)
+                    const SizedBox(
+                      width: 120,
+                      child: Text(
+                        'Add custom audio...',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                ],
+                items: [
+                  ...WakeAlarmSettings.soundOptions.map(
+                    (option) => DropdownMenuItem(
+                      value: option.id,
+                      child: SizedBox(
+                        width: 170,
+                        child: Text(
+                          option.label,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
                       ),
-                      if (!kIsWeb)
-                        const DropdownMenuItem(
-                          value: _pickCustomSoundValue,
-                          child: Text('Add custom audio...'),
-                        ),
-                    ],
-                    onChanged: (val) async {
-                      if (val == null) return;
-                      await _selectWakeAlarmSound(val);
-                    },
+                    ),
                   ),
+                  if (!kIsWeb)
+                    const DropdownMenuItem(
+                      value: _pickCustomSoundValue,
+                      child: Text('Add custom audio...'),
+                    ),
                 ],
+                onChanged: (val) async {
+                  if (val == null) return;
+                  await _selectWakeAlarmSound(val);
+                },
               ),
             ),
             Divider(color: colors.divider),
