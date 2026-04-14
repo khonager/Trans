@@ -157,6 +157,14 @@ class WakeAlarmSettings {
     );
   }
 
+  static Future<void> clearCustomSound() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(customSoundPathPreferenceKey);
+    await prefs.remove(customSoundFileNamePreferenceKey);
+    await prefs.remove(customSoundLabelPreferenceKey);
+    _customSoundOption = null;
+  }
+
   static List<int> vibrationPatternForId(String patternName) {
     switch (patternName) {
       case 'heartbeat':
