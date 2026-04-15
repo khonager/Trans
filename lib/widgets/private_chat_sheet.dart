@@ -221,15 +221,15 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                             _buildAvatar(avatar, emoji, username),
                             const SizedBox(width: 8),
                           ],
-                          Column(
-                            crossAxisAlignment: isMe
-                                ? CrossAxisAlignment.end
-                                : CrossAxisAlignment.start,
-                            children: [
-                              GestureDetector(
-                                onLongPress:
-                                    isMe ? null : () => _reportMessage(msg),
-                                child: Container(
+                          GestureDetector(
+                            onLongPress:
+                                isMe ? null : () => _reportMessage(msg),
+                            child: Column(
+                              crossAxisAlignment: isMe
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              children: [
+                                Container(
                                   constraints: BoxConstraints(
                                       maxWidth: size.width * 0.7),
                                   padding: const EdgeInsets.all(12),
@@ -254,21 +254,9 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
                                               ? Colors.white
                                               : colors.chatBubbleFriendText)),
                                 ),
-                              ),
-                            ],
-                          ),
-                          if (!isMe) ...[
-                            const SizedBox(width: 4),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              icon: Icon(Icons.flag_outlined,
-                                  size: 18, color: colors.textSecondary),
-                              tooltip: _isGerman
-                                  ? 'Nachricht melden'
-                                  : 'Report message',
-                              onPressed: () => _reportMessage(msg),
+                              ],
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     );

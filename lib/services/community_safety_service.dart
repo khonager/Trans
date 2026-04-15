@@ -160,6 +160,7 @@ class CommunitySafetyService {
     final reasons = isGerman ? germanReasons : englishReasons;
 
     var selectedReason = reasons.first;
+    var includeMessageHistory = false;
     final detailsCtrl = TextEditingController();
 
     try {
@@ -179,19 +180,24 @@ class CommunitySafetyService {
                             ? 'Warum möchtest du das melden?'
                             : 'Why do you want to report this?'),
                         const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final reason in reasons)
-                              ChoiceChip(
-                                label: Text(reason),
-                                selected: selectedReason == reason,
-                                onSelected: (_) {
-                                  setState(() => selectedReason = reason);
-                                },
-                              ),
-                          ],
+                        DropdownButtonFormField<String>(
+                          value: selectedReason,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                          ),
+                          items: reasons
+                              .map((reason) => DropdownMenuItem(
+                                    value: reason,
+                                    child: Text(reason),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => selectedReason = value);
+                            }
+                          },
                         ),
                         if (targetLabel != null && targetLabel.isNotEmpty) ...[
                           const SizedBox(height: 16),
@@ -232,6 +238,22 @@ class CommunitySafetyService {
                             border: const OutlineInputBorder(),
                           ),
                         ),
+                        if (contentType.contains('message') ||
+                            contentType.contains('chat')) ...[
+                          const SizedBox(height: 12),
+                          CheckboxListTile(
+                            value: includeMessageHistory,
+                            onChanged: (value) {
+                              setState(
+                                  () => includeMessageHistory = value ?? false);
+                            },
+                            title: Text(isGerman
+                                ? 'Vollständigen Nachrichtenverlauf mit diesem Nutzer einbeziehen'
+                                : 'Include full message history with this user'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -263,6 +285,7 @@ class CommunitySafetyService {
         messagePreview: messagePreview,
         reason: selectedReason,
         details: detailsCtrl.text.trim(),
+        includeMessageHistory: includeMessageHistory,
       );
 
       final messenger = ScaffoldMessenger.of(context);
@@ -302,6 +325,7 @@ class CommunitySafetyService {
     String? messagePreview,
     required String reason,
     required String details,
+    bool includeMessageHistory = false,
   }) {
     final reporterId = SupabaseService.currentUser?.id ?? '(not signed in)';
     final reporterEmail =
@@ -321,6 +345,7 @@ class CommunitySafetyService {
       'Reported User ID: ${reportedUserId ?? '(not provided)'}',
       'Reported Username: ${reportedUsername ?? '(not provided)'}',
       'Reason: $reason',
+      'Include Message History: ${includeMessageHistory ? 'YES' : 'NO'}',
       '',
       'Message Preview:',
       messagePreview == null || messagePreview.trim().isEmpty
@@ -336,14 +361,11 @@ class CommunitySafetyService {
     required String subject,
     required String body,
   }) async {
-    final uri = Uri(
-      scheme: 'mailto',
-      path: AppConfig.supportEmail,
-      queryParameters: {
-        'subject': subject,
-        'body': body,
-      },
-    );
+    // Manually encode to use %20 for spaces instead of +
+    final encodedSubject = Uri.encodeComponent(subject);
+    final encodedBody = Uri.encodeComponent(body);
+    final uri = Uri.parse(
+        'mailto:${AppConfig.supportEmail}?subject=$encodedSubject&body=$encodedBody');
     if (!await canLaunchUrl(uri)) return false;
     return launchUrl(uri);
   }

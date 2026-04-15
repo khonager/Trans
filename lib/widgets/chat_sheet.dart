@@ -168,63 +168,55 @@ class _ChatSheetState extends State<ChatSheet> {
                         children: [
                           if (!isMe) _buildAvatar(avatar, emoji, username),
                           const SizedBox(width: 8),
-                          Column(
-                            crossAxisAlignment: isMe
-                                ? CrossAxisAlignment.end
-                                : CrossAxisAlignment.start,
-                            children: [
-                              if (!isMe)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(left: 4, bottom: 2),
-                                  child: Text(username,
+                          GestureDetector(
+                            onLongPress:
+                                isMe ? null : () => _showMessageActions(msg),
+                            child: Column(
+                              crossAxisAlignment: isMe
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              children: [
+                                if (!isMe)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                        left: 4, bottom: 2),
+                                    child: Text(username,
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: colors.textSecondary)),
+                                  ),
+                                Container(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 240),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                      color: isMe
+                                          ? colors.chatBubbleMeBg
+                                          : colors.chatBubbleFriendBg,
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(16),
+                                        topRight: const Radius.circular(16),
+                                        bottomLeft: isMe
+                                            ? const Radius.circular(16)
+                                            : Radius.zero,
+                                        bottomRight: isMe
+                                            ? Radius.zero
+                                            : const Radius.circular(16),
+                                      ),
+                                      border: isMe
+                                          ? null
+                                          : Border.all(
+                                              color: colors
+                                                  .chatBubbleFriendBorder)),
+                                  child: Text(msg['content'],
                                       style: TextStyle(
-                                          fontSize: 10,
-                                          color: colors.textSecondary)),
+                                          color: isMe
+                                              ? colors.chatBubbleMeText
+                                              : colors.chatBubbleFriendText)),
                                 ),
-                              Container(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 240),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                    color: isMe
-                                        ? colors.chatBubbleMeBg
-                                        : colors.chatBubbleFriendBg,
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: const Radius.circular(16),
-                                      topRight: const Radius.circular(16),
-                                      bottomLeft: isMe
-                                          ? const Radius.circular(16)
-                                          : Radius.zero,
-                                      bottomRight: isMe
-                                          ? Radius.zero
-                                          : const Radius.circular(16),
-                                    ),
-                                    border: isMe
-                                        ? null
-                                        : Border.all(
-                                            color:
-                                                colors.chatBubbleFriendBorder)),
-                                child: Text(msg['content'],
-                                    style: TextStyle(
-                                        color: isMe
-                                            ? colors.chatBubbleMeText
-                                            : colors.chatBubbleFriendText)),
-                              ),
-                            ],
-                          ),
-                          if (!isMe) ...[
-                            const SizedBox(width: 4),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              icon: Icon(Icons.flag_outlined,
-                                  size: 18, color: colors.textSecondary),
-                              tooltip: _isGerman
-                                  ? 'Nachricht melden'
-                                  : 'Report message',
-                              onPressed: () => _showMessageActions(msg),
+                              ],
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     );
