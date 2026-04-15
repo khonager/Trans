@@ -1378,8 +1378,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   bool get _supportsAppleSignIn {
-    if (!_supportsOAuthSignIn) return false;
-    if (kIsWeb) return true;
+    if (kIsWeb) return false;
 
     return switch (defaultTargetPlatform) {
       TargetPlatform.iOS => true,
