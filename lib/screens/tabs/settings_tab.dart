@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
 import '../../services/foreground_haptics.dart';
+import '../../services/color_claim_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/community_safety_service.dart';
 import '../../services/wake_alarm_custom_sound_service.dart';
@@ -43,7 +44,7 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onNahverkehrChanged;
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  final Function(Color) onColorChanged;
+  final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final bool showTrainNumbers;
   final Function(bool) onShowTrainNumbersChanged;
@@ -109,6 +110,7 @@ class _SettingsTabState extends State<SettingsTab> {
   DateTime? _hiddenManualAlarmTarget;
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
+  int? _pendingThemeColorArgb;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
@@ -951,7 +953,7 @@ class _SettingsTabState extends State<SettingsTab> {
                                 Localizations.localeOf(context).languageCode ==
                                     'de';
                             _showMessage(isGerman
-                                ? 'Konto dauerhaft geloescht.'
+                                ? 'Konto dauerhaft gelöscht.'
                                 : 'Account permanently deleted.');
                             setState(() {});
                           }
@@ -1711,12 +1713,28 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               title: Text(AppLocalizations.of(context)!.themeColor,
                   style: TextStyle(color: colors.textPrimary)),
-              subtitle: SizedBox(
-                height: 40,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: appThemeColors.map((c) => _colorCircle(c)).toList(),
-                ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    height: 40,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        ...appThemeColors.map((c) => _colorCircle(c)),
+                        _customColorButton(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    Localizations.localeOf(context).languageCode == 'de'
+                        ? 'Tippe auf + für eine eigene Hex-Farbe. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
+                        : 'Tap + to enter a custom hex color. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
               ),
             ),
             Divider(color: colors.divider), // Separator
@@ -2191,10 +2209,226 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  Future<void> _handleThemeColorTap(Color color) async {
+    final pendingArgb = color.toARGB32();
+    if (_pendingThemeColorArgb == pendingArgb) return;
+
+    setState(() => _pendingThemeColorArgb = pendingArgb);
+    try {
+      if (SupabaseService.currentUser == null) {
+        await widget.onColorChanged(color);
+        return;
+      }
+
+      final status = await ColorClaimService.checkAvailability(
+        color,
+        currentProfile: _profile,
+      );
+      if (!mounted) return;
+
+      if (status.isUnavailableInTrans) {
+        final owner = status.transOwnerLabel ?? 'another user';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_localizedColorTakenMessage(owner)),
+          ),
+        );
+        return;
+      }
+
+      final claimResult = await ColorClaimService.claimColor(
+        color,
+        currentProfile: _profile,
+      );
+      await widget.onColorChanged(color);
+      if (!mounted) return;
+
+      final message = _buildThemeColorSuccessMessage(
+        status,
+        claimResult,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      unawaited(_loadProfile());
+    } on ColorClaimException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save that theme color: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _pendingThemeColorArgb = null);
+      }
+    }
+  }
+
+  String _localizedColorTakenMessage(String owner) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    if (isGerman) {
+      return 'Diese Farbe ist in Trans bereits von $owner beansprucht. Reserviere sie auf der Portfolio-Seite, wenn du eine app-übergreifende Farbe willst.';
+    }
+    return 'That color is already claimed in Trans by $owner. Reserve it on the portfolio site if you want a color that carries across apps.';
+  }
+
+  String _buildThemeColorSuccessMessage(
+    ColorClaimStatus status,
+    ColorClaimResult result,
+  ) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+
+    if (status.isTransOnlyAvailability) {
+      final owner = status.portfolioOwnerLabel;
+      if (isGerman) {
+        return owner != null && owner.isNotEmpty
+            ? 'Farbe in Trans gespeichert. Portfolio-weit ist sie bereits von $owner reserviert, also gilt sie hier nur für Trans. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.'
+            : 'Farbe in Trans gespeichert. Portfolio-weit ist sie bereits reserviert, also gilt sie hier nur für Trans. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.';
+      }
+      return owner != null && owner.isNotEmpty
+          ? 'Color saved in Trans. It is already reserved portfolio-wide by $owner, so this save only applies inside Trans. Reserve it on the portfolio site if you want the same color across all apps.'
+          : 'Color saved in Trans. It is already reserved portfolio-wide, so this save only applies inside Trans. Reserve it on the portfolio site if you want the same color across all apps.';
+    }
+
+    if (status.portfolioClaimedByCurrentUser) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Deine Portfolio-Reservierung deckt diese Farbe bereits app-übergreifend ab.'
+          : 'Color saved in Trans. Your portfolio reservation already covers this color across apps.';
+    }
+
+    if (!status.portfolioStatusChecked) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Die globale Verfügbarkeit konnte nicht geprüft werden. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.'
+          : 'Color saved in Trans. Global availability could not be checked. Reserve it on the portfolio site if you want the same color across all apps.';
+    }
+
+    if (!result.attemptedPortfolioSync) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Sie ist derzeit nur in Trans gesichert. Reserviere sie auf der Portfolio-Seite, wenn du sie app-übergreifend willst.'
+          : 'Color saved in Trans. It is secured in Trans only for now. Reserve it on the portfolio site if you want it across all apps.';
+    }
+
+    if (!result.syncedToPortfolio) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Die Sync-Vorbereitung für das Portfolio ist noch nicht abgeschlossen. Reserviere sie auf der Portfolio-Seite, wenn du sie app-übergreifend willst.'
+          : 'Color saved in Trans. Portfolio sync is not finished yet. Reserve it on the portfolio site if you want it across all apps.';
+    }
+
+    return isGerman
+        ? 'Farbe in Trans gespeichert. Wenn du dieselbe Farbe in allen Apps behalten willst, verwalte die Reservierung auf der Portfolio-Seite.'
+        : 'Color saved in Trans. Manage the reservation on the portfolio site if you want to keep the same color across all apps.';
+  }
+
+  Future<void> _openCustomColorDialog() async {
+    if (SupabaseService.currentUser == null) {
+      if (!mounted) return;
+      final isGerman = Localizations.localeOf(context).languageCode == 'de';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isGerman
+                ? 'Melde dich an, um eine eigene Theme-Farbe zu verwenden und zu reservieren.'
+                : 'Sign in to use and reserve a custom theme color.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final controller = TextEditingController(
+      text: ColorClaimService.normalizeColor(widget.currentColor),
+    );
+    final rawValue = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final dialogColors = TransColors.of(dialogContext);
+        final isGerman =
+            Localizations.localeOf(dialogContext).languageCode == 'de';
+        return AlertDialog(
+          title: Text(isGerman ? 'Eigene Farbe' : 'Custom Color'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.none,
+                decoration: const InputDecoration(
+                  labelText: '#rrggbb',
+                  hintText: '#5bcefa',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  isGerman
+                      ? 'Nur 6-stellige Hex-Farben werden unterstützt.'
+                      : 'Only 6-digit hex colors are supported.',
+                  style: TextStyle(
+                      fontSize: 12, color: dialogColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(AppLocalizations.of(dialogContext)!.cancel),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: Text(isGerman ? 'Übernehmen' : 'Apply'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (rawValue == null || rawValue.isEmpty || !mounted) return;
+
+    try {
+      final hex = ColorClaimService.normalizeHex(rawValue);
+      final value = int.parse(hex.substring(1), radix: 16);
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
+      await _handleThemeColorTap(Color(0xFF000000 | value));
+    } on ColorClaimException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    }
+  }
+
+  Widget _customColorButton() {
+    final colors = TransColors.of(context);
+    return GestureDetector(
+      onTap: _openCustomColorDialog,
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.cardBg,
+          shape: BoxShape.circle,
+          border: Border.all(color: colors.divider),
+        ),
+        child: Icon(Icons.add, size: 18, color: colors.textPrimary),
+      ),
+    );
+  }
+
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.toARGB32() == color.toARGB32();
+    final isPending = _pendingThemeColorArgb == color.toARGB32();
     return GestureDetector(
-      onTap: () => widget.onColorChanged(color),
+      onTap: () => _handleThemeColorTap(color),
       child: Container(
         width: 30,
         height: 30,
@@ -2209,7 +2443,16 @@ class _SettingsTabState extends State<SettingsTab> {
                 : null),
         child: isSelected
             ? const Icon(Icons.check, size: 16, color: Colors.white)
-            : null,
+            : isPending
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : null,
       ),
     );
   }

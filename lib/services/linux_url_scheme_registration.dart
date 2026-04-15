@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../utils/app_error.dart';
 
 class LinuxUrlSchemeRegistration {
@@ -10,9 +12,10 @@ class LinuxUrlSchemeRegistration {
     if (!Platform.isLinux) return;
 
     try {
-      final executablePath = await File('/proc/self/exe').resolveSymbolicLinks();
-      final applicationsDir =
-          Directory('${Platform.environment['HOME']}/.local/share/applications');
+      final executablePath =
+          await File('/proc/self/exe').resolveSymbolicLinks();
+      final applicationsDir = Directory(
+          '${Platform.environment['HOME']}/.local/share/applications');
 
       if (!applicationsDir.existsSync()) {
         await applicationsDir.create(recursive: true);
@@ -68,6 +71,12 @@ StartupNotify=false
         );
       }
     } on ProcessException catch (e, st) {
+      if (e.message.contains('No such file or directory')) {
+        debugPrint(
+          'Skipping Linux URL scheme helper "$command" because it is not installed.',
+        );
+        return;
+      }
       AppError.log(
         e,
         stackTrace: st,

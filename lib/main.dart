@@ -14,6 +14,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
+import 'services/color_claim_service.dart';
 import 'services/supabase_service.dart';
 import 'services/linux_url_scheme_registration.dart';
 import 'utils/app_error.dart';
@@ -26,26 +27,26 @@ enum StartupAuthNotice {
 }
 
 Future<void> main() async {
-  usePathUrlStrategy();
-  WidgetsFlutterBinding.ensureInitialized();
-
-  FlutterError.onError = (details) {
-    AppError.log(
-      details.exception,
-      stackTrace: details.stack,
-      source: 'FlutterError.onError',
-    );
-  };
-  PlatformDispatcher.instance.onError = (error, stack) {
-    AppError.log(
-      error,
-      stackTrace: stack,
-      source: 'PlatformDispatcher.onError',
-    );
-    return true;
-  };
-
   await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    usePathUrlStrategy();
+
+    FlutterError.onError = (details) {
+      AppError.log(
+        details.exception,
+        stackTrace: details.stack,
+        source: 'FlutterError.onError',
+      );
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      AppError.log(
+        error,
+        stackTrace: stack,
+        source: 'PlatformDispatcher.onError',
+      );
+      return true;
+    };
+
     bool initFailed = false;
     String? initError;
     StartupAuthNotice? startupAuthNotice;
@@ -350,13 +351,16 @@ class _TransAppState extends State<TransApp> {
     await SupabaseService.updateSettings({'ghost_mode': enabled});
   }
 
-  void _updateThemeColor(Color color) async {
+  Future<void> _updateThemeColor(Color color) async {
     setState(() {
       _themeColor = color;
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('theme_color_value', color.toARGB32());
     await SupabaseService.updateThemeColor(color.toARGB32());
+    await SupabaseService.updateSettings({
+      'theme_color_hex': ColorClaimService.normalizeColor(color),
+    });
   }
 
   void _changeLocale(Locale locale) async {

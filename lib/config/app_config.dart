@@ -43,4 +43,20 @@ class AppConfig {
     }
     return 'support@khonager.de';
   }
+
+  static String get portfolioColorStatusEndpoint {
+    final endpoint = dotenv.env['PORTFOLIO_COLOR_STATUS_ENDPOINT'];
+    if (endpoint != null && endpoint.isNotEmpty) {
+      return endpoint;
+    }
+    return '';
+  }
+
+  static String get portfolioColorSyncEndpoint {
+    final endpoint = dotenv.env['PORTFOLIO_COLOR_SYNC_ENDPOINT'];
+    if (endpoint != null && endpoint.isNotEmpty) {
+      return endpoint;
+    }
+    return '';
+  }
 }

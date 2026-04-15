@@ -24,7 +24,7 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onNahverkehrChanged;
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  final Function(Color) onColorChanged;
+  final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final Locale? locale;
   final Function(Locale) onLocaleChanged;
