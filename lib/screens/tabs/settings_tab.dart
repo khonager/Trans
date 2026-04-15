@@ -2242,21 +2242,6 @@ class _SettingsTabState extends State<SettingsTab> {
       );
       if (!mounted) return;
 
-      // Don't allow setting the color if availability cannot be determined
-      if (!status.portfolioStatusChecked) {
-        final isGerman = Localizations.localeOf(context).languageCode == 'de';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isGerman
-                  ? 'Die Verfügbarkeit dieser Farbe konnte nicht überprüft werden. Bitte versuche es später erneut.'
-                  : 'Could not check availability for this color. Please try again later.',
-            ),
-          ),
-        );
-        return;
-      }
-
       if (status.isUnavailableInTrans) {
         final owner = status.transOwnerLabel ?? 'another user';
         ScaffoldMessenger.of(context).showSnackBar(
