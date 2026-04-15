@@ -1723,15 +1723,19 @@ class _SettingsTabState extends State<SettingsTab> {
                       scrollDirection: Axis.horizontal,
                       children: [
                         ...appThemeColors.map((c) => _colorCircle(c)),
-                        _customColorButton(),
+                        _colorSeparator(),
+                        if (_isBuiltInColor(widget.currentColor))
+                          _customColorButton()
+                        else
+                          _customColorCircle(),
                       ],
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     Localizations.localeOf(context).languageCode == 'de'
-                        ? 'Tippe auf + für eine eigene Hex-Farbe. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
-                        : 'Tap + to enter a custom hex color. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
+                        ? 'Tippe auf eine Farbe${!_isBuiltInColor(widget.currentColor) ? ' oder tippe die eigene Farbe erneut an' : ''}, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
+                        : 'Tap a color${!_isBuiltInColor(widget.currentColor) ? ' or tap the custom color again' : ''} to change. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
                     style: TextStyle(fontSize: 12, color: colors.textSecondary),
                   ),
                 ],
@@ -2451,6 +2455,19 @@ class _SettingsTabState extends State<SettingsTab> {
     }
   }
 
+  Widget _colorSeparator() {
+    final colors = TransColors.of(context);
+    return Container(
+      width: 2,
+      height: 30,
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.isDark ? Colors.white : Colors.black,
+        borderRadius: BorderRadius.circular(1),
+      ),
+    );
+  }
+
   Widget _customColorButton() {
     final colors = TransColors.of(context);
     return GestureDetector(
@@ -2465,6 +2482,41 @@ class _SettingsTabState extends State<SettingsTab> {
           border: Border.all(color: colors.divider),
         ),
         child: Icon(Icons.add, size: 18, color: colors.textPrimary),
+      ),
+    );
+  }
+
+  Widget _customColorCircle() {
+    final isSelected = !_isBuiltInColor(widget.currentColor);
+    final isPending = _pendingThemeColorArgb == widget.currentColor.toARGB32();
+    final colors = TransColors.of(context);
+
+    return GestureDetector(
+      onTap: _openCustomColorDialog,
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: widget.currentColor,
+          shape: BoxShape.circle,
+          border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+          boxShadow: isSelected
+              ? [const BoxShadow(color: Colors.black26, blurRadius: 4)]
+              : null,
+        ),
+        child: isSelected
+            ? const Icon(Icons.check, size: 16, color: Colors.white)
+            : isPending
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : null,
       ),
     );
   }
