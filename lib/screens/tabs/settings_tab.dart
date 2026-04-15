@@ -2209,12 +2209,24 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  bool _isBuiltInColor(Color color) {
+    final argb = color.toARGB32();
+    return appThemeColors.any((c) => c.toARGB32() == argb);
+  }
+
   Future<void> _handleThemeColorTap(Color color) async {
     final pendingArgb = color.toARGB32();
     if (_pendingThemeColorArgb == pendingArgb) return;
 
     setState(() => _pendingThemeColorArgb = pendingArgb);
     try {
+      // Built-in colors can be used freely without checking availability
+      if (_isBuiltInColor(color)) {
+        await widget.onColorChanged(color);
+        return;
+      }
+
+      // Custom colors require user to be logged in
       if (SupabaseService.currentUser == null) {
         await widget.onColorChanged(color);
         return;
@@ -2225,6 +2237,21 @@ class _SettingsTabState extends State<SettingsTab> {
         currentProfile: _profile,
       );
       if (!mounted) return;
+
+      // Don't allow setting the color if availability cannot be determined
+      if (!status.portfolioStatusChecked) {
+        final isGerman = Localizations.localeOf(context).languageCode == 'de';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isGerman
+                  ? 'Die Verfügbarkeit dieser Farbe konnte nicht überprüft werden. Bitte versuche es später erneut.'
+                  : 'Could not check availability for this color. Please try again later.',
+            ),
+          ),
+        );
+        return;
+      }
 
       if (status.isUnavailableInTrans) {
         final owner = status.transOwnerLabel ?? 'another user';
@@ -2395,9 +2422,27 @@ class _SettingsTabState extends State<SettingsTab> {
     try {
       final hex = ColorClaimService.normalizeHex(rawValue);
       final value = int.parse(hex.substring(1), radix: 16);
+      final color = Color(0xFF000000 | value);
+
+      // Check if the color is a built-in color
+      if (_isBuiltInColor(color)) {
+        if (!mounted) return;
+        final isGerman = Localizations.localeOf(context).languageCode == 'de';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isGerman
+                  ? 'Diese Farbe ist bereits eine eingebaute Theme-Farbe. Wähle sie aus der Liste aus.'
+                  : 'That color is already a built-in theme color. Select it from the list.',
+            ),
+          ),
+        );
+        return;
+      }
+
       await Future<void>.delayed(Duration.zero);
       if (!mounted) return;
-      await _handleThemeColorTap(Color(0xFF000000 | value));
+      await _handleThemeColorTap(color);
     } on ColorClaimException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
