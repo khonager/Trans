@@ -9,6 +9,7 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
 import '../../services/foreground_haptics.dart';
 import '../../services/supabase_service.dart';
+import '../../services/community_safety_service.dart';
 import '../../services/wake_alarm_custom_sound_service.dart';
 import '../../services/wake_alarm_settings.dart';
 import '../../services/history_manager.dart';
@@ -126,7 +127,8 @@ class _SettingsTabState extends State<SettingsTab> {
   void dispose() {
     _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
-    SupabaseService.settingsRefreshNotifier.removeListener(_handleSettingsRefresh);
+    SupabaseService.settingsRefreshNotifier
+        .removeListener(_handleSettingsRefresh);
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
@@ -699,10 +701,10 @@ class _SettingsTabState extends State<SettingsTab> {
                             : DateTime(
                                 now.year,
                                 now.month,
-                            now.day + 1,
-                            selectedTime.hour,
-                            selectedTime.minute,
-                          );
+                                now.day + 1,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              );
                     await _scheduleHiddenManualLeaveTimer(target);
                     navigator.pop(true);
                   },
@@ -1375,6 +1377,17 @@ class _SettingsTabState extends State<SettingsTab> {
     };
   }
 
+  bool get _supportsAppleSignIn {
+    if (!_supportsOAuthSignIn) return false;
+    if (kIsWeb) return true;
+
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS => true,
+      TargetPlatform.macOS => true,
+      _ => false,
+    };
+  }
+
   String get _orLabel {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return isGerman ? 'oder' : 'or';
@@ -1391,6 +1404,13 @@ class _SettingsTabState extends State<SettingsTab> {
     await _startOAuthSignIn(
       action: SupabaseService.signInWithGoogle,
       source: 'sign in with google',
+    );
+  }
+
+  Future<void> _startAppleSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithApple,
+      source: 'sign in with apple',
     );
   }
 
@@ -2094,6 +2114,24 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 8),
           _buildSection(context, [
             ListTile(
+                leading:
+                    Icon(Icons.gavel_outlined, color: colors.settingsHeader),
+                title: Text(
+                    isGerman
+                        ? 'Nutzungsbedingungen & Community-Regeln'
+                        : 'Terms of Use & Community Rules',
+                    style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text(
+                    isGerman
+                        ? 'Keine Toleranz für anstößige Inhalte oder missbräuchliche Nutzer.'
+                        : 'No tolerance for objectionable content or abusive users.',
+                    style:
+                        TextStyle(fontSize: 12, color: colors.textSecondary)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () =>
+                    CommunitySafetyService.showCommunityTerms(context)),
+            Divider(height: 1, color: colors.divider),
+            ListTile(
                 leading: Icon(Icons.block, color: colors.iconBlock),
                 title: Text(AppLocalizations.of(context)!.blockedUsers,
                     style: TextStyle(color: colors.textPrimary)),
@@ -2388,6 +2426,18 @@ class _SettingsTabState extends State<SettingsTab> {
               ],
             ),
             const SizedBox(height: 16),
+            if (_supportsAppleSignIn) ...[
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
+                child: _buildAppleSignInLabel(),
+              ),
+              const SizedBox(height: 12),
+            ],
             OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
               child: _buildGoogleSignInLabel(colors),
@@ -2395,6 +2445,16 @@ class _SettingsTabState extends State<SettingsTab> {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildAppleSignInLabel() {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(isGerman ? 'Mit Apple anmelden' : 'Sign in with Apple'),
+      ],
     );
   }
 

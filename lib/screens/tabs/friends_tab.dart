@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../services/community_safety_service.dart';
 import '../../services/supabase_service.dart';
 import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart';
@@ -570,8 +571,10 @@ class _FriendsTabState extends State<FriendsTab> {
             if (isExpanded) ...[
               const SizedBox(height: 16),
               Divider(color: colors.divider),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              Wrap(
+                alignment: WrapAlignment.spaceEvenly,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   _buildActionButton(
                       icon: Icons.chat_bubble_outline,
@@ -619,6 +622,27 @@ class _FriendsTabState extends State<FriendsTab> {
                                     .removedFriend(friend['username']))));
                             setState(() => _expandedFriendId = null);
                           }
+                        }
+                      }),
+                  _buildActionButton(
+                      icon: Icons.flag_outlined,
+                      label:
+                          Localizations.localeOf(context).languageCode == 'de'
+                              ? 'Melden'
+                              : 'Report',
+                      color: Colors.orange,
+                      onTap: () async {
+                        await CommunitySafetyService.showReportDialog(
+                          context,
+                          contentType: 'friend profile',
+                          targetId: friendId,
+                          targetLabel: friend['username'],
+                          reportedUserId: friendId,
+                          reportedUsername: friend['username'],
+                          source: 'friends list',
+                        );
+                        if (mounted) {
+                          setState(() => _expandedFriendId = null);
                         }
                       }),
                   _buildActionButton(

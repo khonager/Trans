@@ -12,6 +12,7 @@ import 'package:trans/models/station.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/favorite.dart';
 import 'package:trans/services/transport_api.dart';
+import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
@@ -2267,7 +2268,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _findRoutes();
   }
 
-  void _showChat(BuildContext context, String lineName) {
+  Future<void> _showChat(BuildContext context, String lineName) async {
+    final accepted = await CommunitySafetyService.ensureTermsAccepted(
+      context,
+      entryPoint: Localizations.localeOf(context).languageCode == 'de'
+          ? 'Linien-Chats'
+          : 'line chats',
+    );
+    if (!accepted || !context.mounted) return;
+
     showModalBottomSheet(
         context: context,
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
