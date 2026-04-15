@@ -1379,16 +1379,6 @@ class _SettingsTabState extends State<SettingsTab> {
     };
   }
 
-  bool get _supportsAppleSignIn {
-    if (kIsWeb) return false;
-
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.iOS => true,
-      TargetPlatform.macOS => true,
-      _ => false,
-    };
-  }
-
   String get _orLabel {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return isGerman ? 'oder' : 'or';
@@ -1405,13 +1395,6 @@ class _SettingsTabState extends State<SettingsTab> {
     await _startOAuthSignIn(
       action: SupabaseService.signInWithGoogle,
       source: 'sign in with google',
-    );
-  }
-
-  Future<void> _startAppleSignIn() async {
-    await _startOAuthSignIn(
-      action: SupabaseService.signInWithApple,
-      source: 'sign in with apple',
     );
   }
 
@@ -2750,18 +2733,6 @@ class _SettingsTabState extends State<SettingsTab> {
               ],
             ),
             const SizedBox(height: 16),
-            if (_supportsAppleSignIn) ...[
-              FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
-                child: _buildAppleSignInLabel(),
-              ),
-              const SizedBox(height: 12),
-            ],
             OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
               child: _buildGoogleSignInLabel(colors),
@@ -2769,16 +2740,6 @@ class _SettingsTabState extends State<SettingsTab> {
           ],
         ],
       ),
-    );
-  }
-
-  Widget _buildAppleSignInLabel() {
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(isGerman ? 'Mit Apple anmelden' : 'Sign in with Apple'),
-      ],
     );
   }
 

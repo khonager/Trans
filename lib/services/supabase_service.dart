@@ -387,20 +387,6 @@ class SupabaseService {
     }
   }
 
-  static Future<void> signInWithApple() async {
-    final launched = await client.auth.signInWithOAuth(
-      OAuthProvider.apple,
-      redirectTo: _oauthRedirectUrlForCurrentPlatform(),
-      authScreenLaunchMode: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
-          ? LaunchMode.externalApplication
-          : LaunchMode.platformDefault,
-    );
-
-    if (!launched) {
-      throw 'Could not start Apple sign-in.';
-    }
-  }
-
   static Future<void> _ensureProfileRow(String userId,
       {String? username}) async {
     try {
