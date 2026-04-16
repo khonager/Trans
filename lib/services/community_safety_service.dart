@@ -275,6 +275,15 @@ class CommunitySafetyService {
 
       if (!submitted || !context.mounted) return;
 
+      String? messageHistory;
+      if (includeMessageHistory && reportedUserId != null) {
+        messageHistory = await _fetchMessageHistory(
+          contentType: contentType,
+          reportedUserId: reportedUserId,
+          targetId: targetId,
+        );
+      }
+
       final report = _buildReport(
         source: source,
         contentType: contentType,
@@ -286,6 +295,7 @@ class CommunitySafetyService {
         reason: selectedReason,
         details: detailsCtrl.text.trim(),
         includeMessageHistory: includeMessageHistory,
+        messageHistory: messageHistory,
       );
 
       final messenger = ScaffoldMessenger.of(context);
@@ -326,12 +336,13 @@ class CommunitySafetyService {
     required String reason,
     required String details,
     bool includeMessageHistory = false,
+    String? messageHistory,
   }) {
     final reporterId = SupabaseService.currentUser?.id ?? '(not signed in)';
     final reporterEmail =
         SupabaseService.currentUser?.email ?? '(email unavailable)';
 
-    return [
+    final sections = [
       'Trans Content Report',
       'Generated UTC: ${DateTime.now().toUtc().toIso8601String()}',
       'Source: $source',
@@ -354,7 +365,86 @@ class CommunitySafetyService {
       '',
       'Additional Details:',
       details.isEmpty ? '(not provided)' : details,
-    ].join('\n');
+    ];
+
+    if (messageHistory != null && messageHistory.isNotEmpty) {
+      sections.addAll([
+        '',
+        '=' * 70,
+        'FULL MESSAGE HISTORY',
+        '=' * 70,
+        '',
+        messageHistory,
+      ]);
+    }
+
+    return sections.join('\n');
+  }
+
+  static Future<String?> _fetchMessageHistory({
+    required String contentType,
+    required String reportedUserId,
+    required String targetId,
+  }) async {
+    try {
+      final myId = SupabaseService.currentUser?.id;
+      if (myId == null) return null;
+
+      List<Map<String, dynamic>> messages;
+
+      if (contentType.contains('private')) {
+        // Fetch private messages between the two users
+        messages = await SupabaseService.client
+            .from('messages')
+            .select('created_at, user_id, content')
+            .eq('is_encrypted', true)
+            .or('user_id.eq.$myId,user_id.eq.$reportedUserId')
+            .or('receiver_id.eq.$myId,receiver_id.eq.$reportedUserId')
+            .order('created_at', ascending: true)
+            .limit(200);
+
+        // Filter to only messages between these two users
+        messages = messages.where((m) {
+          final uid = m['user_id'];
+          final rid = m['receiver_id'];
+          return (uid == myId && rid == reportedUserId) ||
+              (uid == reportedUserId && rid == myId);
+        }).toList();
+      } else {
+        // For public chat, fetch from the specific line/channel
+        final lineId =
+            targetId.contains(':') ? targetId.split(':').first : targetId;
+
+        messages = await SupabaseService.client
+            .from('messages')
+            .select('created_at, user_id, content')
+            .eq('line_id', lineId)
+            .order('created_at', ascending: true)
+            .limit(200);
+      }
+
+      if (messages.isEmpty) return null;
+
+      final buffer = StringBuffer();
+      for (final msg in messages) {
+        final timestamp = msg['created_at'] ?? '';
+        final userId = msg['user_id'] ?? '';
+        final content = msg['content'] ?? '[encrypted or unavailable]';
+        final isMe = userId == myId;
+        final sender = isMe
+            ? 'Me'
+            : (userId == reportedUserId ? 'Reported User' : 'Other User');
+
+        buffer.writeln('[$timestamp] $sender:');
+        buffer.writeln(content);
+        buffer.writeln();
+      }
+
+      return buffer.toString();
+    } catch (e) {
+      // If fetching fails, return error message instead of crashing
+      return '(Error fetching message history: $e)';
+    }
   }
 
   static Future<bool> _openMailDraft({
