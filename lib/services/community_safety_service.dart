@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -396,20 +400,12 @@ class CommunitySafetyService {
         // Fetch private messages between the two users
         messages = await SupabaseService.client
             .from('messages')
-            .select('created_at, user_id, content')
+            .select('created_at, user_id, receiver_id, content, is_encrypted')
             .eq('is_encrypted', true)
-            .or('user_id.eq.$myId,user_id.eq.$reportedUserId')
-            .or('receiver_id.eq.$myId,receiver_id.eq.$reportedUserId')
+            .or(
+                'and(user_id.eq.$myId,receiver_id.eq.$reportedUserId),and(user_id.eq.$reportedUserId,receiver_id.eq.$myId)')
             .order('created_at', ascending: true)
             .limit(200);
-
-        // Filter to only messages between these two users
-        messages = messages.where((m) {
-          final uid = m['user_id'];
-          final rid = m['receiver_id'];
-          return (uid == myId && rid == reportedUserId) ||
-              (uid == reportedUserId && rid == myId);
-        }).toList();
       } else {
         // For public chat, fetch from the specific line/channel
         final lineId =
@@ -429,7 +425,15 @@ class CommunitySafetyService {
       for (final msg in messages) {
         final timestamp = msg['created_at'] ?? '';
         final userId = msg['user_id'] ?? '';
-        final content = msg['content'] ?? '[encrypted or unavailable]';
+        final isEncrypted = msg['is_encrypted'] == true;
+        final rawContent = (msg['content'] ?? '').toString();
+        final content = isEncrypted
+            ? _decryptPrivateMessage(
+                myId: myId,
+                otherUserId: reportedUserId,
+                storedContent: rawContent,
+              )
+            : (rawContent.isEmpty ? '[unavailable]' : rawContent);
         final isMe = userId == myId;
         final sender = isMe
             ? 'Me'
@@ -458,5 +462,31 @@ class CommunitySafetyService {
         'mailto:${AppConfig.supportEmail}?subject=$encodedSubject&body=$encodedBody');
     if (!await canLaunchUrl(uri)) return false;
     return launchUrl(uri);
+  }
+
+  static String _decryptPrivateMessage({
+    required String myId,
+    required String otherUserId,
+    required String storedContent,
+  }) {
+    if (storedContent.isEmpty) return '[encrypted or unavailable]';
+
+    try {
+      final keyString = _buildPrivateKey(myId, otherUserId);
+      final key = enc.Key.fromUtf8(keyString);
+      final encrypter = enc.Encrypter(enc.AES(key));
+      final parts = storedContent.split(':');
+      if (parts.length != 2) return '[corrupt encrypted message]';
+      final iv = enc.IV.fromBase64(parts[0]);
+      return encrypter.decrypt64(parts[1], iv: iv);
+    } catch (_) {
+      return '[error decrypting]';
+    }
+  }
+
+  static String _buildPrivateKey(String myId, String otherUserId) {
+    final ids = [myId, otherUserId]..sort();
+    final digest = sha256.convert(utf8.encode(ids.join('_')));
+    return digest.toString().substring(0, 32);
   }
 }
