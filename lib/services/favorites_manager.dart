@@ -38,7 +38,7 @@ class FavoritesManager {
       return _defaultFavorites();
     }
 
-    return sanitized;
+    return sanitized.toList();
   }
 
   static Future<void> saveFavorite(Favorite favorite) async {
@@ -47,7 +47,7 @@ class FavoritesManager {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final current = await getFavorites();
+    final current = (await getFavorites()).toList();
 
     // Remove existing if id matches (editing/overwriting)
     current.removeWhere((f) => f.id == favorite.id);
@@ -62,7 +62,7 @@ class FavoritesManager {
 
   static Future<void> deleteFavorite(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    final current = await getFavorites();
+    final current = (await getFavorites()).toList();
 
     current.removeWhere((f) => f.id == id);
 
