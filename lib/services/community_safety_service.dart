@@ -257,6 +257,14 @@ class CommunitySafetyService {
                             dense: true,
                             contentPadding: EdgeInsets.zero,
                           ),
+                          Text(
+                            isGerman
+                                ? 'Hinweis: Bei Auswahl können Nachrichteninhalte in deiner E-Mail-App und bei deinem Mail-Anbieter sichtbar sein.'
+                                : 'Note: If selected, message content may be visible in your email app and email provider.',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                          ),
                         ],
                       ],
                     ),
