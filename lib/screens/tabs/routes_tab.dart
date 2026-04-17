@@ -2370,6 +2370,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     double? getLng(dynamic loc) => loc != null && loc['location'] != null
         ? loc['location']['longitude']
         : (loc != null ? loc['longitude'] : null);
+    String? stationId(dynamic loc) => loc?['id']?.toString();
+    String? stationName(dynamic loc) => loc?['name']?.toString();
+    bool sameStationByIdOrName(
+        String? leftId, String? leftName, String? rightId, String? rightName) {
+      final aId = leftId?.trim();
+      final bId = rightId?.trim();
+      if (aId != null && aId.isNotEmpty && bId != null && bId.isNotEmpty) {
+        return aId == bId;
+      }
+      final aName = leftName?.trim().toLowerCase();
+      final bName = rightName?.trim().toLowerCase();
+      if (aName == null || aName.isEmpty || bName == null || bName.isEmpty) {
+        return false;
+      }
+      return aName == bName;
+    }
 
     void flushTransferBuffer(
         DateTime? nextRideDeparture,
@@ -2471,6 +2487,34 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           walkMinutes < 3 &&
           nextRideDeparture != null &&
           !isFinalWalk;
+
+      // Some providers return a synthetic first-leg micro transfer to the same
+      // station/platform area before the first ride. This should not show as a
+      // standalone transfer card.
+      if (isFirstStep &&
+          transferBuffer.isNotEmpty &&
+          nextRideDeparture != null) {
+        final firstTransfer = transferBuffer.first;
+        final lastTransfer = transferBuffer.last;
+        final startsAtNextRideStation = sameStationByIdOrName(
+          stationId(firstTransfer['origin']),
+          stationName(firstTransfer['origin']),
+          nextStationId,
+          nextStationName,
+        );
+        final endsAtNextRideStation = sameStationByIdOrName(
+          stationId(lastTransfer['destination']),
+          stationName(lastTransfer['destination']),
+          nextStationId,
+          nextStationName,
+        );
+        if (isPhantomWalk &&
+            (startsAtNextRideStation || endsAtNextRideStation)) {
+          transferBuffer.clear();
+          isFirstStep = false;
+          return;
+        }
+      }
 
       String fmtPlat(String? p) =>
           p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
@@ -2667,14 +2711,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime? pDep, pArr;
     try {
       if (legs.isNotEmpty) {
+        final firstRideLeg = legs.cast<Map<String, dynamic>>().firstWhere(
+              (l) => l['line'] != null && l['line']['name'] != null,
+              orElse: () => legs.first as Map<String, dynamic>,
+            );
         dep = DateTime.parse(
-                legs.first['departure'] ?? legs.first['plannedDeparture'])
+                firstRideLeg['departure'] ?? firstRideLeg['plannedDeparture'])
             .toLocal();
         arr =
             DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival'])
                 .toLocal();
         pDep = DateTime.parse(
-                legs.first['plannedDeparture'] ?? legs.first['departure'])
+                firstRideLeg['plannedDeparture'] ?? firstRideLeg['departure'])
             .toLocal();
         pArr =
             DateTime.parse(legs.last['plannedArrival'] ?? legs.last['arrival'])
