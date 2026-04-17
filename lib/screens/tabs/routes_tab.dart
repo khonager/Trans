@@ -4885,21 +4885,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                            Text(route.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                            Text(
+                                route.activeJourney != null
+                                    ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
+                                    : route.subtitle,
                                 style: TextStyle(
                                     fontSize: 24,
                                     fontWeight: FontWeight.bold,
                                     color: colors.textPrimary)),
-                            Row(children: [
-                              Text(
-                                  route.activeJourney != null
-                                      ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
-                                      : route.subtitle,
-                                  style:
-                                      TextStyle(color: colors.textSecondary)),
-                            ])
                           ])),
                       IconButton(
                           icon: Icon(
