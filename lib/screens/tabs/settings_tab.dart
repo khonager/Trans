@@ -1545,108 +1545,9 @@ class _SettingsTabState extends State<SettingsTab> {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     _showMessage(
       isGerman
-          ? 'Trans-Link-Token kopiert. Jetzt im Portfolio unter Konto > Verbundene Apps einfugen.'
+          ? 'Trans-Link-Token kopiert. Jetzt im Portfolio unter Konto > Verbundene Apps einfügen.'
           : 'Trans link token copied. Paste it in Portfolio > Account > Connected Apps.',
     );
-  }
-
-  Future<void> _saveLinkedPortfolioUid(String uid) async {
-    final normalized = uid.trim();
-    final currentSettings = _profile?['settings'];
-    final settingsMap = currentSettings is Map
-        ? Map<String, dynamic>.from(currentSettings)
-        : <String, dynamic>{};
-
-    final linkedAppsRaw = settingsMap['linked_apps'];
-    final linkedApps = linkedAppsRaw is Map
-        ? Map<String, dynamic>.from(linkedAppsRaw)
-        : <String, dynamic>{};
-
-    final portfolioRaw = linkedApps['portfolio'];
-    final portfolio = portfolioRaw is Map
-        ? Map<String, dynamic>.from(portfolioRaw)
-        : <String, dynamic>{};
-
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    if (normalized.isEmpty) {
-      portfolio['status'] = 'inactive';
-      portfolio['uid'] = null;
-      portfolio['updatedAt'] = now;
-      portfolio['unlinkedAt'] = now;
-    } else {
-      portfolio['provider'] = 'portfolio';
-      portfolio['uid'] = normalized;
-      portfolio['status'] = 'active';
-      portfolio['linkedAt'] = portfolio['linkedAt'] ?? now;
-      portfolio['updatedAt'] = now;
-    }
-
-    linkedApps['portfolio'] = portfolio;
-
-    await SupabaseService.updateSettings({
-      'linked_apps': linkedApps,
-      'linked_portfolio_uid': normalized.isEmpty ? null : normalized,
-      'portfolio_uid': normalized.isEmpty ? null : normalized,
-    });
-
-    await _loadProfile();
-
-    if (!mounted) return;
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    _showMessage(
-      normalized.isEmpty
-          ? (isGerman
-              ? 'Portfolio-Verknupfung entfernt.'
-              : 'Portfolio link removed.')
-          : (isGerman ? 'Portfolio-UID gespeichert.' : 'Portfolio UID saved.'),
-    );
-  }
-
-  Future<void> _showPortfolioUidDialog() async {
-    final existing = _linkedPortfolioUid() ?? '';
-    final ctrl = TextEditingController(text: existing);
-    final isGerman = Localizations.localeOf(context).languageCode == 'de';
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title:
-            Text(isGerman ? 'Portfolio UID verknupfen' : 'Link Portfolio UID'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: 'Portfolio UID',
-            hintText: isGerman
-                ? 'Firebase UID aus Portfolio eintragen'
-                : 'Paste your Firebase UID from portfolio',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(isGerman ? 'Abbrechen' : 'Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              await _saveLinkedPortfolioUid('');
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: Text(isGerman ? 'Trennen' : 'Unlink'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              await _saveLinkedPortfolioUid(ctrl.text);
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: Text(isGerman ? 'Speichern' : 'Save'),
-          ),
-        ],
-      ),
-    );
-
-    ctrl.dispose();
   }
 
   @override
@@ -2767,15 +2668,20 @@ class _SettingsTabState extends State<SettingsTab> {
                 subtitle: Text(
                   _linkedPortfolioUid() != null
                       ? (Localizations.localeOf(context).languageCode == 'de'
-                          ? 'Verknupft mit UID ${_linkedPortfolioUid()}'
-                          : 'Linked to UID ${_linkedPortfolioUid()}')
+                          ? 'Verbunden. Verwende "Mit Portfolio fortfahren", um die Anmeldung zu aktualisieren.'
+                          : 'Connected. Use "Continue with Portfolio" to refresh sign-in.')
                       : (Localizations.localeOf(context).languageCode == 'de'
-                          ? 'Noch keine Portfolio-UID gespeichert.'
-                          : 'No portfolio UID saved yet.'),
+                          ? 'Noch nicht verbunden. Nutze "Mit Portfolio fortfahren" auf dem Login-Screen.'
+                          : 'Not connected yet. Use "Continue with Portfolio" on the login screen.'),
                   style: TextStyle(color: colors.textSecondary),
                 ),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: _showPortfolioUidDialog,
+                trailing: Icon(
+                  _linkedPortfolioUid() != null
+                      ? Icons.check_circle_outline
+                      : Icons.info_outline,
+                  size: 18,
+                  color: colors.textSecondary,
+                ),
               ),
               Divider(color: colors.divider),
               ListTile(
@@ -2789,7 +2695,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 subtitle: Text(
                   Localizations.localeOf(context).languageCode == 'de'
-                      ? 'Im Portfolio bei Konto > Verbundene Apps einfugen.'
+                      ? 'Im Portfolio bei Konto > Verbundene Apps einfügen.'
                       : 'Paste in portfolio at Account > Connected Apps.',
                   style: TextStyle(color: colors.textSecondary),
                 ),
