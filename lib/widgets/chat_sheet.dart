@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
+import '../services/community_safety_service.dart';
 import '../services/supabase_service.dart';
 import '../config/app_theme.dart';
 
@@ -16,6 +17,8 @@ class ChatSheet extends StatefulWidget {
 class _ChatSheetState extends State<ChatSheet> {
   final TextEditingController _msgCtrl = TextEditingController();
 
+  bool get _isGerman => Localizations.localeOf(context).languageCode == 'de';
+
   Widget _buildAvatar(String? url, String? emoji, String username) {
     if (emoji != null && emoji.isNotEmpty) {
       return CircleAvatar(
@@ -30,6 +33,64 @@ class _ChatSheetState extends State<ChatSheet> {
       child: url == null
           ? Text(username.isNotEmpty ? username[0].toUpperCase() : "?")
           : null,
+    );
+  }
+
+  @override
+  void dispose() {
+    _msgCtrl.dispose();
+    super.dispose();
+  }
+
+  void _showMessageActions(Map<String, dynamic> msg) {
+    final userId = msg['user_id']?.toString();
+    final username = msg['username']?.toString() ?? 'Unknown';
+    final content = msg['content']?.toString() ?? '';
+    if (userId == null || userId.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.flag_outlined, color: Colors.orange),
+              title: Text(_isGerman ? 'Nachricht melden' : 'Report message'),
+              subtitle: Text(username),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await CommunitySafetyService.showReportDialog(
+                  context,
+                  contentType: 'public chat message',
+                  targetId: msg['id']?.toString() ?? '${widget.lineId}:$userId',
+                  targetLabel: '${widget.title} - $username',
+                  reportedUserId: userId,
+                  reportedUsername: username,
+                  messagePreview: content,
+                  source: 'public chat',
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.block, color: Colors.red),
+              title: Text(_isGerman ? 'Nutzer blockieren' : 'Block user'),
+              subtitle: Text(username),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await SupabaseService.blockUser(userId);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(_isGerman
+                        ? '$username wurde blockiert.'
+                        : '$username was blocked.'),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -107,51 +168,55 @@ class _ChatSheetState extends State<ChatSheet> {
                         children: [
                           if (!isMe) _buildAvatar(avatar, emoji, username),
                           const SizedBox(width: 8),
-                          Column(
-                            crossAxisAlignment: isMe
-                                ? CrossAxisAlignment.end
-                                : CrossAxisAlignment.start,
-                            children: [
-                              if (!isMe)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(left: 4, bottom: 2),
-                                  child: Text(username,
+                          GestureDetector(
+                            onLongPress:
+                                isMe ? null : () => _showMessageActions(msg),
+                            child: Column(
+                              crossAxisAlignment: isMe
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              children: [
+                                if (!isMe)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                        left: 4, bottom: 2),
+                                    child: Text(username,
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: colors.textSecondary)),
+                                  ),
+                                Container(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 240),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                      color: isMe
+                                          ? colors.chatBubbleMeBg
+                                          : colors.chatBubbleFriendBg,
+                                      borderRadius: BorderRadius.only(
+                                        topLeft: const Radius.circular(16),
+                                        topRight: const Radius.circular(16),
+                                        bottomLeft: isMe
+                                            ? const Radius.circular(16)
+                                            : Radius.zero,
+                                        bottomRight: isMe
+                                            ? Radius.zero
+                                            : const Radius.circular(16),
+                                      ),
+                                      border: isMe
+                                          ? null
+                                          : Border.all(
+                                              color: colors
+                                                  .chatBubbleFriendBorder)),
+                                  child: Text(msg['content'],
                                       style: TextStyle(
-                                          fontSize: 10,
-                                          color: colors.textSecondary)),
+                                          color: isMe
+                                              ? colors.chatBubbleMeText
+                                              : colors.chatBubbleFriendText)),
                                 ),
-                              Container(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 240),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                    color: isMe
-                                        ? colors.chatBubbleMeBg
-                                        : colors.chatBubbleFriendBg,
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: const Radius.circular(16),
-                                      topRight: const Radius.circular(16),
-                                      bottomLeft: isMe
-                                          ? const Radius.circular(16)
-                                          : Radius.zero,
-                                      bottomRight: isMe
-                                          ? Radius.zero
-                                          : const Radius.circular(16),
-                                    ),
-                                    border: isMe
-                                        ? null
-                                        : Border.all(
-                                            color:
-                                                colors.chatBubbleFriendBorder)),
-                                child: Text(msg['content'],
-                                    style: TextStyle(
-                                        color: isMe
-                                            ? colors.chatBubbleMeText
-                                            : colors.chatBubbleFriendText)),
-                              ),
-                            ],
-                          )
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     );

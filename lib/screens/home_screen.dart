@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/screens/transitous_live_map_screen.dart';
 import 'tabs/routes_tab.dart';
@@ -23,7 +24,7 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onNahverkehrChanged;
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  final Function(Color) onColorChanged;
+  final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final Locale? locale;
   final Function(Locale) onLocaleChanged;
@@ -52,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _showTrainNumbers = false;
   bool _alwaysWakeMe = false;
+  bool _hasAcceptedCommunityTerms = false;
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
@@ -69,10 +71,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final hasAcceptedCommunityTerms =
+        await CommunitySafetyService.hasAcceptedTerms();
     if (mounted) {
       setState(() {
         _showTrainNumbers = prefs.getBool('show_train_numbers') ?? false;
         _alwaysWakeMe = prefs.getBool('always_wake_me') ?? false;
+        _hasAcceptedCommunityTerms = hasAcceptedCommunityTerms;
+        if (!hasAcceptedCommunityTerms && _currentIndex == 1) {
+          _currentIndex = 0;
+        }
       });
     }
   }
@@ -261,6 +269,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // Save the tab index whenever it changes
   Future<void> _onTabChanged(int index) async {
+    if (index == 1 && !_hasAcceptedCommunityTerms) {
+      final accepted = await CommunitySafetyService.ensureTermsAccepted(
+        context,
+        entryPoint: Localizations.localeOf(context).languageCode == 'de'
+            ? 'Freunde'
+            : 'Friends',
+      );
+      if (!accepted) return;
+      if (mounted) {
+        setState(() => _hasAcceptedCommunityTerms = true);
+      } else {
+        _hasAcceptedCommunityTerms = true;
+      }
+    }
+
     setState(() => _currentIndex = index);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('current_tab_index', index);

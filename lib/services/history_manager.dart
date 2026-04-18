@@ -358,7 +358,7 @@ class SearchHistoryManager {
 
   static Future<bool> setSavedJourneyLeaveReminder({
     required Map<String, dynamic> item,
-    required int? minutesBeforeDeparture,
+    required List<int> minutesBeforeDepartureList,
   }) async {
     var journeys = await _loadSavedJourneysPruned();
     final connectionKey = item['connectionKey'];
@@ -387,10 +387,18 @@ class SearchHistoryManager {
 
     if (index == -1) return false;
 
-    if (minutesBeforeDeparture == null) {
+    final normalizedMinutes = minutesBeforeDepartureList
+        .toSet()
+        .where((value) => value > 0)
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+
+    if (normalizedMinutes.isEmpty) {
       journeys[index].remove('leaveReminderMinutes');
+      journeys[index].remove('leaveReminderMinutesList');
     } else {
-      journeys[index]['leaveReminderMinutes'] = minutesBeforeDeparture;
+      journeys[index]['leaveReminderMinutes'] = normalizedMinutes.first;
+      journeys[index]['leaveReminderMinutesList'] = normalizedMinutes;
     }
 
     await _persistSavedJourneys(journeys);

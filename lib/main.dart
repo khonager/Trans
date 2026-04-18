@@ -14,6 +14,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/home_screen.dart';
+import 'services/color_claim_service.dart';
 import 'services/supabase_service.dart';
 import 'services/linux_url_scheme_registration.dart';
 import 'utils/app_error.dart';
@@ -23,29 +24,31 @@ enum StartupAuthNotice {
   emailUpdated,
   emailConfirmationFailed,
   magicLinkSignedIn,
+  portfolioSignedIn,
+  portfolioSignInFailed,
 }
 
 Future<void> main() async {
-  usePathUrlStrategy();
-  WidgetsFlutterBinding.ensureInitialized();
-
-  FlutterError.onError = (details) {
-    AppError.log(
-      details.exception,
-      stackTrace: details.stack,
-      source: 'FlutterError.onError',
-    );
-  };
-  PlatformDispatcher.instance.onError = (error, stack) {
-    AppError.log(
-      error,
-      stackTrace: stack,
-      source: 'PlatformDispatcher.onError',
-    );
-    return true;
-  };
-
   await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    usePathUrlStrategy();
+
+    FlutterError.onError = (details) {
+      AppError.log(
+        details.exception,
+        stackTrace: details.stack,
+        source: 'FlutterError.onError',
+      );
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      AppError.log(
+        error,
+        stackTrace: stack,
+        source: 'PlatformDispatcher.onError',
+      );
+      return true;
+    };
+
     bool initFailed = false;
     String? initError;
     StartupAuthNotice? startupAuthNotice;
@@ -60,7 +63,11 @@ Future<void> main() async {
 
       if (kIsWeb) {
         try {
-          if (SupabaseService.shouldHandleAuthCallbackManually(Uri.base)) {
+          if (SupabaseService.isPortfolioBridgeUri(Uri.base)) {
+            await SupabaseService.handlePortfolioBridgeUri(Uri.base);
+            startupAuthNotice = StartupAuthNotice.portfolioSignedIn;
+          } else if (SupabaseService.shouldHandleAuthCallbackManually(
+              Uri.base)) {
             final otpType =
                 await SupabaseService.handleAuthCallbackUri(Uri.base);
             if (otpType == OtpType.signup) {
@@ -73,7 +80,9 @@ Future<void> main() async {
             }
           }
         } catch (e, st) {
-          startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
+          startupAuthNotice = SupabaseService.isPortfolioBridgeUri(Uri.base)
+              ? StartupAuthNotice.portfolioSignInFailed
+              : StartupAuthNotice.emailConfirmationFailed;
           AppError.log(
             e,
             stackTrace: st,
@@ -191,6 +200,12 @@ class _TransAppState extends State<TransApp> {
       StartupAuthNotice.magicLinkSignedIn => isGerman
           ? 'Du wurdest über den Magic Link angemeldet.'
           : 'You were signed in through the magic link.',
+      StartupAuthNotice.portfolioSignedIn => isGerman
+          ? 'Du wurdest mit deinem Portfolio-Konto angemeldet.'
+          : 'You were signed in with your portfolio account.',
+      StartupAuthNotice.portfolioSignInFailed => isGerman
+          ? 'Portfolio-Anmeldung fehlgeschlagen. Bitte erneut versuchen.'
+          : 'Portfolio sign-in failed. Please try again.',
     };
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -228,6 +243,12 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _processAuthUri(Uri uri) async {
     try {
+      if (SupabaseService.isPortfolioBridgeUri(uri)) {
+        await SupabaseService.handlePortfolioBridgeUri(uri);
+        await _showStartupAuthNotice(StartupAuthNotice.portfolioSignedIn);
+        return;
+      }
+
       final otpType = await SupabaseService.handleAuthCallbackUri(uri);
       if (otpType != null) {
         switch (otpType) {
@@ -350,13 +371,16 @@ class _TransAppState extends State<TransApp> {
     await SupabaseService.updateSettings({'ghost_mode': enabled});
   }
 
-  void _updateThemeColor(Color color) async {
+  Future<void> _updateThemeColor(Color color) async {
     setState(() {
       _themeColor = color;
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('theme_color_value', color.toARGB32());
     await SupabaseService.updateThemeColor(color.toARGB32());
+    await SupabaseService.updateSettings({
+      'theme_color_hex': ColorClaimService.normalizeColor(color),
+    });
   }
 
   void _changeLocale(Locale locale) async {

@@ -8,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../../services/notification_manager.dart';
 import '../../services/foreground_haptics.dart';
+import '../../services/color_claim_service.dart';
 import '../../services/supabase_service.dart';
+import '../../services/community_safety_service.dart';
 import '../../services/wake_alarm_custom_sound_service.dart';
 import '../../services/wake_alarm_settings.dart';
 import '../../services/history_manager.dart';
@@ -42,7 +44,7 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onNahverkehrChanged;
   final bool isGhostMode;
   final Function(bool) onGhostModeChanged;
-  final Function(Color) onColorChanged;
+  final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final bool showTrainNumbers;
   final Function(bool) onShowTrainNumbersChanged;
@@ -108,6 +110,7 @@ class _SettingsTabState extends State<SettingsTab> {
   DateTime? _hiddenManualAlarmTarget;
   bool _obscureAuthPassword = true;
   bool _isAuthSubmitting = false;
+  int? _pendingThemeColorArgb;
 
   String _vibrationPattern = 'standard';
   int _vibrationIntensity = 128;
@@ -126,7 +129,8 @@ class _SettingsTabState extends State<SettingsTab> {
   void dispose() {
     _hiddenManualAlarmTimer?.cancel();
     _locationSub?.cancel();
-    SupabaseService.settingsRefreshNotifier.removeListener(_handleSettingsRefresh);
+    SupabaseService.settingsRefreshNotifier
+        .removeListener(_handleSettingsRefresh);
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _usernameCtrl.dispose();
@@ -699,10 +703,10 @@ class _SettingsTabState extends State<SettingsTab> {
                             : DateTime(
                                 now.year,
                                 now.month,
-                            now.day + 1,
-                            selectedTime.hour,
-                            selectedTime.minute,
-                          );
+                                now.day + 1,
+                                selectedTime.hour,
+                                selectedTime.minute,
+                              );
                     await _scheduleHiddenManualLeaveTimer(target);
                     navigator.pop(true);
                   },
@@ -949,7 +953,7 @@ class _SettingsTabState extends State<SettingsTab> {
                                 Localizations.localeOf(context).languageCode ==
                                     'de';
                             _showMessage(isGerman
-                                ? 'Konto dauerhaft geloescht.'
+                                ? 'Konto dauerhaft gelöscht.'
                                 : 'Account permanently deleted.');
                             setState(() {});
                           }
@@ -1394,6 +1398,13 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  Future<void> _startPortfolioSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithPortfolio,
+      source: 'sign in with portfolio',
+    );
+  }
+
   Future<void> _startOAuthSignIn({
     required Future<void> Function() action,
     required String source,
@@ -1494,6 +1505,49 @@ class _SettingsTabState extends State<SettingsTab> {
     }
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String? _linkedPortfolioUid() {
+    final settings = _profile?['settings'];
+    if (settings is! Map) return null;
+
+    final linkedApps = settings['linked_apps'];
+    if (linkedApps is! Map) return null;
+
+    final portfolio = linkedApps['portfolio'];
+    if (portfolio is! Map) return null;
+
+    final uid = portfolio['uid'];
+    if (uid == null) return null;
+    final normalized = uid.toString().trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  Future<void> _copyTransLinkToken() async {
+    final session = SupabaseService.client.auth.currentSession;
+    final token = session?.accessToken;
+
+    if (token == null || token.isEmpty) {
+      final isGerman = Localizations.localeOf(context).languageCode == 'de';
+      _showMessage(
+        isGerman
+            ? 'Du musst angemeldet sein, um ein Link-Token zu kopieren.'
+            : 'You must be signed in to copy a link token.',
+        reportable: true,
+        source: 'copy trans link token',
+      );
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: token));
+
+    if (!mounted) return;
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    _showMessage(
+      isGerman
+          ? 'Trans-Link-Token kopiert. Jetzt im Portfolio unter Konto > Verbundene Apps einfügen.'
+          : 'Trans link token copied. Paste it in Portfolio > Account > Connected Apps.',
+    );
   }
 
   @override
@@ -1692,12 +1746,32 @@ class _SettingsTabState extends State<SettingsTab> {
             ListTile(
               title: Text(AppLocalizations.of(context)!.themeColor,
                   style: TextStyle(color: colors.textPrimary)),
-              subtitle: SizedBox(
-                height: 40,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: appThemeColors.map((c) => _colorCircle(c)).toList(),
-                ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    height: 40,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        ...appThemeColors.map((c) => _colorCircle(c)),
+                        _colorSeparator(),
+                        if (_isBuiltInColor(widget.currentColor))
+                          _customColorButton()
+                        else
+                          _customColorCircle(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    Localizations.localeOf(context).languageCode == 'de'
+                        ? 'Tippe auf eine Farbe${!_isBuiltInColor(widget.currentColor) ? ' oder tippe die eigene Farbe erneut an' : ''}, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
+                        : 'Tap a color${!_isBuiltInColor(widget.currentColor) ? ' or tap the custom color again' : ''} to change. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
               ),
             ),
             Divider(color: colors.divider), // Separator
@@ -2094,6 +2168,24 @@ class _SettingsTabState extends State<SettingsTab> {
           const SizedBox(height: 8),
           _buildSection(context, [
             ListTile(
+                leading:
+                    Icon(Icons.gavel_outlined, color: colors.settingsHeader),
+                title: Text(
+                    isGerman
+                        ? 'Nutzungsbedingungen & Community-Regeln'
+                        : 'Terms of Use & Community Rules',
+                    style: TextStyle(color: colors.textPrimary)),
+                subtitle: Text(
+                    isGerman
+                        ? 'Keine Toleranz für anstößige Inhalte oder missbräuchliche Nutzer.'
+                        : 'No tolerance for objectionable content or abusive users.',
+                    style:
+                        TextStyle(fontSize: 12, color: colors.textSecondary)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () =>
+                    CommunitySafetyService.showCommunityTerms(context)),
+            Divider(height: 1, color: colors.divider),
+            ListTile(
                 leading: Icon(Icons.block, color: colors.iconBlock),
                 title: Text(AppLocalizations.of(context)!.blockedUsers,
                     style: TextStyle(color: colors.textPrimary)),
@@ -2154,10 +2246,303 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  bool _isBuiltInColor(Color color) {
+    final argb = color.toARGB32();
+    return appThemeColors.any((c) => c.toARGB32() == argb);
+  }
+
+  Future<void> _handleThemeColorTap(Color color) async {
+    final pendingArgb = color.toARGB32();
+    if (_pendingThemeColorArgb == pendingArgb) return;
+
+    setState(() => _pendingThemeColorArgb = pendingArgb);
+    try {
+      // Built-in colors can be used freely without checking availability
+      if (_isBuiltInColor(color)) {
+        await widget.onColorChanged(color);
+        return;
+      }
+
+      // Custom colors require user to be logged in
+      if (SupabaseService.currentUser == null) {
+        await widget.onColorChanged(color);
+        return;
+      }
+
+      final status = await ColorClaimService.checkAvailability(
+        color,
+        currentProfile: _profile,
+      );
+      if (!mounted) return;
+
+      if (status.isUnavailableInTrans) {
+        final owner = status.transOwnerLabel ?? 'another user';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_localizedColorTakenMessage(owner)),
+          ),
+        );
+        return;
+      }
+
+      final claimResult = await ColorClaimService.claimColor(
+        color,
+        currentProfile: _profile,
+      );
+      await widget.onColorChanged(color);
+      if (!mounted) return;
+
+      final message = _buildThemeColorSuccessMessage(
+        status,
+        claimResult,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      unawaited(_loadProfile());
+    } on ColorClaimException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save that theme color: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _pendingThemeColorArgb = null);
+      }
+    }
+  }
+
+  String _localizedColorTakenMessage(String owner) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    if (isGerman) {
+      return 'Diese Farbe ist in Trans bereits von $owner beansprucht. Reserviere sie auf der Portfolio-Seite, wenn du eine app-übergreifende Farbe willst.';
+    }
+    return 'That color is already claimed in Trans by $owner. Reserve it on the portfolio site if you want a color that carries across apps.';
+  }
+
+  String _buildThemeColorSuccessMessage(
+    ColorClaimStatus status,
+    ColorClaimResult result,
+  ) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+
+    if (status.isTransOnlyAvailability) {
+      final owner = status.portfolioOwnerLabel;
+      if (isGerman) {
+        return owner != null && owner.isNotEmpty
+            ? 'Farbe in Trans gespeichert. Portfolio-weit ist sie bereits von $owner reserviert, also gilt sie hier nur für Trans. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.'
+            : 'Farbe in Trans gespeichert. Portfolio-weit ist sie bereits reserviert, also gilt sie hier nur für Trans. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.';
+      }
+      return owner != null && owner.isNotEmpty
+          ? 'Color saved in Trans. It is already reserved portfolio-wide by $owner, so this save only applies inside Trans. Reserve it on the portfolio site if you want the same color across all apps.'
+          : 'Color saved in Trans. It is already reserved portfolio-wide, so this save only applies inside Trans. Reserve it on the portfolio site if you want the same color across all apps.';
+    }
+
+    if (status.portfolioClaimedByCurrentUser) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Deine Portfolio-Reservierung deckt diese Farbe bereits app-übergreifend ab.'
+          : 'Color saved in Trans. Your portfolio reservation already covers this color across apps.';
+    }
+
+    if (!status.portfolioStatusChecked) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Die globale Verfügbarkeit konnte nicht geprüft werden. Wenn du dieselbe Farbe in allen Apps willst, reserviere sie auf der Portfolio-Seite.'
+          : 'Color saved in Trans. Global availability could not be checked. Reserve it on the portfolio site if you want the same color across all apps.';
+    }
+
+    if (!result.attemptedPortfolioSync) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Sie ist derzeit nur in Trans gesichert. Reserviere sie auf der Portfolio-Seite, wenn du sie app-übergreifend willst.'
+          : 'Color saved in Trans. It is secured in Trans only for now. Reserve it on the portfolio site if you want it across all apps.';
+    }
+
+    if (!result.syncedToPortfolio) {
+      return isGerman
+          ? 'Farbe in Trans gespeichert. Die Sync-Vorbereitung für das Portfolio ist noch nicht abgeschlossen. Reserviere sie auf der Portfolio-Seite, wenn du sie app-übergreifend willst.'
+          : 'Color saved in Trans. Portfolio sync is not finished yet. Reserve it on the portfolio site if you want it across all apps.';
+    }
+
+    return isGerman
+        ? 'Farbe in Trans gespeichert. Wenn du dieselbe Farbe in allen Apps behalten willst, verwalte die Reservierung auf der Portfolio-Seite.'
+        : 'Color saved in Trans. Manage the reservation on the portfolio site if you want to keep the same color across all apps.';
+  }
+
+  Future<void> _openCustomColorDialog() async {
+    if (SupabaseService.currentUser == null) {
+      if (!mounted) return;
+      final isGerman = Localizations.localeOf(context).languageCode == 'de';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isGerman
+                ? 'Melde dich an, um eine eigene Theme-Farbe zu verwenden und zu reservieren.'
+                : 'Sign in to use and reserve a custom theme color.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final controller = TextEditingController(
+      text: ColorClaimService.normalizeColor(widget.currentColor),
+    );
+    final rawValue = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final dialogColors = TransColors.of(dialogContext);
+        final isGerman =
+            Localizations.localeOf(dialogContext).languageCode == 'de';
+        return AlertDialog(
+          title: Text(isGerman ? 'Eigene Farbe' : 'Custom Color'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                textCapitalization: TextCapitalization.none,
+                decoration: const InputDecoration(
+                  labelText: '#rrggbb',
+                  hintText: '#5bcefa',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  isGerman
+                      ? 'Nur 6-stellige Hex-Farben werden unterstützt.'
+                      : 'Only 6-digit hex colors are supported.',
+                  style: TextStyle(
+                      fontSize: 12, color: dialogColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(AppLocalizations.of(dialogContext)!.cancel),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: Text(isGerman ? 'Übernehmen' : 'Apply'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (rawValue == null || rawValue.isEmpty || !mounted) return;
+
+    try {
+      final hex = ColorClaimService.normalizeHex(rawValue);
+      final value = int.parse(hex.substring(1), radix: 16);
+      final color = Color(0xFF000000 | value);
+
+      // Check if the color is a built-in color
+      if (_isBuiltInColor(color)) {
+        if (!mounted) return;
+        final isGerman = Localizations.localeOf(context).languageCode == 'de';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isGerman
+                  ? 'Diese Farbe ist bereits eine eingebaute Theme-Farbe. Wähle sie aus der Liste aus.'
+                  : 'That color is already a built-in theme color. Select it from the list.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
+      await _handleThemeColorTap(color);
+    } on ColorClaimException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    }
+  }
+
+  Widget _colorSeparator() {
+    final colors = TransColors.of(context);
+    return Container(
+      width: 2,
+      height: 30,
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.isDark ? Colors.white : Colors.black,
+        borderRadius: BorderRadius.circular(1),
+      ),
+    );
+  }
+
+  Widget _customColorButton() {
+    final colors = TransColors.of(context);
+    return GestureDetector(
+      onTap: _openCustomColorDialog,
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.cardBg,
+          shape: BoxShape.circle,
+          border: Border.all(color: colors.divider),
+        ),
+        child: Icon(Icons.add, size: 18, color: colors.textPrimary),
+      ),
+    );
+  }
+
+  Widget _customColorCircle() {
+    final isSelected = !_isBuiltInColor(widget.currentColor);
+    final isPending = _pendingThemeColorArgb == widget.currentColor.toARGB32();
+
+    return GestureDetector(
+      onTap: _openCustomColorDialog,
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: widget.currentColor,
+          shape: BoxShape.circle,
+          border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+          boxShadow: isSelected
+              ? [const BoxShadow(color: Colors.black26, blurRadius: 4)]
+              : null,
+        ),
+        child: isSelected
+            ? const Icon(Icons.check, size: 16, color: Colors.white)
+            : isPending
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : null,
+      ),
+    );
+  }
+
   Widget _colorCircle(Color color) {
     final isSelected = widget.currentColor.toARGB32() == color.toARGB32();
+    final isPending = _pendingThemeColorArgb == color.toARGB32();
     return GestureDetector(
-      onTap: () => widget.onColorChanged(color),
+      onTap: () => _handleThemeColorTap(color),
       child: Container(
         width: 30,
         height: 30,
@@ -2172,7 +2557,16 @@ class _SettingsTabState extends State<SettingsTab> {
                 : null),
         child: isSelected
             ? const Icon(Icons.check, size: 16, color: Colors.white)
-            : null,
+            : isPending
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : null,
       ),
     );
   }
@@ -2260,6 +2654,53 @@ class _SettingsTabState extends State<SettingsTab> {
                     style: TextStyle(color: colors.textSecondary)),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: _showChangePasswordDialog,
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.link_outlined),
+                title: Text(
+                  Localizations.localeOf(context).languageCode == 'de'
+                      ? 'Portfolio-Verknupfung'
+                      : 'Portfolio Link',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  _linkedPortfolioUid() != null
+                      ? (Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Verbunden. Verwende "Mit Portfolio fortfahren", um die Anmeldung zu aktualisieren.'
+                          : 'Connected. Use "Continue with Portfolio" to refresh sign-in.')
+                      : (Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Noch nicht verbunden. Nutze "Mit Portfolio fortfahren" auf dem Login-Screen.'
+                          : 'Not connected yet. Use "Continue with Portfolio" on the login screen.'),
+                  style: TextStyle(color: colors.textSecondary),
+                ),
+                trailing: Icon(
+                  _linkedPortfolioUid() != null
+                      ? Icons.check_circle_outline
+                      : Icons.info_outline,
+                  size: 18,
+                  color: colors.textSecondary,
+                ),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.key_outlined),
+                title: Text(
+                  Localizations.localeOf(context).languageCode == 'de'
+                      ? 'Trans-Link-Token kopieren'
+                      : 'Copy Trans Link Token',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  Localizations.localeOf(context).languageCode == 'de'
+                      ? 'Im Portfolio bei Konto > Verbundene Apps einfügen.'
+                      : 'Paste in portfolio at Account > Connected Apps.',
+                  style: TextStyle(color: colors.textSecondary),
+                ),
+                trailing: const Icon(Icons.copy_rounded, size: 18),
+                onTap: _copyTransLinkToken,
               ),
               Divider(color: colors.divider),
               ListTile(
@@ -2391,6 +2832,16 @@ class _SettingsTabState extends State<SettingsTab> {
             OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
               child: _buildGoogleSignInLabel(colors),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: _isAuthSubmitting ? null : _startPortfolioSignIn,
+              child: Text(
+                Localizations.localeOf(context).languageCode == 'de'
+                    ? 'Mit Portfolio fortfahren'
+                    : 'Continue with Portfolio',
+                style: TextStyle(color: colors.textPrimary),
+              ),
             ),
           ],
         ],

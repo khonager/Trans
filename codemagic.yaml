@@ -27,6 +27,7 @@ workflows:
           echo "SUPABASE_URL=$SUPABASE_URL" > .env
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
           echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
+          echo "PORTFOLIO_BRIDGE_BASE_URL=$PORTFOLIO_BRIDGE_BASE_URL" >> .env
 
       - name: Get Flutter packages
         script: |
@@ -112,6 +113,7 @@ workflows:
           echo "SUPABASE_URL=$SUPABASE_URL" > .env
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
           echo "SUPPORT_EMAIL=$SUPPORT_EMAIL" >> .env
+          echo "PORTFOLIO_BRIDGE_BASE_URL=$PORTFOLIO_BRIDGE_BASE_URL" >> .env
 
       - name: Get Flutter packages
         script: |

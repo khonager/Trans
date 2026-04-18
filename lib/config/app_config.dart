@@ -43,4 +43,45 @@ class AppConfig {
     }
     return 'support@khonager.de';
   }
+
+  static String get portfolioColorStatusEndpoint {
+    final endpoint = dotenv.env['PORTFOLIO_COLOR_STATUS_ENDPOINT'];
+    if (endpoint != null && endpoint.isNotEmpty) {
+      return endpoint;
+    }
+    return '';
+  }
+
+  static String get portfolioColorSyncEndpoint {
+    final endpoint = dotenv.env['PORTFOLIO_COLOR_SYNC_ENDPOINT'];
+    if (endpoint != null && endpoint.isNotEmpty) {
+      return endpoint;
+    }
+    return '';
+  }
+
+  static String get portfolioBridgeBaseUrl {
+    final endpoint = dotenv.env['PORTFOLIO_BRIDGE_BASE_URL'];
+    if (endpoint != null && endpoint.isNotEmpty) {
+      return endpoint;
+    }
+    return '';
+  }
+
+  static String get portfolioBridgeContinueUrl {
+    if (portfolioBridgeBaseUrl.isEmpty) return '';
+    return Uri.parse(portfolioBridgeBaseUrl)
+        .resolve('continue-with-portfolio.html')
+        .toString();
+  }
+
+  static String get portfolioBridgeExchangeEndpoint {
+    if (portfolioBridgeBaseUrl.isEmpty) return '';
+    return Uri.parse(portfolioBridgeBaseUrl)
+        .resolve('api/trans-bridge/exchange')
+        .toString();
+  }
+
+  static String get portfolioBridgeRedirectUrl =>
+      kIsWeb ? webBaseUrl : 'io.supabase.trans://portfolio-continue/';
 }
