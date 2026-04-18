@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -8,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as enc;
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import 'favorites_policy.dart';
 import 'notification_manager.dart';
@@ -24,6 +27,7 @@ class SupabaseService {
   static StreamSubscription? _msgSubscription;
   static Future<void>? _pendingSignInPreparation;
   static String? _preparedUserId;
+  static String? _pendingPortfolioBridgeState;
 
   // --- INITIALIZATION ---
   static Future<void> init() async {
@@ -232,6 +236,109 @@ class SupabaseService {
     // supabase_flutter already consumes OAuth/deep-link session callbacks.
     // We only manually handle OTP confirmation links that include token_hash.
     return isAuthConfirmUri(uri);
+  }
+
+  static bool isPortfolioBridgeUri(Uri uri) {
+    final code = uri.queryParameters['bridge_code'];
+    if (code == null || code.isEmpty) return false;
+
+    if (kIsWeb) {
+      final base = Uri.parse(AppConfig.webBaseUrl);
+      final sameHost = uri.host == base.host;
+      return sameHost;
+    }
+
+    return uri.scheme == 'io.supabase.trans';
+  }
+
+  static String _randomState() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(24, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  static Future<void> signInWithPortfolio() async {
+    final continueUrl = AppConfig.portfolioBridgeContinueUrl;
+    if (continueUrl.isEmpty) {
+      throw 'Portfolio bridge URL is not configured.';
+    }
+
+    final state = _randomState();
+    _pendingPortfolioBridgeState = state;
+
+    final uri = Uri.parse(continueUrl).replace(
+      queryParameters: {
+        'redirect_uri': AppConfig.portfolioBridgeRedirectUrl,
+        'state': state,
+      },
+    );
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched) {
+      throw 'Could not open portfolio sign-in page.';
+    }
+  }
+
+  static Future<void> handlePortfolioBridgeUri(Uri uri) async {
+    final code = uri.queryParameters['bridge_code'];
+    final state = uri.queryParameters['state'];
+    final expectedState = _pendingPortfolioBridgeState;
+
+    if (code == null || code.isEmpty) {
+      throw 'Missing bridge code.';
+    }
+
+    if (expectedState != null && expectedState.isNotEmpty) {
+      if (state == null || state.isEmpty || state != expectedState) {
+        throw 'Portfolio bridge state mismatch. Please try again.';
+      }
+    }
+
+    final endpoint = AppConfig.portfolioBridgeExchangeEndpoint;
+    if (endpoint.isEmpty) {
+      throw 'Portfolio bridge exchange endpoint is not configured.';
+    }
+
+    final response = await http.post(
+      Uri.parse(endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: json.encode({
+        'code': code,
+        'state': state,
+      }),
+    );
+
+    dynamic payload;
+    try {
+      payload = response.body.isNotEmpty ? json.decode(response.body) : {};
+    } catch (_) {
+      payload = <String, dynamic>{'error': response.body};
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw payload is Map<String, dynamic>
+          ? (payload['error']?.toString() ??
+              'Portfolio bridge exchange failed.')
+          : 'Portfolio bridge exchange failed.';
+    }
+
+    final refreshToken = payload is Map<String, dynamic>
+        ? payload['refreshToken']?.toString()
+        : null;
+
+    if (refreshToken == null || refreshToken.isEmpty) {
+      throw 'Portfolio bridge did not return a refresh token.';
+    }
+
+    await client.auth.setSession(refreshToken);
+    _pendingPortfolioBridgeState = null;
+    await ensureCurrentUserReady();
   }
 
   static Future<void> _finishSignIn() async {

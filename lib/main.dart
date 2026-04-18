@@ -24,6 +24,8 @@ enum StartupAuthNotice {
   emailUpdated,
   emailConfirmationFailed,
   magicLinkSignedIn,
+  portfolioSignedIn,
+  portfolioSignInFailed,
 }
 
 Future<void> main() async {
@@ -61,7 +63,11 @@ Future<void> main() async {
 
       if (kIsWeb) {
         try {
-          if (SupabaseService.shouldHandleAuthCallbackManually(Uri.base)) {
+          if (SupabaseService.isPortfolioBridgeUri(Uri.base)) {
+            await SupabaseService.handlePortfolioBridgeUri(Uri.base);
+            startupAuthNotice = StartupAuthNotice.portfolioSignedIn;
+          } else if (SupabaseService.shouldHandleAuthCallbackManually(
+              Uri.base)) {
             final otpType =
                 await SupabaseService.handleAuthCallbackUri(Uri.base);
             if (otpType == OtpType.signup) {
@@ -74,7 +80,9 @@ Future<void> main() async {
             }
           }
         } catch (e, st) {
-          startupAuthNotice = StartupAuthNotice.emailConfirmationFailed;
+          startupAuthNotice = SupabaseService.isPortfolioBridgeUri(Uri.base)
+              ? StartupAuthNotice.portfolioSignInFailed
+              : StartupAuthNotice.emailConfirmationFailed;
           AppError.log(
             e,
             stackTrace: st,
@@ -192,6 +200,12 @@ class _TransAppState extends State<TransApp> {
       StartupAuthNotice.magicLinkSignedIn => isGerman
           ? 'Du wurdest über den Magic Link angemeldet.'
           : 'You were signed in through the magic link.',
+      StartupAuthNotice.portfolioSignedIn => isGerman
+          ? 'Du wurdest mit deinem Portfolio-Konto angemeldet.'
+          : 'You were signed in with your portfolio account.',
+      StartupAuthNotice.portfolioSignInFailed => isGerman
+          ? 'Portfolio-Anmeldung fehlgeschlagen. Bitte erneut versuchen.'
+          : 'Portfolio sign-in failed. Please try again.',
     };
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -229,6 +243,12 @@ class _TransAppState extends State<TransApp> {
 
   Future<void> _processAuthUri(Uri uri) async {
     try {
+      if (SupabaseService.isPortfolioBridgeUri(uri)) {
+        await SupabaseService.handlePortfolioBridgeUri(uri);
+        await _showStartupAuthNotice(StartupAuthNotice.portfolioSignedIn);
+        return;
+      }
+
       final otpType = await SupabaseService.handleAuthCallbackUri(uri);
       if (otpType != null) {
         switch (otpType) {

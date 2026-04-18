@@ -1398,6 +1398,13 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
+  Future<void> _startPortfolioSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithPortfolio,
+      source: 'sign in with portfolio',
+    );
+  }
+
   Future<void> _startOAuthSignIn({
     required Future<void> Function() action,
     required String source,
@@ -1547,17 +1554,17 @@ class _SettingsTabState extends State<SettingsTab> {
     final normalized = uid.trim();
     final currentSettings = _profile?['settings'];
     final settingsMap = currentSettings is Map
-        ? Map<String, dynamic>.from(currentSettings as Map)
+        ? Map<String, dynamic>.from(currentSettings)
         : <String, dynamic>{};
 
     final linkedAppsRaw = settingsMap['linked_apps'];
     final linkedApps = linkedAppsRaw is Map
-        ? Map<String, dynamic>.from(linkedAppsRaw as Map)
+        ? Map<String, dynamic>.from(linkedAppsRaw)
         : <String, dynamic>{};
 
     final portfolioRaw = linkedApps['portfolio'];
     final portfolio = portfolioRaw is Map
-        ? Map<String, dynamic>.from(portfolioRaw as Map)
+        ? Map<String, dynamic>.from(portfolioRaw)
         : <String, dynamic>{};
 
     final now = DateTime.now().toUtc().toIso8601String();
@@ -2599,7 +2606,6 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget _customColorCircle() {
     final isSelected = !_isBuiltInColor(widget.currentColor);
     final isPending = _pendingThemeColorArgb == widget.currentColor.toARGB32();
-    final colors = TransColors.of(context);
 
     return GestureDetector(
       onTap: _openCustomColorDialog,
@@ -2920,6 +2926,16 @@ class _SettingsTabState extends State<SettingsTab> {
             OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
               child: _buildGoogleSignInLabel(colors),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: _isAuthSubmitting ? null : _startPortfolioSignIn,
+              child: Text(
+                Localizations.localeOf(context).languageCode == 'de'
+                    ? 'Mit Portfolio fortfahren'
+                    : 'Continue with Portfolio',
+                style: TextStyle(color: colors.textPrimary),
+              ),
             ),
           ],
         ],
