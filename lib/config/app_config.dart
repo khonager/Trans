@@ -5,6 +5,7 @@ class AppConfig {
   static const bool isDevBuild =
       bool.fromEnvironment('IS_DEV', defaultValue: false);
   static const String authConfirmPath = '/auth/confirm';
+  static const String _defaultPortfolioBridgeBaseUrl = 'https://khonager.de/';
 
   static String get webBaseUrl => isDevBuild
       ? 'https://trans.khonager.de/dev/'
@@ -65,7 +66,7 @@ class AppConfig {
     if (endpoint != null && endpoint.isNotEmpty) {
       return endpoint;
     }
-    return '';
+    return _defaultPortfolioBridgeBaseUrl;
   }
 
   static String get portfolioBridgeContinueUrl {

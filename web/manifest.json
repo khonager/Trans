@@ -13,7 +13,7 @@
             "name": "Routes",
             "short_name": "Routes",
             "description": "View transit routes",
-            "url": "/",
+            "url": ".",
             "icons": [
                 {
                     "src": "trans-dark.svg",
@@ -26,7 +26,7 @@
             "name": "Settings",
             "short_name": "Settings",
             "description": "App settings",
-            "url": "/settings",
+            "url": "settings",
             "icons": [
                 {
                     "src": "trans-dark.svg",
