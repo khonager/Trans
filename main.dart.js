@@ -50232,7 +50232,7 @@ if(s!=null&&s.length!==0)return s
 return""},
 axA(){var s=$.DS().gCq().h(0,"PORTFOLIO_BRIDGE_BASE_URL")
 if(s!=null&&s.length!==0)return s
-return""},
+return"https://khonager.de/"},
 c_H(){if(B.axA().length===0)return""
 return B.di(B.axA(),0,null).a2("continue-with-portfolio.html").j(0)},
 c_I(){if(B.axA().length===0)return""
