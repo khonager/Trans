@@ -1392,13 +1392,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   bool get _supportsAppleSignIn {
-    return false;
-
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.iOS => true,
-      TargetPlatform.macOS => true,
-      _ => false,
-    };
+    return _supportsOAuthSignIn;
   }
 
   Future<void> _startGoogleSignIn() async {
