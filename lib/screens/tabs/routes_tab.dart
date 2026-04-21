@@ -3104,6 +3104,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               );
               return;
             }
+            if (partial.isEmpty) {
+              TransportApi.addSyntheticDebugLog(
+                'ui: partial ignored empty (no tab creation)',
+              );
+              return;
+            }
             hasDisplayedResults = true;
             if (currentTabId == null) {
               currentTabId = _addJourneyTab(
