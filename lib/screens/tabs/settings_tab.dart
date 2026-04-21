@@ -1392,7 +1392,7 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   bool get _supportsAppleSignIn {
-    if (kIsWeb) return false;
+    return false;
 
     return switch (defaultTargetPlatform) {
       TargetPlatform.iOS => true,
@@ -2927,16 +2927,25 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Widget _buildAppleSignInLabel(TransColors colors) {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.apple, color: colors.textPrimary),
-        const SizedBox(width: 8),
-        Text(
-          isGerman ? 'Mit Apple fortfahren' : 'Continue with Apple',
-          style: TextStyle(color: colors.textPrimary),
-        ),
-      ],
+    final baseStyle = TextStyle(color: colors.textPrimary);
+
+    return Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          TextSpan(text: isGerman ? 'Mit ' : 'Continue with '),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: Transform.translate(
+              offset: const Offset(0, 2.2),
+              child: Icon(Icons.apple, color: colors.textPrimary, size: 18),
+            ),
+          ),
+          const TextSpan(text: 'Apple'),
+          if (isGerman) const TextSpan(text: ' fortfahren'),
+        ],
+      ),
     );
   }
 
