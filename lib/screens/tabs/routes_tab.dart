@@ -1024,17 +1024,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       sections.add(_SuggestionSection(items: favorites));
     }
 
-    final activeQuery = (_activeSearchField == 'from'
-            ? _fromController.text
-            : _toController.text)
-        .trim();
-    if (activeQuery.isNotEmpty) {
-      if (stations.isNotEmpty) {
-        sections.add(_SuggestionSection(items: stations));
-      }
-      return sections;
-    }
-
     final groupedStations = <String, List<Station>>{};
     final cityOrder = <String>[];
     for (final station in stations) {
