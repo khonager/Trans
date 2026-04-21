@@ -89,8 +89,7 @@ class TransportApi {
   // Cache the User-Agent
   static String? _userAgent;
   static DateTime? _v6StationsCooldownUntil;
-  static const Duration _syntheticStopDeparturesCacheTtl =
-      Duration(minutes: 2);
+  static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
@@ -488,15 +487,7 @@ class TransportApi {
 
     final response = await _fetch(_getMotisUri('/api/v5/plan', params));
     final data = json.decode(response.body);
-
-    final itineraries = data['itineraries'] as List? ?? [];
-
-    // Convert MOTIS itineraries to v6.db journey format and tag source
-    return itineraries.map<Map<String, dynamic>>((it) {
-      final j = journeyFromMotisItinerary(it as Map<String, dynamic>);
-      j['source'] = 'motis';
-      return j;
-    }).toList();
+    return decodeMotisPlanJourneys(data);
   }
 
   // ============================================================
@@ -1166,6 +1157,34 @@ class TransportApi {
     return data is Map<String, dynamic> ? data : null;
   }
 
+  /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
+  ///
+  /// Transitous data quality can vary by provider/country; this parser is
+  /// intentionally defensive so one malformed itinerary does not discard all
+  /// other valid results.
+  @visibleForTesting
+  static List<Map<String, dynamic>> decodeMotisPlanJourneys(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Unsupported MOTIS plan response');
+    }
+
+    final rawItineraries = data['itineraries'];
+    if (rawItineraries is! List) return const <Map<String, dynamic>>[];
+
+    final journeys = <Map<String, dynamic>>[];
+    for (final raw in rawItineraries) {
+      if (raw is! Map) continue;
+      try {
+        final journey = journeyFromMotisItinerary(raw.cast<String, dynamic>());
+        journey['source'] = 'motis';
+        journeys.add(journey);
+      } catch (error) {
+        debugPrint('Skipping malformed MOTIS itinerary: $error');
+      }
+    }
+    return journeys;
+  }
+
   /// Builds the MOTIS URI for `/api/v5/map/trips` with the required query
   /// parameters.  Exposed for unit-testing of parameter serialisation.
   @visibleForTesting
@@ -1341,10 +1360,11 @@ class TransportApi {
     return text;
   }
 
-  static List<Map<String, dynamic>> _copyLegList(List? rawLegs) => rawLegs
-      ?.whereType<Map>()
-      .map((leg) => Map<String, dynamic>.from(leg))
-      .toList() ??
+  static List<Map<String, dynamic>> _copyLegList(List? rawLegs) =>
+      rawLegs
+          ?.whereType<Map>()
+          .map((leg) => Map<String, dynamic>.from(leg))
+          .toList() ??
       const <Map<String, dynamic>>[];
 
   static double? _locationLat(Map<String, dynamic>? location) {
@@ -1376,8 +1396,9 @@ class TransportApi {
         rideIndices.add(index);
       }
     }
-    final rideLegs =
-        rideIndices.map((index) => mappedRawLegs[index]).toList(growable: false);
+    final rideLegs = rideIndices
+        .map((index) => mappedRawLegs[index])
+        .toList(growable: false);
     if (rideLegs.length < 2) return null;
 
     final firstRide = rideLegs.first;
@@ -1403,7 +1424,8 @@ class TransportApi {
     final transferStopId = _stringOrNull(transfer['id']) ?? '';
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
-    final secondLineKey = _normalizeTransitKey(_journeyLegLineName(transferRide));
+    final secondLineKey =
+        _normalizeTransitKey(_journeyLegLineName(transferRide));
     final secondDirectionKey = _normalizeTransitKey(transferRide['direction']);
     final secondDestinationStopId =
         _stringOrNull(secondDestination?['id']) ?? '';
@@ -1416,7 +1438,8 @@ class TransportApi {
     final supportsSharedFamilyExpansion = rideLegs.length == 2 &&
         secondLineKey.isNotEmpty &&
         secondDirectionKey.isNotEmpty &&
-        (secondDestinationStopId.isNotEmpty || secondDestinationStopName.isNotEmpty) &&
+        (secondDestinationStopId.isNotEmpty ||
+            secondDestinationStopName.isNotEmpty) &&
         trailingLegs.every((leg) => leg['line'] == null);
 
     return _SyntheticSeed(
@@ -1560,7 +1583,8 @@ class TransportApi {
     String stopId,
     String stopName,
   ) {
-    final placeId = _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
+    final placeId =
+        _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
     if (stopId.isNotEmpty && placeId == stopId) return true;
 
     if (stopName.isEmpty) return false;
@@ -1576,7 +1600,8 @@ class TransportApi {
   ) {
     for (var index = 0; index < sequence.length; index++) {
       final place =
-          (sequence[index]['place'] as Map?)?.cast<String, dynamic>() ?? const {};
+          (sequence[index]['place'] as Map?)?.cast<String, dynamic>() ??
+              const {};
       if (_tripPlaceMatchesTarget(place, stopId, stopName)) return index;
     }
     return -1;
@@ -1638,7 +1663,8 @@ class TransportApi {
     _SyntheticSeed seed,
     Map<String, dynamic> tripItinerary,
     String tripId,
-  ) => _buildSyntheticRideSegment(
+  ) =>
+      _buildSyntheticRideSegment(
         templateRide: seed.firstRide,
         tripItinerary: tripItinerary,
         tripId: tripId,
@@ -1688,11 +1714,12 @@ class TransportApi {
       );
       if (departure == null || arrival == null) continue;
 
-      final line = (templateRide['line'] as Map?)?.cast<String, dynamic>() != null
-          ? Map<String, dynamic>.from(
-              (templateRide['line'] as Map).cast<String, dynamic>(),
-            )
-          : <String, dynamic>{'name': _journeyLegLineName(templateRide)};
+      final line =
+          (templateRide['line'] as Map?)?.cast<String, dynamic>() != null
+              ? Map<String, dynamic>.from(
+                  (templateRide['line'] as Map).cast<String, dynamic>(),
+                )
+              : <String, dynamic>{'name': _journeyLegLineName(templateRide)};
       if (tripId.isNotEmpty) {
         line['tripId'] = tripId;
       }
@@ -1711,16 +1738,14 @@ class TransportApi {
         'destination': _journeyLocationFromTripPlace(transferPlace),
         'departure': departure,
         'arrival': arrival,
-        'plannedDeparture':
-            originStop['scheduledDeparture'] ??
-                originStop['departure'] ??
-                originStop['scheduledArrival'] ??
-                originStop['arrival'],
-        'plannedArrival':
-            transferStop['scheduledArrival'] ??
-                transferStop['arrival'] ??
-                transferStop['scheduledDeparture'] ??
-                transferStop['departure'],
+        'plannedDeparture': originStop['scheduledDeparture'] ??
+            originStop['departure'] ??
+            originStop['scheduledArrival'] ??
+            originStop['arrival'],
+        'plannedArrival': transferStop['scheduledArrival'] ??
+            transferStop['arrival'] ??
+            transferStop['scheduledDeparture'] ??
+            transferStop['departure'],
         'departureDelay': _delaySecondsFromStrings(
           (originStop['scheduledDeparture'] ?? originStop['scheduledArrival'])
               ?.toString(),
@@ -1735,8 +1760,10 @@ class TransportApi {
         'reachable': true,
         'line': line,
         'direction': templateRide['direction'],
-        if (intermediateStopovers.isNotEmpty) 'stopovers': intermediateStopovers,
-        if (templateRide['polyline'] != null) 'polyline': templateRide['polyline'],
+        if (intermediateStopovers.isNotEmpty)
+          'stopovers': intermediateStopovers,
+        if (templateRide['polyline'] != null)
+          'polyline': templateRide['polyline'],
         if (templateRide['decodedPath'] != null)
           'decodedPath': templateRide['decodedPath'],
         'tripId': tripId,
@@ -1770,23 +1797,20 @@ class TransportApi {
 
     final rawStopovers = shifted['stopovers'] as List?;
     if (rawStopovers != null) {
-      shifted['stopovers'] = rawStopovers
-          .whereType<Map>()
-          .map((stopover) {
-            final mapped = Map<String, dynamic>.from(stopover);
-            for (final key in const [
-              'arrival',
-              'departure',
-              'plannedArrival',
-              'plannedDeparture',
-            ]) {
-              if (mapped.containsKey(key)) {
-                mapped[key] = _shiftIsoTimeString(mapped[key], delta);
-              }
-            }
-            return mapped;
-          })
-          .toList();
+      shifted['stopovers'] = rawStopovers.whereType<Map>().map((stopover) {
+        final mapped = Map<String, dynamic>.from(stopover);
+        for (final key in const [
+          'arrival',
+          'departure',
+          'plannedArrival',
+          'plannedDeparture',
+        ]) {
+          if (mapped.containsKey(key)) {
+            mapped[key] = _shiftIsoTimeString(mapped[key], delta);
+          }
+        }
+        return mapped;
+      }).toList();
     }
 
     return shifted;
@@ -1860,10 +1884,9 @@ class TransportApi {
     Map<String, dynamic> a,
     Map<String, dynamic> b,
   ) {
-    final sourceScore =
-        _journeySyntheticPreferenceScore(a).compareTo(
-          _journeySyntheticPreferenceScore(b),
-        );
+    final sourceScore = _journeySyntheticPreferenceScore(a).compareTo(
+      _journeySyntheticPreferenceScore(b),
+    );
     if (sourceScore != 0) return sourceScore;
 
     final arrivalA = _parseJourneyTimeLocal(
@@ -2022,7 +2045,8 @@ class TransportApi {
           (onwardLegs.isNotEmpty
               ? onwardLegs.last['arrival'] ?? onwardLegs.last['plannedArrival']
               : null),
-      'plannedDeparture': firstRide['plannedDeparture'] ?? firstRide['departure'],
+      'plannedDeparture':
+          firstRide['plannedDeparture'] ?? firstRide['departure'],
       'plannedArrival': onwardJourney['plannedArrival'] ??
           onwardJourney['arrival'] ??
           (onwardLegs.isNotEmpty
@@ -2051,8 +2075,7 @@ class TransportApi {
           lastLeg['plannedArrival'] ??
           lastLeg['departure'] ??
           lastLeg['plannedDeparture'],
-      'plannedDeparture':
-          firstLeg['plannedDeparture'] ?? firstLeg['departure'],
+      'plannedDeparture': firstLeg['plannedDeparture'] ?? firstLeg['departure'],
       'plannedArrival': lastLeg['plannedArrival'] ??
           lastLeg['arrival'] ??
           lastLeg['plannedDeparture'] ??
@@ -2250,7 +2273,8 @@ class TransportApi {
       }
     }
 
-    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+    if ((shouldContinue?.call() ?? true) &&
+        synthetic.length > lastProgressCount) {
       onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
@@ -2495,7 +2519,8 @@ class TransportApi {
       }
     }
 
-    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+    if ((shouldContinue?.call() ?? true) &&
+        synthetic.length > lastProgressCount) {
       onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
@@ -2529,8 +2554,7 @@ class TransportApi {
       if (journey['source'] == 'motis') {
         motisJourneys++;
         final rawLegs = journey['legs'] as List?;
-        final rideCount =
-            rawLegs
+        final rideCount = rawLegs
                 ?.whereType<Map>()
                 .where((leg) => leg['line'] != null)
                 .length ??

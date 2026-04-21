@@ -355,10 +355,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() => _currentPosition = pos);
 
       if (!widget.isGhostMode) {
-        SupabaseService.updateLocation(pos);
+        try {
+          SupabaseService.updateLocation(pos);
+        } catch (e) {
+          debugPrint("Location Sync Error (Ignored): $e");
+        }
       }
     } catch (e) {
-      debugPrint("Location Error (Ignored): $e");
+      debugPrint("Geolocation Error (Ignored): $e");
     }
   }
 

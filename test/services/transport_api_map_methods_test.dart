@@ -181,4 +181,43 @@ void main() {
       expect(TransportApi.decodeJsonMap('null'), isNull);
     });
   });
+
+  group('TransportApi.decodeMotisPlanJourneys', () {
+    test('returns empty list for valid plan response with no itineraries', () {
+      final result = TransportApi.decodeMotisPlanJourneys({
+        'requestParameters': {},
+        'itineraries': [],
+        'previousPageCursor': 'EARLIER|1',
+        'nextPageCursor': 'LATER|1',
+      });
+      expect(result, isEmpty);
+    });
+
+    test(
+        'keeps valid itineraries when response also contains malformed entries',
+        () {
+      final result = TransportApi.decodeMotisPlanJourneys({
+        'itineraries': [
+          {'legs': 'not-a-list'},
+          {
+            'startTime': '2026-04-21T08:00:00Z',
+            'endTime': '2026-04-21T09:00:00Z',
+            'legs': [
+              {
+                'mode': 'WALK',
+                'from': {'name': 'A', 'lat': 1.0, 'lon': 2.0},
+                'to': {'name': 'B', 'lat': 1.1, 'lon': 2.1},
+                'startTime': '2026-04-21T08:00:00Z',
+                'endTime': '2026-04-21T08:05:00Z',
+              }
+            ],
+          },
+          'bad-itinerary',
+        ],
+      });
+
+      expect(result.length, 1);
+      expect(result.every((journey) => journey['source'] == 'motis'), isTrue);
+    });
+  });
 }
