@@ -1391,10 +1391,27 @@ class _SettingsTabState extends State<SettingsTab> {
         : 'Continue in your browser to finish signing in.';
   }
 
+  bool get _supportsAppleSignIn {
+    if (kIsWeb) return false;
+
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.iOS => true,
+      TargetPlatform.macOS => true,
+      _ => false,
+    };
+  }
+
   Future<void> _startGoogleSignIn() async {
     await _startOAuthSignIn(
       action: SupabaseService.signInWithGoogle,
       source: 'sign in with google',
+    );
+  }
+
+  Future<void> _startAppleSignIn() async {
+    await _startOAuthSignIn(
+      action: SupabaseService.signInWithApple,
+      source: 'sign in with apple',
     );
   }
 
@@ -2833,6 +2850,13 @@ class _SettingsTabState extends State<SettingsTab> {
               onPressed: _isAuthSubmitting ? null : _startGoogleSignIn,
               child: _buildGoogleSignInLabel(colors),
             ),
+            if (_supportsAppleSignIn) ...[
+              const SizedBox(height: 10),
+              OutlinedButton(
+                onPressed: _isAuthSubmitting ? null : _startAppleSignIn,
+                child: _buildAppleSignInLabel(colors),
+              ),
+            ],
             const SizedBox(height: 10),
             OutlinedButton(
               onPressed: _isAuthSubmitting ? null : _startPortfolioSignIn,
@@ -2897,6 +2921,21 @@ class _SettingsTabState extends State<SettingsTab> {
               fontWeight: FontWeight.w700,
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildAppleSignInLabel(TransColors colors) {
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.apple, color: colors.textPrimary),
+        const SizedBox(width: 8),
+        Text(
+          isGerman ? 'Mit Apple fortfahren' : 'Continue with Apple',
+          style: TextStyle(color: colors.textPrimary),
+        ),
       ],
     );
   }
