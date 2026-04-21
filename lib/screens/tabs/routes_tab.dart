@@ -901,13 +901,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   // --- SEARCH LOGIC ---
-  Future<void> _fetchSuggestions({bool forceHistory = false}) async {
+  Future<void> _fetchSuggestions({
+    bool forceHistory = false,
+    bool updateLoadingState = true,
+  }) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
-      if (mounted) setState(() => _suggestions = history);
+      if (mounted) {
+        setState(() {
+          _suggestions = history;
+          if (updateLoadingState) _isSuggestionsLoading = false;
+        });
+      }
       return;
     }
-    setState(() => _isSuggestionsLoading = true);
+    if (updateLoadingState) {
+      setState(() => _isSuggestionsLoading = true);
+    }
     List<dynamic> results = [];
     final query = (_activeSearchField == 'from'
             ? _fromController.text
@@ -931,7 +941,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _suggestions = results;
-        _isSuggestionsLoading = false;
+        if (updateLoadingState) _isSuggestionsLoading = false;
       });
     }
   }
@@ -1014,6 +1024,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       sections.add(_SuggestionSection(items: favorites));
     }
 
+    final activeQuery = (_activeSearchField == 'from'
+            ? _fromController.text
+            : _toController.text)
+        .trim();
+    if (activeQuery.isNotEmpty) {
+      if (stations.isNotEmpty) {
+        sections.add(_SuggestionSection(items: stations));
+      }
+      return sections;
+    }
+
     final groupedStations = <String, List<Station>>{};
     final cityOrder = <String>[];
     for (final station in stations) {
@@ -1076,21 +1097,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
     setState(() => _activeSearchField = field);
-    _fetchSuggestions();
     if (sanitizedQuery.isEmpty) {
       _suggestionRequestToken++;
+      _fetchSuggestions(forceHistory: true, updateLoadingState: false);
       if (field == 'from') {
         setState(() {
           _fromStation = null;
           _fromUsesCurrentLocation = true;
-          _suggestions = [];
           _isSuggestionsLoading = false;
         });
         return;
       } else if (field == 'to') {
         setState(() {
           _toStation = null;
-          _suggestions = [];
           _isSuggestionsLoading = false;
         });
         return;
@@ -1146,38 +1165,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
                     duration: const Duration(seconds: 2)));
               }
-              final mergedSuggestions = List<dynamic>.from(_suggestions);
-              for (var s in apiResults) {
-                bool exists = mergedSuggestions.any((existing) {
-                  if (existing is Station) return existing.id == s.id;
-                  if (existing is Favorite) return existing.station?.id == s.id;
-                  return false;
-                });
-                if (!exists) mergedSuggestions.add(s);
-              }
-
-              // Sort suggestions. First by whether it matches the query (already handled by API returning good matches),
-              // then by distance if the names are identical.
-              mergedSuggestions.sort((a, b) {
-                if (a is Station && b is Station) {
-                  if (a.name == b.name &&
-                      refLat != null &&
-                      refLng != null &&
-                      a.latitude != null &&
-                      a.longitude != null &&
-                      b.latitude != null &&
-                      b.longitude != null) {
-                    double distA = Geolocator.distanceBetween(
-                        refLat, refLng, a.latitude!, a.longitude!);
-                    double distB = Geolocator.distanceBetween(
-                        refLat, refLng, b.latitude!, b.longitude!);
-                    return distA.compareTo(distB);
-                  }
-                }
-                return 0; // Keep original order otherwise
-              });
-
-              _suggestions = mergedSuggestions;
+              _suggestions = apiResults;
               _isSuggestionsLoading = false;
             });
           }
@@ -4293,9 +4281,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             clipBehavior: Clip.hardEdge,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (_isSuggestionsLoading)
-                const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: LinearProgressIndicator(minHeight: 2)),
+                const SizedBox.shrink(),
               Flexible(
                   child: ListView.builder(
                       shrinkWrap: true,

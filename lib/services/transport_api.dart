@@ -561,12 +561,9 @@ class TransportApi {
       return rankedMotis;
     }
 
-    if (!_shouldAugmentStationResultsWithV6(
-      rankedMotis,
-      query,
-      lat: lat,
-      lng: lng,
-    )) {
+    // In auto mode, Transitous is the primary source.
+    // Only fall back to v6 when Transitous returns no station results.
+    if (rankedMotis.isNotEmpty) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
         const Duration(hours: 1),
@@ -579,51 +576,9 @@ class TransportApi {
       lat: lat,
       lng: lng,
     );
-    if (v6Results.isEmpty) {
-      _stationCache[cacheKey] = _CacheEntry(
-        rankedMotis,
-        const Duration(hours: 1),
-      );
-      return rankedMotis;
-    }
-
-    final merged = _mergeStations(rankedMotis, v6Results);
-    final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
+    final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
-  }
-
-  static List<Station> _mergeStations(
-    List<Station> primary,
-    List<Station> secondary,
-  ) {
-    final merged = <Station>[];
-    final seen = <String>{};
-
-    void addStation(Station station) {
-      final key = _stationDedupKey(station);
-      if (seen.add(key)) {
-        merged.add(station);
-      }
-    }
-
-    for (final station in primary) {
-      addStation(station);
-    }
-    for (final station in secondary) {
-      addStation(station);
-    }
-
-    return merged;
-  }
-
-  static String _stationDedupKey(Station station) {
-    final id = station.id.trim();
-    if (id.isNotEmpty) return id;
-
-    final lat = station.latitude?.toStringAsFixed(5) ?? '';
-    final lng = station.longitude?.toStringAsFixed(5) ?? '';
-    return '${station.name.trim().toLowerCase()}|$lat|$lng';
   }
 
   static Future<List<Station>> _searchStationsV6WithCooldown(
@@ -650,38 +605,6 @@ class TransportApi {
       );
       return const <Station>[];
     }
-  }
-
-  static bool _shouldAugmentStationResultsWithV6(
-    List<Station> motisResults,
-    String query, {
-    double? lat,
-    double? lng,
-  }) {
-    if (motisResults.isEmpty) return true;
-
-    final queryTokens = _searchTokens(query);
-    final topResults = motisResults.take(5).toList();
-    final transitResults =
-        topResults.where((station) => _isTransitStation(station)).toList();
-
-    if (_isAirportLikeQuery(queryTokens)) {
-      return transitResults.isEmpty ||
-          !topResults.any((station) => _looksLikeAirportStation(station));
-    }
-
-    if (transitResults.isEmpty) return true;
-    if (motisResults.length < 5) return true;
-
-    final hasLocationBias = lat != null && lng != null;
-    final isSingleTokenQuery = queryTokens.length == 1;
-    if (!hasLocationBias &&
-        isSingleTokenQuery &&
-        !_looksLikeTransitHubStation(topResults.first)) {
-      return true;
-    }
-
-    return false;
   }
 
   @visibleForTesting
@@ -851,23 +774,6 @@ class TransportApi {
     );
   }
 
-  static bool _looksLikeAirportStation(Station station) {
-    final normalizedName = _normalizeSearchText(station.name);
-    final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(
-      _normalizeSearchText(
-        [
-          station.city,
-          station.region,
-          station.country,
-          station.category,
-          station.type,
-        ].whereType<String>().join(' '),
-      ),
-    );
-    return _looksLikeAirport(nameTokens, metadataTokens);
-  }
-
   static bool _looksLikeTransitHub(
     String normalizedName,
     List<String> nameTokens,
@@ -894,15 +800,6 @@ class TransportApi {
 
     return nameTokens.any(hubTokens.contains);
   }
-
-  static bool _looksLikeTransitHubStation(Station station) =>
-      _looksLikeTransitHub(
-        _normalizeSearchText(station.name),
-        _splitSearchTokens(_normalizeSearchText(station.name)),
-      );
-
-  static bool _isTransitStation(Station station) =>
-      station.type == 'station' || station.type == 'stop';
 
   static bool _isGenericAirportLabel(String normalizedName) =>
       normalizedName == 'airport' || normalizedName == 'flughafen';
