@@ -144,6 +144,28 @@ void main() {
     });
   });
 
+  group('TransportApi.buildMotisPlanUri', () {
+    test('targets the correct MOTIS plan endpoint path', () {
+      final uri = TransportApi.buildMotisPlanUri({
+        'fromPlace': '1,2',
+        'toPlace': '3,4',
+      });
+      expect(uri.path, '/api/v5/plan');
+    });
+
+    test('supports pre/post transit walk time override parameters', () {
+      final uri = TransportApi.buildMotisPlanUri({
+        'fromPlace': '1,2',
+        'toPlace': '3,4',
+        'maxPreTransitTime': '3600',
+        'maxPostTransitTime': '3600',
+      });
+      final params = uri.queryParameters;
+      expect(params['maxPreTransitTime'], '3600');
+      expect(params['maxPostTransitTime'], '3600');
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // decodeJsonMap – JSON shape handling
   // ---------------------------------------------------------------------------

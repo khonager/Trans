@@ -946,6 +946,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  bool _favoriteMatchesQuery(Favorite favorite, String queryLower) {
+    final label = favorite.label.toLowerCase();
+    final stationName = favorite.station?.name.toLowerCase() ?? '';
+    return label.contains(queryLower) || stationName.contains(queryLower);
+  }
+
   ({double? lat, double? lng}) _suggestionReferencePoint() {
     double? refLat;
     double? refLng;
@@ -1145,16 +1151,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final apiResults = await TransportApi.searchStations(sanitizedQuery,
               lat: refLat, lng: refLng);
           if (!mounted || requestToken != _suggestionRequestToken) return;
+          final queryLower = sanitizedQuery.toLowerCase();
+          final matchingFavs = _favorites
+              .where((favorite) => _favoriteMatchesQuery(favorite, queryLower))
+              .toList();
           if (mounted) {
             setState(() {
-              if (apiResults.isEmpty && _suggestions.isEmpty) {
+              if (apiResults.isEmpty && matchingFavs.isEmpty) {
                 // Show message if no results at all
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content:
                         Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
                     duration: const Duration(seconds: 2)));
               }
-              _suggestions = apiResults;
+              _suggestions = <dynamic>[
+                ...matchingFavs,
+                ...apiResults,
+              ];
               _isSuggestionsLoading = false;
             });
           }
@@ -4269,8 +4282,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             borderRadius: BorderRadius.circular(16),
             clipBehavior: Clip.hardEdge,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              if (_isSuggestionsLoading)
-                const SizedBox.shrink(),
+              if (_isSuggestionsLoading) const SizedBox.shrink(),
               Flexible(
                   child: ListView.builder(
                       shrinkWrap: true,

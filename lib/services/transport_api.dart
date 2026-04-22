@@ -104,6 +104,10 @@ class TransportApi {
     'RJX',
     'WESTBAHN',
   ];
+  // Transitous defaults first/last street legs to 15 minutes (900s).
+  // Use 60 minutes so routes requiring longer access/egress walks are found.
+  static const int _motisMaxPreTransitTimeSeconds = 3600;
+  static const int _motisMaxPostTransitTimeSeconds = 3600;
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -444,6 +448,8 @@ class TransportApi {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
       'showIntermediateStops': 'true',
+      'maxPreTransitTime': _motisMaxPreTransitTimeSeconds.toString(),
+      'maxPostTransitTime': _motisMaxPostTransitTimeSeconds.toString(),
     };
 
     // FROM: Use coordinates if ID is GPS, location, address, empty, or a v6.db numeric ID
@@ -485,7 +491,7 @@ class TransportApi {
           'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS,WALK';
     }
 
-    final response = await _fetch(_getMotisUri('/api/v5/plan', params));
+    final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
     return decodeMotisPlanJourneys(data);
   }
@@ -1053,6 +1059,13 @@ class TransportApi {
     final data = json.decode(body);
     return data is Map<String, dynamic> ? data : null;
   }
+
+  @visibleForTesting
+  static Uri buildMotisPlanUri(Map<String, dynamic> params) =>
+      _getMotisPlanUri(params);
+
+  static Uri _getMotisPlanUri(Map<String, dynamic> params) =>
+      _getMotisUri('/api/v5/plan', params);
 
   /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
   ///
