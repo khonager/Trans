@@ -209,6 +209,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FocusNode _fromFocusNode = FocusNode();
   final FocusNode _toFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _suggestionsScrollController = ScrollController();
 
   Station? _fromStation;
   Station? _toStation;
@@ -449,6 +450,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.dispose();
     _toFocusNode.dispose();
     _scrollController.dispose();
+    _suggestionsScrollController.dispose();
     _debounce?.cancel();
     _focusDebounce?.cancel();
     _gpsStream?.cancel();
@@ -521,6 +523,28 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             curve: Curves.easeInOut);
       }
     });
+  }
+
+  void _scrollSuggestionsToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_suggestionsScrollController.hasClients) {
+        _suggestionsScrollController.jumpTo(0.0);
+      }
+    });
+  }
+
+  IconData _favoriteIcon(Favorite favorite) {
+    if (favorite.iconCode != null) {
+      return kAvailableIcons.firstWhere(
+        (icon) => icon.codePoint == favorite.iconCode,
+        orElse: () => Icons.star,
+      );
+    }
+
+    final lowerLabel = favorite.label.toLowerCase();
+    if (lowerLabel == 'home') return Icons.home;
+    if (lowerLabel == 'work') return Icons.work;
+    return Icons.star;
   }
 
   Future<void> _loadFavorites() async {
@@ -1092,6 +1116,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
     setState(() => _activeSearchField = field);
+    _scrollToTop();
+    _scrollSuggestionsToTop();
     if (sanitizedQuery.isEmpty) {
       _suggestionRequestToken++;
       _fetchSuggestions(forceHistory: true, updateLoadingState: false);
@@ -3753,17 +3779,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                         ]));
                               }
                               final fav = _favorites[idx];
-                              IconData icon = Icons.star;
-                              if (fav.label.toLowerCase() == 'home') {
-                                icon = Icons.home;
-                              } else if (fav.label.toLowerCase() == 'work') {
-                                icon = Icons.work;
-                              }
-                              if (fav.iconCode != null) {
-                                icon = kAvailableIcons.firstWhere(
-                                    (i) => i.codePoint == fav.iconCode,
-                                    orElse: () => Icons.star);
-                              }
+                              final icon = _favoriteIcon(fav);
                               return GestureDetector(
                                   onTap: () => _onFavoriteTap(fav),
                                   onLongPress: () =>
@@ -4285,6 +4301,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               if (_isSuggestionsLoading) const SizedBox.shrink(),
               Flexible(
                   child: ListView.builder(
+                      controller: _suggestionsScrollController,
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       itemCount: sections.length,
@@ -4315,7 +4332,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               Widget tile;
                               if (item is Favorite) {
                                 tile = ListTile(
-                                  leading: const Icon(Icons.star,
+                                  leading: Icon(_favoriteIcon(item),
                                       size: 16, color: Colors.orange),
                                   title: Text(item.label,
                                       style: TextStyle(
