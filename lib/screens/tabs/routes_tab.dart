@@ -506,6 +506,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (!mounted) return;
     final bottomInset = View.of(context).viewInsets.bottom;
     final isVisible = bottomInset > 0;
+    if (!_wasKeyboardVisible &&
+        isVisible &&
+        _activeTabId == null &&
+        _activeSearchField.isNotEmpty) {
+      _scrollToTop();
+    }
     if (_wasKeyboardVisible && !isVisible) {
       // Keyboard JUST closed
       if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
@@ -5605,174 +5611,185 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
     final colors = TransColors.of(context);
+    final media = MediaQuery.of(context);
+    final topInset = max(12.0, media.padding.top + 8);
+    final availableHeight =
+        media.size.height - media.viewInsets.bottom - topInset - 12;
+    final dialogMaxHeight = max(260.0, availableHeight);
     return Dialog(
+      alignment: Alignment.topCenter,
+      insetPadding: EdgeInsets.fromLTRB(16, topInset, 16, 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       backgroundColor: colors.cardBg,
-      child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                  isNew
-                      ? AppLocalizations.of(context)!.addFavorite
-                      : AppLocalizations.of(context)!.editFavorite,
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: colors.textPrimary)),
-              const SizedBox(height: 20),
-              TextField(
-                  controller: _labelCtrl,
-                  decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context)!.favoriteLabelHint)),
-              const SizedBox(height: 10),
-              SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                      children: kAvailableIcons.map((icon) {
-                    final isSelected = _selectedIconCode == icon.codePoint;
-                    return GestureDetector(
-                        onTap: () =>
-                            setState(() => _selectedIconCode = icon.codePoint),
-                        child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                                color: isSelected
-                                    ? colors.navBarSelected
-                                    : colors.chipBg,
-                                shape: BoxShape.circle),
-                            child: Icon(icon,
-                                size: 20,
-                                color:
-                                    isSelected ? Colors.white : Colors.grey)));
-                  }).toList())),
-              const SizedBox(height: 10),
-              if (_selectedStation != null)
-                ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.train, color: Colors.indigo),
-                    title: Text(_selectedStation!.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() {
-                              _selectedStation = null;
-                              _searchCtrl.clear();
-                              _suggestions = [];
-                            })))
-              else ...[
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 400, maxHeight: dialogMaxHeight),
+        child: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    isNew
+                        ? AppLocalizations.of(context)!.addFavorite
+                        : AppLocalizations.of(context)!.editFavorite,
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary)),
+                const SizedBox(height: 20),
                 TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context)!.searchStationName,
-                      prefixIcon: const Icon(Icons.search),
-                      suffix: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: _isLoading
-                              ? const CircularProgressIndicator(strokeWidth: 2)
-                              : null)),
-                  onChanged: (val) {
-                    final sanitizedQuery = val.trim();
-                    if (_debounce?.isActive ?? false) _debounce!.cancel();
-                    if (sanitizedQuery.isEmpty) {
-                      _searchRequestToken++;
-                      if (mounted) setState(() => _suggestions = []);
-                      return;
-                    }
-                    final requestToken = ++_searchRequestToken;
-                    _debounce =
-                        Timer(const Duration(milliseconds: 400), () async {
-                      if (!mounted) return;
-                      setState(() => _isLoading = true);
-                      try {
-                        final res = await TransportApi.searchStations(
-                          sanitizedQuery,
-                        ).timeout(const Duration(seconds: 10));
-                        if (requestToken != _searchRequestToken) return;
-                        if (mounted) {
-                          setState(() {
-                            _suggestions = res;
-                            _isLoading = false;
-                          });
+                    controller: _labelCtrl,
+                    decoration: InputDecoration(
+                        labelText:
+                            AppLocalizations.of(context)!.favoriteLabelHint)),
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                        children: kAvailableIcons.map((icon) {
+                      final isSelected = _selectedIconCode == icon.codePoint;
+                      return GestureDetector(
+                          onTap: () => setState(
+                              () => _selectedIconCode = icon.codePoint),
+                          child: Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? colors.navBarSelected
+                                      : colors.chipBg,
+                                  shape: BoxShape.circle),
+                              child: Icon(icon,
+                                  size: 20,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.grey)));
+                    }).toList())),
+                const SizedBox(height: 10),
+                if (_selectedStation != null)
+                  ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.train, color: Colors.indigo),
+                      title: Text(_selectedStation!.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                                _selectedStation = null;
+                                _searchCtrl.clear();
+                                _suggestions = [];
+                              })))
+                else ...[
+                  TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(
+                        labelText:
+                            AppLocalizations.of(context)!.searchStationName,
+                        prefixIcon: const Icon(Icons.search),
+                        suffix: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: _isLoading
+                                ? const CircularProgressIndicator(
+                                    strokeWidth: 2)
+                                : null)),
+                    onChanged: (val) {
+                      final sanitizedQuery = val.trim();
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      if (sanitizedQuery.isEmpty) {
+                        _searchRequestToken++;
+                        if (mounted) setState(() => _suggestions = []);
+                        return;
+                      }
+                      final requestToken = ++_searchRequestToken;
+                      _debounce =
+                          Timer(const Duration(milliseconds: 400), () async {
+                        if (!mounted) return;
+                        setState(() => _isLoading = true);
+                        try {
+                          final res = await TransportApi.searchStations(
+                            sanitizedQuery,
+                          ).timeout(const Duration(seconds: 10));
+                          if (requestToken != _searchRequestToken) return;
+                          if (mounted) {
+                            setState(() {
+                              _suggestions = res;
+                              _isLoading = false;
+                            });
+                          }
+                        } catch (e) {
+                          if (requestToken != _searchRequestToken) return;
+                          if (mounted) setState(() => _isLoading = false);
                         }
-                      } catch (e) {
-                        if (requestToken != _searchRequestToken) return;
-                        if (mounted) setState(() => _isLoading = false);
-                      }
-                    });
-                  },
-                ),
-                if (_suggestions.isNotEmpty)
-                  Container(
-                      height: 150,
-                      margin: const EdgeInsets.only(top: 8),
-                      decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white10),
-                          borderRadius: BorderRadius.circular(8)),
-                      child: ListView.builder(
-                          itemCount: _suggestions.length,
-                          itemBuilder: (context, idx) {
-                            final s = _suggestions[idx];
-                            return ListTile(
-                                dense: true,
-                                title: Text(s.name),
-                                onTap: () {
-                                  if (!mounted) return;
-                                  setState(() {
-                                    _selectedStation = s;
-                                    _suggestions = [];
-                                    if (_labelCtrl.text.isEmpty) {
-                                      _labelCtrl.text = s.name;
-                                    }
-                                  });
-                                });
-                          }))
-              ],
-              const SizedBox(height: 20),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                if (!isNew &&
-                    widget.favorite.id != 'home' &&
-                    widget.favorite.id != 'work')
-                  TextButton(
-                      onPressed: () async {
-                        await FavoritesManager.deleteFavorite(
-                            widget.favorite.id);
-                        if (context.mounted) Navigator.pop(context, true);
-                      },
-                      child: Text(AppLocalizations.of(context)!.delete,
-                          style: TextStyle(color: Colors.red))),
-                const SizedBox(width: 8),
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text(AppLocalizations.of(context)!.cancel)),
-                ElevatedButton(
-                    onPressed: () async {
-                      if (_labelCtrl.text.isNotEmpty) {
-                        final newFav = Favorite(
-                            id: isNew
-                                ? DateTime.now()
-                                    .millisecondsSinceEpoch
-                                    .toString()
-                                : widget.favorite.id,
-                            label: _labelCtrl.text,
-                            type: kSupportedFavoriteType,
-                            station: _selectedStation,
-                            iconCode: _selectedIconCode);
-                        await FavoritesManager.saveFavorite(newFav);
-                        if (context.mounted) Navigator.pop(context, true);
-                      }
+                      });
                     },
-                    child: Text(AppLocalizations.of(context)!.save))
-              ])
-            ],
+                  ),
+                  if (_suggestions.isNotEmpty)
+                    Container(
+                        height: 150,
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white10),
+                            borderRadius: BorderRadius.circular(8)),
+                        child: ListView.builder(
+                            itemCount: _suggestions.length,
+                            itemBuilder: (context, idx) {
+                              final s = _suggestions[idx];
+                              return ListTile(
+                                  dense: true,
+                                  title: Text(s.name),
+                                  onTap: () {
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _selectedStation = s;
+                                      _suggestions = [];
+                                      if (_labelCtrl.text.isEmpty) {
+                                        _labelCtrl.text = s.name;
+                                      }
+                                    });
+                                  });
+                            }))
+                ],
+                const SizedBox(height: 20),
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  if (!isNew &&
+                      widget.favorite.id != 'home' &&
+                      widget.favorite.id != 'work')
+                    TextButton(
+                        onPressed: () async {
+                          await FavoritesManager.deleteFavorite(
+                              widget.favorite.id);
+                          if (context.mounted) Navigator.pop(context, true);
+                        },
+                        child: Text(AppLocalizations.of(context)!.delete,
+                            style: TextStyle(color: Colors.red))),
+                  const SizedBox(width: 8),
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: Text(AppLocalizations.of(context)!.cancel)),
+                  ElevatedButton(
+                      onPressed: () async {
+                        if (_labelCtrl.text.isNotEmpty) {
+                          final newFav = Favorite(
+                              id: isNew
+                                  ? DateTime.now()
+                                      .millisecondsSinceEpoch
+                                      .toString()
+                                  : widget.favorite.id,
+                              label: _labelCtrl.text,
+                              type: kSupportedFavoriteType,
+                              station: _selectedStation,
+                              iconCode: _selectedIconCode);
+                          await FavoritesManager.saveFavorite(newFav);
+                          if (context.mounted) Navigator.pop(context, true);
+                        }
+                      },
+                      child: Text(AppLocalizations.of(context)!.save))
+                ])
+              ],
+            ),
           ),
         ),
       ),
