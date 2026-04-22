@@ -954,9 +954,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             : _toController.text)
         .trim();
     if (query.isNotEmpty) {
-      final matchingFavs = _favorites
-          .where((f) => f.label.toLowerCase().contains(query.toLowerCase()))
-          .toList();
+      final matchingFavs = _matchingFavoritesForQuery(query);
       results.addAll(matchingFavs);
     }
     final history = await SearchHistoryManager.getHistory();
@@ -980,6 +978,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final label = favorite.label.toLowerCase();
     final stationName = favorite.station?.name.toLowerCase() ?? '';
     return label.contains(queryLower) || stationName.contains(queryLower);
+  }
+
+  List<Favorite> _matchingFavoritesForQuery(String query) {
+    final queryLower = query.toLowerCase();
+    return _favorites
+        .where((favorite) => _favoriteMatchesQuery(favorite, queryLower))
+        .toList();
   }
 
   ({double? lat, double? lng}) _suggestionReferencePoint() {
@@ -1149,72 +1154,72 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromUsesCurrentLocation = _isCurrentLocationText(sanitizedQuery);
       });
     }
-    setState(() => _isSuggestionsLoading = true);
+    final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+    setState(() {
+      _suggestions = matchingFavs;
+      _isSuggestionsLoading = sanitizedQuery.length > 2;
+    });
     if (_debounce?.isActive ?? false) _debounce!.cancel();
+    if (sanitizedQuery.length <= 2) {
+      return;
+    }
     final requestToken = ++_suggestionRequestToken;
     _debounce = Timer(const Duration(milliseconds: 600), () async {
-      if (sanitizedQuery.length > 2) {
-        double? refLat;
-        double? refLng;
+      double? refLat;
+      double? refLng;
 
-        if (field == 'from') {
-          if (_toStation != null &&
-              _toStation!.latitude != null &&
-              _toStation!.longitude != null) {
-            refLat = _toStation!.latitude;
-            refLng = _toStation!.longitude;
-          } else if (_effectiveCurrentPosition != null) {
-            refLat = _effectiveCurrentPosition!.latitude;
-            refLng = _effectiveCurrentPosition!.longitude;
-          }
-        } else if (field == 'to') {
-          if (_fromStation != null &&
-              _fromStation!.latitude != null &&
-              _fromStation!.longitude != null) {
-            refLat = _fromStation!.latitude;
-            refLng = _fromStation!.longitude;
-          } else if (_effectiveCurrentPosition != null) {
-            refLat = _effectiveCurrentPosition!.latitude;
-            refLng = _effectiveCurrentPosition!.longitude;
-          }
+      if (field == 'from') {
+        if (_toStation != null &&
+            _toStation!.latitude != null &&
+            _toStation!.longitude != null) {
+          refLat = _toStation!.latitude;
+          refLng = _toStation!.longitude;
+        } else if (_effectiveCurrentPosition != null) {
+          refLat = _effectiveCurrentPosition!.latitude;
+          refLng = _effectiveCurrentPosition!.longitude;
         }
+      } else if (field == 'to') {
+        if (_fromStation != null &&
+            _fromStation!.latitude != null &&
+            _fromStation!.longitude != null) {
+          refLat = _fromStation!.latitude;
+          refLng = _fromStation!.longitude;
+        } else if (_effectiveCurrentPosition != null) {
+          refLat = _effectiveCurrentPosition!.latitude;
+          refLng = _effectiveCurrentPosition!.longitude;
+        }
+      }
 
-        try {
-          final apiResults = await TransportApi.searchStations(sanitizedQuery,
-              lat: refLat, lng: refLng);
-          if (!mounted || requestToken != _suggestionRequestToken) return;
-          final queryLower = sanitizedQuery.toLowerCase();
-          final matchingFavs = _favorites
-              .where((favorite) => _favoriteMatchesQuery(favorite, queryLower))
-              .toList();
-          if (mounted) {
-            setState(() {
-              if (apiResults.isEmpty && matchingFavs.isEmpty) {
-                // Show message if no results at all
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content:
-                        Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
-                    duration: const Duration(seconds: 2)));
-              }
-              _suggestions = <dynamic>[
-                ...matchingFavs,
-                ...apiResults,
-              ];
-              _isSuggestionsLoading = false;
-            });
-          }
-        } catch (e) {
-          if (!mounted || requestToken != _suggestionRequestToken) return;
-          if (mounted) {
-            setState(() => _isSuggestionsLoading = false);
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(
-                    AppLocalizations.of(context)!.serviceBusyPleaseTryAgain),
-                duration: const Duration(seconds: 2)));
-          }
+      try {
+        final apiResults = await TransportApi.searchStations(sanitizedQuery,
+            lat: refLat, lng: refLng);
+        if (!mounted || requestToken != _suggestionRequestToken) return;
+        final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+        if (mounted) {
+          setState(() {
+            if (apiResults.isEmpty && matchingFavs.isEmpty) {
+              // Show message if no results at all
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content:
+                      Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
+                  duration: const Duration(seconds: 2)));
+            }
+            _suggestions = <dynamic>[
+              ...matchingFavs,
+              ...apiResults,
+            ];
+            _isSuggestionsLoading = false;
+          });
         }
-      } else {
-        if (mounted) setState(() => _isSuggestionsLoading = false);
+      } catch (e) {
+        if (!mounted || requestToken != _suggestionRequestToken) return;
+        if (mounted) {
+          setState(() => _isSuggestionsLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:
+                  Text(AppLocalizations.of(context)!.serviceBusyPleaseTryAgain),
+              duration: const Duration(seconds: 2)));
+        }
       }
     });
   }
