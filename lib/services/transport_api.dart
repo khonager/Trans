@@ -89,6 +89,10 @@ class TransportApi {
       'advanced_post_transit_bike_enabled';
   static const String advancedCyclingSpeedKmhPreferenceKey =
       'advanced_cycling_speed_kmh';
+  static const String advancedPedestrianSpeedKmhPreferenceKey =
+      'advanced_pedestrian_speed_kmh';
+  static const String advancedMaxWalkingTimeMinutesPreferenceKey =
+      'advanced_max_walking_time_minutes';
 
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
@@ -124,6 +128,8 @@ class TransportApi {
   static bool _advancedPostTransitWalkEnabled = true;
   static bool _advancedPostTransitBikeEnabled = false;
   static double _advancedCyclingSpeedKmh = 16.0;
+  static double _advancedPedestrianSpeedKmh = 5.0;
+  static int _advancedMaxWalkingTimeMinutes = 60;
   static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
@@ -182,6 +188,13 @@ class TransportApi {
             ) ??
             ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
         .clamp(8.0, 30.0);
+    _advancedPedestrianSpeedKmh = (prefs.getDouble(
+              advancedPedestrianSpeedKmhPreferenceKey,
+            ) ??
+            5.0)
+        .clamp(2.0, 10.0);
+    _advancedMaxWalkingTimeMinutes =
+        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 60;
     _advancedBikeToggleEnabledForDevice =
         prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
     _advancedSettingsLoaded = true;
@@ -197,6 +210,8 @@ class TransportApi {
     required bool postTransitWalkEnabled,
     required bool postTransitBikeEnabled,
     required double cyclingSpeedKmh,
+    required double pedestrianSpeedKmh,
+    required int maxWalkingTimeMinutes,
   }) {
     _advancedSettingsEnabledForDevice = enabledForDevice;
     _advancedMinTransferTimeMinutes = minTransferTimeMinutes.clamp(0, 30);
@@ -208,6 +223,8 @@ class TransportApi {
     _advancedPostTransitWalkEnabled = postTransitWalkEnabled;
     _advancedPostTransitBikeEnabled = postTransitBikeEnabled;
     _advancedCyclingSpeedKmh = cyclingSpeedKmh.clamp(8.0, 30.0);
+    _advancedPedestrianSpeedKmh = pedestrianSpeedKmh.clamp(2.0, 10.0);
+    _advancedMaxWalkingTimeMinutes = maxWalkingTimeMinutes.clamp(5, 120);
     _advancedSettingsLoaded = true;
   }
 
@@ -607,6 +624,13 @@ class TransportApi {
           (_advancedAdditionalTransferTimeMinutes * 60).toString();
       params['transferTimeFactor'] =
           _advancedTransferTimeFactor.toStringAsFixed(2);
+      final pedestrianSpeedMps =
+          (_advancedPedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
+      params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      final maxWalkingTimeSeconds =
+          (_advancedMaxWalkingTimeMinutes.clamp(5, 120) * 60);
+      params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
+      params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
 
       final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
           (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);

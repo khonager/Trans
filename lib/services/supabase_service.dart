@@ -850,6 +850,28 @@ class SupabaseService {
           );
         }
       }
+      if (settings
+          .containsKey(TransportApi.advancedPedestrianSpeedKmhPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPedestrianSpeedKmhPreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey];
+        if (raw is num) {
+          await prefs.setInt(
+            TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey,
+            raw.toInt(),
+          );
+        }
+      }
 
       final List<String> favs =
           favorites.map((f) => json.encode(f)).toList().cast<String>();

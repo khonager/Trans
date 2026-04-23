@@ -85,6 +85,8 @@ class _SettingsTabState extends State<SettingsTab> {
   static const int _defaultAdvancedMinTransferTimeMinutes = 4;
   static const int _defaultAdvancedAdditionalTransferTimeMinutes = 2;
   static const double _defaultAdvancedTransferTimeFactor = 1.3;
+  static const double _defaultAdvancedPedestrianSpeedKmh = 5.0;
+  static const int _defaultAdvancedMaxWalkingTimeMinutes = 60;
   static const double _defaultAdvancedCyclingSpeedKmh = 16.0;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
@@ -138,6 +140,8 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _advancedPreTransitBikeEnabled = false;
   bool _advancedPostTransitWalkEnabled = true;
   bool _advancedPostTransitBikeEnabled = false;
+  double _advancedPedestrianSpeedKmh = _defaultAdvancedPedestrianSpeedKmh;
+  int _advancedMaxWalkingTimeMinutes = _defaultAdvancedMaxWalkingTimeMinutes;
   double _advancedCyclingSpeedKmh = _defaultAdvancedCyclingSpeedKmh;
   Timer? _advancedUnlockTimer;
   Timer? _advancedCountdownTimer;
@@ -289,6 +293,15 @@ class _SettingsTabState extends State<SettingsTab> {
               TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
             ) ??
             (legacyBikePreference > 0.01);
+        _advancedPedestrianSpeedKmh = (prefs.getDouble(
+                  TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
+                ) ??
+                _defaultAdvancedPedestrianSpeedKmh)
+            .clamp(2.0, 10.0);
+        _advancedMaxWalkingTimeMinutes = prefs.getInt(
+              TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey,
+            ) ??
+            _defaultAdvancedMaxWalkingTimeMinutes;
         _advancedCyclingSpeedKmh = ((prefs.getDouble(
                       TransportApi.advancedCyclingSpeedKmhPreferenceKey,
                     ) ??
@@ -305,6 +318,8 @@ class _SettingsTabState extends State<SettingsTab> {
           preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
           postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
           postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+          pedestrianSpeedKmh: _advancedPedestrianSpeedKmh,
+          maxWalkingTimeMinutes: _advancedMaxWalkingTimeMinutes,
           cyclingSpeedKmh: _advancedCyclingSpeedKmh,
         );
       });
@@ -522,6 +537,14 @@ class _SettingsTabState extends State<SettingsTab> {
       TransportApi.advancedCyclingSpeedKmhPreferenceKey,
       _advancedCyclingSpeedKmh,
     );
+    await prefs.setDouble(
+      TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
+      _advancedPedestrianSpeedKmh,
+    );
+    await prefs.setInt(
+      TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey,
+      _advancedMaxWalkingTimeMinutes,
+    );
     if (!_advancedPreTransitBikeEnabled && !_advancedPostTransitBikeEnabled) {
       await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, false);
       TransportApi.setBikeToggleEnabledForDevice(false);
@@ -536,6 +559,8 @@ class _SettingsTabState extends State<SettingsTab> {
       preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
       postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
       postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+      pedestrianSpeedKmh: _advancedPedestrianSpeedKmh,
+      maxWalkingTimeMinutes: _advancedMaxWalkingTimeMinutes,
       cyclingSpeedKmh: _advancedCyclingSpeedKmh,
     );
 
@@ -555,6 +580,10 @@ class _SettingsTabState extends State<SettingsTab> {
             _advancedPostTransitWalkEnabled,
         TransportApi.advancedPostTransitBikeEnabledPreferenceKey:
             _advancedPostTransitBikeEnabled,
+        TransportApi.advancedPedestrianSpeedKmhPreferenceKey:
+            _advancedPedestrianSpeedKmh,
+        TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey:
+            _advancedMaxWalkingTimeMinutes,
         TransportApi.advancedCyclingSpeedKmhPreferenceKey:
             _advancedCyclingSpeedKmh,
       });
@@ -584,6 +613,8 @@ class _SettingsTabState extends State<SettingsTab> {
       preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
       postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
       postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+      pedestrianSpeedKmh: _advancedPedestrianSpeedKmh,
+      maxWalkingTimeMinutes: _advancedMaxWalkingTimeMinutes,
       cyclingSpeedKmh: _advancedCyclingSpeedKmh,
     );
 
@@ -3002,6 +3033,126 @@ class _SettingsTabState extends State<SettingsTab> {
                   setState(() => _advancedPostTransitBikeEnabled = value);
                   await _persistAdvancedSearchPreferences();
                 },
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman ? 'Gehgeschwindigkeit' : 'Walking speed',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Beeinflusst Fußwege und Transfers. Aktuell: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h'
+                          : 'Affects walking legs and transfers. Current: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h',
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: _advancedPedestrianSpeedKmh,
+                            min: 2,
+                            max: 10,
+                            divisions: 80,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(
+                                () => _advancedPedestrianSpeedKmh =
+                                    (value * 10).round() / 10,
+                              );
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: (_advancedPedestrianSpeedKmh -
+                                          _defaultAdvancedPedestrianSpeedKmh)
+                                      .abs() <
+                                  0.0001
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedPedestrianSpeedKmh =
+                                        _defaultAdvancedPedestrianSpeedKmh;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman
+                      ? 'Maximale Gehzeit'
+                      : 'Maximum walking time',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Begrenzt Zu-/Abweg zu Transit in Minuten (pre/post). Aktuell: $_advancedMaxWalkingTimeMinutes min'
+                          : 'Limits first/last-mile walking to transit in minutes (pre/post). Current: $_advancedMaxWalkingTimeMinutes min',
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: _advancedMaxWalkingTimeMinutes.toDouble(),
+                            min: 5,
+                            max: 120,
+                            divisions: 23,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(
+                                () => _advancedMaxWalkingTimeMinutes =
+                                    value.round(),
+                              );
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: _advancedMaxWalkingTimeMinutes ==
+                                  _defaultAdvancedMaxWalkingTimeMinutes
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedMaxWalkingTimeMinutes =
+                                        _defaultAdvancedMaxWalkingTimeMinutes;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
               Divider(color: colors.divider),
               ListTile(
