@@ -567,6 +567,8 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
   }) async {
     await _ensureAdvancedSettingsLoaded();
 
@@ -624,11 +626,14 @@ class TransportApi {
           (_advancedAdditionalTransferTimeMinutes * 60).toString();
       params['transferTimeFactor'] =
           _advancedTransferTimeFactor.toStringAsFixed(2);
-      final pedestrianSpeedMps =
-          (_advancedPedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
+      final pedestrianSpeedKmh =
+          pedestrianSpeedKmhOverride ?? _advancedPedestrianSpeedKmh;
+      final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
       params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      final maxWalkingTimeMinutes =
+          maxWalkingTimeMinutesOverride ?? _advancedMaxWalkingTimeMinutes;
       final maxWalkingTimeSeconds =
-          (_advancedMaxWalkingTimeMinutes.clamp(5, 120) * 60);
+          (maxWalkingTimeMinutes.clamp(5, 120) * 60);
       params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
       params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
 
@@ -662,6 +667,71 @@ class TransportApi {
     final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
     return decodeMotisPlanJourneys(data);
+  }
+
+  /// Retry empty MOTIS search with safer walking parameters for edge-case
+  /// combinations where high walking speed / short pre-post windows can
+  /// suppress otherwise valid itineraries.
+  static Future<List<Map<String, dynamic>>> _searchJourneysMotisWithFallback({
+    required Station from,
+    required Station to,
+    required bool nahverkehrOnly,
+    required DateTime? when,
+    required bool isArrival,
+    required int results,
+  }) async {
+    final primary = await _searchJourneysMotis(
+      from,
+      to,
+      nahverkehrOnly: nahverkehrOnly,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+    if (primary.isNotEmpty) return primary;
+
+    await _ensureAdvancedSettingsLoaded();
+    if (!_advancedSettingsEnabledForDevice) return primary;
+
+    // Some provider/network combinations are unstable in narrow speed bands.
+    // Retry using conservative, known-stable walking speeds and wider
+    // first/last-mile windows before giving up.
+    final retries = <(double speedKmh, int walkMinutes)>[
+      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+      (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
+    ];
+    final attemptedKeys = <String>{};
+
+    for (final retry in retries) {
+      final key =
+          '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
+      if (!attemptedKeys.add(key)) continue;
+
+      _syntheticLog(
+        'motis retry: empty primary, fallback pedestrianSpeed='
+        '${retry.$1.toStringAsFixed(1)}km/h '
+        'maxWalk=${retry.$2}min',
+      );
+
+      final fallback = await _searchJourneysMotis(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+        pedestrianSpeedKmhOverride: retry.$1,
+        maxWalkingTimeMinutesOverride: retry.$2,
+      );
+      _syntheticLog(
+        'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
+        'maxWalk=${retry.$2}min itineraries=${fallback.length}',
+      );
+      if (fallback.isNotEmpty) return fallback;
+    }
+
+    return primary;
   }
 
   // ============================================================
@@ -2805,9 +2875,9 @@ class TransportApi {
     if (apiMode == 'motis') {
       setPhase(loadPhaseMotis, true);
       try {
-        final res = await _searchJourneysMotis(
-          from,
-          to,
+        final res = await _searchJourneysMotisWithFallback(
+          from: from,
+          to: to,
           nahverkehrOnly: nahverkehrOnly,
           when: when,
           isArrival: isArrival,
@@ -2847,9 +2917,9 @@ class TransportApi {
     try {
       // Launch both requests in parallel
       setPhase(loadPhaseMotis, true);
-      final motisFuture = _searchJourneysMotis(
-        from,
-        to,
+      final motisFuture = _searchJourneysMotisWithFallback(
+        from: from,
+        to: to,
         nahverkehrOnly: nahverkehrOnly,
         when: when,
         isArrival: isArrival,
