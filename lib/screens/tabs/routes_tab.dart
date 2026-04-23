@@ -2875,22 +2875,35 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime? pDep, pArr;
     try {
       if (legs.isNotEmpty) {
-        final firstRideLeg = legs.cast<Map<String, dynamic>>().firstWhere(
-              (l) => l['line'] != null && l['line']['name'] != null,
-              orElse: () => legs.first as Map<String, dynamic>,
-            );
+        final normalizedLegs = legs.cast<Map<String, dynamic>>();
+        final firstLeg = normalizedLegs.first;
+        final lastLeg = normalizedLegs.last;
+        final firstRideLeg = normalizedLegs.firstWhere(
+          (l) => l['line'] != null && l['line']['name'] != null,
+          orElse: () => firstLeg,
+        );
+
+        // Use full-trip boundaries (including pre/post walk legs) whenever
+        // available. Fallback to first ride if providers omit leg-level times
+        // for non-ride access/egress legs.
         dep = DateTime.parse(
-                firstRideLeg['departure'] ?? firstRideLeg['plannedDeparture'])
-            .toLocal();
-        arr =
-            DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival'])
-                .toLocal();
+          firstLeg['departure'] ??
+              firstLeg['plannedDeparture'] ??
+              firstRideLeg['departure'] ??
+              firstRideLeg['plannedDeparture'],
+        ).toLocal();
+        arr = DateTime.parse(
+          lastLeg['arrival'] ?? lastLeg['plannedArrival'],
+        ).toLocal();
         pDep = DateTime.parse(
-                firstRideLeg['plannedDeparture'] ?? firstRideLeg['departure'])
-            .toLocal();
-        pArr =
-            DateTime.parse(legs.last['plannedArrival'] ?? legs.last['arrival'])
-                .toLocal();
+          firstLeg['plannedDeparture'] ??
+              firstLeg['departure'] ??
+              firstRideLeg['plannedDeparture'] ??
+              firstRideLeg['departure'],
+        ).toLocal();
+        pArr = DateTime.parse(
+          lastLeg['plannedArrival'] ?? lastLeg['arrival'],
+        ).toLocal();
       } else if (journeyData['departure'] != null &&
           journeyData['arrival'] != null) {
         dep = DateTime.parse(journeyData['departure']).toLocal();
@@ -6059,10 +6072,15 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   DateTime _getDepTime(Map<String, dynamic> j) {
     try {
       final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final first =
-          legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
-      return DateTime.parse(first['departure'] ?? first['plannedDeparture'])
-          .toLocal();
+      final firstLeg = legs.first;
+      final firstRide =
+          legs.firstWhere((l) => l['line'] != null, orElse: () => firstLeg);
+      return DateTime.parse(
+        firstLeg['departure'] ??
+            firstLeg['plannedDeparture'] ??
+            firstRide['departure'] ??
+            firstRide['plannedDeparture'],
+      ).toLocal();
     } catch (e) {
       return DateTime.now();
     }
