@@ -129,7 +129,7 @@ class TransportApi {
   static bool _advancedPostTransitBikeEnabled = false;
   static double _advancedCyclingSpeedKmh = 16.0;
   static double _advancedPedestrianSpeedKmh = 5.0;
-  static int _advancedMaxWalkingTimeMinutes = 60;
+  static int _advancedMaxWalkingTimeMinutes = 15;
   static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
@@ -194,7 +194,7 @@ class TransportApi {
             5.0)
         .clamp(2.0, 10.0);
     _advancedMaxWalkingTimeMinutes =
-        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 60;
+        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 15;
     _advancedBikeToggleEnabledForDevice =
         prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
     _advancedSettingsLoaded = true;

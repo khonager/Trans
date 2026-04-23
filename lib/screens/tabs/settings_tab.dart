@@ -86,7 +86,7 @@ class _SettingsTabState extends State<SettingsTab> {
   static const int _defaultAdvancedAdditionalTransferTimeMinutes = 2;
   static const double _defaultAdvancedTransferTimeFactor = 1.3;
   static const double _defaultAdvancedPedestrianSpeedKmh = 5.0;
-  static const int _defaultAdvancedMaxWalkingTimeMinutes = 60;
+  static const int _defaultAdvancedMaxWalkingTimeMinutes = 15;
   static const double _defaultAdvancedCyclingSpeedKmh = 16.0;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
