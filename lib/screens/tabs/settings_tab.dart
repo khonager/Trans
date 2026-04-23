@@ -82,6 +82,10 @@ class _SettingsTabState extends State<SettingsTab> {
   static const int _hiddenManualAlarmNotificationId = 9002;
   static const int _advancedUnlockHoldSeconds = 7;
   static const int _advancedUnlockCountdownStartSeconds = 3;
+  static const int _defaultAdvancedMinTransferTimeMinutes = 4;
+  static const int _defaultAdvancedAdditionalTransferTimeMinutes = 2;
+  static const double _defaultAdvancedTransferTimeFactor = 1.3;
+  static const double _defaultAdvancedCyclingSpeedKmh = 16.0;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -126,14 +130,15 @@ class _SettingsTabState extends State<SettingsTab> {
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
   bool _advancedSettingsEnabledForDevice = false;
-  int _advancedMinTransferTimeMinutes = 4;
-  int _advancedAdditionalTransferTimeMinutes = 2;
-  double _advancedTransferTimeFactor = 1.3;
+  int _advancedMinTransferTimeMinutes = _defaultAdvancedMinTransferTimeMinutes;
+  int _advancedAdditionalTransferTimeMinutes =
+      _defaultAdvancedAdditionalTransferTimeMinutes;
+  double _advancedTransferTimeFactor = _defaultAdvancedTransferTimeFactor;
   bool _advancedPreTransitWalkEnabled = true;
   bool _advancedPreTransitBikeEnabled = false;
   bool _advancedPostTransitWalkEnabled = true;
   bool _advancedPostTransitBikeEnabled = false;
-  double _advancedCyclingSpeedKmh = 16.0;
+  double _advancedCyclingSpeedKmh = _defaultAdvancedCyclingSpeedKmh;
   Timer? _advancedUnlockTimer;
   Timer? _advancedCountdownTimer;
   DateTime? _advancedUnlockPressStart;
@@ -2744,21 +2749,44 @@ class _SettingsTabState extends State<SettingsTab> {
                         color: colors.textSecondary,
                       ),
                     ),
-                    Slider(
-                      value: _advancedMinTransferTimeMinutes.toDouble(),
-                      min: 0,
-                      max: 20,
-                      divisions: 20,
-                      activeColor: colors.effectiveSeed,
-                      thumbColor: colors.effectiveSeed,
-                      onChanged: (value) {
-                        setState(
-                          () => _advancedMinTransferTimeMinutes = value.round(),
-                        );
-                      },
-                      onChangeEnd: (_) async {
-                        await _persistAdvancedSearchPreferences();
-                      },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: _advancedMinTransferTimeMinutes.toDouble(),
+                            min: 0,
+                            max: 20,
+                            divisions: 20,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(
+                                () =>
+                                    _advancedMinTransferTimeMinutes = value.round(),
+                              );
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: _advancedMinTransferTimeMinutes ==
+                                  _defaultAdvancedMinTransferTimeMinutes
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedMinTransferTimeMinutes =
+                                        _defaultAdvancedMinTransferTimeMinutes;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2780,22 +2808,45 @@ class _SettingsTabState extends State<SettingsTab> {
                           : 'Adds fixed extra buffer to every transfer. Higher = safer, but often slower. Current: $_advancedAdditionalTransferTimeMinutes min.',
                       style: TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
-                    Slider(
-                      value: _advancedAdditionalTransferTimeMinutes.toDouble(),
-                      min: 0,
-                      max: 15,
-                      divisions: 15,
-                      activeColor: colors.effectiveSeed,
-                      thumbColor: colors.effectiveSeed,
-                      onChanged: (value) {
-                        setState(
-                          () =>
-                              _advancedAdditionalTransferTimeMinutes = value.round(),
-                        );
-                      },
-                      onChangeEnd: (_) async {
-                        await _persistAdvancedSearchPreferences();
-                      },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value:
+                                _advancedAdditionalTransferTimeMinutes.toDouble(),
+                            min: 0,
+                            max: 15,
+                            divisions: 15,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(
+                                () => _advancedAdditionalTransferTimeMinutes =
+                                    value.round(),
+                              );
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: _advancedAdditionalTransferTimeMinutes ==
+                                  _defaultAdvancedAdditionalTransferTimeMinutes
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedAdditionalTransferTimeMinutes =
+                                        _defaultAdvancedAdditionalTransferTimeMinutes;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2815,22 +2866,46 @@ class _SettingsTabState extends State<SettingsTab> {
                           : 'Weights transfer time in route scoring. Higher = prefers fewer/looser transfers, lower = more aggressive fast options. Current: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.',
                       style: TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
-                    Slider(
-                      value: _advancedTransferTimeFactor,
-                      min: 0.7,
-                      max: 2.5,
-                      divisions: 18,
-                      activeColor: colors.effectiveSeed,
-                      thumbColor: colors.effectiveSeed,
-                      onChanged: (value) {
-                        setState(
-                          () => _advancedTransferTimeFactor =
-                              (value * 10).round() / 10,
-                        );
-                      },
-                      onChangeEnd: (_) async {
-                        await _persistAdvancedSearchPreferences();
-                      },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: _advancedTransferTimeFactor,
+                            min: 0.7,
+                            max: 2.5,
+                            divisions: 18,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(
+                                () => _advancedTransferTimeFactor =
+                                    (value * 10).round() / 10,
+                              );
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: (_advancedTransferTimeFactor -
+                                          _defaultAdvancedTransferTimeFactor)
+                                      .abs() <
+                                  0.0001
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedTransferTimeFactor =
+                                        _defaultAdvancedTransferTimeFactor;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2944,19 +3019,43 @@ class _SettingsTabState extends State<SettingsTab> {
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
-                    Slider(
-                      value: _advancedCyclingSpeedKmh,
-                      min: 8,
-                      max: 30,
-                      divisions: 22,
-                      activeColor: colors.effectiveSeed,
-                      thumbColor: colors.effectiveSeed,
-                      onChanged: (value) {
-                        setState(() => _advancedCyclingSpeedKmh = value);
-                      },
-                      onChangeEnd: (_) async {
-                        await _persistAdvancedSearchPreferences();
-                      },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Slider(
+                            value: _advancedCyclingSpeedKmh,
+                            min: 8,
+                            max: 30,
+                            divisions: 22,
+                            activeColor: colors.effectiveSeed,
+                            thumbColor: colors.effectiveSeed,
+                            onChanged: (value) {
+                              setState(() => _advancedCyclingSpeedKmh = value);
+                            },
+                            onChangeEnd: (_) async {
+                              await _persistAdvancedSearchPreferences();
+                            },
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: isGerman
+                              ? 'Auf Standard zurücksetzen'
+                              : 'Reset to default',
+                          icon: Icon(Icons.refresh, color: colors.textSecondary),
+                          onPressed: (_advancedCyclingSpeedKmh -
+                                          _defaultAdvancedCyclingSpeedKmh)
+                                      .abs() <
+                                  0.0001
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _advancedCyclingSpeedKmh =
+                                        _defaultAdvancedCyclingSpeedKmh;
+                                  });
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                        ),
+                      ],
                     ),
                   ],
                 ),
