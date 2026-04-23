@@ -80,6 +80,8 @@ class SettingsTab extends StatefulWidget {
 class _SettingsTabState extends State<SettingsTab> {
   static const String _pickCustomSoundValue = '__pick_custom_sound__';
   static const int _hiddenManualAlarmNotificationId = 9002;
+  static const int _advancedUnlockHoldSeconds = 7;
+  static const int _advancedUnlockCountdownStartSeconds = 3;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -123,11 +125,27 @@ class _SettingsTabState extends State<SettingsTab> {
   int _stopsBeforeAlarm = 1;
   String _apiMode = 'auto';
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
-// Removed _alwaysWakeMe internal state
+  bool _advancedSettingsEnabledForDevice = false;
+  int _advancedMinTransferTimeMinutes = 4;
+  int _advancedAdditionalTransferTimeMinutes = 2;
+  double _advancedTransferTimeFactor = 1.3;
+  bool _advancedPreTransitWalkEnabled = true;
+  bool _advancedPreTransitBikeEnabled = false;
+  bool _advancedPostTransitWalkEnabled = true;
+  bool _advancedPostTransitBikeEnabled = false;
+  double _advancedCyclingSpeedKmh = 16.0;
+  Timer? _advancedUnlockTimer;
+  Timer? _advancedCountdownTimer;
+  DateTime? _advancedUnlockPressStart;
+  int? _advancedUnlockCountdownSecondsLeft;
+  bool _suppressNextChangelogTap = false;
+  // Removed _alwaysWakeMe internal state
 
   @override
   void dispose() {
     _hiddenManualAlarmTimer?.cancel();
+    _advancedUnlockTimer?.cancel();
+    _advancedCountdownTimer?.cancel();
     _locationSub?.cancel();
     SupabaseService.settingsRefreshNotifier
         .removeListener(_handleSettingsRefresh);
@@ -221,7 +239,69 @@ class _SettingsTabState extends State<SettingsTab> {
         _apiMode = prefs.getString('api_mode') ?? 'auto';
         _alarmTriggerThreshold =
             prefs.getString('alarm_trigger_threshold') ?? '5%';
+        _advancedSettingsEnabledForDevice = prefs.getBool(
+              TransportApi.advancedSettingsEnabledPreferenceKey,
+            ) ??
+            false;
+        final legacyTransferComfort = (prefs.getDouble(
+                  TransportApi.advancedTransferComfortPreferenceKey,
+                ) ??
+                0.5)
+            .clamp(0.0, 1.0);
+        final legacyBikePreference = (prefs.getDouble(
+                  TransportApi.advancedBikePreferenceKey,
+                ) ??
+                0.0)
+            .clamp(0.0, 1.0);
+        _advancedMinTransferTimeMinutes =
+            prefs.getInt(TransportApi.advancedMinTransferTimeMinutesPreferenceKey) ??
+                (2 + (legacyTransferComfort * 5)).round();
+        _advancedAdditionalTransferTimeMinutes = prefs.getInt(
+              TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
+            ) ??
+            (legacyTransferComfort * 4).round();
+        _advancedTransferTimeFactor = ((prefs.getDouble(
+                      TransportApi.advancedTransferTimeFactorPreferenceKey,
+                    ) ??
+                    (0.8 + legacyTransferComfort))
+                .clamp(0.7, 2.5) *
+            10)
+            .round() /
+            10;
+        _advancedPreTransitWalkEnabled = prefs.getBool(
+              TransportApi.advancedPreTransitWalkEnabledPreferenceKey,
+            ) ??
+            true;
+        _advancedPreTransitBikeEnabled = prefs.getBool(
+              TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
+            ) ??
+            (legacyBikePreference > 0.01);
+        _advancedPostTransitWalkEnabled = prefs.getBool(
+              TransportApi.advancedPostTransitWalkEnabledPreferenceKey,
+            ) ??
+            true;
+        _advancedPostTransitBikeEnabled = prefs.getBool(
+              TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
+            ) ??
+            (legacyBikePreference > 0.01);
+        _advancedCyclingSpeedKmh = ((prefs.getDouble(
+                      TransportApi.advancedCyclingSpeedKmhPreferenceKey,
+                    ) ??
+                    ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+                .clamp(8.0, 30.0))
+            .roundToDouble();
         TransportApi.apiMode = _apiMode;
+        TransportApi.configureAdvancedSearchSettings(
+          enabledForDevice: _advancedSettingsEnabledForDevice,
+          minTransferTimeMinutes: _advancedMinTransferTimeMinutes,
+          additionalTransferTimeMinutes: _advancedAdditionalTransferTimeMinutes,
+          transferTimeFactor: _advancedTransferTimeFactor,
+          preTransitWalkEnabled: _advancedPreTransitWalkEnabled,
+          preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
+          postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
+          postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+          cyclingSpeedKmh: _advancedCyclingSpeedKmh,
+        );
       });
     }
   }
@@ -401,6 +481,377 @@ class _SettingsTabState extends State<SettingsTab> {
       _apiMode = mode;
       TransportApi.apiMode = mode;
     });
+  }
+
+  Future<void> _persistAdvancedSearchPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      TransportApi.advancedMinTransferTimeMinutesPreferenceKey,
+      _advancedMinTransferTimeMinutes,
+    );
+    await prefs.setInt(
+      TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
+      _advancedAdditionalTransferTimeMinutes,
+    );
+    await prefs.setDouble(
+      TransportApi.advancedTransferTimeFactorPreferenceKey,
+      _advancedTransferTimeFactor,
+    );
+    await prefs.setBool(
+      TransportApi.advancedPreTransitWalkEnabledPreferenceKey,
+      _advancedPreTransitWalkEnabled,
+    );
+    await prefs.setBool(
+      TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
+      _advancedPreTransitBikeEnabled,
+    );
+    await prefs.setBool(
+      TransportApi.advancedPostTransitWalkEnabledPreferenceKey,
+      _advancedPostTransitWalkEnabled,
+    );
+    await prefs.setBool(
+      TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
+      _advancedPostTransitBikeEnabled,
+    );
+    await prefs.setDouble(
+      TransportApi.advancedCyclingSpeedKmhPreferenceKey,
+      _advancedCyclingSpeedKmh,
+    );
+    if (!_advancedPreTransitBikeEnabled && !_advancedPostTransitBikeEnabled) {
+      await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, false);
+      TransportApi.setBikeToggleEnabledForDevice(false);
+    }
+
+    TransportApi.configureAdvancedSearchSettings(
+      enabledForDevice: _advancedSettingsEnabledForDevice,
+      minTransferTimeMinutes: _advancedMinTransferTimeMinutes,
+      additionalTransferTimeMinutes: _advancedAdditionalTransferTimeMinutes,
+      transferTimeFactor: _advancedTransferTimeFactor,
+      preTransitWalkEnabled: _advancedPreTransitWalkEnabled,
+      preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
+      postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
+      postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+      cyclingSpeedKmh: _advancedCyclingSpeedKmh,
+    );
+
+    if (SupabaseService.currentUser != null) {
+      await SupabaseService.updateSettings({
+        TransportApi.advancedMinTransferTimeMinutesPreferenceKey:
+            _advancedMinTransferTimeMinutes,
+        TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey:
+            _advancedAdditionalTransferTimeMinutes,
+        TransportApi.advancedTransferTimeFactorPreferenceKey:
+            _advancedTransferTimeFactor,
+        TransportApi.advancedPreTransitWalkEnabledPreferenceKey:
+            _advancedPreTransitWalkEnabled,
+        TransportApi.advancedPreTransitBikeEnabledPreferenceKey:
+            _advancedPreTransitBikeEnabled,
+        TransportApi.advancedPostTransitWalkEnabledPreferenceKey:
+            _advancedPostTransitWalkEnabled,
+        TransportApi.advancedPostTransitBikeEnabledPreferenceKey:
+            _advancedPostTransitBikeEnabled,
+        TransportApi.advancedCyclingSpeedKmhPreferenceKey:
+            _advancedCyclingSpeedKmh,
+      });
+    }
+  }
+
+  Future<void> _unlockAdvancedSettingsForDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(
+      TransportApi.advancedSettingsEnabledPreferenceKey,
+      true,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _advancedSettingsEnabledForDevice = true;
+      _advancedUnlockCountdownSecondsLeft = null;
+    });
+    _suppressNextChangelogTap = true;
+
+    TransportApi.configureAdvancedSearchSettings(
+      enabledForDevice: true,
+      minTransferTimeMinutes: _advancedMinTransferTimeMinutes,
+      additionalTransferTimeMinutes: _advancedAdditionalTransferTimeMinutes,
+      transferTimeFactor: _advancedTransferTimeFactor,
+      preTransitWalkEnabled: _advancedPreTransitWalkEnabled,
+      preTransitBikeEnabled: _advancedPreTransitBikeEnabled,
+      postTransitWalkEnabled: _advancedPostTransitWalkEnabled,
+      postTransitBikeEnabled: _advancedPostTransitBikeEnabled,
+      cyclingSpeedKmh: _advancedCyclingSpeedKmh,
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          Localizations.localeOf(context).languageCode == 'de'
+              ? 'Erweiterte Sucheinstellungen sind jetzt auf diesem Gerät aktiviert.'
+              : 'Advanced search settings are now enabled on this device.',
+        ),
+      ),
+    );
+  }
+
+  void _cancelAdvancedUnlockHold() {
+    _advancedUnlockTimer?.cancel();
+    _advancedUnlockTimer = null;
+    _advancedCountdownTimer?.cancel();
+    _advancedCountdownTimer = null;
+    _advancedUnlockPressStart = null;
+    if (_advancedUnlockCountdownSecondsLeft != null && mounted) {
+      setState(() => _advancedUnlockCountdownSecondsLeft = null);
+    }
+  }
+
+  void _startAdvancedUnlockHold() {
+    if (_advancedSettingsEnabledForDevice) return;
+    _cancelAdvancedUnlockHold();
+    final startedAt = DateTime.now();
+    _advancedUnlockPressStart = startedAt;
+
+    _advancedUnlockTimer = Timer(
+      const Duration(seconds: _advancedUnlockHoldSeconds),
+      () async {
+        if (!mounted || _advancedUnlockPressStart != startedAt) return;
+        _cancelAdvancedUnlockHold();
+        await _unlockAdvancedSettingsForDevice();
+      },
+    );
+
+    _advancedCountdownTimer = Timer.periodic(const Duration(seconds: 1), (
+      timer,
+    ) {
+      if (!mounted || _advancedUnlockPressStart != startedAt) {
+        timer.cancel();
+        return;
+      }
+
+      final elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
+      if (elapsedSeconds >= _advancedUnlockCountdownStartSeconds) {
+        final secondsLeft =
+            (_advancedUnlockHoldSeconds - elapsedSeconds).clamp(0, 99);
+        if (_advancedUnlockCountdownSecondsLeft != secondsLeft) {
+          setState(() => _advancedUnlockCountdownSecondsLeft = secondsLeft);
+        }
+      }
+    });
+  }
+
+  String _modeLabel(String mode, bool isGerman) {
+    switch (mode) {
+      case 'WALK':
+        return isGerman ? 'Zu Fuß' : 'Walk';
+      case 'BICYCLE':
+        return isGerman ? 'Fahrrad' : 'Bicycle';
+      default:
+        return mode;
+    }
+  }
+
+  Widget _buildTransferImpactPreview(bool isGerman, TransColors colors) {
+    final min = _advancedMinTransferTimeMinutes;
+    final add = _advancedAdditionalTransferTimeMinutes;
+    final factor = _advancedTransferTimeFactor;
+
+    final previewRoutes = <Map<String, dynamic>>[
+      {
+        'label': isGerman ? 'Route A: Sehr schnell' : 'Route A: Very fast',
+        'duration': 29,
+        'transfers': 2,
+        'transferMinutes': 6, // 2 x 3 min
+      },
+      {
+        'label': isGerman ? 'Route B: Ausgewogen' : 'Route B: Balanced',
+        'duration': 33,
+        'transfers': 1,
+        'transferMinutes': 6, // 1 x 6 min
+      },
+      {
+        'label': isGerman ? 'Route C: Komfort' : 'Route C: Comfort',
+        'duration': 39,
+        'transfers': 0,
+        'transferMinutes': 0,
+      },
+    ];
+
+    for (final route in previewRoutes) {
+      final transfers = route['transfers'] as int;
+      final transferMinutes = route['transferMinutes'] as int;
+      final minPerTransfer =
+          transfers == 0 ? transferMinutes : (transferMinutes / transfers);
+      final filtered = transfers > 0 && minPerTransfer < min;
+      final effectiveTransferMinutes = transferMinutes + (transfers * add);
+      final transferPenalty = effectiveTransferMinutes * factor;
+      final totalCost = (route['duration'] as int) + transferPenalty;
+      route['filtered'] = filtered;
+      route['effectiveTransferMinutes'] = effectiveTransferMinutes;
+      route['transferPenalty'] = transferPenalty;
+      route['totalCost'] = totalCost;
+      route['minPerTransfer'] = minPerTransfer;
+    }
+
+    final allowedRoutes = previewRoutes
+        .where((route) => route['filtered'] == false)
+        .toList(growable: false);
+    double? bestAllowedCost;
+    if (allowedRoutes.isNotEmpty) {
+      bestAllowedCost = allowedRoutes
+          .map((route) => (route['totalCost'] as num).toDouble())
+          .reduce((a, b) => a < b ? a : b);
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.cardBg.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isGerman ? 'Live-Beispielwirkung' : 'Live example impact',
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            isGerman
+                ? 'Bewertung: Fahrzeit + ((Umstiegsminuten + Anzahl Umstiege × Zusatz) × Faktor)'
+                : 'Score: trip time + ((transfer minutes + number of transfers × additional) × factor)',
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          ...previewRoutes.map((route) {
+            final filtered = route['filtered'] as bool;
+            final transferPenalty =
+                (route['transferPenalty'] as num).toDouble();
+            final totalCost = (route['totalCost'] as num).toDouble();
+            final transferMinutes = route['transferMinutes'] as int;
+            final effectiveTransferMinutes =
+                route['effectiveTransferMinutes'] as int;
+            final transfers = route['transfers'] as int;
+            final minPerTransfer = (route['minPerTransfer'] as num).toDouble();
+            final duration = route['duration'] as int;
+            final isPreferred = !filtered &&
+                bestAllowedCost != null &&
+                (totalCost - bestAllowedCost).abs() < 0.0001;
+
+            Color badgeBg;
+            Color badgeFg;
+            String badgeLabel;
+            if (filtered) {
+              badgeBg = Colors.red.withValues(alpha: 0.15);
+              badgeFg = Colors.red;
+              badgeLabel = isGerman ? 'Herausgefiltert' : 'Filtered out';
+            } else if (isPreferred) {
+              badgeBg = colors.effectiveSeed.withValues(alpha: 0.15);
+              badgeFg = colors.effectiveSeed;
+              badgeLabel = isGerman ? 'Bevorzugt' : 'Preferred';
+            } else {
+              badgeBg = Colors.green.withValues(alpha: 0.15);
+              badgeFg = Colors.green.shade700;
+              badgeLabel = isGerman ? 'Erlaubt' : 'Allowed';
+            }
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colors.cardBg.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: filtered
+                      ? Colors.red.withValues(alpha: 0.35)
+                      : colors.divider,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.alt_route, size: 18, color: colors.textPrimary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          route['label'] as String,
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: badgeBg,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          badgeLabel,
+                          style: TextStyle(
+                            color: badgeFg,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    isGerman
+                        ? 'Fahrzeit: $duration min • Umstiege: $transfers • Summe Umstiegsminuten: $transferMinutes'
+                        : 'Trip time: $duration min • Transfers: $transfers • Total transfer minutes: $transferMinutes',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  Text(
+                    isGerman
+                        ? 'Transfer-Penalty: ($transferMinutes + $transfers × $add) × ${factor.toStringAsFixed(1)} = ${transferPenalty.toStringAsFixed(1)}'
+                        : 'Transfer penalty: ($transferMinutes + $transfers × $add) × ${factor.toStringAsFixed(1)} = ${transferPenalty.toStringAsFixed(1)}',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  Text(
+                    isGerman
+                        ? 'Effektive Umstiegsminuten: $effectiveTransferMinutes'
+                        : 'Effective transfer minutes: $effectiveTransferMinutes',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  Text(
+                    isGerman
+                        ? 'Gesamtwert: $duration + ${transferPenalty.toStringAsFixed(1)} = ${totalCost.toStringAsFixed(1)} (niedriger ist besser)'
+                        : 'Total score: $duration + ${transferPenalty.toStringAsFixed(1)} = ${totalCost.toStringAsFixed(1)} (lower is better)',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  if (filtered)
+                    Text(
+                      isGerman
+                          ? 'Grund: Ø Umstiegszeit ${minPerTransfer.toStringAsFixed(1)} min < Minimum $min min'
+                          : 'Reason: avg transfer time ${minPerTransfer.toStringAsFixed(1)} min < minimum $min min',
+                      style: TextStyle(fontSize: 12, color: Colors.red.shade300),
+                    ),
+                ],
+              ),
+            );
+          }),
+          Text(
+            isGerman
+                ? 'Die Vorschau zeigt nur den Einfluss auf Transfer-Bewertung/Filterung. Echtzeit- und Linien-Daten können die finale Reihenfolge zusätzlich ändern.'
+                : 'This preview only shows transfer filter/scoring impact. Real-time and line data can still change final ordering.',
+            style: TextStyle(fontSize: 11, color: colors.textSecondary),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _testVibration() async {
@@ -1577,11 +2028,13 @@ class _SettingsTabState extends State<SettingsTab> {
     // FIX: Dynamic Padding
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: ListView(
-        padding: const EdgeInsets.only(top: 16.0, bottom: 150.0),
-        children: [
+    return Stack(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: ListView(
+            padding: const EdgeInsets.only(top: 16.0, bottom: 150.0),
+            children: [
           SizedBox(height: topPadding),
           // Header Restored
           Row(
@@ -1640,24 +2093,37 @@ class _SettingsTabState extends State<SettingsTab> {
               const Spacer(),
               // Version Display & Link
               if (!_isUnstableBuild && _version.isNotEmpty)
-                InkWell(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              ChangelogScreen(currentVersion: _version)),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Text("v$_version",
-                        style: TextStyle(
-                            color: colors.textSecondary.withValues(alpha: 0.7),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14)),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) => _startAdvancedUnlockHold(),
+                  onTapUp: (_) => _cancelAdvancedUnlockHold(),
+                  onTapCancel: _cancelAdvancedUnlockHold,
+                  child: InkWell(
+                    onTap: () {
+                      if (_suppressNextChangelogTap) {
+                        _suppressNextChangelogTap = false;
+                        return;
+                      }
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                ChangelogScreen(currentVersion: _version)),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Text("v$_version",
+                          style: TextStyle(
+                              color:
+                                  colors.textSecondary.withValues(alpha: 0.7),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14)),
+                    ),
                   ),
                 ),
             ],
@@ -2247,13 +2713,310 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
             )
           ]),
+          if (_advancedSettingsEnabledForDevice) ...[
+            const SizedBox(height: 20),
+            Text(
+              isGerman
+                  ? 'Erweiterte Suche (Gerät)'
+                  : 'Advanced Search (Device)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: colors.settingsHeader,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildSection(context, [
+              ListTile(
+                title: Text(
+                  isGerman ? 'Minimale Umstiegszeit' : 'Minimum transfer time',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Unter diesem Wert werden Verbindungen mit zu knappem Umstieg verworfen. Aktuell: $_advancedMinTransferTimeMinutes min.'
+                          : 'Connections requiring less than this change time are filtered out. Current: $_advancedMinTransferTimeMinutes min.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    Slider(
+                      value: _advancedMinTransferTimeMinutes.toDouble(),
+                      min: 0,
+                      max: 20,
+                      divisions: 20,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (value) {
+                        setState(
+                          () => _advancedMinTransferTimeMinutes = value.round(),
+                        );
+                      },
+                      onChangeEnd: (_) async {
+                        await _persistAdvancedSearchPreferences();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman
+                      ? 'Zusätzliche Umstiegszeit'
+                      : 'Additional transfer time',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Fügt jedem Umstieg pauschal Extra-Puffer hinzu. Höher = sicherer, aber oft langsamer. Aktuell: $_advancedAdditionalTransferTimeMinutes min.'
+                          : 'Adds fixed extra buffer to every transfer. Higher = safer, but often slower. Current: $_advancedAdditionalTransferTimeMinutes min.',
+                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                    Slider(
+                      value: _advancedAdditionalTransferTimeMinutes.toDouble(),
+                      min: 0,
+                      max: 15,
+                      divisions: 15,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (value) {
+                        setState(
+                          () =>
+                              _advancedAdditionalTransferTimeMinutes = value.round(),
+                        );
+                      },
+                      onChangeEnd: (_) async {
+                        await _persistAdvancedSearchPreferences();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman ? 'Umstiegsfaktor' : 'Transfer time factor',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Gewichtet Umstiegszeit in der Routenbewertung. Höher = weniger/entspanntere Umstiege bevorzugt, niedriger = aggressiv schneller. Aktuell: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.'
+                          : 'Weights transfer time in route scoring. Higher = prefers fewer/looser transfers, lower = more aggressive fast options. Current: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.',
+                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                    Slider(
+                      value: _advancedTransferTimeFactor,
+                      min: 0.7,
+                      max: 2.5,
+                      divisions: 18,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (value) {
+                        setState(
+                          () => _advancedTransferTimeFactor =
+                              (value * 10).round() / 10,
+                        );
+                      },
+                      onChangeEnd: (_) async {
+                        await _persistAdvancedSearchPreferences();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              _buildTransferImpactPreview(isGerman, colors),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman
+                      ? 'Pre-Transit Modi'
+                      : 'Pre-transit modes',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  isGerman
+                      ? 'Modi vor dem ersten ÖPNV-Abschnitt.'
+                      : 'Modes before the first transit leg.',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+              SwitchListTile(
+                title: Text(
+                  _modeLabel('WALK', isGerman),
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                value: _advancedPreTransitWalkEnabled,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return primaryColor;
+                  return null;
+                }),
+                onChanged: (value) async {
+                  setState(() => _advancedPreTransitWalkEnabled = value);
+                  await _persistAdvancedSearchPreferences();
+                },
+              ),
+              Divider(color: colors.divider),
+              SwitchListTile(
+                title: Text(
+                  _modeLabel('BICYCLE', isGerman),
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                value: _advancedPreTransitBikeEnabled,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return primaryColor;
+                  return null;
+                }),
+                onChanged: (value) async {
+                  setState(() => _advancedPreTransitBikeEnabled = value);
+                  await _persistAdvancedSearchPreferences();
+                },
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman
+                      ? 'Post-Transit Modi'
+                      : 'Post-transit modes',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Text(
+                  isGerman
+                      ? 'Modi nach dem letzten ÖPNV-Abschnitt.'
+                      : 'Modes after the last transit leg.',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+              SwitchListTile(
+                title: Text(
+                  _modeLabel('WALK', isGerman),
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                value: _advancedPostTransitWalkEnabled,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return primaryColor;
+                  return null;
+                }),
+                onChanged: (value) async {
+                  setState(() => _advancedPostTransitWalkEnabled = value);
+                  await _persistAdvancedSearchPreferences();
+                },
+              ),
+              Divider(color: colors.divider),
+              SwitchListTile(
+                title: Text(
+                  _modeLabel('BICYCLE', isGerman),
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                value: _advancedPostTransitBikeEnabled,
+                thumbColor: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) return primaryColor;
+                  return null;
+                }),
+                onChanged: (value) async {
+                  setState(() => _advancedPostTransitBikeEnabled = value);
+                  await _persistAdvancedSearchPreferences();
+                },
+              ),
+              Divider(color: colors.divider),
+              ListTile(
+                title: Text(
+                  isGerman ? 'Fahrradgeschwindigkeit' : 'Cycling speed',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGerman
+                          ? 'Wird nur genutzt, wenn Fahrrad-Modi aktiv sind. Aktuell: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h'
+                          : 'Used only when bicycle modes are enabled. Current: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h',
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                    Slider(
+                      value: _advancedCyclingSpeedKmh,
+                      min: 8,
+                      max: 30,
+                      divisions: 22,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (value) {
+                        setState(() => _advancedCyclingSpeedKmh = value);
+                      },
+                      onChangeEnd: (_) async {
+                        await _persistAdvancedSearchPreferences();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+          ],
           const SizedBox(height: 20),
           if (user == null)
             _buildAuthForm(context, colors)
           else
             _buildProfileSection(context, user, colors),
-        ],
-      ),
+            ],
+          ),
+        ),
+        if (_advancedUnlockCountdownSecondsLeft != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.cardBg.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: colors.effectiveSeed.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        isGerman
+                            ? 'Du bist dabei, die erweiterten Einstellungen auf diesem Gerät zu aktivieren.'
+                            : 'You are about to unlock advanced settings for this device.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${_advancedUnlockCountdownSecondsLeft!}s',
+                        style: TextStyle(
+                          color: colors.effectiveSeed,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

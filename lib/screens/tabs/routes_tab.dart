@@ -229,6 +229,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   bool _isArrival = false;
+  bool _bikeSearchToggleEnabledForDevice = false;
+  bool _hasBikeModesConfiguredForDevice = false;
 
   bool _isWakeAlarmSet = false;
   StreamSubscription<Position>? _gpsStream;
@@ -266,6 +268,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     super.initState();
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
+    _loadDeviceRoutePreferences();
+    SupabaseService.settingsRefreshNotifier
+        .addListener(_handleDeviceRouteSettingsRefresh);
     _initNotifications();
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
@@ -273,6 +278,52 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _resolveCurrentAddress();
     _loadHistoryData();
   }
+
+  Future<void> _loadDeviceRoutePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final advancedEnabled = prefs.getBool(
+          TransportApi.advancedSettingsEnabledPreferenceKey,
+        ) ??
+        false;
+    final preBikeEnabled = prefs.getBool(
+          TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
+        ) ??
+        false;
+    final postBikeEnabled = prefs.getBool(
+          TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
+        ) ??
+        false;
+    final hasBikeModesConfigured = advancedEnabled && (preBikeEnabled || postBikeEnabled);
+    final bikeToggleEnabled = prefs.getBool(
+          TransportApi.advancedBikeTogglePreferenceKey,
+        ) ??
+        false;
+    final effectiveToggleEnabled = hasBikeModesConfigured && bikeToggleEnabled;
+    if (!hasBikeModesConfigured && bikeToggleEnabled) {
+      await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, false);
+    }
+
+    TransportApi.setBikeToggleEnabledForDevice(effectiveToggleEnabled);
+    if (!mounted) return;
+    setState(() {
+      _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
+      _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
+    });
+  }
+
+  void _handleDeviceRouteSettingsRefresh() {
+    unawaited(_loadDeviceRoutePreferences());
+  }
+
+  Future<void> _setBikeSearchToggleEnabledForDevice(bool enabled) async {
+    if (!_hasBikeModesConfiguredForDevice) return;
+    setState(() => _bikeSearchToggleEnabledForDevice = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, enabled);
+    TransportApi.setBikeToggleEnabledForDevice(enabled);
+  }
+
+  bool get _showBikeSearchToggle => _hasBikeModesConfiguredForDevice;
 
   Future<void> _loadHistoryData() async {
     final history = await SearchHistoryManager.getHistory();
@@ -302,6 +353,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromUsesCurrentLocation = true;
       }
       _resolveCurrentAddress();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadDeviceRoutePreferences());
     }
   }
 
@@ -462,6 +520,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _savedJourneyLiveCountdownTicker = null;
     _savedJourneyStatusPollTimer?.cancel();
     _savedJourneyStatusPollTimer = null;
+    SupabaseService.settingsRefreshNotifier
+        .removeListener(_handleDeviceRouteSettingsRefresh);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -3554,6 +3614,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return GestureDetector(
       onTap: () {
         FocusScope.of(context).unfocus();
@@ -3692,6 +3753,43 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                                   color: colors.textPrimary,
                                                   fontWeight: FontWeight.bold))
                                         ]))),
+                          if (_showBikeSearchToggle) ...[
+                            const SizedBox(width: 8),
+                            Tooltip(
+                              message: _bikeSearchToggleEnabledForDevice
+                                  ? (isGerman
+                                      ? 'Fahrrad-Routing aktiviert'
+                                      : 'Bike routing enabled')
+                                  : (isGerman
+                                      ? 'Fahrrad-Routing deaktiviert'
+                                      : 'Bike routing disabled'),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: () =>
+                                    _setBikeSearchToggleEnabledForDevice(
+                                  !_bikeSearchToggleEnabledForDevice,
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: _bikeSearchToggleEnabledForDevice
+                                        ? colors.effectiveSeed.withValues(
+                                            alpha: 0.18,
+                                          )
+                                        : colors.timeToggleBg,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    Icons.pedal_bike,
+                                    size: 18,
+                                    color: _bikeSearchToggleEnabledForDevice
+                                        ? colors.effectiveSeed
+                                        : colors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                           if (_selectedDate != null)
                             IconButton(
                                 icon: const Icon(Icons.close, size: 16),

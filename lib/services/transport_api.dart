@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/station.dart';
 import 'motis_adapters.dart';
@@ -64,6 +65,31 @@ class _SyntheticSeed {
 }
 
 class TransportApi {
+  static const String advancedSettingsEnabledPreferenceKey =
+      'advanced_settings_enabled_device';
+  // Legacy keys kept for migration from slider-based advanced settings.
+  static const String advancedTransferComfortPreferenceKey =
+      'advanced_transfer_comfort';
+  static const String advancedBikePreferenceKey = 'advanced_bike_preference';
+  static const String advancedBikeTogglePreferenceKey =
+      'advanced_bike_toggle_enabled_device';
+  static const String advancedMinTransferTimeMinutesPreferenceKey =
+      'advanced_min_transfer_time_minutes';
+  static const String advancedAdditionalTransferTimeMinutesPreferenceKey =
+      'advanced_additional_transfer_time_minutes';
+  static const String advancedTransferTimeFactorPreferenceKey =
+      'advanced_transfer_time_factor';
+  static const String advancedPreTransitWalkEnabledPreferenceKey =
+      'advanced_pre_transit_walk_enabled';
+  static const String advancedPreTransitBikeEnabledPreferenceKey =
+      'advanced_pre_transit_bike_enabled';
+  static const String advancedPostTransitWalkEnabledPreferenceKey =
+      'advanced_post_transit_walk_enabled';
+  static const String advancedPostTransitBikeEnabledPreferenceKey =
+      'advanced_post_transit_bike_enabled';
+  static const String advancedCyclingSpeedKmhPreferenceKey =
+      'advanced_cycling_speed_kmh';
+
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
   static const String _v6Url = 'https://v6.db.transport.rest';
@@ -88,6 +114,17 @@ class TransportApi {
 
   // Cache the User-Agent
   static String? _userAgent;
+  static bool _advancedSettingsLoaded = false;
+  static bool _advancedSettingsEnabledForDevice = false;
+  static int _advancedMinTransferTimeMinutes = 4;
+  static int _advancedAdditionalTransferTimeMinutes = 2;
+  static double _advancedTransferTimeFactor = 1.3;
+  static bool _advancedPreTransitWalkEnabled = true;
+  static bool _advancedPreTransitBikeEnabled = false;
+  static bool _advancedPostTransitWalkEnabled = true;
+  static bool _advancedPostTransitBikeEnabled = false;
+  static double _advancedCyclingSpeedKmh = 16.0;
+  static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
@@ -108,6 +145,76 @@ class TransportApi {
   // Use 60 minutes so routes requiring longer access/egress walks are found.
   static const int _motisMaxPreTransitTimeSeconds = 3600;
   static const int _motisMaxPostTransitTimeSeconds = 3600;
+
+  static Future<void> _ensureAdvancedSettingsLoaded() async {
+    if (_advancedSettingsLoaded) return;
+    final prefs = await SharedPreferences.getInstance();
+    _advancedSettingsEnabledForDevice =
+        prefs.getBool(advancedSettingsEnabledPreferenceKey) ?? false;
+    final legacyTransferComfort =
+        (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
+            .clamp(0.0, 1.0);
+    final legacyBikePreference =
+        (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0);
+    _advancedMinTransferTimeMinutes =
+        prefs.getInt(advancedMinTransferTimeMinutesPreferenceKey) ??
+            (2 + (legacyTransferComfort * 5)).round();
+    _advancedAdditionalTransferTimeMinutes =
+        prefs.getInt(advancedAdditionalTransferTimeMinutesPreferenceKey) ??
+            (legacyTransferComfort * 4).round();
+    _advancedTransferTimeFactor = (prefs.getDouble(
+              advancedTransferTimeFactorPreferenceKey,
+            ) ??
+            (0.8 + (legacyTransferComfort * 1.0)))
+        .clamp(0.7, 2.5);
+    _advancedPreTransitWalkEnabled =
+        prefs.getBool(advancedPreTransitWalkEnabledPreferenceKey) ?? true;
+    _advancedPreTransitBikeEnabled =
+        prefs.getBool(advancedPreTransitBikeEnabledPreferenceKey) ??
+            legacyBikePreference > 0.01;
+    _advancedPostTransitWalkEnabled =
+        prefs.getBool(advancedPostTransitWalkEnabledPreferenceKey) ?? true;
+    _advancedPostTransitBikeEnabled =
+        prefs.getBool(advancedPostTransitBikeEnabledPreferenceKey) ??
+            legacyBikePreference > 0.01;
+    _advancedCyclingSpeedKmh = (prefs.getDouble(
+              advancedCyclingSpeedKmhPreferenceKey,
+            ) ??
+            ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+        .clamp(8.0, 30.0);
+    _advancedBikeToggleEnabledForDevice =
+        prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
+    _advancedSettingsLoaded = true;
+  }
+
+  static void configureAdvancedSearchSettings({
+    required bool enabledForDevice,
+    required int minTransferTimeMinutes,
+    required int additionalTransferTimeMinutes,
+    required double transferTimeFactor,
+    required bool preTransitWalkEnabled,
+    required bool preTransitBikeEnabled,
+    required bool postTransitWalkEnabled,
+    required bool postTransitBikeEnabled,
+    required double cyclingSpeedKmh,
+  }) {
+    _advancedSettingsEnabledForDevice = enabledForDevice;
+    _advancedMinTransferTimeMinutes = minTransferTimeMinutes.clamp(0, 30);
+    _advancedAdditionalTransferTimeMinutes =
+        additionalTransferTimeMinutes.clamp(0, 30);
+    _advancedTransferTimeFactor = transferTimeFactor.clamp(0.7, 2.5);
+    _advancedPreTransitWalkEnabled = preTransitWalkEnabled;
+    _advancedPreTransitBikeEnabled = preTransitBikeEnabled;
+    _advancedPostTransitWalkEnabled = postTransitWalkEnabled;
+    _advancedPostTransitBikeEnabled = postTransitBikeEnabled;
+    _advancedCyclingSpeedKmh = cyclingSpeedKmh.clamp(8.0, 30.0);
+    _advancedSettingsLoaded = true;
+  }
+
+  static void setBikeToggleEnabledForDevice(bool enabled) {
+    _advancedBikeToggleEnabledForDevice = enabled;
+    _advancedSettingsLoaded = true;
+  }
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -444,6 +551,8 @@ class TransportApi {
     bool isArrival = false,
     int results = 3,
   }) async {
+    await _ensureAdvancedSettingsLoaded();
+
     final Map<String, dynamic> params = {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
@@ -489,6 +598,41 @@ class TransportApi {
     if (nahverkehrOnly) {
       params['transitModes'] =
           'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS,WALK';
+    }
+
+    if (_advancedSettingsEnabledForDevice) {
+      params['minTransferTime'] =
+          (_advancedMinTransferTimeMinutes * 60).toString();
+      params['additionalTransferTime'] =
+          (_advancedAdditionalTransferTimeMinutes * 60).toString();
+      params['transferTimeFactor'] =
+          _advancedTransferTimeFactor.toStringAsFixed(2);
+
+      final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
+          (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
+      final preModes = <String>[];
+      final postModes = <String>[];
+
+      if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
+      if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
+      if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
+        preModes.add('BICYCLE');
+      }
+      if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
+        postModes.add('BICYCLE');
+      }
+
+      // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
+      if (preModes.isEmpty) preModes.add('WALK');
+      if (postModes.isEmpty) postModes.add('WALK');
+
+      params['preTransitModes'] = preModes.join(',');
+      params['postTransitModes'] = postModes.join(',');
+
+      if (useBikeForThisSearch) {
+        final cyclingSpeedMps = (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
+        params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+      }
     }
 
     final response = await _fetch(_getMotisPlanUri(params));
