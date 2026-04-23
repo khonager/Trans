@@ -38,7 +38,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
+	<false/>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>We need your location to track your journey and wake you up even when the app is in the background.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
