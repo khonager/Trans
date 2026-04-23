@@ -86,8 +86,8 @@ String _modeToProduct(String mode) {
 List<Map<String, dynamic>> _convertIntermediateStops(List<dynamic>? stops) {
   if (stops == null) return [];
 
-  return stops.map((stop) {
-    final s = stop as Map<String, dynamic>;
+  return stops.whereType<Map>().map((stop) {
+    final s = stop.cast<String, dynamic>();
     final platform = s['track'] ?? s['scheduledTrack'];
     return {
       'stop': _placeToLocation(s),
@@ -185,10 +185,16 @@ List<List<double>> _decodePolyline(String encoded, {int precision = 5}) {
 Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
   final mode = leg['mode'] as String? ?? 'WALK';
   final isWalking = mode == 'WALK' || mode == 'BIKE' || mode == 'CAR';
+  final from = (leg['from'] as Map?)?.cast<String, dynamic>() ?? const {};
+  final to = (leg['to'] as Map?)?.cast<String, dynamic>() ?? const {};
+  final legGeometry =
+      (leg['legGeometry'] as Map?)?.cast<String, dynamic>() ?? const {};
+  final legGeometryPoints = legGeometry['points'] as String?;
+  final legGeometryPrecision = (legGeometry['precision'] as num?)?.toInt() ?? 6;
 
   return {
-    'origin': _placeToLocation(leg['from']),
-    'destination': _placeToLocation(leg['to']),
+    'origin': _placeToLocation(from),
+    'destination': _placeToLocation(to),
     'departure': leg['startTime'],
     'arrival': leg['endTime'],
     'plannedDeparture': leg['scheduledStartTime'],
@@ -212,26 +218,26 @@ Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
       'stopovers': _convertIntermediateStops(leg['intermediateStops']),
 
     // Polyline - MOTIS uses Google polyline format
-    if (leg['legGeometry'] != null)
+    if (legGeometry.isNotEmpty)
       'polyline': {
-        'points': leg['legGeometry']['points'],
-        'precision': leg['legGeometry']['precision'] ?? 6,
+        'points': legGeometryPoints,
+        'precision': legGeometryPrecision,
       },
-    if (leg['legGeometry'] != null && leg['legGeometry']['points'] != null)
-      'decodedPath': _decodePolyline(leg['legGeometry']['points'],
-          precision: leg['legGeometry']['precision'] ?? 6),
+    if (legGeometryPoints != null)
+      'decodedPath':
+          _decodePolyline(legGeometryPoints, precision: legGeometryPrecision),
   };
 }
 
 /// Converts MOTIS Itinerary → Journey format expected by UI
 /// This is the main entry point for journey conversion
 Map<String, dynamic> journeyFromMotisItinerary(Map<String, dynamic> itinerary) {
-  final legs = (itinerary['legs'] as List?) ?? [];
+  final legs = ((itinerary['legs'] as List?) ?? []).whereType<Map>();
 
   return {
     'type': 'journey',
     'legs': legs
-        .map((leg) => legFromMotisLeg(leg as Map<String, dynamic>))
+        .map((leg) => legFromMotisLeg(leg.cast<String, dynamic>()))
         .toList(),
 
     // Journey-level timing

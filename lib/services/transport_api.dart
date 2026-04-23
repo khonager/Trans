@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/station.dart';
 import 'motis_adapters.dart';
@@ -64,6 +65,35 @@ class _SyntheticSeed {
 }
 
 class TransportApi {
+  static const String advancedSettingsEnabledPreferenceKey =
+      'advanced_settings_enabled_device';
+  // Legacy keys kept for migration from slider-based advanced settings.
+  static const String advancedTransferComfortPreferenceKey =
+      'advanced_transfer_comfort';
+  static const String advancedBikePreferenceKey = 'advanced_bike_preference';
+  static const String advancedBikeTogglePreferenceKey =
+      'advanced_bike_toggle_enabled_device';
+  static const String advancedMinTransferTimeMinutesPreferenceKey =
+      'advanced_min_transfer_time_minutes';
+  static const String advancedAdditionalTransferTimeMinutesPreferenceKey =
+      'advanced_additional_transfer_time_minutes';
+  static const String advancedTransferTimeFactorPreferenceKey =
+      'advanced_transfer_time_factor';
+  static const String advancedPreTransitWalkEnabledPreferenceKey =
+      'advanced_pre_transit_walk_enabled';
+  static const String advancedPreTransitBikeEnabledPreferenceKey =
+      'advanced_pre_transit_bike_enabled';
+  static const String advancedPostTransitWalkEnabledPreferenceKey =
+      'advanced_post_transit_walk_enabled';
+  static const String advancedPostTransitBikeEnabledPreferenceKey =
+      'advanced_post_transit_bike_enabled';
+  static const String advancedCyclingSpeedKmhPreferenceKey =
+      'advanced_cycling_speed_kmh';
+  static const String advancedPedestrianSpeedKmhPreferenceKey =
+      'advanced_pedestrian_speed_kmh';
+  static const String advancedMaxWalkingTimeMinutesPreferenceKey =
+      'advanced_max_walking_time_minutes';
+
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
   static const String _v6Url = 'https://v6.db.transport.rest';
@@ -88,9 +118,21 @@ class TransportApi {
 
   // Cache the User-Agent
   static String? _userAgent;
+  static bool _advancedSettingsLoaded = false;
+  static bool _advancedSettingsEnabledForDevice = false;
+  static int _advancedMinTransferTimeMinutes = 4;
+  static int _advancedAdditionalTransferTimeMinutes = 2;
+  static double _advancedTransferTimeFactor = 1.3;
+  static bool _advancedPreTransitWalkEnabled = true;
+  static bool _advancedPreTransitBikeEnabled = false;
+  static bool _advancedPostTransitWalkEnabled = true;
+  static bool _advancedPostTransitBikeEnabled = false;
+  static double _advancedCyclingSpeedKmh = 16.0;
+  static double _advancedPedestrianSpeedKmh = 5.0;
+  static int _advancedMaxWalkingTimeMinutes = 15;
+  static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
-  static const Duration _syntheticStopDeparturesCacheTtl =
-      Duration(minutes: 2);
+  static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
@@ -105,6 +147,91 @@ class TransportApi {
     'RJX',
     'WESTBAHN',
   ];
+  // Transitous defaults first/last street legs to 15 minutes (900s).
+  // Use 60 minutes so routes requiring longer access/egress walks are found.
+  static const int _motisMaxPreTransitTimeSeconds = 3600;
+  static const int _motisMaxPostTransitTimeSeconds = 3600;
+
+  static Future<void> _ensureAdvancedSettingsLoaded() async {
+    if (_advancedSettingsLoaded) return;
+    final prefs = await SharedPreferences.getInstance();
+    _advancedSettingsEnabledForDevice =
+        prefs.getBool(advancedSettingsEnabledPreferenceKey) ?? false;
+    final legacyTransferComfort =
+        (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
+            .clamp(0.0, 1.0);
+    final legacyBikePreference =
+        (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0);
+    _advancedMinTransferTimeMinutes =
+        prefs.getInt(advancedMinTransferTimeMinutesPreferenceKey) ??
+            (2 + (legacyTransferComfort * 5)).round();
+    _advancedAdditionalTransferTimeMinutes =
+        prefs.getInt(advancedAdditionalTransferTimeMinutesPreferenceKey) ??
+            (legacyTransferComfort * 4).round();
+    _advancedTransferTimeFactor = (prefs.getDouble(
+              advancedTransferTimeFactorPreferenceKey,
+            ) ??
+            (0.8 + (legacyTransferComfort * 1.0)))
+        .clamp(0.7, 2.5);
+    _advancedPreTransitWalkEnabled =
+        prefs.getBool(advancedPreTransitWalkEnabledPreferenceKey) ?? true;
+    _advancedPreTransitBikeEnabled =
+        prefs.getBool(advancedPreTransitBikeEnabledPreferenceKey) ??
+            legacyBikePreference > 0.01;
+    _advancedPostTransitWalkEnabled =
+        prefs.getBool(advancedPostTransitWalkEnabledPreferenceKey) ?? true;
+    _advancedPostTransitBikeEnabled =
+        prefs.getBool(advancedPostTransitBikeEnabledPreferenceKey) ??
+            legacyBikePreference > 0.01;
+    _advancedCyclingSpeedKmh = (prefs.getDouble(
+              advancedCyclingSpeedKmhPreferenceKey,
+            ) ??
+            ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+        .clamp(8.0, 30.0);
+    _advancedPedestrianSpeedKmh = (prefs.getDouble(
+              advancedPedestrianSpeedKmhPreferenceKey,
+            ) ??
+            5.0)
+        .clamp(2.0, 10.0);
+    _advancedMaxWalkingTimeMinutes =
+        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 15;
+    _advancedBikeToggleEnabledForDevice =
+        prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
+    _advancedSettingsLoaded = true;
+  }
+
+  static void configureAdvancedSearchSettings({
+    required bool enabledForDevice,
+    required int minTransferTimeMinutes,
+    required int additionalTransferTimeMinutes,
+    required double transferTimeFactor,
+    required bool preTransitWalkEnabled,
+    required bool preTransitBikeEnabled,
+    required bool postTransitWalkEnabled,
+    required bool postTransitBikeEnabled,
+    required double cyclingSpeedKmh,
+    required double pedestrianSpeedKmh,
+    required int maxWalkingTimeMinutes,
+  }) {
+    _advancedSettingsEnabledForDevice = enabledForDevice;
+    _advancedMinTransferTimeMinutes = minTransferTimeMinutes.clamp(0, 30);
+    _advancedAdditionalTransferTimeMinutes =
+        additionalTransferTimeMinutes.clamp(0, 30);
+    _advancedTransferTimeFactor = transferTimeFactor.clamp(0.7, 2.5);
+    _advancedPreTransitWalkEnabled = preTransitWalkEnabled;
+    _advancedPreTransitBikeEnabled = preTransitBikeEnabled;
+    _advancedPostTransitWalkEnabled = postTransitWalkEnabled;
+    _advancedPostTransitBikeEnabled = postTransitBikeEnabled;
+    _advancedCyclingSpeedKmh = cyclingSpeedKmh.clamp(8.0, 30.0);
+    _advancedPedestrianSpeedKmh = pedestrianSpeedKmh.clamp(2.0, 10.0);
+    _advancedMaxWalkingTimeMinutes = maxWalkingTimeMinutes.clamp(5, 120);
+    _advancedSettingsLoaded = true;
+  }
+
+  static void setBikeToggleEnabledForDevice(bool enabled) {
+    _advancedBikeToggleEnabledForDevice = enabled;
+    _advancedSettingsLoaded = true;
+  }
 
   // ============================================================
   // CORE FETCH HELPERS
@@ -440,11 +567,17 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
   }) async {
+    await _ensureAdvancedSettingsLoaded();
+
     final Map<String, dynamic> params = {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
       'showIntermediateStops': 'true',
+      'maxPreTransitTime': _motisMaxPreTransitTimeSeconds.toString(),
+      'maxPostTransitTime': _motisMaxPostTransitTimeSeconds.toString(),
     };
 
     // FROM: Use coordinates if ID is GPS, location, address, empty, or a v6.db numeric ID
@@ -486,17 +619,119 @@ class TransportApi {
           'REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,SUBWAY,TRAM,BUS,WALK';
     }
 
-    final response = await _fetch(_getMotisUri('/api/v5/plan', params));
+    if (_advancedSettingsEnabledForDevice) {
+      params['minTransferTime'] =
+          (_advancedMinTransferTimeMinutes * 60).toString();
+      params['additionalTransferTime'] =
+          (_advancedAdditionalTransferTimeMinutes * 60).toString();
+      params['transferTimeFactor'] =
+          _advancedTransferTimeFactor.toStringAsFixed(2);
+      final pedestrianSpeedKmh =
+          pedestrianSpeedKmhOverride ?? _advancedPedestrianSpeedKmh;
+      final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
+      params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      final maxWalkingTimeMinutes =
+          maxWalkingTimeMinutesOverride ?? _advancedMaxWalkingTimeMinutes;
+      final maxWalkingTimeSeconds =
+          (maxWalkingTimeMinutes.clamp(5, 120) * 60);
+      params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
+      params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
+
+      final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
+          (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
+      final preModes = <String>[];
+      final postModes = <String>[];
+
+      if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
+      if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
+      if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
+        preModes.add('BICYCLE');
+      }
+      if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
+        postModes.add('BICYCLE');
+      }
+
+      // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
+      if (preModes.isEmpty) preModes.add('WALK');
+      if (postModes.isEmpty) postModes.add('WALK');
+
+      params['preTransitModes'] = preModes.join(',');
+      params['postTransitModes'] = postModes.join(',');
+
+      if (useBikeForThisSearch) {
+        final cyclingSpeedMps = (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
+        params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+      }
+    }
+
+    final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
+    return decodeMotisPlanJourneys(data);
+  }
 
-    final itineraries = data['itineraries'] as List? ?? [];
+  /// Retry empty MOTIS search with safer walking parameters for edge-case
+  /// combinations where high walking speed / short pre-post windows can
+  /// suppress otherwise valid itineraries.
+  static Future<List<Map<String, dynamic>>> _searchJourneysMotisWithFallback({
+    required Station from,
+    required Station to,
+    required bool nahverkehrOnly,
+    required DateTime? when,
+    required bool isArrival,
+    required int results,
+  }) async {
+    final primary = await _searchJourneysMotis(
+      from,
+      to,
+      nahverkehrOnly: nahverkehrOnly,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+    if (primary.isNotEmpty) return primary;
 
-    // Convert MOTIS itineraries to v6.db journey format and tag source
-    return itineraries.map<Map<String, dynamic>>((it) {
-      final j = journeyFromMotisItinerary(it as Map<String, dynamic>);
-      j['source'] = 'motis';
-      return j;
-    }).toList();
+    await _ensureAdvancedSettingsLoaded();
+    if (!_advancedSettingsEnabledForDevice) return primary;
+
+    // Some provider/network combinations are unstable in narrow speed bands.
+    // Retry using conservative, known-stable walking speeds and wider
+    // first/last-mile windows before giving up.
+    final retries = <(double speedKmh, int walkMinutes)>[
+      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+      (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
+    ];
+    final attemptedKeys = <String>{};
+
+    for (final retry in retries) {
+      final key =
+          '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
+      if (!attemptedKeys.add(key)) continue;
+
+      _syntheticLog(
+        'motis retry: empty primary, fallback pedestrianSpeed='
+        '${retry.$1.toStringAsFixed(1)}km/h '
+        'maxWalk=${retry.$2}min',
+      );
+
+      final fallback = await _searchJourneysMotis(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+        pedestrianSpeedKmhOverride: retry.$1,
+        maxWalkingTimeMinutesOverride: retry.$2,
+      );
+      _syntheticLog(
+        'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
+        'maxWalk=${retry.$2}min itineraries=${fallback.length}',
+      );
+      if (fallback.isNotEmpty) return fallback;
+    }
+
+    return primary;
   }
 
   // ============================================================
@@ -570,12 +805,9 @@ class TransportApi {
       return rankedMotis;
     }
 
-    if (!_shouldAugmentStationResultsWithV6(
-      rankedMotis,
-      query,
-      lat: lat,
-      lng: lng,
-    )) {
+    // In auto mode, Transitous is the primary source.
+    // Only fall back to v6 when Transitous returns no station results.
+    if (rankedMotis.isNotEmpty) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
         const Duration(hours: 1),
@@ -588,51 +820,9 @@ class TransportApi {
       lat: lat,
       lng: lng,
     );
-    if (v6Results.isEmpty) {
-      _stationCache[cacheKey] = _CacheEntry(
-        rankedMotis,
-        const Duration(hours: 1),
-      );
-      return rankedMotis;
-    }
-
-    final merged = _mergeStations(rankedMotis, v6Results);
-    final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
+    final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
-  }
-
-  static List<Station> _mergeStations(
-    List<Station> primary,
-    List<Station> secondary,
-  ) {
-    final merged = <Station>[];
-    final seen = <String>{};
-
-    void addStation(Station station) {
-      final key = _stationDedupKey(station);
-      if (seen.add(key)) {
-        merged.add(station);
-      }
-    }
-
-    for (final station in primary) {
-      addStation(station);
-    }
-    for (final station in secondary) {
-      addStation(station);
-    }
-
-    return merged;
-  }
-
-  static String _stationDedupKey(Station station) {
-    final id = station.id.trim();
-    if (id.isNotEmpty) return id;
-
-    final lat = station.latitude?.toStringAsFixed(5) ?? '';
-    final lng = station.longitude?.toStringAsFixed(5) ?? '';
-    return '${station.name.trim().toLowerCase()}|$lat|$lng';
   }
 
   static Future<List<Station>> _searchStationsV6WithCooldown(
@@ -659,38 +849,6 @@ class TransportApi {
       );
       return const <Station>[];
     }
-  }
-
-  static bool _shouldAugmentStationResultsWithV6(
-    List<Station> motisResults,
-    String query, {
-    double? lat,
-    double? lng,
-  }) {
-    if (motisResults.isEmpty) return true;
-
-    final queryTokens = _searchTokens(query);
-    final topResults = motisResults.take(5).toList();
-    final transitResults =
-        topResults.where((station) => _isTransitStation(station)).toList();
-
-    if (_isAirportLikeQuery(queryTokens)) {
-      return transitResults.isEmpty ||
-          !topResults.any((station) => _looksLikeAirportStation(station));
-    }
-
-    if (transitResults.isEmpty) return true;
-    if (motisResults.length < 5) return true;
-
-    final hasLocationBias = lat != null && lng != null;
-    final isSingleTokenQuery = queryTokens.length == 1;
-    if (!hasLocationBias &&
-        isSingleTokenQuery &&
-        !_looksLikeTransitHubStation(topResults.first)) {
-      return true;
-    }
-
-    return false;
   }
 
   @visibleForTesting
@@ -860,23 +1018,6 @@ class TransportApi {
     );
   }
 
-  static bool _looksLikeAirportStation(Station station) {
-    final normalizedName = _normalizeSearchText(station.name);
-    final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(
-      _normalizeSearchText(
-        [
-          station.city,
-          station.region,
-          station.country,
-          station.category,
-          station.type,
-        ].whereType<String>().join(' '),
-      ),
-    );
-    return _looksLikeAirport(nameTokens, metadataTokens);
-  }
-
   static bool _looksLikeTransitHub(
     String normalizedName,
     List<String> nameTokens,
@@ -903,15 +1044,6 @@ class TransportApi {
 
     return nameTokens.any(hubTokens.contains);
   }
-
-  static bool _looksLikeTransitHubStation(Station station) =>
-      _looksLikeTransitHub(
-        _normalizeSearchText(station.name),
-        _splitSearchTokens(_normalizeSearchText(station.name)),
-      );
-
-  static bool _isTransitStation(Station station) =>
-      station.type == 'station' || station.type == 'stop';
 
   static bool _isGenericAirportLabel(String normalizedName) =>
       normalizedName == 'airport' || normalizedName == 'flughafen';
@@ -1166,6 +1298,41 @@ class TransportApi {
     return data is Map<String, dynamic> ? data : null;
   }
 
+  @visibleForTesting
+  static Uri buildMotisPlanUri(Map<String, dynamic> params) =>
+      _getMotisPlanUri(params);
+
+  static Uri _getMotisPlanUri(Map<String, dynamic> params) =>
+      _getMotisUri('/api/v5/plan', params);
+
+  /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
+  ///
+  /// Transitous data quality can vary by provider/country; this parser is
+  /// intentionally defensive so one malformed itinerary does not discard all
+  /// other valid results.
+  @visibleForTesting
+  static List<Map<String, dynamic>> decodeMotisPlanJourneys(dynamic data) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Unsupported MOTIS plan response');
+    }
+
+    final rawItineraries = data['itineraries'];
+    if (rawItineraries is! List) return const <Map<String, dynamic>>[];
+
+    final journeys = <Map<String, dynamic>>[];
+    for (final raw in rawItineraries) {
+      if (raw is! Map) continue;
+      try {
+        final journey = journeyFromMotisItinerary(raw.cast<String, dynamic>());
+        journey['source'] = 'motis';
+        journeys.add(journey);
+      } catch (error) {
+        debugPrint('Skipping malformed MOTIS itinerary: $error');
+      }
+    }
+    return journeys;
+  }
+
   /// Builds the MOTIS URI for `/api/v5/map/trips` with the required query
   /// parameters.  Exposed for unit-testing of parameter serialisation.
   @visibleForTesting
@@ -1341,10 +1508,11 @@ class TransportApi {
     return text;
   }
 
-  static List<Map<String, dynamic>> _copyLegList(List? rawLegs) => rawLegs
-      ?.whereType<Map>()
-      .map((leg) => Map<String, dynamic>.from(leg))
-      .toList() ??
+  static List<Map<String, dynamic>> _copyLegList(List? rawLegs) =>
+      rawLegs
+          ?.whereType<Map>()
+          .map((leg) => Map<String, dynamic>.from(leg))
+          .toList() ??
       const <Map<String, dynamic>>[];
 
   static double? _locationLat(Map<String, dynamic>? location) {
@@ -1376,8 +1544,9 @@ class TransportApi {
         rideIndices.add(index);
       }
     }
-    final rideLegs =
-        rideIndices.map((index) => mappedRawLegs[index]).toList(growable: false);
+    final rideLegs = rideIndices
+        .map((index) => mappedRawLegs[index])
+        .toList(growable: false);
     if (rideLegs.length < 2) return null;
 
     final firstRide = rideLegs.first;
@@ -1403,7 +1572,8 @@ class TransportApi {
     final transferStopId = _stringOrNull(transfer['id']) ?? '';
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
-    final secondLineKey = _normalizeTransitKey(_journeyLegLineName(transferRide));
+    final secondLineKey =
+        _normalizeTransitKey(_journeyLegLineName(transferRide));
     final secondDirectionKey = _normalizeTransitKey(transferRide['direction']);
     final secondDestinationStopId =
         _stringOrNull(secondDestination?['id']) ?? '';
@@ -1416,7 +1586,8 @@ class TransportApi {
     final supportsSharedFamilyExpansion = rideLegs.length == 2 &&
         secondLineKey.isNotEmpty &&
         secondDirectionKey.isNotEmpty &&
-        (secondDestinationStopId.isNotEmpty || secondDestinationStopName.isNotEmpty) &&
+        (secondDestinationStopId.isNotEmpty ||
+            secondDestinationStopName.isNotEmpty) &&
         trailingLegs.every((leg) => leg['line'] == null);
 
     return _SyntheticSeed(
@@ -1560,7 +1731,8 @@ class TransportApi {
     String stopId,
     String stopName,
   ) {
-    final placeId = _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
+    final placeId =
+        _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
     if (stopId.isNotEmpty && placeId == stopId) return true;
 
     if (stopName.isEmpty) return false;
@@ -1576,7 +1748,8 @@ class TransportApi {
   ) {
     for (var index = 0; index < sequence.length; index++) {
       final place =
-          (sequence[index]['place'] as Map?)?.cast<String, dynamic>() ?? const {};
+          (sequence[index]['place'] as Map?)?.cast<String, dynamic>() ??
+              const {};
       if (_tripPlaceMatchesTarget(place, stopId, stopName)) return index;
     }
     return -1;
@@ -1638,7 +1811,8 @@ class TransportApi {
     _SyntheticSeed seed,
     Map<String, dynamic> tripItinerary,
     String tripId,
-  ) => _buildSyntheticRideSegment(
+  ) =>
+      _buildSyntheticRideSegment(
         templateRide: seed.firstRide,
         tripItinerary: tripItinerary,
         tripId: tripId,
@@ -1688,11 +1862,12 @@ class TransportApi {
       );
       if (departure == null || arrival == null) continue;
 
-      final line = (templateRide['line'] as Map?)?.cast<String, dynamic>() != null
-          ? Map<String, dynamic>.from(
-              (templateRide['line'] as Map).cast<String, dynamic>(),
-            )
-          : <String, dynamic>{'name': _journeyLegLineName(templateRide)};
+      final line =
+          (templateRide['line'] as Map?)?.cast<String, dynamic>() != null
+              ? Map<String, dynamic>.from(
+                  (templateRide['line'] as Map).cast<String, dynamic>(),
+                )
+              : <String, dynamic>{'name': _journeyLegLineName(templateRide)};
       if (tripId.isNotEmpty) {
         line['tripId'] = tripId;
       }
@@ -1711,16 +1886,14 @@ class TransportApi {
         'destination': _journeyLocationFromTripPlace(transferPlace),
         'departure': departure,
         'arrival': arrival,
-        'plannedDeparture':
-            originStop['scheduledDeparture'] ??
-                originStop['departure'] ??
-                originStop['scheduledArrival'] ??
-                originStop['arrival'],
-        'plannedArrival':
-            transferStop['scheduledArrival'] ??
-                transferStop['arrival'] ??
-                transferStop['scheduledDeparture'] ??
-                transferStop['departure'],
+        'plannedDeparture': originStop['scheduledDeparture'] ??
+            originStop['departure'] ??
+            originStop['scheduledArrival'] ??
+            originStop['arrival'],
+        'plannedArrival': transferStop['scheduledArrival'] ??
+            transferStop['arrival'] ??
+            transferStop['scheduledDeparture'] ??
+            transferStop['departure'],
         'departureDelay': _delaySecondsFromStrings(
           (originStop['scheduledDeparture'] ?? originStop['scheduledArrival'])
               ?.toString(),
@@ -1735,8 +1908,10 @@ class TransportApi {
         'reachable': true,
         'line': line,
         'direction': templateRide['direction'],
-        if (intermediateStopovers.isNotEmpty) 'stopovers': intermediateStopovers,
-        if (templateRide['polyline'] != null) 'polyline': templateRide['polyline'],
+        if (intermediateStopovers.isNotEmpty)
+          'stopovers': intermediateStopovers,
+        if (templateRide['polyline'] != null)
+          'polyline': templateRide['polyline'],
         if (templateRide['decodedPath'] != null)
           'decodedPath': templateRide['decodedPath'],
         'tripId': tripId,
@@ -1770,23 +1945,20 @@ class TransportApi {
 
     final rawStopovers = shifted['stopovers'] as List?;
     if (rawStopovers != null) {
-      shifted['stopovers'] = rawStopovers
-          .whereType<Map>()
-          .map((stopover) {
-            final mapped = Map<String, dynamic>.from(stopover);
-            for (final key in const [
-              'arrival',
-              'departure',
-              'plannedArrival',
-              'plannedDeparture',
-            ]) {
-              if (mapped.containsKey(key)) {
-                mapped[key] = _shiftIsoTimeString(mapped[key], delta);
-              }
-            }
-            return mapped;
-          })
-          .toList();
+      shifted['stopovers'] = rawStopovers.whereType<Map>().map((stopover) {
+        final mapped = Map<String, dynamic>.from(stopover);
+        for (final key in const [
+          'arrival',
+          'departure',
+          'plannedArrival',
+          'plannedDeparture',
+        ]) {
+          if (mapped.containsKey(key)) {
+            mapped[key] = _shiftIsoTimeString(mapped[key], delta);
+          }
+        }
+        return mapped;
+      }).toList();
     }
 
     return shifted;
@@ -1860,10 +2032,9 @@ class TransportApi {
     Map<String, dynamic> a,
     Map<String, dynamic> b,
   ) {
-    final sourceScore =
-        _journeySyntheticPreferenceScore(a).compareTo(
-          _journeySyntheticPreferenceScore(b),
-        );
+    final sourceScore = _journeySyntheticPreferenceScore(a).compareTo(
+      _journeySyntheticPreferenceScore(b),
+    );
     if (sourceScore != 0) return sourceScore;
 
     final arrivalA = _parseJourneyTimeLocal(
@@ -2022,7 +2193,8 @@ class TransportApi {
           (onwardLegs.isNotEmpty
               ? onwardLegs.last['arrival'] ?? onwardLegs.last['plannedArrival']
               : null),
-      'plannedDeparture': firstRide['plannedDeparture'] ?? firstRide['departure'],
+      'plannedDeparture':
+          firstRide['plannedDeparture'] ?? firstRide['departure'],
       'plannedArrival': onwardJourney['plannedArrival'] ??
           onwardJourney['arrival'] ??
           (onwardLegs.isNotEmpty
@@ -2051,8 +2223,7 @@ class TransportApi {
           lastLeg['plannedArrival'] ??
           lastLeg['departure'] ??
           lastLeg['plannedDeparture'],
-      'plannedDeparture':
-          firstLeg['plannedDeparture'] ?? firstLeg['departure'],
+      'plannedDeparture': firstLeg['plannedDeparture'] ?? firstLeg['departure'],
       'plannedArrival': lastLeg['plannedArrival'] ??
           lastLeg['arrival'] ??
           lastLeg['plannedDeparture'] ??
@@ -2250,7 +2421,8 @@ class TransportApi {
       }
     }
 
-    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+    if ((shouldContinue?.call() ?? true) &&
+        synthetic.length > lastProgressCount) {
       onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
@@ -2495,7 +2667,8 @@ class TransportApi {
       }
     }
 
-    if ((shouldContinue?.call() ?? true) && synthetic.length > lastProgressCount) {
+    if ((shouldContinue?.call() ?? true) &&
+        synthetic.length > lastProgressCount) {
       onProgress?.call(List<Map<String, dynamic>>.from(synthetic));
     }
 
@@ -2529,8 +2702,7 @@ class TransportApi {
       if (journey['source'] == 'motis') {
         motisJourneys++;
         final rawLegs = journey['legs'] as List?;
-        final rideCount =
-            rawLegs
+        final rideCount = rawLegs
                 ?.whereType<Map>()
                 .where((leg) => leg['line'] != null)
                 .length ??
@@ -2703,9 +2875,9 @@ class TransportApi {
     if (apiMode == 'motis') {
       setPhase(loadPhaseMotis, true);
       try {
-        final res = await _searchJourneysMotis(
-          from,
-          to,
+        final res = await _searchJourneysMotisWithFallback(
+          from: from,
+          to: to,
           nahverkehrOnly: nahverkehrOnly,
           when: when,
           isArrival: isArrival,
@@ -2745,9 +2917,9 @@ class TransportApi {
     try {
       // Launch both requests in parallel
       setPhase(loadPhaseMotis, true);
-      final motisFuture = _searchJourneysMotis(
-        from,
-        to,
+      final motisFuture = _searchJourneysMotisWithFallback(
+        from: from,
+        to: to,
         nahverkehrOnly: nahverkehrOnly,
         when: when,
         isArrival: isArrival,

@@ -209,6 +209,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FocusNode _fromFocusNode = FocusNode();
   final FocusNode _toFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _suggestionsScrollController = ScrollController();
 
   Station? _fromStation;
   Station? _toStation;
@@ -228,6 +229,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   bool _isArrival = false;
+  bool _bikeSearchToggleEnabledForDevice = false;
+  bool _hasBikeModesConfiguredForDevice = false;
 
   bool _isWakeAlarmSet = false;
   StreamSubscription<Position>? _gpsStream;
@@ -265,6 +268,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     super.initState();
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
+    _loadDeviceRoutePreferences();
+    SupabaseService.settingsRefreshNotifier
+        .addListener(_handleDeviceRouteSettingsRefresh);
     _initNotifications();
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
@@ -272,6 +278,52 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _resolveCurrentAddress();
     _loadHistoryData();
   }
+
+  Future<void> _loadDeviceRoutePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final advancedEnabled = prefs.getBool(
+          TransportApi.advancedSettingsEnabledPreferenceKey,
+        ) ??
+        false;
+    final preBikeEnabled = prefs.getBool(
+          TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
+        ) ??
+        false;
+    final postBikeEnabled = prefs.getBool(
+          TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
+        ) ??
+        false;
+    final hasBikeModesConfigured = advancedEnabled && (preBikeEnabled || postBikeEnabled);
+    final bikeToggleEnabled = prefs.getBool(
+          TransportApi.advancedBikeTogglePreferenceKey,
+        ) ??
+        false;
+    final effectiveToggleEnabled = hasBikeModesConfigured && bikeToggleEnabled;
+    if (!hasBikeModesConfigured && bikeToggleEnabled) {
+      await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, false);
+    }
+
+    TransportApi.setBikeToggleEnabledForDevice(effectiveToggleEnabled);
+    if (!mounted) return;
+    setState(() {
+      _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
+      _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
+    });
+  }
+
+  void _handleDeviceRouteSettingsRefresh() {
+    unawaited(_loadDeviceRoutePreferences());
+  }
+
+  Future<void> _setBikeSearchToggleEnabledForDevice(bool enabled) async {
+    if (!_hasBikeModesConfiguredForDevice) return;
+    setState(() => _bikeSearchToggleEnabledForDevice = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, enabled);
+    TransportApi.setBikeToggleEnabledForDevice(enabled);
+  }
+
+  bool get _showBikeSearchToggle => _hasBikeModesConfiguredForDevice;
 
   Future<void> _loadHistoryData() async {
     final history = await SearchHistoryManager.getHistory();
@@ -301,6 +353,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromUsesCurrentLocation = true;
       }
       _resolveCurrentAddress();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadDeviceRoutePreferences());
     }
   }
 
@@ -449,6 +508,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.dispose();
     _toFocusNode.dispose();
     _scrollController.dispose();
+    _suggestionsScrollController.dispose();
     _debounce?.cancel();
     _focusDebounce?.cancel();
     _gpsStream?.cancel();
@@ -460,6 +520,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _savedJourneyLiveCountdownTicker = null;
     _savedJourneyStatusPollTimer?.cancel();
     _savedJourneyStatusPollTimer = null;
+    SupabaseService.settingsRefreshNotifier
+        .removeListener(_handleDeviceRouteSettingsRefresh);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -504,6 +566,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (!mounted) return;
     final bottomInset = View.of(context).viewInsets.bottom;
     final isVisible = bottomInset > 0;
+    if (!_wasKeyboardVisible &&
+        isVisible &&
+        _activeTabId == null &&
+        _activeSearchField.isNotEmpty) {
+      _scrollToTop();
+    }
     if (_wasKeyboardVisible && !isVisible) {
       // Keyboard JUST closed
       if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
@@ -521,6 +589,28 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             curve: Curves.easeInOut);
       }
     });
+  }
+
+  void _scrollSuggestionsToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_suggestionsScrollController.hasClients) {
+        _suggestionsScrollController.jumpTo(0.0);
+      }
+    });
+  }
+
+  IconData _favoriteIcon(Favorite favorite) {
+    if (favorite.iconCode != null) {
+      return kAvailableIcons.firstWhere(
+        (icon) => icon.codePoint == favorite.iconCode,
+        orElse: () => Icons.star,
+      );
+    }
+
+    final lowerLabel = favorite.label.toLowerCase();
+    if (lowerLabel == 'home') return Icons.home;
+    if (lowerLabel == 'work') return Icons.work;
+    return Icons.star;
   }
 
   Future<void> _loadFavorites() async {
@@ -901,22 +991,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   // --- SEARCH LOGIC ---
-  Future<void> _fetchSuggestions({bool forceHistory = false}) async {
+  Future<void> _fetchSuggestions({
+    bool forceHistory = false,
+    bool updateLoadingState = true,
+  }) async {
     if (forceHistory) {
       final history = await SearchHistoryManager.getHistory();
-      if (mounted) setState(() => _suggestions = history);
+      if (mounted) {
+        setState(() {
+          _suggestions = history;
+          if (updateLoadingState) _isSuggestionsLoading = false;
+        });
+      }
       return;
     }
-    setState(() => _isSuggestionsLoading = true);
+    if (updateLoadingState) {
+      setState(() => _isSuggestionsLoading = true);
+    }
     List<dynamic> results = [];
     final query = (_activeSearchField == 'from'
             ? _fromController.text
             : _toController.text)
         .trim();
     if (query.isNotEmpty) {
-      final matchingFavs = _favorites
-          .where((f) => f.label.toLowerCase().contains(query.toLowerCase()))
-          .toList();
+      final matchingFavs = _matchingFavoritesForQuery(query);
       results.addAll(matchingFavs);
     }
     final history = await SearchHistoryManager.getHistory();
@@ -931,9 +1029,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _suggestions = results;
-        _isSuggestionsLoading = false;
+        if (updateLoadingState) _isSuggestionsLoading = false;
       });
     }
+  }
+
+  bool _favoriteMatchesQuery(Favorite favorite, String queryLower) {
+    final label = favorite.label.toLowerCase();
+    final stationName = favorite.station?.name.toLowerCase() ?? '';
+    return label.contains(queryLower) || stationName.contains(queryLower);
+  }
+
+  List<Favorite> _matchingFavoritesForQuery(String query) {
+    final queryLower = query.toLowerCase();
+    return _favorites
+        .where((favorite) => _favoriteMatchesQuery(favorite, queryLower))
+        .toList();
   }
 
   ({double? lat, double? lng}) _suggestionReferencePoint() {
@@ -1076,21 +1187,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
     setState(() => _activeSearchField = field);
-    _fetchSuggestions();
+    _scrollToTop();
+    _scrollSuggestionsToTop();
     if (sanitizedQuery.isEmpty) {
       _suggestionRequestToken++;
+      _fetchSuggestions(forceHistory: true, updateLoadingState: false);
       if (field == 'from') {
         setState(() {
           _fromStation = null;
           _fromUsesCurrentLocation = true;
-          _suggestions = [];
           _isSuggestionsLoading = false;
         });
         return;
       } else if (field == 'to') {
         setState(() {
           _toStation = null;
-          _suggestions = [];
           _isSuggestionsLoading = false;
         });
         return;
@@ -1103,96 +1214,72 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromUsesCurrentLocation = _isCurrentLocationText(sanitizedQuery);
       });
     }
-    setState(() => _isSuggestionsLoading = true);
+    final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+    setState(() {
+      _suggestions = matchingFavs;
+      _isSuggestionsLoading = sanitizedQuery.length > 2;
+    });
     if (_debounce?.isActive ?? false) _debounce!.cancel();
+    if (sanitizedQuery.length <= 2) {
+      return;
+    }
     final requestToken = ++_suggestionRequestToken;
     _debounce = Timer(const Duration(milliseconds: 600), () async {
-      if (sanitizedQuery.length > 2) {
-        double? refLat;
-        double? refLng;
+      double? refLat;
+      double? refLng;
 
-        if (field == 'from') {
-          if (_toStation != null &&
-              _toStation!.latitude != null &&
-              _toStation!.longitude != null) {
-            refLat = _toStation!.latitude;
-            refLng = _toStation!.longitude;
-          } else if (_effectiveCurrentPosition != null) {
-            refLat = _effectiveCurrentPosition!.latitude;
-            refLng = _effectiveCurrentPosition!.longitude;
-          }
-        } else if (field == 'to') {
-          if (_fromStation != null &&
-              _fromStation!.latitude != null &&
-              _fromStation!.longitude != null) {
-            refLat = _fromStation!.latitude;
-            refLng = _fromStation!.longitude;
-          } else if (_effectiveCurrentPosition != null) {
-            refLat = _effectiveCurrentPosition!.latitude;
-            refLng = _effectiveCurrentPosition!.longitude;
-          }
+      if (field == 'from') {
+        if (_toStation != null &&
+            _toStation!.latitude != null &&
+            _toStation!.longitude != null) {
+          refLat = _toStation!.latitude;
+          refLng = _toStation!.longitude;
+        } else if (_effectiveCurrentPosition != null) {
+          refLat = _effectiveCurrentPosition!.latitude;
+          refLng = _effectiveCurrentPosition!.longitude;
         }
-
-        try {
-          final apiResults = await TransportApi.searchStations(sanitizedQuery,
-              lat: refLat, lng: refLng);
-          if (!mounted || requestToken != _suggestionRequestToken) return;
-          if (mounted) {
-            setState(() {
-              if (apiResults.isEmpty && _suggestions.isEmpty) {
-                // Show message if no results at all
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content:
-                        Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
-                    duration: const Duration(seconds: 2)));
-              }
-              final mergedSuggestions = List<dynamic>.from(_suggestions);
-              for (var s in apiResults) {
-                bool exists = mergedSuggestions.any((existing) {
-                  if (existing is Station) return existing.id == s.id;
-                  if (existing is Favorite) return existing.station?.id == s.id;
-                  return false;
-                });
-                if (!exists) mergedSuggestions.add(s);
-              }
-
-              // Sort suggestions. First by whether it matches the query (already handled by API returning good matches),
-              // then by distance if the names are identical.
-              mergedSuggestions.sort((a, b) {
-                if (a is Station && b is Station) {
-                  if (a.name == b.name &&
-                      refLat != null &&
-                      refLng != null &&
-                      a.latitude != null &&
-                      a.longitude != null &&
-                      b.latitude != null &&
-                      b.longitude != null) {
-                    double distA = Geolocator.distanceBetween(
-                        refLat, refLng, a.latitude!, a.longitude!);
-                    double distB = Geolocator.distanceBetween(
-                        refLat, refLng, b.latitude!, b.longitude!);
-                    return distA.compareTo(distB);
-                  }
-                }
-                return 0; // Keep original order otherwise
-              });
-
-              _suggestions = mergedSuggestions;
-              _isSuggestionsLoading = false;
-            });
-          }
-        } catch (e) {
-          if (!mounted || requestToken != _suggestionRequestToken) return;
-          if (mounted) {
-            setState(() => _isSuggestionsLoading = false);
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(
-                    AppLocalizations.of(context)!.serviceBusyPleaseTryAgain),
-                duration: const Duration(seconds: 2)));
-          }
+      } else if (field == 'to') {
+        if (_fromStation != null &&
+            _fromStation!.latitude != null &&
+            _fromStation!.longitude != null) {
+          refLat = _fromStation!.latitude;
+          refLng = _fromStation!.longitude;
+        } else if (_effectiveCurrentPosition != null) {
+          refLat = _effectiveCurrentPosition!.latitude;
+          refLng = _effectiveCurrentPosition!.longitude;
         }
-      } else {
-        if (mounted) setState(() => _isSuggestionsLoading = false);
+      }
+
+      try {
+        final apiResults = await TransportApi.searchStations(sanitizedQuery,
+            lat: refLat, lng: refLng);
+        if (!mounted || requestToken != _suggestionRequestToken) return;
+        final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+        if (mounted) {
+          setState(() {
+            if (apiResults.isEmpty && matchingFavs.isEmpty) {
+              // Show message if no results at all
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content:
+                      Text(AppLocalizations.of(context)!.serviceBusyTryAgain),
+                  duration: const Duration(seconds: 2)));
+            }
+            _suggestions = <dynamic>[
+              ...matchingFavs,
+              ...apiResults,
+            ];
+            _isSuggestionsLoading = false;
+          });
+        }
+      } catch (e) {
+        if (!mounted || requestToken != _suggestionRequestToken) return;
+        if (mounted) {
+          setState(() => _isSuggestionsLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:
+                  Text(AppLocalizations.of(context)!.serviceBusyPleaseTryAgain),
+              duration: const Duration(seconds: 2)));
+        }
       }
     });
   }
@@ -2788,22 +2875,35 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime? pDep, pArr;
     try {
       if (legs.isNotEmpty) {
-        final firstRideLeg = legs.cast<Map<String, dynamic>>().firstWhere(
-              (l) => l['line'] != null && l['line']['name'] != null,
-              orElse: () => legs.first as Map<String, dynamic>,
-            );
+        final normalizedLegs = legs.cast<Map<String, dynamic>>();
+        final firstLeg = normalizedLegs.first;
+        final lastLeg = normalizedLegs.last;
+        final firstRideLeg = normalizedLegs.firstWhere(
+          (l) => l['line'] != null && l['line']['name'] != null,
+          orElse: () => firstLeg,
+        );
+
+        // Use full-trip boundaries (including pre/post walk legs) whenever
+        // available. Fallback to first ride if providers omit leg-level times
+        // for non-ride access/egress legs.
         dep = DateTime.parse(
-                firstRideLeg['departure'] ?? firstRideLeg['plannedDeparture'])
-            .toLocal();
-        arr =
-            DateTime.parse(legs.last['arrival'] ?? legs.last['plannedArrival'])
-                .toLocal();
+          firstLeg['departure'] ??
+              firstLeg['plannedDeparture'] ??
+              firstRideLeg['departure'] ??
+              firstRideLeg['plannedDeparture'],
+        ).toLocal();
+        arr = DateTime.parse(
+          lastLeg['arrival'] ?? lastLeg['plannedArrival'],
+        ).toLocal();
         pDep = DateTime.parse(
-                firstRideLeg['plannedDeparture'] ?? firstRideLeg['departure'])
-            .toLocal();
-        pArr =
-            DateTime.parse(legs.last['plannedArrival'] ?? legs.last['arrival'])
-                .toLocal();
+          firstLeg['plannedDeparture'] ??
+              firstLeg['departure'] ??
+              firstRideLeg['plannedDeparture'] ??
+              firstRideLeg['departure'],
+        ).toLocal();
+        pArr = DateTime.parse(
+          lastLeg['plannedArrival'] ?? lastLeg['arrival'],
+        ).toLocal();
       } else if (journeyData['departure'] != null &&
           journeyData['arrival'] != null) {
         dep = DateTime.parse(journeyData['departure']).toLocal();
@@ -3101,6 +3201,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             if (!mounted || _isRouteSearchCancelled(searchToken)) {
               TransportApi.addSyntheticDebugLog(
                 'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+              );
+              return;
+            }
+            if (partial.isEmpty) {
+              TransportApi.addSyntheticDebugLog(
+                'ui: partial ignored empty (no tab creation)',
               );
               return;
             }
@@ -3521,6 +3627,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildSearchView(bool canSearch, TransColors colors) {
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return GestureDetector(
       onTap: () {
         FocusScope.of(context).unfocus();
@@ -3659,6 +3766,43 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                                   color: colors.textPrimary,
                                                   fontWeight: FontWeight.bold))
                                         ]))),
+                          if (_showBikeSearchToggle) ...[
+                            const SizedBox(width: 8),
+                            Tooltip(
+                              message: _bikeSearchToggleEnabledForDevice
+                                  ? (isGerman
+                                      ? 'Fahrrad-Routing aktiviert'
+                                      : 'Bike routing enabled')
+                                  : (isGerman
+                                      ? 'Fahrrad-Routing deaktiviert'
+                                      : 'Bike routing disabled'),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: () =>
+                                    _setBikeSearchToggleEnabledForDevice(
+                                  !_bikeSearchToggleEnabledForDevice,
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: _bikeSearchToggleEnabledForDevice
+                                        ? colors.effectiveSeed.withValues(
+                                            alpha: 0.18,
+                                          )
+                                        : colors.timeToggleBg,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    Icons.pedal_bike,
+                                    size: 18,
+                                    color: _bikeSearchToggleEnabledForDevice
+                                        ? colors.effectiveSeed
+                                        : colors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                           if (_selectedDate != null)
                             IconButton(
                                 icon: const Icon(Icons.close, size: 16),
@@ -3757,17 +3901,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                         ]));
                               }
                               final fav = _favorites[idx];
-                              IconData icon = Icons.star;
-                              if (fav.label.toLowerCase() == 'home') {
-                                icon = Icons.home;
-                              } else if (fav.label.toLowerCase() == 'work') {
-                                icon = Icons.work;
-                              }
-                              if (fav.iconCode != null) {
-                                icon = kAvailableIcons.firstWhere(
-                                    (i) => i.codePoint == fav.iconCode,
-                                    orElse: () => Icons.star);
-                              }
+                              final icon = _favoriteIcon(fav);
                               return GestureDetector(
                                   onTap: () => _onFavoriteTap(fav),
                                   onLongPress: () =>
@@ -4286,12 +4420,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             borderRadius: BorderRadius.circular(16),
             clipBehavior: Clip.hardEdge,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              if (_isSuggestionsLoading)
-                const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: LinearProgressIndicator(minHeight: 2)),
+              if (_isSuggestionsLoading) const SizedBox.shrink(),
               Flexible(
                   child: ListView.builder(
+                      controller: _suggestionsScrollController,
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       itemCount: sections.length,
@@ -4322,7 +4454,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               Widget tile;
                               if (item is Favorite) {
                                 tile = ListTile(
-                                  leading: const Icon(Icons.star,
+                                  leading: Icon(_favoriteIcon(item),
                                       size: 16, color: Colors.orange),
                                   title: Text(item.label,
                                       style: TextStyle(
@@ -5595,174 +5727,185 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
   Widget build(BuildContext context) {
     final bool isNew = widget.favorite.id.isEmpty;
     final colors = TransColors.of(context);
+    final media = MediaQuery.of(context);
+    final topInset = max(12.0, media.padding.top + 8);
+    final availableHeight =
+        media.size.height - media.viewInsets.bottom - topInset - 12;
+    final dialogMaxHeight = max(260.0, availableHeight);
     return Dialog(
+      alignment: Alignment.topCenter,
+      insetPadding: EdgeInsets.fromLTRB(16, topInset, 16, 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       backgroundColor: colors.cardBg,
-      child: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                  isNew
-                      ? AppLocalizations.of(context)!.addFavorite
-                      : AppLocalizations.of(context)!.editFavorite,
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: colors.textPrimary)),
-              const SizedBox(height: 20),
-              TextField(
-                  controller: _labelCtrl,
-                  decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context)!.favoriteLabelHint)),
-              const SizedBox(height: 10),
-              SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                      children: kAvailableIcons.map((icon) {
-                    final isSelected = _selectedIconCode == icon.codePoint;
-                    return GestureDetector(
-                        onTap: () =>
-                            setState(() => _selectedIconCode = icon.codePoint),
-                        child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                                color: isSelected
-                                    ? colors.navBarSelected
-                                    : colors.chipBg,
-                                shape: BoxShape.circle),
-                            child: Icon(icon,
-                                size: 20,
-                                color:
-                                    isSelected ? Colors.white : Colors.grey)));
-                  }).toList())),
-              const SizedBox(height: 10),
-              if (_selectedStation != null)
-                ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.train, color: Colors.indigo),
-                    title: Text(_selectedStation!.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() {
-                              _selectedStation = null;
-                              _searchCtrl.clear();
-                              _suggestions = [];
-                            })))
-              else ...[
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 400, maxHeight: dialogMaxHeight),
+        child: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    isNew
+                        ? AppLocalizations.of(context)!.addFavorite
+                        : AppLocalizations.of(context)!.editFavorite,
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary)),
+                const SizedBox(height: 20),
                 TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context)!.searchStationName,
-                      prefixIcon: const Icon(Icons.search),
-                      suffix: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: _isLoading
-                              ? const CircularProgressIndicator(strokeWidth: 2)
-                              : null)),
-                  onChanged: (val) {
-                    final sanitizedQuery = val.trim();
-                    if (_debounce?.isActive ?? false) _debounce!.cancel();
-                    if (sanitizedQuery.isEmpty) {
-                      _searchRequestToken++;
-                      if (mounted) setState(() => _suggestions = []);
-                      return;
-                    }
-                    final requestToken = ++_searchRequestToken;
-                    _debounce =
-                        Timer(const Duration(milliseconds: 400), () async {
-                      if (!mounted) return;
-                      setState(() => _isLoading = true);
-                      try {
-                        final res = await TransportApi.searchStations(
-                          sanitizedQuery,
-                        ).timeout(const Duration(seconds: 10));
-                        if (requestToken != _searchRequestToken) return;
-                        if (mounted) {
-                          setState(() {
-                            _suggestions = res;
-                            _isLoading = false;
-                          });
+                    controller: _labelCtrl,
+                    decoration: InputDecoration(
+                        labelText:
+                            AppLocalizations.of(context)!.favoriteLabelHint)),
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                        children: kAvailableIcons.map((icon) {
+                      final isSelected = _selectedIconCode == icon.codePoint;
+                      return GestureDetector(
+                          onTap: () => setState(
+                              () => _selectedIconCode = icon.codePoint),
+                          child: Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? colors.navBarSelected
+                                      : colors.chipBg,
+                                  shape: BoxShape.circle),
+                              child: Icon(icon,
+                                  size: 20,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.grey)));
+                    }).toList())),
+                const SizedBox(height: 10),
+                if (_selectedStation != null)
+                  ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.train, color: Colors.indigo),
+                      title: Text(_selectedStation!.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                                _selectedStation = null;
+                                _searchCtrl.clear();
+                                _suggestions = [];
+                              })))
+                else ...[
+                  TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(
+                        labelText:
+                            AppLocalizations.of(context)!.searchStationName,
+                        prefixIcon: const Icon(Icons.search),
+                        suffix: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: _isLoading
+                                ? const CircularProgressIndicator(
+                                    strokeWidth: 2)
+                                : null)),
+                    onChanged: (val) {
+                      final sanitizedQuery = val.trim();
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      if (sanitizedQuery.isEmpty) {
+                        _searchRequestToken++;
+                        if (mounted) setState(() => _suggestions = []);
+                        return;
+                      }
+                      final requestToken = ++_searchRequestToken;
+                      _debounce =
+                          Timer(const Duration(milliseconds: 400), () async {
+                        if (!mounted) return;
+                        setState(() => _isLoading = true);
+                        try {
+                          final res = await TransportApi.searchStations(
+                            sanitizedQuery,
+                          ).timeout(const Duration(seconds: 10));
+                          if (requestToken != _searchRequestToken) return;
+                          if (mounted) {
+                            setState(() {
+                              _suggestions = res;
+                              _isLoading = false;
+                            });
+                          }
+                        } catch (e) {
+                          if (requestToken != _searchRequestToken) return;
+                          if (mounted) setState(() => _isLoading = false);
                         }
-                      } catch (e) {
-                        if (requestToken != _searchRequestToken) return;
-                        if (mounted) setState(() => _isLoading = false);
-                      }
-                    });
-                  },
-                ),
-                if (_suggestions.isNotEmpty)
-                  Container(
-                      height: 150,
-                      margin: const EdgeInsets.only(top: 8),
-                      decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white10),
-                          borderRadius: BorderRadius.circular(8)),
-                      child: ListView.builder(
-                          itemCount: _suggestions.length,
-                          itemBuilder: (context, idx) {
-                            final s = _suggestions[idx];
-                            return ListTile(
-                                dense: true,
-                                title: Text(s.name),
-                                onTap: () {
-                                  if (!mounted) return;
-                                  setState(() {
-                                    _selectedStation = s;
-                                    _suggestions = [];
-                                    if (_labelCtrl.text.isEmpty) {
-                                      _labelCtrl.text = s.name;
-                                    }
-                                  });
-                                });
-                          }))
-              ],
-              const SizedBox(height: 20),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                if (!isNew &&
-                    widget.favorite.id != 'home' &&
-                    widget.favorite.id != 'work')
-                  TextButton(
-                      onPressed: () async {
-                        await FavoritesManager.deleteFavorite(
-                            widget.favorite.id);
-                        if (context.mounted) Navigator.pop(context, true);
-                      },
-                      child: Text(AppLocalizations.of(context)!.delete,
-                          style: TextStyle(color: Colors.red))),
-                const SizedBox(width: 8),
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: Text(AppLocalizations.of(context)!.cancel)),
-                ElevatedButton(
-                    onPressed: () async {
-                      if (_labelCtrl.text.isNotEmpty) {
-                        final newFav = Favorite(
-                            id: isNew
-                                ? DateTime.now()
-                                    .millisecondsSinceEpoch
-                                    .toString()
-                                : widget.favorite.id,
-                            label: _labelCtrl.text,
-                            type: kSupportedFavoriteType,
-                            station: _selectedStation,
-                            iconCode: _selectedIconCode);
-                        await FavoritesManager.saveFavorite(newFav);
-                        if (context.mounted) Navigator.pop(context, true);
-                      }
+                      });
                     },
-                    child: Text(AppLocalizations.of(context)!.save))
-              ])
-            ],
+                  ),
+                  if (_suggestions.isNotEmpty)
+                    Container(
+                        height: 150,
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white10),
+                            borderRadius: BorderRadius.circular(8)),
+                        child: ListView.builder(
+                            itemCount: _suggestions.length,
+                            itemBuilder: (context, idx) {
+                              final s = _suggestions[idx];
+                              return ListTile(
+                                  dense: true,
+                                  title: Text(s.name),
+                                  onTap: () {
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _selectedStation = s;
+                                      _suggestions = [];
+                                      if (_labelCtrl.text.isEmpty) {
+                                        _labelCtrl.text = s.name;
+                                      }
+                                    });
+                                  });
+                            }))
+                ],
+                const SizedBox(height: 20),
+                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  if (!isNew &&
+                      widget.favorite.id != 'home' &&
+                      widget.favorite.id != 'work')
+                    TextButton(
+                        onPressed: () async {
+                          await FavoritesManager.deleteFavorite(
+                              widget.favorite.id);
+                          if (context.mounted) Navigator.pop(context, true);
+                        },
+                        child: Text(AppLocalizations.of(context)!.delete,
+                            style: TextStyle(color: Colors.red))),
+                  const SizedBox(width: 8),
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: Text(AppLocalizations.of(context)!.cancel)),
+                  ElevatedButton(
+                      onPressed: () async {
+                        if (_labelCtrl.text.isNotEmpty) {
+                          final newFav = Favorite(
+                              id: isNew
+                                  ? DateTime.now()
+                                      .millisecondsSinceEpoch
+                                      .toString()
+                                  : widget.favorite.id,
+                              label: _labelCtrl.text,
+                              type: kSupportedFavoriteType,
+                              station: _selectedStation,
+                              iconCode: _selectedIconCode);
+                          await FavoritesManager.saveFavorite(newFav);
+                          if (context.mounted) Navigator.pop(context, true);
+                        }
+                      },
+                      child: Text(AppLocalizations.of(context)!.save))
+                ])
+              ],
+            ),
           ),
         ),
       ),
@@ -5929,10 +6072,15 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   DateTime _getDepTime(Map<String, dynamic> j) {
     try {
       final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final first =
-          legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
-      return DateTime.parse(first['departure'] ?? first['plannedDeparture'])
-          .toLocal();
+      final firstLeg = legs.first;
+      final firstRide =
+          legs.firstWhere((l) => l['line'] != null, orElse: () => firstLeg);
+      return DateTime.parse(
+        firstLeg['departure'] ??
+            firstLeg['plannedDeparture'] ??
+            firstRide['departure'] ??
+            firstRide['plannedDeparture'],
+      ).toLocal();
     } catch (e) {
       return DateTime.now();
     }

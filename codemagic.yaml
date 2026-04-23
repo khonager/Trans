@@ -44,7 +44,7 @@ workflows:
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
-          xcode-project use-profiles
+          xcode-project use-profiles --project ios/Runner.xcodeproj
 
       - name: Flutter build ipa
         script: |
@@ -106,7 +106,7 @@ workflows:
     scripts:
       - name: Set up code signing
         script: |
-          xcode-project use-profiles
+          xcode-project use-profiles --project ios/Runner.xcodeproj
 
       - name: Create .env file
         script: |

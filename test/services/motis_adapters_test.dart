@@ -72,5 +72,27 @@ void main() {
       expect(stop['platform'], '4');
       expect(stop['stop']?['platform'], '4');
     });
+
+    test(
+        'journey conversion skips non-map legs and tolerates missing endpoints',
+        () {
+      final journey = journeyFromMotisItinerary({
+        'startTime': '2026-04-21T08:00:00Z',
+        'endTime': '2026-04-21T09:00:00Z',
+        'legs': [
+          'invalid-leg',
+          {
+            'mode': 'WALK',
+            'startTime': '2026-04-21T08:00:00Z',
+            'endTime': '2026-04-21T08:10:00Z',
+          }
+        ],
+      });
+
+      final legs = journey['legs'] as List<dynamic>;
+      expect(legs.length, 1);
+      expect((legs.first as Map<String, dynamic>)['origin'], isNotNull);
+      expect((legs.first)['destination'], isNotNull);
+    });
   });
 }

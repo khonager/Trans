@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import 'favorites_policy.dart';
 import 'notification_manager.dart';
+import 'transport_api.dart';
 import 'wake_alarm_settings.dart';
 import '../utils/app_error.dart';
 
@@ -494,6 +495,20 @@ class SupabaseService {
     }
   }
 
+  static Future<void> signInWithApple() async {
+    final launched = await client.auth.signInWithOAuth(
+      OAuthProvider.apple,
+      redirectTo: _oauthRedirectUrlForCurrentPlatform(),
+      authScreenLaunchMode: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
+          ? LaunchMode.externalApplication
+          : LaunchMode.platformDefault,
+    );
+
+    if (!launched) {
+      throw 'Could not start Apple sign-in.';
+    }
+  }
+
   static Future<void> _ensureProfileRow(String userId,
       {String? username}) async {
     try {
@@ -728,6 +743,134 @@ class SupabaseService {
       }
       if (settings.containsKey('locale_code')) {
         await prefs.setString('locale_code', settings['locale_code']);
+      }
+      if (settings
+          .containsKey(TransportApi.advancedTransferComfortPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedTransferComfortPreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedTransferComfortPreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings.containsKey(TransportApi.advancedBikePreferenceKey)) {
+        final raw = settings[TransportApi.advancedBikePreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedBikePreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedMinTransferTimeMinutesPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedMinTransferTimeMinutesPreferenceKey];
+        if (raw is num) {
+          await prefs.setInt(
+            TransportApi.advancedMinTransferTimeMinutesPreferenceKey,
+            raw.toInt(),
+          );
+        }
+      }
+      if (settings.containsKey(
+          TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey)) {
+        final raw = settings[
+            TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey];
+        if (raw is num) {
+          await prefs.setInt(
+            TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
+            raw.toInt(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedTransferTimeFactorPreferenceKey)) {
+        final raw = settings[TransportApi.advancedTransferTimeFactorPreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedTransferTimeFactorPreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedPreTransitWalkEnabledPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPreTransitWalkEnabledPreferenceKey];
+        if (raw is bool) {
+          await prefs.setBool(
+            TransportApi.advancedPreTransitWalkEnabledPreferenceKey,
+            raw,
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedPreTransitBikeEnabledPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPreTransitBikeEnabledPreferenceKey];
+        if (raw is bool) {
+          await prefs.setBool(
+            TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
+            raw,
+          );
+        }
+      }
+      if (settings.containsKey(
+          TransportApi.advancedPostTransitWalkEnabledPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPostTransitWalkEnabledPreferenceKey];
+        if (raw is bool) {
+          await prefs.setBool(
+            TransportApi.advancedPostTransitWalkEnabledPreferenceKey,
+            raw,
+          );
+        }
+      }
+      if (settings.containsKey(
+          TransportApi.advancedPostTransitBikeEnabledPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPostTransitBikeEnabledPreferenceKey];
+        if (raw is bool) {
+          await prefs.setBool(
+            TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
+            raw,
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedCyclingSpeedKmhPreferenceKey)) {
+        final raw = settings[TransportApi.advancedCyclingSpeedKmhPreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedCyclingSpeedKmhPreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedPedestrianSpeedKmhPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedPedestrianSpeedKmhPreferenceKey];
+        if (raw is num) {
+          await prefs.setDouble(
+            TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
+            raw.toDouble(),
+          );
+        }
+      }
+      if (settings
+          .containsKey(TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey)) {
+        final raw =
+            settings[TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey];
+        if (raw is num) {
+          await prefs.setInt(
+            TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey,
+            raw.toInt(),
+          );
+        }
       }
 
       final List<String> favs =
