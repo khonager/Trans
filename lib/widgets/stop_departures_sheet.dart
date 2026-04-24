@@ -44,6 +44,8 @@ class StopDeparturesSheet extends StatefulWidget {
 }
 
 class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
+  static const int _fullDayMaxResults = 2000;
+
   late Future<_StopDeparturesData> _future;
   String? _selectedDayTabId;
   String? _selectedPlatformKey;
@@ -89,17 +91,20 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
         (type) => TransportApi.fetchStopDepartures(
           widget.stopId,
           date: dates[type],
+          maxResults: _fullDayMaxResults,
         ).catchError((_) => <Map<String, dynamic>>[]),
       ),
     );
 
     final dayTabs = List<_DayTab>.generate(dayTypes.length, (index) {
       final type = dayTypes[index];
+      final sortedDepartures = List<Map<String, dynamic>>.from(results[index])
+        ..sort(_departureSortCompare);
       return _DayTab(
         id: _serviceDayId(type),
         label: _serviceDayLabel(type),
         type: type,
-        departures: results[index],
+        departures: sortedDepartures,
       );
     });
 
@@ -315,28 +320,14 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                     ),
                                   ),
                                 )
-                              : ListView.separated(
-                                  controller: scrollCtrl,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    0,
-                                    16,
-                                    24,
+                              : _LazyLoopDeparturesList(
+                                  key: ValueKey(
+                                    '${selectedDayTab.id}|${selectedPlatformKey ?? 'all'}|${departures.length}',
                                   ),
-                                  itemCount: departures.length,
-                                  separatorBuilder: (_, __) => Divider(
-                                    height: 1,
-                                    color: colors.divider.withValues(
-                                      alpha: 0.45,
-                                    ),
-                                  ),
-                                  itemBuilder: (ctx, idx) {
-                                    return _DepartureRow(
-                                      dep: departures[idx],
-                                      colors: colors,
-                                      l10n: l10n,
-                                    );
-                                  },
+                                  departures: departures,
+                                  scrollController: scrollCtrl,
+                                  colors: colors,
+                                  l10n: l10n,
                                 ),
                         ),
                       ],
@@ -619,6 +610,158 @@ class _DepartureRow extends StatelessWidget {
   }
 }
 
+class _LazyLoopDeparturesList extends StatefulWidget {
+  final List<Map<String, dynamic>> departures;
+  final ScrollController scrollController;
+  final TransColors colors;
+  final AppLocalizations l10n;
+
+  const _LazyLoopDeparturesList({
+    super.key,
+    required this.departures,
+    required this.scrollController,
+    required this.colors,
+    required this.l10n,
+  });
+
+  @override
+  State<_LazyLoopDeparturesList> createState() =>
+      _LazyLoopDeparturesListState();
+}
+
+class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
+  static const int _windowChunk = 60;
+  static const int _loadMarginPx = 320;
+  static const double _rowExtentEstimate = 76;
+  static const int _loopStartIndex = 5000;
+
+  int _anchorIndex = 0;
+  int _visibleStart = 0;
+  int _visibleEnd = -1;
+  bool _loopEnabled = false;
+  bool _didInitialJump = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetWindow();
+  }
+
+  void _resetWindow() {
+    final total = widget.departures.length;
+    if (total == 0) {
+      _anchorIndex = 0;
+      _visibleStart = 0;
+      _visibleEnd = -1;
+      _loopEnabled = false;
+      _didInitialJump = true;
+      return;
+    }
+
+    _anchorIndex = _indexForCurrentTime(widget.departures);
+    _visibleStart = (_anchorIndex - _windowChunk).clamp(0, total - 1);
+    _visibleEnd = (_anchorIndex + _windowChunk).clamp(0, total - 1);
+    _loopEnabled = _visibleStart == 0 && _visibleEnd == total - 1;
+    _didInitialJump = false;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpToAnchor();
+    });
+  }
+
+  void _jumpToAnchor() {
+    if (!mounted || _didInitialJump || !widget.scrollController.hasClients) {
+      return;
+    }
+    final index = _loopEnabled
+        ? _loopStartIndex + _anchorIndex
+        : (_anchorIndex - _visibleStart).clamp(0, _visibleCount - 1);
+    final target = (index * _rowExtentEstimate).toDouble();
+    widget.scrollController.jumpTo(target);
+    _didInitialJump = true;
+  }
+
+  int get _visibleCount {
+    if (_visibleEnd < _visibleStart) return 0;
+    return _visibleEnd - _visibleStart + 1;
+  }
+
+  bool _handleScroll(ScrollNotification notification) {
+    _jumpToAnchor();
+    if (_loopEnabled || widget.departures.isEmpty) return false;
+
+    final metrics = notification.metrics;
+    final nearTop = metrics.pixels <= _loadMarginPx;
+    final nearBottom =
+        metrics.pixels >= metrics.maxScrollExtent - _loadMarginPx;
+    final total = widget.departures.length;
+
+    if (nearBottom && _visibleEnd < total - 1) {
+      setState(() {
+        _visibleEnd = (_visibleEnd + _windowChunk).clamp(0, total - 1);
+      });
+    }
+
+    if (nearTop && _visibleStart > 0) {
+      final oldPixels = widget.scrollController.hasClients
+          ? widget.scrollController.position.pixels
+          : 0.0;
+      final added =
+          _visibleStart >= _windowChunk ? _windowChunk : _visibleStart;
+      setState(() {
+        _visibleStart = (_visibleStart - _windowChunk).clamp(0, total - 1);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.scrollController.hasClients) return;
+        widget.scrollController.jumpTo(oldPixels + added * _rowExtentEstimate);
+      });
+    }
+
+    if (_visibleStart == 0 && _visibleEnd == total - 1) {
+      setState(() {
+        _loopEnabled = true;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.scrollController.hasClients) return;
+        final loopAnchor = _loopStartIndex + _anchorIndex;
+        widget.scrollController.jumpTo(loopAnchor * _rowExtentEstimate);
+      });
+    }
+
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final departures = widget.departures;
+    if (departures.isEmpty) return const SizedBox.shrink();
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleScroll,
+      child: ListView.builder(
+        controller: widget.scrollController,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        itemCount: _loopEnabled ? null : _visibleCount,
+        itemBuilder: (ctx, idx) {
+          final realIdx =
+              _loopEnabled ? idx % departures.length : _visibleStart + idx;
+          final dep = departures[realIdx];
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _DepartureRow(dep: dep, colors: widget.colors, l10n: widget.l10n),
+              Divider(
+                height: 1,
+                color: widget.colors.divider.withValues(alpha: 0.45),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _ParsedDeparture {
   final String timeStr;
   final String? delayStr;
@@ -871,4 +1014,46 @@ int? _calculateDelayMinutes(String? scheduled, String? actual) {
   } catch (_) {
     return null;
   }
+}
+
+DateTime? _departureDateTimeLocal(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  final rawTime = (motisDepObj?['scheduledTime'] as String?) ??
+      (motisDepObj?['time'] as String?) ??
+      (motisPlaceObj?['scheduledDeparture'] as String?) ??
+      (motisPlaceObj?['departure'] as String?) ??
+      (motisPlaceObj?['scheduledArrival'] as String?) ??
+      (motisPlaceObj?['arrival'] as String?) ??
+      (dep['plannedWhen'] as String?) ??
+      (dep['when'] as String?);
+  if (rawTime == null || rawTime.isEmpty) return null;
+  try {
+    return DateTime.parse(rawTime).toLocal();
+  } catch (_) {
+    return null;
+  }
+}
+
+int _departureSortCompare(Map<String, dynamic> a, Map<String, dynamic> b) {
+  final ta = _departureDateTimeLocal(a);
+  final tb = _departureDateTimeLocal(b);
+  if (ta == null && tb == null) return 0;
+  if (ta == null) return 1;
+  if (tb == null) return -1;
+  return ta.compareTo(tb);
+}
+
+int _indexForCurrentTime(List<Map<String, dynamic>> departures) {
+  if (departures.isEmpty) return 0;
+
+  final now = DateTime.now();
+  final nowMinutes = now.hour * 60 + now.minute;
+  for (var i = 0; i < departures.length; i++) {
+    final time = _departureDateTimeLocal(departures[i]);
+    if (time == null) continue;
+    final minutes = time.hour * 60 + time.minute;
+    if (minutes >= nowMinutes) return i;
+  }
+  return 0;
 }
