@@ -119,8 +119,7 @@ String formatRideDisplayLine({
     }
   }
 
-  final effectivePlatform =
-      platform?.trim().isNotEmpty == true ? platform : arrivalPlatform;
+  final effectivePlatform = platform?.trim();
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
@@ -2850,7 +2849,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           startStationName: leg['origin']?['name'],
           destinationName: leg['destination']?['name'],
           headsign: leg['direction'],
-          tripId: leg['line']?['fahrtNr']?.toString() ??
+          tripId: leg['line']?['tripId']?.toString() ??
+              leg['line']?['fahrtNr']?.toString() ??
               leg['tripId']?.toString(), // Populating tripId
           isWakeAlarmOn: widget.alwaysWakeMe,
         ));

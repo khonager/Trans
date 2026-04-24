@@ -18,7 +18,7 @@ void main() {
     expect(formatted, 'RE 50 (Gl. 2)');
   });
 
-  test('formats display line with fallback arrival platform', () {
+  test('does not use arrival platform as display fallback', () {
     final formatted = formatRideDisplayLine(
       line: 'RE29',
       platform: null,
@@ -26,7 +26,7 @@ void main() {
       tripId: null,
       showTrainNumbers: false,
     );
-    expect(formatted, 'RE29 (Pl. 9)');
+    expect(formatted, 'RE29');
   });
 
   test('hides train number in parentheses but keeps platform', () {
