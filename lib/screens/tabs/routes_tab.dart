@@ -710,7 +710,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (route.activeJourney == null) return;
 
     final updatedSteps = route.activeJourney!.steps.map((s) {
-      if (s == step) return s.copyWith(isWakeAlarmOn: !s.isWakeAlarmOn);
+      if (s == step) {
+        return s.copyWith(
+          isWakeAlarmOn: !s.isWakeAlarmOn,
+          clearAlarmTarget: true,
+        );
+      }
       return s;
     }).toList();
 
@@ -731,6 +736,59 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     } else if (!anyAlarmOn && _isWakeAlarmSet) {
       _stopWakeAlarm();
     }
+  }
+
+  void _setIntermediateStopAlarm(
+    RouteTab route,
+    JourneyStep step, {
+    required String stopName,
+    required double? targetLat,
+    required double? targetLng,
+    required double? originLat,
+    required double? originLng,
+  }) {
+    if (route.activeJourney == null) return;
+    final l10n = AppLocalizations.of(context)!;
+
+    if (targetLat == null || targetLng == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.missingDestCoords)));
+      return;
+    }
+
+    final updatedSteps = route.activeJourney!.steps.map((s) {
+      if (s == step) {
+        return s.copyWith(
+          isWakeAlarmOn: true,
+          alarmTargetName: stopName,
+          alarmTargetLat: targetLat,
+          alarmTargetLng: targetLng,
+          alarmTargetOriginLat: originLat,
+          alarmTargetOriginLng: originLng,
+        );
+      }
+      return s;
+    }).toList();
+
+    final updatedJourney = route.activeJourney!.copyWith(steps: updatedSteps);
+
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx != -1) {
+        _tabs[idx] =
+            route.copyWith(activeJourney: updatedJourney, steps: updatedSteps);
+      }
+    });
+
+    if (!_isWakeAlarmSet) {
+      _startWakeAlarm(route);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Wake alert set for $stopName')),
+    );
   }
 
   void _stopWakeAlarm() {
@@ -890,7 +948,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         double? originLat = step.startLat;
         double? originLng = step.startLng;
 
-        if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        if (step.alarmTargetLat != null && step.alarmTargetLng != null) {
+          targetLat = step.alarmTargetLat;
+          targetLng = step.alarmTargetLng;
+          originLat = step.alarmTargetOriginLat ?? originLat;
+          originLng = step.alarmTargetOriginLng ?? originLng;
+        } else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
           final stops = step.stopovers!;
           if (stopsBefore > 0) {
             int targetIndex = stops.length - stopsBefore;
@@ -948,17 +1011,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _triggerVibration();
           _showNotification();
           triggered = true;
+          final triggerStopName =
+              step.alarmTargetName ?? step.destinationName ?? 'your stop';
 
           // Turn off alarm for THIS step
           int stepIdx = remainingSteps.indexOf(step);
           if (stepIdx != -1) {
-            remainingSteps[stepIdx] = step.copyWith(isWakeAlarmOn: false);
+            remainingSteps[stepIdx] = step.copyWith(
+              isWakeAlarmOn: false,
+              clearAlarmTarget: true,
+            );
           }
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(AppLocalizations.of(context)!
-                    .wakeUpApproaching(step.destinationName ?? 'your stop')),
+                    .wakeUpApproaching(triggerStopName)),
                 backgroundColor: Colors.red));
           }
         }
@@ -5208,6 +5276,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       _showAlternatives(
                           context, stationId, route.destination, time,
                           lat: lat, lng: lng, stationName: name),
+                  onIntermediateAlarmLongPress: (stopName,
+                          {double? targetLat,
+                          double? targetLng,
+                          double? originLat,
+                          double? originLng}) =>
+                      _setIntermediateStopAlarm(route, route.steps[i],
+                          stopName: stopName,
+                          targetLat: targetLat,
+                          targetLng: targetLng,
+                          originLat: originLat,
+                          originLng: originLng),
                   onChat: (line) => _showChat(context, line),
                   onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
                   onMapTap: () => _openMap(route, focusStep: route.steps[i]),
@@ -5223,6 +5302,13 @@ class _StepCard extends StatefulWidget {
   final String finalDestinationId;
   final Function(String, DateTime, {double? lat, double? lng, String? name})
       onOpenAlternatives;
+  final Function(
+    String, {
+    double? targetLat,
+    double? targetLng,
+    double? originLat,
+    double? originLng,
+  }) onIntermediateAlarmLongPress;
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
@@ -5233,6 +5319,7 @@ class _StepCard extends StatefulWidget {
     this.isFirst = false,
     required this.finalDestinationId,
     required this.onOpenAlternatives,
+    required this.onIntermediateAlarmLongPress,
     required this.onChat,
     required this.onAlarmToggle,
     required this.onMapTap,
@@ -5525,6 +5612,12 @@ class _StepCardState extends State<_StepCard> {
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: step.stopovers!.length,
                             itemBuilder: (ctx, idx) {
+                              double? asDouble(dynamic value) {
+                                if (value is num) return value.toDouble();
+                                if (value == null) return null;
+                                return double.tryParse(value.toString());
+                              }
+
                               final stop = step.stopovers![idx];
                               final name = stop['stop']['name'];
                               final stopId = stop['stop']['id'];
@@ -5539,6 +5632,23 @@ class _StepCardState extends State<_StepCard> {
                                   stop['scheduledArrival'];
                               final actualDep =
                                   stop['departure'] ?? stop['arrival'];
+                              final stopLat =
+                                  asDouble(stop['stop']?['location']?['latitude']);
+                              final stopLng = asDouble(
+                                  stop['stop']?['location']?['longitude']);
+                              double? previousLat = step.startLat;
+                              double? previousLng = step.startLng;
+                              if (idx > 0) {
+                                final previousStop = step.stopovers![idx - 1];
+                                previousLat = asDouble(
+                                        previousStop['stop']?['location']
+                                            ?['latitude']) ??
+                                    previousLat;
+                                previousLng = asDouble(
+                                        previousStop['stop']?['location']
+                                            ?['longitude']) ??
+                                    previousLng;
+                              }
                               String timeStr = "--:--";
                               Color timeColor = Colors.grey;
                               DateTime? exactStopDate;
@@ -5593,24 +5703,35 @@ class _StepCardState extends State<_StepCard> {
                                                     fontSize: 12)),
                                             const SizedBox(width: 8),
                                             if (exactStopDate != null)
-                                              IconButton(
-                                                  icon: const Icon(
-                                                      Icons.alt_route,
-                                                      size: 16,
-                                                      color: Colors.blue),
-                                                  // FIX: Pass exact stop time and location if available
-                                                  onPressed: () =>
-                                                      widget.onOpenAlternatives(
-                                                          stopId as String,
-                                                          exactStopDate!,
-                                                          lat: stop['stop']
-                                                                  ['location']
-                                                              ?['latitude'],
-                                                          lng: stop['stop']
-                                                                  ['location']
-                                                              ?['longitude'],
-                                                          name:
-                                                              name as String?))
+                                              GestureDetector(
+                                                onLongPress: () =>
+                                                    widget.onIntermediateAlarmLongPress(
+                                                  name as String? ??
+                                                      displayName,
+                                                  targetLat: stopLat,
+                                                  targetLng: stopLng,
+                                                  originLat: previousLat,
+                                                  originLng: previousLng,
+                                                ),
+                                                child: IconButton(
+                                                    icon: const Icon(
+                                                        Icons.alt_route,
+                                                        size: 16,
+                                                        color: Colors.blue),
+                                                    // Pass exact stop time and location if available.
+                                                    onPressed: () => widget
+                                                        .onOpenAlternatives(
+                                                            stopId as String,
+                                                            exactStopDate!,
+                                                            lat: stop['stop']
+                                                                    ['location']
+                                                                ?['latitude'],
+                                                            lng: stop['stop']
+                                                                    ['location']
+                                                                ?['longitude'],
+                                                            name: name
+                                                                as String?)),
+                                              )
                                           ])));
                             }))
                   else
