@@ -525,6 +525,8 @@ class _JourneyCard extends StatelessWidget {
     final depStr = DateFormat('HH:mm').format(journey.departure);
     final arrStr = DateFormat('HH:mm').format(journey.arrival);
     final durStr = FormatUtils.formatDuration(journey.duration.inMinutes);
+    final walkStr =
+        FormatUtils.formatDuration(journey.totalWalkingDuration.inMinutes);
     final isSynthetic = journey.source == 'motis_synthetic';
     final badgeLabel = isSynthetic
         ? 'TRANS/SYN'
@@ -629,13 +631,39 @@ class _JourneyCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      durStr,
-                      style: const TextStyle(
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          durStr,
+                          style: const TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Container(
+                          width: 1,
+                          height: 14,
+                          color: Colors.white24,
+                        ),
+                        const SizedBox(width: 10),
+                        Icon(
+                          Icons.directions_walk,
+                          size: 14,
+                          color: colors.stepTransferText,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          walkStr,
+                          style: TextStyle(
+                            color: colors.stepTransferText,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

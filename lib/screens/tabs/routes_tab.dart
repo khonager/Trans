@@ -292,7 +292,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
         ) ??
         false;
-    final hasBikeModesConfigured = advancedEnabled && (preBikeEnabled || postBikeEnabled);
+    final hasBikeModesConfigured =
+        advancedEnabled && (preBikeEnabled || postBikeEnabled);
     final bikeToggleEnabled = prefs.getBool(
           TransportApi.advancedBikeTogglePreferenceKey,
         ) ??
@@ -5111,6 +5112,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     final colors = TransColors.of(context);
+    final totalWalkingMinutes =
+        route.activeJourney?.totalWalkingDuration.inMinutes ?? 0;
+    final totalWalkingDurationLabel =
+        FormatUtils.formatDuration(totalWalkingMinutes);
     return RefreshIndicator(
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
@@ -5172,14 +5177,25 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           decoration: BoxDecoration(
                               color: Colors.green.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(12)),
-                          child: Row(children: [
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
                             const Icon(Icons.timer_outlined,
                                 size: 16, color: Colors.green),
                             const SizedBox(width: 4),
                             Text(route.totalDuration,
                                 style: const TextStyle(
                                     color: Colors.green,
-                                    fontWeight: FontWeight.bold))
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 10),
+                            Container(
+                                width: 1, height: 14, color: Colors.white24),
+                            const SizedBox(width: 10),
+                            Icon(Icons.directions_walk,
+                                size: 16, color: colors.stepTransferText),
+                            const SizedBox(width: 4),
+                            Text(totalWalkingDurationLabel,
+                                style: TextStyle(
+                                    color: colors.stepTransferText,
+                                    fontWeight: FontWeight.bold)),
                           ]))
                     ])),
             for (int i = 0; i < route.steps.length; i++)
