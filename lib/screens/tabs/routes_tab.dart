@@ -5182,6 +5182,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final colors = TransColors.of(context);
     final totalWalkingMinutes =
         route.activeJourney?.totalWalkingDuration.inMinutes ?? 0;
+    final hasWalkingSummary = totalWalkingMinutes > 0;
     final totalWalkingDurationLabel =
         FormatUtils.formatDuration(totalWalkingMinutes);
     return RefreshIndicator(
@@ -5256,16 +5257,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             style: const TextStyle(
                                 color: Colors.green,
                                 fontWeight: FontWeight.bold)),
-                        const SizedBox(width: 10),
-                        Container(width: 1, height: 14, color: Colors.white24),
-                        const SizedBox(width: 10),
-                        Icon(Icons.directions_walk,
-                            size: 16, color: colors.stepTransferText),
-                        const SizedBox(width: 4),
-                        Text(totalWalkingDurationLabel,
-                            style: TextStyle(
-                                color: colors.stepTransferText,
-                                fontWeight: FontWeight.bold)),
+                        if (hasWalkingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                              width: 1, height: 14, color: Colors.white24),
+                          const SizedBox(width: 10),
+                          Icon(Icons.directions_walk,
+                              size: 16, color: colors.stepTransferText),
+                          const SizedBox(width: 4),
+                          Text(totalWalkingDurationLabel,
+                              style: TextStyle(
+                                  color: colors.stepTransferText,
+                                  fontWeight: FontWeight.bold)),
+                        ]
                       ]));
 
                   if (isCompactHeader) {
