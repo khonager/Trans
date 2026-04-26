@@ -5192,80 +5192,113 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           children: [
             Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      if (route.candidates != null &&
-                          route.candidates!.length > 1)
-                        IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.arrow_back),
-                            onPressed: () => setState(() {
-                                  final idx =
-                                      _tabs.indexWhere((t) => t.id == route.id);
-                                  if (idx != -1) {
-                                    _tabs[idx] = route.copyWith(
-                                        clearActiveJourney: true);
-                                  }
-                                })),
-                      if (route.candidates != null &&
-                          route.candidates!.length > 1)
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final showBackButton =
+                      route.candidates != null && route.candidates!.length > 1;
+                  final isCompactHeader = constraints.maxWidth < 430;
+                  final timeLabel = route.activeJourney != null
+                      ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
+                      : route.subtitle;
+
+                  Widget timeText({double fontSize = 24}) => FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(timeLabel,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                              fontSize: fontSize,
+                              fontWeight: FontWeight.bold,
+                              color: colors.textPrimary)));
+
+                  final actions =
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (showBackButton)
+                      IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => setState(() {
+                                final idx =
+                                    _tabs.indexWhere((t) => t.id == route.id);
+                                if (idx != -1) {
+                                  _tabs[idx] =
+                                      route.copyWith(clearActiveJourney: true);
+                                }
+                              })),
+                    if (showBackButton) const SizedBox(width: 8),
+                    IconButton(
+                        icon: Icon(
+                            _isRouteSaved(route)
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                            color: colors.navBarSelected),
+                        onPressed:
+                            route.origin == null || route.activeJourney == null
+                                ? null
+                                : () => _toggleSavedRoute(route)),
+                    IconButton(
+                        icon: const Icon(Icons.map, color: Colors.blue),
+                        onPressed: () => _openMap(route)),
+                  ]);
+
+                  final durationChip = Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.timer_outlined,
+                            size: 16, color: Colors.green),
+                        const SizedBox(width: 4),
+                        Text(route.totalDuration,
+                            style: const TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(width: 10),
+                        Container(width: 1, height: 14, color: Colors.white24),
+                        const SizedBox(width: 10),
+                        Icon(Icons.directions_walk,
+                            size: 16, color: colors.stepTransferText),
+                        const SizedBox(width: 4),
+                        Text(totalWalkingDurationLabel,
+                            style: TextStyle(
+                                color: colors.stepTransferText,
+                                fontWeight: FontWeight.bold)),
+                      ]));
+
+                  if (isCompactHeader) {
+                    return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: double.infinity, child: timeText()),
+                          const SizedBox(height: 8),
+                          Row(children: [
+                            Expanded(
+                                child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: actions)),
+                            const SizedBox(width: 8),
+                            Flexible(
+                                child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerRight,
+                                    child: durationChip))
+                          ])
+                        ]);
+                  }
+
+                  return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(child: timeText()),
                         const SizedBox(width: 8),
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Text(
-                                route.activeJourney != null
-                                    ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
-                                    : route.subtitle,
-                                style: TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold,
-                                    color: colors.textPrimary)),
-                          ])),
-                      IconButton(
-                          icon: Icon(
-                              _isRouteSaved(route)
-                                  ? Icons.bookmark
-                                  : Icons.bookmark_border,
-                              color: colors.navBarSelected),
-                          onPressed: route.origin == null ||
-                                  route.activeJourney == null
-                              ? null
-                              : () => _toggleSavedRoute(route)),
-                      IconButton(
-                          icon: const Icon(Icons.map, color: Colors.blue),
-                          onPressed: () => _openMap(route)),
-                      const SizedBox(width: 8),
-                      Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12)),
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            const Icon(Icons.timer_outlined,
-                                size: 16, color: Colors.green),
-                            const SizedBox(width: 4),
-                            Text(route.totalDuration,
-                                style: const TextStyle(
-                                    color: Colors.green,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(width: 10),
-                            Container(
-                                width: 1, height: 14, color: Colors.white24),
-                            const SizedBox(width: 10),
-                            Icon(Icons.directions_walk,
-                                size: 16, color: colors.stepTransferText),
-                            const SizedBox(width: 4),
-                            Text(totalWalkingDurationLabel,
-                                style: TextStyle(
-                                    color: colors.stepTransferText,
-                                    fontWeight: FontWeight.bold)),
-                          ]))
-                    ])),
+                        actions,
+                        const SizedBox(width: 8),
+                        durationChip
+                      ]);
+                })),
             for (int i = 0; i < route.steps.length; i++)
               _StepCard(
                   step: route.steps[i],
@@ -5632,21 +5665,19 @@ class _StepCardState extends State<_StepCard> {
                                   stop['scheduledArrival'];
                               final actualDep =
                                   stop['departure'] ?? stop['arrival'];
-                              final stopLat =
-                                  asDouble(stop['stop']?['location']?['latitude']);
+                              final stopLat = asDouble(
+                                  stop['stop']?['location']?['latitude']);
                               final stopLng = asDouble(
                                   stop['stop']?['location']?['longitude']);
                               double? previousLat = step.startLat;
                               double? previousLng = step.startLng;
                               if (idx > 0) {
                                 final previousStop = step.stopovers![idx - 1];
-                                previousLat = asDouble(
-                                        previousStop['stop']?['location']
-                                            ?['latitude']) ??
+                                previousLat = asDouble(previousStop['stop']
+                                        ?['location']?['latitude']) ??
                                     previousLat;
-                                previousLng = asDouble(
-                                        previousStop['stop']?['location']
-                                            ?['longitude']) ??
+                                previousLng = asDouble(previousStop['stop']
+                                        ?['location']?['longitude']) ??
                                     previousLng;
                               }
                               String timeStr = "--:--";
@@ -5704,8 +5735,8 @@ class _StepCardState extends State<_StepCard> {
                                             const SizedBox(width: 8),
                                             if (exactStopDate != null)
                                               GestureDetector(
-                                                onLongPress: () =>
-                                                    widget.onIntermediateAlarmLongPress(
+                                                onLongPress: () => widget
+                                                    .onIntermediateAlarmLongPress(
                                                   name as String? ??
                                                       displayName,
                                                   targetLat: stopLat,
