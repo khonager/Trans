@@ -24,6 +24,7 @@ import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
@@ -6108,7 +6109,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
   bool _isMoreLoading = false;
-  String? _error;
+  Object? _error;
 
   @override
   void initState() {
@@ -6176,10 +6177,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         );
         processResults(results);
       }
-    } catch (e) {
+    } catch (e, st) {
+      AppError.log(e,
+          stackTrace: st, source: 'AlternativesSheet._fetchInitial');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = e;
           _isLoading = false;
         });
       }
@@ -6224,10 +6227,11 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
       );
 
       processResults(results);
-    } catch (e) {
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'AlternativesSheet._fetch');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = e;
           _isLoading = false;
           _isMoreLoading = false;
         });
@@ -6284,6 +6288,14 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final errorMessage = _error == null
+        ? null
+        : AppError.userMessage(
+            context,
+            _error!,
+            fallback: l10n.noRoutesFoundBusy,
+          );
     return Column(
       children: [
         Padding(
@@ -6295,7 +6307,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2))),
         ),
-        Text(AppLocalizations.of(context)!.alternatives,
+        Text(l10n.alternatives,
             style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -6308,14 +6320,18 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
               child: Center(
                   child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text(
-                          AppLocalizations.of(context)!
-                              .errorPrefix(_error ?? ""),
-                          textAlign: TextAlign.center))))
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(errorMessage ?? l10n.noRoutesFoundBusy,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.textPrimary)),
+                        const SizedBox(height: 12),
+                        TextButton.icon(
+                            onPressed: _fetchInitial,
+                            icon: const Icon(Icons.refresh),
+                            label: Text(l10n.retry))
+                      ]))))
         else if (_results.isEmpty)
-          Expanded(
-              child: Center(
-                  child: Text(AppLocalizations.of(context)!.noRoutesFound)))
+          Expanded(child: Center(child: Text(l10n.noRoutesFound)))
         else
           Expanded(
             child: ListView.builder(
@@ -6328,7 +6344,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                           padding: const EdgeInsets.symmetric(vertical: 12)),
                       onPressed: _isMoreLoading ? null : _loadEarlier,
                       icon: const Icon(Icons.history, size: 18),
-                      label: Text(AppLocalizations.of(context)!.loadEarlier));
+                      label: Text(l10n.loadEarlier));
                 }
                 if (idx == _results.length + 1) {
                   return TextButton.icon(
@@ -6336,7 +6352,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                           padding: const EdgeInsets.symmetric(vertical: 12)),
                       onPressed: _isMoreLoading ? null : _loadLater,
                       icon: const Icon(Icons.update, size: 18),
-                      label: Text(AppLocalizations.of(context)!.loadLater));
+                      label: Text(l10n.loadLater));
                 }
 
                 final journey = _results[idx - 1];
