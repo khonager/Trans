@@ -706,6 +706,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showStopDeparturesForStop({
+    required String stopId,
+    required String stopName,
+    required DateTime date,
+    String? preferredPlatform,
+  }) async {
+    _cancelRouteSearch();
+    await StopDeparturesSheet.show(
+      context,
+      stopId: stopId,
+      stopName: stopName,
+      date: date,
+      preferredPlatform: preferredPlatform,
+    );
+  }
+
   // --- WAKE ALARM LOGIC ---
   void _toggleStepAlarm(RouteTab route, JourneyStep step) {
     if (route.activeJourney == null) return;
@@ -5309,6 +5325,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   step: route.steps[i],
                   isFirst: i == 0,
                   finalDestinationId: route.destination.id,
+                  onShowStopDepartures: ({
+                    required String stopId,
+                    required String stopName,
+                    required DateTime date,
+                    String? preferredPlatform,
+                  }) =>
+                      _showStopDeparturesForStop(
+                        stopId: stopId,
+                        stopName: stopName,
+                        date: date,
+                        preferredPlatform: preferredPlatform,
+                      ),
                   onOpenAlternatives: (stationId, time,
                           {double? lat, double? lng, String? name}) =>
                       _showAlternatives(
@@ -5338,6 +5366,12 @@ class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
   final String finalDestinationId;
+  final Future<void> Function({
+    required String stopId,
+    required String stopName,
+    required DateTime date,
+    String? preferredPlatform,
+  }) onShowStopDepartures;
   final Function(String, DateTime, {double? lat, double? lng, String? name})
       onOpenAlternatives;
   final Function(
@@ -5356,6 +5390,7 @@ class _StepCard extends StatefulWidget {
     required this.step,
     this.isFirst = false,
     required this.finalDestinationId,
+    required this.onShowStopDepartures,
     required this.onOpenAlternatives,
     required this.onIntermediateAlarmLongPress,
     required this.onChat,
@@ -5608,8 +5643,7 @@ class _StepCardState extends State<_StepCard> {
                                 colors.stepStopoversBg.withValues(alpha: 0.5)),
                         child: GestureDetector(
                             onLongPress: step.startStationId != null
-                                ? () => StopDeparturesSheet.show(
-                                      context,
+                                ? () => widget.onShowStopDepartures(
                                       stopId: step.startStationId!,
                                       stopName: step.startStationName!,
                                       date: step.plannedDeparture ??
@@ -5707,8 +5741,7 @@ class _StepCardState extends State<_StepCard> {
                               }
                               return GestureDetector(
                                   onLongPress: stopId != null
-                                      ? () => StopDeparturesSheet.show(
-                                            context,
+                                      ? () => widget.onShowStopDepartures(
                                             stopId: stopId as String,
                                             stopName:
                                                 name as String? ?? displayName,
@@ -5793,8 +5826,7 @@ class _StepCardState extends State<_StepCard> {
                                   final destDate = step.plannedArrival ??
                                       step.dateTime ??
                                       DateTime.now();
-                                  StopDeparturesSheet.show(
-                                    context,
+                                  widget.onShowStopDepartures(
                                     stopId: destId,
                                     stopName:
                                         step.destinationName ?? 'Destination',
