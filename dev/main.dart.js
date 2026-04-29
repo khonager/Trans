@@ -168747,15 +168747,17 @@ o=B.e3(c==null?b2.h(0,b0):c).fF()}}catch(b){}a=new B.aA(d,new B.aYX(),B.Z(d).i("
 a0=a>0?a-1:0
 j=0
 for(c=d.length,a1=t.s,a2=0;a3=d.length,a2<a3;d.length===c||(0,B.E)(d),++a2){i=d[a2]
-if(i.a==="wait"||i.a==="transfer")try{h=B.b(i.d.split(" "),a1)
+if(i.a==="wait"||i.a==="transfer"){if(i.p2!=null){j+=A.b.N(i.p2.a,6e7)
+continue}try{h=B.b(i.d.split(" "),a1)
 if(J.aX(h)!==0){a3=j
 a4=B.hO(J.k(h,0),null)
-j=a3+(a4==null?0:a4)}}catch(b){}}g=0
+j=a3+(a4==null?0:a4)}}catch(b){}}}g=0
 for(a2=0;a2<d.length;d.length===a3||(0,B.E)(d),++a2){f=d[a2]
-if(f.a==="walk")try{e=B.b(f.d.split(" "),a1)
+if(f.a==="walk"){if(f.p1!=null){g+=A.b.N(f.p1.a,6e7)
+continue}try{e=B.b(f.d.split(" "),a1)
 if(J.aX(e)!==0){c=g
 a4=B.hO(J.k(e,0),null)
-g=c+(a4==null?0:a4)}}catch(b){}}c=r
+g=c+(a4==null?0:a4)}}catch(b){}}}c=r
 if(c==null)c=new B.aS(Date.now(),0,!1)
 a1=q
 if(a1==null)a1=new B.aS(Date.now(),0,!1)
