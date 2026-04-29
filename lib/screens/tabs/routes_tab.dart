@@ -3010,6 +3010,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     int waitMinutes = 0;
     for (var step in steps) {
       if (step.type == 'wait' || step.type == 'transfer') {
+        if (step.waitDuration != null) {
+          waitMinutes += step.waitDuration!.inMinutes;
+          continue;
+        }
         try {
           final parts = step.duration.split(' ');
           if (parts.isNotEmpty) waitMinutes += int.tryParse(parts[0]) ?? 0;
@@ -3020,6 +3024,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     int walkMinutes = 0;
     for (var step in steps) {
       if (step.type == 'walk') {
+        if (step.walkDuration != null) {
+          walkMinutes += step.walkDuration!.inMinutes;
+          continue;
+        }
         try {
           final parts = step.duration.split(' ');
           if (parts.isNotEmpty) walkMinutes += int.tryParse(parts[0]) ?? 0;
