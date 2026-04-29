@@ -2556,23 +2556,24 @@ class _SettingsTabState extends State<SettingsTab> {
                       _testVibration();
                       _showIosVibrationAvailabilityMessage();
                     })),
-            ListTile(
-                title: Text(AppLocalizations.of(context)!.vibrationIntensity,
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Slider(
-                    value: _vibrationIntensity.toDouble(),
-                    min: 1,
-                    max: 255,
-                    activeColor: colors.effectiveSeed,
-                    thumbColor: colors.effectiveSeed,
-                    onChanged: (val) {
-                      setState(() => _vibrationIntensity = val.toInt());
-                    },
-                    onChangeEnd: (val) {
-                      _persistVibrationSettings();
-                      _testVibration();
-                      _showIosVibrationAvailabilityMessage();
-                    })),
+            if (defaultTargetPlatform != TargetPlatform.iOS)
+              ListTile(
+                  title: Text(AppLocalizations.of(context)!.vibrationIntensity,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Slider(
+                      value: _vibrationIntensity.toDouble(),
+                      min: 1,
+                      max: 255,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (val) {
+                        setState(() => _vibrationIntensity = val.toInt());
+                      },
+                      onChangeEnd: (val) {
+                        _persistVibrationSettings();
+                        _testVibration();
+                        _showIosVibrationAvailabilityMessage();
+                      })),
             if (defaultTargetPlatform == TargetPlatform.iOS)
               ListTile(
                 leading: Icon(Icons.info_outline, color: colors.textSecondary),
