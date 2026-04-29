@@ -285,8 +285,6 @@
   "tenPercentRemaining": "10 % verbleibend",
   "fixed500m": "Feste 500 m",
   "vibrationIntensity": "Vibrationsintensität",
-  "iosWakeAlarmVibrationNoticeTitle": "iPhone-Vibrationslimit",
-  "iosWakeAlarmVibrationNoticeBody": "Auf dem iPhone funktionieren benutzerdefinierte Benachrichtigungstöne. Benutzerdefinierte Vibration funktioniert nur, solange du die App aktiv benutzt. Wenn die App im Hintergrund ist, bekommst du nur den Ton.",
   "alwaysWakeMe": "Immer wecken",
   "turnOnAlarmDefault": "Alarm immer standardmäßig aktivieren",
   "dataAndPrivacy": "Daten & Datenschutz",
