@@ -24,6 +24,7 @@ import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
+import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
@@ -119,8 +120,7 @@ String formatRideDisplayLine({
     }
   }
 
-  final effectivePlatform =
-      platform?.trim().isNotEmpty == true ? platform : arrivalPlatform;
+  final effectivePlatform = platform?.trim();
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
   if (showTrainNumbers &&
@@ -293,7 +293,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
         ) ??
         false;
-    final hasBikeModesConfigured = advancedEnabled && (preBikeEnabled || postBikeEnabled);
+    final hasBikeModesConfigured =
+        advancedEnabled && (preBikeEnabled || postBikeEnabled);
     final bikeToggleEnabled = prefs.getBool(
           TransportApi.advancedBikeTogglePreferenceKey,
         ) ??
@@ -705,12 +706,33 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showStopDeparturesForStop({
+    required String stopId,
+    required String stopName,
+    required DateTime date,
+    String? preferredPlatform,
+  }) async {
+    _cancelRouteSearch();
+    await StopDeparturesSheet.show(
+      context,
+      stopId: stopId,
+      stopName: stopName,
+      date: date,
+      preferredPlatform: preferredPlatform,
+    );
+  }
+
   // --- WAKE ALARM LOGIC ---
   void _toggleStepAlarm(RouteTab route, JourneyStep step) {
     if (route.activeJourney == null) return;
 
     final updatedSteps = route.activeJourney!.steps.map((s) {
-      if (s == step) return s.copyWith(isWakeAlarmOn: !s.isWakeAlarmOn);
+      if (s == step) {
+        return s.copyWith(
+          isWakeAlarmOn: !s.isWakeAlarmOn,
+          clearAlarmTarget: true,
+        );
+      }
       return s;
     }).toList();
 
@@ -731,6 +753,59 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     } else if (!anyAlarmOn && _isWakeAlarmSet) {
       _stopWakeAlarm();
     }
+  }
+
+  void _setIntermediateStopAlarm(
+    RouteTab route,
+    JourneyStep step, {
+    required String stopName,
+    required double? targetLat,
+    required double? targetLng,
+    required double? originLat,
+    required double? originLng,
+  }) {
+    if (route.activeJourney == null) return;
+    final l10n = AppLocalizations.of(context)!;
+
+    if (targetLat == null || targetLng == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.missingDestCoords)));
+      return;
+    }
+
+    final updatedSteps = route.activeJourney!.steps.map((s) {
+      if (s == step) {
+        return s.copyWith(
+          isWakeAlarmOn: true,
+          alarmTargetName: stopName,
+          alarmTargetLat: targetLat,
+          alarmTargetLng: targetLng,
+          alarmTargetOriginLat: originLat,
+          alarmTargetOriginLng: originLng,
+        );
+      }
+      return s;
+    }).toList();
+
+    final updatedJourney = route.activeJourney!.copyWith(steps: updatedSteps);
+
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx != -1) {
+        _tabs[idx] =
+            route.copyWith(activeJourney: updatedJourney, steps: updatedSteps);
+      }
+    });
+
+    if (!_isWakeAlarmSet) {
+      _startWakeAlarm(route);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Wake alert set for $stopName')),
+    );
   }
 
   void _stopWakeAlarm() {
@@ -890,7 +965,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         double? originLat = step.startLat;
         double? originLng = step.startLng;
 
-        if (step.stopovers != null && step.stopovers!.isNotEmpty) {
+        if (step.alarmTargetLat != null && step.alarmTargetLng != null) {
+          targetLat = step.alarmTargetLat;
+          targetLng = step.alarmTargetLng;
+          originLat = step.alarmTargetOriginLat ?? originLat;
+          originLng = step.alarmTargetOriginLng ?? originLng;
+        } else if (step.stopovers != null && step.stopovers!.isNotEmpty) {
           final stops = step.stopovers!;
           if (stopsBefore > 0) {
             int targetIndex = stops.length - stopsBefore;
@@ -948,17 +1028,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _triggerVibration();
           _showNotification();
           triggered = true;
+          final triggerStopName =
+              step.alarmTargetName ?? step.destinationName ?? 'your stop';
 
           // Turn off alarm for THIS step
           int stepIdx = remainingSteps.indexOf(step);
           if (stepIdx != -1) {
-            remainingSteps[stepIdx] = step.copyWith(isWakeAlarmOn: false);
+            remainingSteps[stepIdx] = step.copyWith(
+              isWakeAlarmOn: false,
+              clearAlarmTarget: true,
+            );
           }
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(AppLocalizations.of(context)!
-                    .wakeUpApproaching(step.destinationName ?? 'your stop')),
+                    .wakeUpApproaching(triggerStopName)),
                 backgroundColor: Colors.red));
           }
         }
@@ -2850,7 +2935,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           startStationName: leg['origin']?['name'],
           destinationName: leg['destination']?['name'],
           headsign: leg['direction'],
-          tripId: leg['line']?['fahrtNr']?.toString() ??
+          tripId: leg['line']?['tripId']?.toString() ??
+              leg['line']?['fahrtNr']?.toString() ??
               leg['tripId']?.toString(), // Populating tripId
           isWakeAlarmOn: widget.alwaysWakeMe,
         ));
@@ -2924,6 +3010,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     int waitMinutes = 0;
     for (var step in steps) {
       if (step.type == 'wait' || step.type == 'transfer') {
+        if (step.waitDuration != null) {
+          waitMinutes += step.waitDuration!.inMinutes;
+          continue;
+        }
         try {
           final parts = step.duration.split(' ');
           if (parts.isNotEmpty) waitMinutes += int.tryParse(parts[0]) ?? 0;
@@ -2934,6 +3024,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     int walkMinutes = 0;
     for (var step in steps) {
       if (step.type == 'walk') {
+        if (step.walkDuration != null) {
+          walkMinutes += step.walkDuration!.inMinutes;
+          continue;
+        }
         try {
           final parts = step.duration.split(' ');
           if (parts.isNotEmpty) walkMinutes += int.tryParse(parts[0]) ?? 0;
@@ -5111,6 +5205,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     final colors = TransColors.of(context);
+    final totalWalkingMinutes =
+        route.activeJourney?.totalWalkingDuration.inMinutes ?? 0;
+    final hasWalkingSummary = totalWalkingMinutes > 0;
+    final totalWalkingDurationLabel =
+        FormatUtils.formatDuration(totalWalkingMinutes);
     return RefreshIndicator(
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
@@ -5119,79 +5218,149 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           children: [
             Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      if (route.candidates != null &&
-                          route.candidates!.length > 1)
-                        IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.arrow_back),
-                            onPressed: () => setState(() {
-                                  final idx =
-                                      _tabs.indexWhere((t) => t.id == route.id);
-                                  if (idx != -1) {
-                                    _tabs[idx] = route.copyWith(
-                                        clearActiveJourney: true);
-                                  }
-                                })),
-                      if (route.candidates != null &&
-                          route.candidates!.length > 1)
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final showBackButton =
+                      route.candidates != null && route.candidates!.length > 1;
+                  final isCompactHeader = constraints.maxWidth < 430;
+                  final timeLabel = route.activeJourney != null
+                      ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
+                      : route.subtitle;
+
+                  Widget timeText({double fontSize = 24}) => FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(timeLabel,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                              fontSize: fontSize,
+                              fontWeight: FontWeight.bold,
+                              color: colors.textPrimary)));
+
+                  final actions =
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (showBackButton)
+                      IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => setState(() {
+                                final idx =
+                                    _tabs.indexWhere((t) => t.id == route.id);
+                                if (idx != -1) {
+                                  _tabs[idx] =
+                                      route.copyWith(clearActiveJourney: true);
+                                }
+                              })),
+                    if (showBackButton) const SizedBox(width: 8),
+                    IconButton(
+                        icon: Icon(
+                            _isRouteSaved(route)
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                            color: colors.navBarSelected),
+                        onPressed:
+                            route.origin == null || route.activeJourney == null
+                                ? null
+                                : () => _toggleSavedRoute(route)),
+                    IconButton(
+                        icon: const Icon(Icons.map, color: Colors.blue),
+                        onPressed: () => _openMap(route)),
+                  ]);
+
+                  final durationChip = Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.timer_outlined,
+                            size: 16, color: Colors.green),
+                        const SizedBox(width: 4),
+                        Text(route.totalDuration,
+                            style: const TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold)),
+                        if (hasWalkingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                              width: 1, height: 14, color: Colors.white24),
+                          const SizedBox(width: 10),
+                          Icon(Icons.directions_walk,
+                              size: 16, color: colors.stepTransferText),
+                          const SizedBox(width: 4),
+                          Text(totalWalkingDurationLabel,
+                              style: TextStyle(
+                                  color: colors.stepTransferText,
+                                  fontWeight: FontWeight.bold)),
+                        ]
+                      ]));
+
+                  if (isCompactHeader) {
+                    return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: double.infinity, child: timeText()),
+                          const SizedBox(height: 8),
+                          Row(children: [
+                            Expanded(
+                                child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: actions)),
+                            const SizedBox(width: 8),
+                            Flexible(
+                                child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerRight,
+                                    child: durationChip))
+                          ])
+                        ]);
+                  }
+
+                  return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(child: timeText()),
                         const SizedBox(width: 8),
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Text(
-                                route.activeJourney != null
-                                    ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
-                                    : route.subtitle,
-                                style: TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold,
-                                    color: colors.textPrimary)),
-                          ])),
-                      IconButton(
-                          icon: Icon(
-                              _isRouteSaved(route)
-                                  ? Icons.bookmark
-                                  : Icons.bookmark_border,
-                              color: colors.navBarSelected),
-                          onPressed: route.origin == null ||
-                                  route.activeJourney == null
-                              ? null
-                              : () => _toggleSavedRoute(route)),
-                      IconButton(
-                          icon: const Icon(Icons.map, color: Colors.blue),
-                          onPressed: () => _openMap(route)),
-                      const SizedBox(width: 8),
-                      Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12)),
-                          child: Row(children: [
-                            const Icon(Icons.timer_outlined,
-                                size: 16, color: Colors.green),
-                            const SizedBox(width: 4),
-                            Text(route.totalDuration,
-                                style: const TextStyle(
-                                    color: Colors.green,
-                                    fontWeight: FontWeight.bold))
-                          ]))
-                    ])),
+                        actions,
+                        const SizedBox(width: 8),
+                        durationChip
+                      ]);
+                })),
             for (int i = 0; i < route.steps.length; i++)
               _StepCard(
                   step: route.steps[i],
                   isFirst: i == 0,
                   finalDestinationId: route.destination.id,
+                  onShowStopDepartures: ({
+                    required String stopId,
+                    required String stopName,
+                    required DateTime date,
+                    String? preferredPlatform,
+                  }) =>
+                      _showStopDeparturesForStop(
+                        stopId: stopId,
+                        stopName: stopName,
+                        date: date,
+                        preferredPlatform: preferredPlatform,
+                      ),
                   onOpenAlternatives: (stationId, time,
                           {double? lat, double? lng, String? name}) =>
                       _showAlternatives(
                           context, stationId, route.destination, time,
                           lat: lat, lng: lng, stationName: name),
+                  onIntermediateAlarmLongPress: (stopName,
+                          {double? targetLat,
+                          double? targetLng,
+                          double? originLat,
+                          double? originLng}) =>
+                      _setIntermediateStopAlarm(route, route.steps[i],
+                          stopName: stopName,
+                          targetLat: targetLat,
+                          targetLng: targetLng,
+                          originLat: originLat,
+                          originLng: originLng),
                   onChat: (line) => _showChat(context, line),
                   onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
                   onMapTap: () => _openMap(route, focusStep: route.steps[i]),
@@ -5205,8 +5374,21 @@ class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
   final String finalDestinationId;
+  final Future<void> Function({
+    required String stopId,
+    required String stopName,
+    required DateTime date,
+    String? preferredPlatform,
+  }) onShowStopDepartures;
   final Function(String, DateTime, {double? lat, double? lng, String? name})
       onOpenAlternatives;
+  final Function(
+    String, {
+    double? targetLat,
+    double? targetLng,
+    double? originLat,
+    double? originLng,
+  }) onIntermediateAlarmLongPress;
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
@@ -5216,7 +5398,9 @@ class _StepCard extends StatefulWidget {
     required this.step,
     this.isFirst = false,
     required this.finalDestinationId,
+    required this.onShowStopDepartures,
     required this.onOpenAlternatives,
+    required this.onIntermediateAlarmLongPress,
     required this.onChat,
     required this.onAlarmToggle,
     required this.onMapTap,
@@ -5467,8 +5651,7 @@ class _StepCardState extends State<_StepCard> {
                                 colors.stepStopoversBg.withValues(alpha: 0.5)),
                         child: GestureDetector(
                             onLongPress: step.startStationId != null
-                                ? () => StopDeparturesSheet.show(
-                                      context,
+                                ? () => widget.onShowStopDepartures(
                                       stopId: step.startStationId!,
                                       stopName: step.startStationName!,
                                       date: step.plannedDeparture ??
@@ -5509,6 +5692,12 @@ class _StepCardState extends State<_StepCard> {
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: step.stopovers!.length,
                             itemBuilder: (ctx, idx) {
+                              double? asDouble(dynamic value) {
+                                if (value is num) return value.toDouble();
+                                if (value == null) return null;
+                                return double.tryParse(value.toString());
+                              }
+
                               final stop = step.stopovers![idx];
                               final name = stop['stop']['name'];
                               final stopId = stop['stop']['id'];
@@ -5523,6 +5712,21 @@ class _StepCardState extends State<_StepCard> {
                                   stop['scheduledArrival'];
                               final actualDep =
                                   stop['departure'] ?? stop['arrival'];
+                              final stopLat = asDouble(
+                                  stop['stop']?['location']?['latitude']);
+                              final stopLng = asDouble(
+                                  stop['stop']?['location']?['longitude']);
+                              double? previousLat = step.startLat;
+                              double? previousLng = step.startLng;
+                              if (idx > 0) {
+                                final previousStop = step.stopovers![idx - 1];
+                                previousLat = asDouble(previousStop['stop']
+                                        ?['location']?['latitude']) ??
+                                    previousLat;
+                                previousLng = asDouble(previousStop['stop']
+                                        ?['location']?['longitude']) ??
+                                    previousLng;
+                              }
                               String timeStr = "--:--";
                               Color timeColor = Colors.grey;
                               DateTime? exactStopDate;
@@ -5545,8 +5749,7 @@ class _StepCardState extends State<_StepCard> {
                               }
                               return GestureDetector(
                                   onLongPress: stopId != null
-                                      ? () => StopDeparturesSheet.show(
-                                            context,
+                                      ? () => widget.onShowStopDepartures(
                                             stopId: stopId as String,
                                             stopName:
                                                 name as String? ?? displayName,
@@ -5577,24 +5780,35 @@ class _StepCardState extends State<_StepCard> {
                                                     fontSize: 12)),
                                             const SizedBox(width: 8),
                                             if (exactStopDate != null)
-                                              IconButton(
-                                                  icon: const Icon(
-                                                      Icons.alt_route,
-                                                      size: 16,
-                                                      color: Colors.blue),
-                                                  // FIX: Pass exact stop time and location if available
-                                                  onPressed: () =>
-                                                      widget.onOpenAlternatives(
-                                                          stopId as String,
-                                                          exactStopDate!,
-                                                          lat: stop['stop']
-                                                                  ['location']
-                                                              ?['latitude'],
-                                                          lng: stop['stop']
-                                                                  ['location']
-                                                              ?['longitude'],
-                                                          name:
-                                                              name as String?))
+                                              GestureDetector(
+                                                onLongPress: () => widget
+                                                    .onIntermediateAlarmLongPress(
+                                                  name as String? ??
+                                                      displayName,
+                                                  targetLat: stopLat,
+                                                  targetLng: stopLng,
+                                                  originLat: previousLat,
+                                                  originLng: previousLng,
+                                                ),
+                                                child: IconButton(
+                                                    icon: const Icon(
+                                                        Icons.alt_route,
+                                                        size: 16,
+                                                        color: Colors.blue),
+                                                    // Pass exact stop time and location if available.
+                                                    onPressed: () => widget
+                                                        .onOpenAlternatives(
+                                                            stopId as String,
+                                                            exactStopDate!,
+                                                            lat: stop['stop']
+                                                                    ['location']
+                                                                ?['latitude'],
+                                                            lng: stop['stop']
+                                                                    ['location']
+                                                                ?['longitude'],
+                                                            name: name
+                                                                as String?)),
+                                              )
                                           ])));
                             }))
                   else
@@ -5620,8 +5834,7 @@ class _StepCardState extends State<_StepCard> {
                                   final destDate = step.plannedArrival ??
                                       step.dateTime ??
                                       DateTime.now();
-                                  StopDeparturesSheet.show(
-                                    context,
+                                  widget.onShowStopDepartures(
                                     stopId: destId,
                                     stopName:
                                         step.destinationName ?? 'Destination',
@@ -5936,7 +6149,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
   bool _isMoreLoading = false;
-  String? _error;
+  Object? _error;
 
   @override
   void initState() {
@@ -6004,10 +6217,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         );
         processResults(results);
       }
-    } catch (e) {
+    } catch (e, st) {
+      AppError.log(e,
+          stackTrace: st, source: 'AlternativesSheet._fetchInitial');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = e;
           _isLoading = false;
         });
       }
@@ -6052,10 +6267,11 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
       );
 
       processResults(results);
-    } catch (e) {
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'AlternativesSheet._fetch');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = e;
           _isLoading = false;
           _isMoreLoading = false;
         });
@@ -6112,6 +6328,14 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final errorMessage = _error == null
+        ? null
+        : AppError.userMessage(
+            context,
+            _error!,
+            fallback: l10n.noRoutesFoundBusy,
+          );
     return Column(
       children: [
         Padding(
@@ -6123,7 +6347,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2))),
         ),
-        Text(AppLocalizations.of(context)!.alternatives,
+        Text(l10n.alternatives,
             style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -6136,14 +6360,18 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
               child: Center(
                   child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text(
-                          AppLocalizations.of(context)!
-                              .errorPrefix(_error ?? ""),
-                          textAlign: TextAlign.center))))
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(errorMessage ?? l10n.noRoutesFoundBusy,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.textPrimary)),
+                        const SizedBox(height: 12),
+                        TextButton.icon(
+                            onPressed: _fetchInitial,
+                            icon: const Icon(Icons.refresh),
+                            label: Text(l10n.retry))
+                      ]))))
         else if (_results.isEmpty)
-          Expanded(
-              child: Center(
-                  child: Text(AppLocalizations.of(context)!.noRoutesFound)))
+          Expanded(child: Center(child: Text(l10n.noRoutesFound)))
         else
           Expanded(
             child: ListView.builder(
@@ -6156,7 +6384,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                           padding: const EdgeInsets.symmetric(vertical: 12)),
                       onPressed: _isMoreLoading ? null : _loadEarlier,
                       icon: const Icon(Icons.history, size: 18),
-                      label: Text(AppLocalizations.of(context)!.loadEarlier));
+                      label: Text(l10n.loadEarlier));
                 }
                 if (idx == _results.length + 1) {
                   return TextButton.icon(
@@ -6164,7 +6392,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                           padding: const EdgeInsets.symmetric(vertical: 12)),
                       onPressed: _isMoreLoading ? null : _loadLater,
                       icon: const Icon(Icons.update, size: 18),
-                      label: Text(AppLocalizations.of(context)!.loadLater));
+                      label: Text(l10n.loadLater));
                 }
 
                 final journey = _results[idx - 1];

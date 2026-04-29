@@ -1,3 +1,6 @@
+import 'dart:developer' as developer;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/services/transport_api.dart';
@@ -5,11 +8,18 @@ import 'package:trans/utils/app_error.dart';
 
 import '../l10n/app_localizations.dart';
 
+typedef StopDeparturesLoader = Future<List<Map<String, dynamic>>> Function(
+  String stationId, {
+  DateTime? date,
+  int maxResults,
+});
+
 class StopDeparturesSheet extends StatefulWidget {
   final String stopId;
   final String stopName;
   final DateTime date;
   final String? preferredPlatform;
+  final StopDeparturesLoader departuresLoader;
 
   const StopDeparturesSheet({
     super.key,
@@ -17,6 +27,7 @@ class StopDeparturesSheet extends StatefulWidget {
     required this.stopName,
     required this.date,
     this.preferredPlatform,
+    this.departuresLoader = TransportApi.fetchStopDepartures,
   });
 
   static Future<void> show(
@@ -44,66 +55,111 @@ class StopDeparturesSheet extends StatefulWidget {
 }
 
 class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
-  late Future<_StopDeparturesData> _future;
+  static const int _fullDayMaxResults = 2000;
+
+  late final Map<_ServiceDayType, DateTime> _sampleDates;
+  late final Map<_ServiceDayType, _DayLoadState> _dayStates;
+  _StopDeparturesData? _dataCache;
   String? _selectedDayTabId;
   String? _selectedPlatformKey;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _sampleDates = _serviceDaySampleDates(widget.date);
+    _dayStates = {
+      for (final type in _ServiceDayType.values) type: const _DayLoadState(),
+    };
+    _selectedDayTabId = _serviceDayId(_serviceDayTypeForDate(widget.date));
+    _loadInitialDay();
   }
 
-  void _load() {
-    _future = _loadData().then((data) {
-      if (!mounted) return data;
+  Future<void> _loadInitialDay() async {
+    final initialType = _serviceDayTypeForDate(widget.date);
+    await _ensureDayLoaded(initialType);
+  }
 
-      final selectedDayTab =
-          data.dayTabById(_selectedDayTabId) ?? data.defaultDayTab(widget.date);
-      final platformTabs = data.platformTabsForDay(selectedDayTab.id);
-      final nextPlatformKey = _resolvePlatformKey(
-        platformTabs,
-        currentKey: _selectedPlatformKey,
-      );
+  Future<void> _ensureDayLoaded(_ServiceDayType type) async {
+    final state = _dayStates[type]!;
+    if (state.isLoading || state.hasLoaded) return;
 
-      if (_selectedDayTabId != selectedDayTab.id ||
-          _selectedPlatformKey != nextPlatformKey) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          setState(() {
-            _selectedDayTabId = selectedDayTab.id;
-            _selectedPlatformKey = nextPlatformKey;
-          });
-        });
-      }
-
-      return data;
+    setState(() {
+      _dayStates[type] = state.copyWith(isLoading: true, error: null);
+      _dataCache = null;
     });
-  }
 
-  Future<_StopDeparturesData> _loadData() async {
-    final dates = _serviceDaySampleDates(widget.date);
-    final dayTypes = _ServiceDayType.values;
-    final results = await Future.wait(
-      dayTypes.map(
-        (type) => TransportApi.fetchStopDepartures(
+    try {
+      final departures = await _StopDeparturesProfiler.measureAsync(
+        'stop_departures.load_day',
+        context: 'stop=${widget.stopId} day=${_serviceDayId(type)}',
+        action: () => widget.departuresLoader(
           widget.stopId,
-          date: dates[type],
-        ).catchError((_) => <Map<String, dynamic>>[]),
-      ),
-    );
-
-    final dayTabs = List<_DayTab>.generate(dayTypes.length, (index) {
-      final type = dayTypes[index];
-      return _DayTab(
-        id: _serviceDayId(type),
-        label: _serviceDayLabel(type),
-        type: type,
-        departures: results[index],
+          date: _sampleDates[type],
+          maxResults: _fullDayMaxResults,
+        ),
       );
-    });
+      final sortedDepartures = _StopDeparturesProfiler.measureSync(
+        'stop_departures.sort_day',
+        context: '${_serviceDayId(type)} count=${departures.length}',
+        action: () {
+          final copy = List<Map<String, dynamic>>.from(departures);
+          copy.sort(_departureSortCompare);
+          return copy;
+        },
+      );
 
-    return _StopDeparturesData(dayTabs: dayTabs);
+      if (!mounted) return;
+      setState(() {
+        _dayStates[type] = _DayLoadState(
+          departures: sortedDepartures,
+          hasLoaded: true,
+        );
+        _dataCache = null;
+      });
+      _syncSelectedPlatformKey();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _dayStates[type] = _DayLoadState(
+          isLoading: false,
+          hasLoaded: true,
+          error: error,
+        );
+        _dataCache = null;
+      });
+    }
+  }
+
+  _StopDeparturesData _currentData() {
+    return _dataCache ??= _StopDeparturesData(
+      dayTabs: _ServiceDayType.values
+          .map(
+            (type) => _DayTab(
+              id: _serviceDayId(type),
+              label: _serviceDayLabel(type),
+              type: type,
+              departures: _dayStates[type]!.departures,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  void _syncSelectedPlatformKey() {
+    if (!mounted) return;
+    final data = _currentData();
+    final selectedDayTab =
+        data.dayTabById(_selectedDayTabId) ?? data.defaultDayTab(widget.date);
+    final platformTabs = data.platformTabsForDay(selectedDayTab.id);
+    final nextPlatformKey = _resolvePlatformKey(
+      platformTabs,
+      currentKey: _selectedPlatformKey,
+    );
+    if (_selectedPlatformKey != nextPlatformKey) {
+      setState(() {
+        _selectedPlatformKey = nextPlatformKey;
+      });
+    }
   }
 
   String _serviceDayLabel(_ServiceDayType type) {
@@ -142,6 +198,7 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
 
   void _selectDayTab(String dayTabId, _StopDeparturesData data) {
     final platformTabs = data.platformTabsForDay(dayTabId);
+    final type = _serviceDayTypeFromId(dayTabId);
     setState(() {
       _selectedDayTabId = dayTabId;
       _selectedPlatformKey = _resolvePlatformKey(
@@ -149,6 +206,9 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
         currentKey: _selectedPlatformKey,
       );
     });
+    if (type != null) {
+      _ensureDayLoaded(type);
+    }
   }
 
   @override
@@ -195,55 +255,13 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                 ),
               ),
               Expanded(
-                child: FutureBuilder<_StopDeparturesData>(
-                  future: _future,
-                  builder: (ctx, snap) {
-                    if (snap.connectionState == ConnectionState.waiting) {
-                      return Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const CircularProgressIndicator(),
-                            const SizedBox(height: 12),
-                            Text(
-                              l10n.loadingDepartures,
-                              style: TextStyle(color: colors.textSecondary),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-
-                    if (snap.hasError) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            AppError.userMessage(context, snap.error!),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: colors.textSecondary),
-                          ),
-                        ),
-                      );
-                    }
-
-                    final data =
-                        snap.data ?? const _StopDeparturesData(dayTabs: []);
-                    if (data.dayTabs.isEmpty) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            l10n.noDeparturesFound,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: colors.textSecondary),
-                          ),
-                        ),
-                      );
-                    }
-
+                child: Builder(
+                  builder: (ctx) {
+                    final data = _currentData();
                     final selectedDayTab = data.dayTabById(_selectedDayTabId) ??
                         data.defaultDayTab(widget.date);
+                    final selectedDayState = _dayStates[selectedDayTab.type] ??
+                        const _DayLoadState();
                     final platformTabs = data.platformTabsForDay(
                       selectedDayTab.id,
                     );
@@ -302,42 +320,62 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                           ),
                         ),
                         Expanded(
-                          child: departures.isEmpty
+                          child: selectedDayState.isLoading &&
+                                  selectedDayState.departures.isEmpty
                               ? Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(24),
-                                    child: Text(
-                                      l10n.noDeparturesFound,
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: colors.textSecondary,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        l10n.loadingDepartures,
+                                        style: TextStyle(
+                                          color: colors.textSecondary,
+                                        ),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 )
-                              : ListView.separated(
-                                  controller: scrollCtrl,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    0,
-                                    16,
-                                    24,
-                                  ),
-                                  itemCount: departures.length,
-                                  separatorBuilder: (_, __) => Divider(
-                                    height: 1,
-                                    color: colors.divider.withValues(
-                                      alpha: 0.45,
-                                    ),
-                                  ),
-                                  itemBuilder: (ctx, idx) {
-                                    return _DepartureRow(
-                                      dep: departures[idx],
-                                      colors: colors,
-                                      l10n: l10n,
-                                    );
-                                  },
-                                ),
+                              : selectedDayState.error != null &&
+                                      selectedDayState.departures.isEmpty
+                                  ? Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(24),
+                                        child: Text(
+                                          AppError.userMessage(
+                                            context,
+                                            selectedDayState.error!,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: colors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : departures.isEmpty
+                                      ? Center(
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(24),
+                                            child: Text(
+                                              l10n.noDeparturesFound,
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: colors.textSecondary,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      : _LazyLoopDeparturesList(
+                                          key: ValueKey(
+                                            '${selectedDayTab.id}|${selectedPlatformKey ?? 'all'}|${departures.length}',
+                                          ),
+                                          departures: departures,
+                                          scrollController: scrollCtrl,
+                                          colors: colors,
+                                          l10n: l10n,
+                                        ),
                         ),
                       ],
                     );
@@ -429,6 +467,13 @@ String _serviceDayId(_ServiceDayType type) {
   };
 }
 
+_ServiceDayType? _serviceDayTypeFromId(String id) {
+  for (final type in _ServiceDayType.values) {
+    if (_serviceDayId(type) == id) return type;
+  }
+  return null;
+}
+
 Map<_ServiceDayType, DateTime> _serviceDaySampleDates(DateTime anchor) {
   final normalizedAnchor = DateTime(anchor.year, anchor.month, anchor.day);
   final monday = normalizedAnchor.subtract(Duration(days: anchor.weekday - 1));
@@ -458,6 +503,36 @@ class _ChipModel {
     required this.onTap,
   });
 }
+
+class _DayLoadState {
+  final bool isLoading;
+  final bool hasLoaded;
+  final List<Map<String, dynamic>> departures;
+  final Object? error;
+
+  const _DayLoadState({
+    this.isLoading = false,
+    this.hasLoaded = false,
+    this.departures = const <Map<String, dynamic>>[],
+    this.error,
+  });
+
+  _DayLoadState copyWith({
+    bool? isLoading,
+    bool? hasLoaded,
+    List<Map<String, dynamic>>? departures,
+    Object? error = _dayLoadStateNoChange,
+  }) {
+    return _DayLoadState(
+      isLoading: isLoading ?? this.isLoading,
+      hasLoaded: hasLoaded ?? this.hasLoaded,
+      departures: departures ?? this.departures,
+      error: identical(error, _dayLoadStateNoChange) ? this.error : error,
+    );
+  }
+}
+
+const Object _dayLoadStateNoChange = Object();
 
 class _FilterChip extends StatelessWidget {
   final String label;
@@ -619,6 +694,258 @@ class _DepartureRow extends StatelessWidget {
   }
 }
 
+class _LazyLoopDeparturesList extends StatefulWidget {
+  final List<Map<String, dynamic>> departures;
+  final ScrollController scrollController;
+  final TransColors colors;
+  final AppLocalizations l10n;
+
+  const _LazyLoopDeparturesList({
+    super.key,
+    required this.departures,
+    required this.scrollController,
+    required this.colors,
+    required this.l10n,
+  });
+
+  @override
+  State<_LazyLoopDeparturesList> createState() =>
+      _LazyLoopDeparturesListState();
+}
+
+class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
+  static const int _windowChunk = 60;
+  static const int _loadMarginPx = 320;
+  static const double _rowExtentEstimate = 76;
+  static const Duration _loadIndicatorFrame = Duration(milliseconds: 16);
+
+  int _anchorIndex = 0;
+  int _visibleStart = 0;
+  int _visibleEnd = -1;
+  bool _didInitialJump = false;
+  bool _isLoadingPrevious = false;
+  bool _isLoadingNext = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetWindow();
+  }
+
+  void _resetWindow() {
+    final total = widget.departures.length;
+    if (total == 0) {
+      _anchorIndex = 0;
+      _visibleStart = 0;
+      _visibleEnd = -1;
+      _didInitialJump = true;
+      _isLoadingPrevious = false;
+      _isLoadingNext = false;
+      return;
+    }
+
+    _anchorIndex = _indexForCurrentTime(widget.departures);
+    _visibleStart = (_anchorIndex - _windowChunk).clamp(0, total - 1);
+    _visibleEnd = (_anchorIndex + _windowChunk).clamp(0, total - 1);
+    _didInitialJump = false;
+    _isLoadingPrevious = false;
+    _isLoadingNext = false;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpToAnchor();
+    });
+  }
+
+  void _jumpToAnchor() {
+    if (!mounted || _didInitialJump || !widget.scrollController.hasClients) {
+      return;
+    }
+    final index = (_anchorIndex - _visibleStart).clamp(0, _visibleCount - 1);
+    final target = (index * _rowExtentEstimate).toDouble();
+    _didInitialJump = true;
+    widget.scrollController.jumpTo(target);
+  }
+
+  int get _visibleCount {
+    if (_visibleEnd < _visibleStart) return 0;
+    return _visibleEnd - _visibleStart + 1;
+  }
+
+  bool _handleScroll(ScrollNotification notification) {
+    if (widget.departures.isEmpty) return false;
+
+    final metrics = notification.metrics;
+    final nearTop = metrics.pixels <= _loadMarginPx;
+    final nearBottom =
+        metrics.pixels >= metrics.maxScrollExtent - _loadMarginPx;
+
+    if (nearBottom) _scheduleLoadNextChunk();
+    if (nearTop) _scheduleLoadPreviousChunk();
+
+    return false;
+  }
+
+  Future<void> _scheduleLoadNextChunk() async {
+    final total = widget.departures.length;
+    if (_isLoadingNext || _visibleEnd >= total - 1) return;
+
+    _StopDeparturesProfiler.log(
+      'stop_departures.load_next_chunk.start',
+      'visible=$_visibleStart-$_visibleEnd total=$total',
+    );
+    setState(() {
+      _isLoadingNext = true;
+    });
+    await Future<void>.delayed(_loadIndicatorFrame);
+    if (!mounted) return;
+
+    setState(() {
+      _visibleEnd = (_visibleEnd + _windowChunk).clamp(0, total - 1);
+      _isLoadingNext = false;
+    });
+    _StopDeparturesProfiler.log(
+      'stop_departures.load_next_chunk.done',
+      'visible=$_visibleStart-$_visibleEnd total=$total',
+    );
+    _maybeEnableLoopMode();
+  }
+
+  Future<void> _scheduleLoadPreviousChunk() async {
+    final total = widget.departures.length;
+    if (_isLoadingPrevious || _visibleStart <= 0) return;
+
+    final oldPixels = widget.scrollController.hasClients
+        ? widget.scrollController.position.pixels
+        : 0.0;
+    final added = _visibleStart >= _windowChunk ? _windowChunk : _visibleStart;
+
+    _StopDeparturesProfiler.log(
+      'stop_departures.load_previous_chunk.start',
+      'visible=$_visibleStart-$_visibleEnd total=$total',
+    );
+    setState(() {
+      _isLoadingPrevious = true;
+    });
+    await Future<void>.delayed(_loadIndicatorFrame);
+    if (!mounted) return;
+
+    setState(() {
+      _visibleStart = (_visibleStart - _windowChunk).clamp(0, total - 1);
+      _isLoadingPrevious = false;
+    });
+    _StopDeparturesProfiler.log(
+      'stop_departures.load_previous_chunk.done',
+      'visible=$_visibleStart-$_visibleEnd total=$total',
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.scrollController.hasClients) return;
+      widget.scrollController.jumpTo(oldPixels + added * _rowExtentEstimate);
+    });
+    _maybeEnableLoopMode();
+  }
+
+  void _maybeEnableLoopMode() {
+    // Intentionally disabled: switching into an artificial infinite scroll
+    // range caused UI stalls on busy web runs right after lazy loading completed.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final departures = widget.departures;
+    if (departures.isEmpty) return const SizedBox.shrink();
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleScroll,
+      child: ListView.builder(
+        controller: widget.scrollController,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        itemCount: _boundedItemCount,
+        itemBuilder: (ctx, idx) {
+          if (_isLoadingPrevious && idx == 0) {
+            return _ChunkLoadingRow(
+              key: const ValueKey('stop_departures_loader_top'),
+              colors: widget.colors,
+              l10n: widget.l10n,
+            );
+          }
+
+          final bottomLoaderIndex =
+              _boundedItemCount - (_isLoadingNext ? 1 : 0);
+          if (_isLoadingNext && idx == bottomLoaderIndex) {
+            return _ChunkLoadingRow(
+              key: const ValueKey('stop_departures_loader_bottom'),
+              colors: widget.colors,
+              l10n: widget.l10n,
+            );
+          }
+
+          final effectiveIndex = idx - (_isLoadingPrevious ? 1 : 0);
+          final realIdx = _visibleStart + effectiveIndex;
+          final dep = departures[realIdx];
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _DepartureRow(dep: dep, colors: widget.colors, l10n: widget.l10n),
+              Divider(
+                height: 1,
+                color: widget.colors.divider.withValues(alpha: 0.45),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  int get _boundedItemCount {
+    return _visibleCount +
+        (_isLoadingPrevious ? 1 : 0) +
+        (_isLoadingNext ? 1 : 0);
+  }
+}
+
+class _ChunkLoadingRow extends StatelessWidget {
+  final TransColors colors;
+  final AppLocalizations l10n;
+
+  const _ChunkLoadingRow({
+    super.key,
+    required this.colors,
+    required this.l10n,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              l10n.loadingDepartures,
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ParsedDeparture {
   final String timeStr;
   final String? delayStr;
@@ -638,7 +965,13 @@ class _ParsedDeparture {
     required this.metaLine,
   });
 
+  static final Expando<_ParsedDeparture> _cache =
+      Expando<_ParsedDeparture>('parsed_departure');
+
   factory _ParsedDeparture.fromMap(Map<String, dynamic> dep) {
+    final cached = _cache[dep];
+    if (cached != null) return cached;
+
     String timeStr = '--:--';
     String? delayStr;
     Color timeColor = Colors.red;
@@ -705,7 +1038,7 @@ class _ParsedDeparture {
       if (stopLabel != null && stopLabel.isNotEmpty) stopLabel,
     ];
 
-    return _ParsedDeparture(
+    final parsed = _ParsedDeparture(
       timeStr: timeStr,
       delayStr: delayStr,
       timeColor: timeColor,
@@ -720,13 +1053,23 @@ class _ParsedDeparture {
           '',
       metaLine: metaParts.isEmpty ? ' ' : metaParts.join(' • '),
     );
+    _cache[dep] = parsed;
+    return parsed;
   }
 }
 
 class _StopDeparturesData {
   final List<_DayTab> dayTabs;
+  late final Map<String, List<_PlatformTab>> _platformTabsByDay =
+      _StopDeparturesProfiler.measureSync(
+    'stop_departures.build_platform_tabs_cache',
+    context: 'days=${dayTabs.length}',
+    action: () => {
+      for (final tab in dayTabs) tab.id: _buildPlatformTabsForDay(tab),
+    },
+  );
 
-  const _StopDeparturesData({required this.dayTabs});
+  _StopDeparturesData({required this.dayTabs});
 
   _DayTab? dayTabById(String? id) {
     if (id == null) return null;
@@ -751,43 +1094,48 @@ class _StopDeparturesData {
   }
 
   List<_PlatformTab> platformTabsForDay(String dayTabId) {
-    final dayTab = dayTabById(dayTabId);
-    if (dayTab == null) return const <_PlatformTab>[];
-
-    final grouped = <String, List<Map<String, dynamic>>>{};
-    for (final dep in dayTab.departures) {
-      final key = _platformKey(dep);
-      grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(dep);
-    }
-
-    final duplicateCounts = <String, int>{};
-    for (final dep in dayTab.departures) {
-      final label = _platformLabel(dep);
-      if (label != null) {
-        duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
-      }
-    }
-
-    final tabs = grouped.entries.map((entry) {
-      final dep = entry.value.first;
-      final platformLabel = _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
-      final hasDuplicateLabel = (duplicateCounts[platformLabel] ?? 0) > 1;
-      final label = hasDuplicateLabel
-          ? '$platformLabel ${_shortDirection(dep)}'
-          : platformLabel;
-
-      return _PlatformTab(
-        key: entry.key,
-        label: label.trim(),
-        platformLabel: _platformLabel(dep),
-        stopAreaId: _stopAreaId(dep),
-        departures: entry.value,
-      );
-    }).toList()
-      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
-
-    return tabs;
+    return _platformTabsByDay[dayTabId] ?? const <_PlatformTab>[];
   }
+}
+
+List<_PlatformTab> _buildPlatformTabsForDay(_DayTab dayTab) {
+  final grouped = <String, List<Map<String, dynamic>>>{};
+  for (final dep in dayTab.departures) {
+    final key = _platformKey(dep);
+    grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(dep);
+  }
+
+  final duplicateCounts = <String, int>{};
+  for (final dep in dayTab.departures) {
+    final label = _platformLabel(dep);
+    if (label != null) {
+      duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
+    }
+  }
+
+  final tabs = grouped.entries.map((entry) {
+    final dep = entry.value.first;
+    final platformLabel = _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
+    final hasDuplicateLabel = (duplicateCounts[platformLabel] ?? 0) > 1;
+    final label = hasDuplicateLabel
+        ? '$platformLabel ${_shortDirection(dep)}'
+        : platformLabel;
+
+    return _PlatformTab(
+      key: entry.key,
+      label: label.trim(),
+      platformLabel: _platformLabel(dep),
+      stopAreaId: _stopAreaId(dep),
+      departures: entry.value,
+    );
+  }).toList()
+    ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+
+  _StopDeparturesProfiler.log(
+    'stop_departures.platform_tabs_built',
+    'day=${dayTab.id} departures=${dayTab.departures.length} tabs=${tabs.length}',
+  );
+  return tabs;
 }
 
 class _DayTab {
@@ -870,5 +1218,118 @@ int? _calculateDelayMinutes(String? scheduled, String? actual) {
         .inMinutes;
   } catch (_) {
     return null;
+  }
+}
+
+DateTime? _departureDateTimeLocal(Map<String, dynamic> dep) {
+  final cached = _departureDateTimeCache[dep];
+  if (cached != null) {
+    return identical(cached, _nullDateTimeSentinel) ? null : cached as DateTime;
+  }
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  final rawTime = (motisDepObj?['scheduledTime'] as String?) ??
+      (motisDepObj?['time'] as String?) ??
+      (motisPlaceObj?['scheduledDeparture'] as String?) ??
+      (motisPlaceObj?['departure'] as String?) ??
+      (motisPlaceObj?['scheduledArrival'] as String?) ??
+      (motisPlaceObj?['arrival'] as String?) ??
+      (dep['plannedWhen'] as String?) ??
+      (dep['when'] as String?);
+  if (rawTime == null || rawTime.isEmpty) {
+    _departureDateTimeCache[dep] = _nullDateTimeSentinel;
+    return null;
+  }
+  try {
+    final parsed = DateTime.parse(rawTime).toLocal();
+    _departureDateTimeCache[dep] = parsed;
+    return parsed;
+  } catch (_) {
+    _departureDateTimeCache[dep] = _nullDateTimeSentinel;
+    return null;
+  }
+}
+
+final Expando<Object> _departureDateTimeCache =
+    Expando<Object>('departure_datetime');
+final Object _nullDateTimeSentinel = Object();
+
+int _departureSortCompare(Map<String, dynamic> a, Map<String, dynamic> b) {
+  final ta = _departureDateTimeLocal(a);
+  final tb = _departureDateTimeLocal(b);
+  if (ta == null && tb == null) return 0;
+  if (ta == null) return 1;
+  if (tb == null) return -1;
+  return ta.compareTo(tb);
+}
+
+int _indexForCurrentTime(List<Map<String, dynamic>> departures) {
+  if (departures.isEmpty) return 0;
+
+  final now = DateTime.now();
+  final nowMinutes = now.hour * 60 + now.minute;
+  for (var i = 0; i < departures.length; i++) {
+    final time = _departureDateTimeLocal(departures[i]);
+    if (time == null) continue;
+    final minutes = time.hour * 60 + time.minute;
+    if (minutes >= nowMinutes) return i;
+  }
+  return 0;
+}
+
+class _StopDeparturesProfiler {
+  static const Duration _warnThreshold = Duration(milliseconds: 8);
+
+  static bool get _enabled => kDebugMode || kProfileMode;
+
+  static void log(String label, String message) {
+    if (!_enabled) return;
+    debugPrint('[StopDepartures][$label] $message');
+  }
+
+  static T measureSync<T>(
+    String label, {
+    String? context,
+    required T Function() action,
+  }) {
+    if (!_enabled) return action();
+
+    final task = developer.TimelineTask()..start(label);
+    final stopwatch = Stopwatch()..start();
+    try {
+      return action();
+    } finally {
+      stopwatch.stop();
+      task.finish();
+      if (stopwatch.elapsed >= _warnThreshold) {
+        debugPrint(
+          '[StopDepartures][$label] ${stopwatch.elapsedMilliseconds}ms'
+          '${context == null ? '' : ' $context'}',
+        );
+      }
+    }
+  }
+
+  static Future<T> measureAsync<T>(
+    String label, {
+    String? context,
+    required Future<T> Function() action,
+  }) async {
+    if (!_enabled) return action();
+
+    final task = developer.TimelineTask()..start(label);
+    final stopwatch = Stopwatch()..start();
+    try {
+      return await action();
+    } finally {
+      stopwatch.stop();
+      task.finish();
+      if (stopwatch.elapsed >= _warnThreshold) {
+        debugPrint(
+          '[StopDepartures][$label] ${stopwatch.elapsedMilliseconds}ms'
+          '${context == null ? '' : ' $context'}',
+        );
+      }
+    }
   }
 }

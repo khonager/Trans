@@ -1219,17 +1219,6 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  void _showIosVibrationAvailabilityMessage() {
-    if (defaultTargetPlatform != TargetPlatform.iOS || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          AppLocalizations.of(context)!.iosWakeAlarmVibrationNoticeBody,
-        ),
-      ),
-    );
-  }
-
   void _pickAvatar() {
     showModalBottomSheet(
       context: context,
@@ -2554,41 +2543,24 @@ class _SettingsTabState extends State<SettingsTab> {
                       setState(() => _vibrationPattern = val);
                       await _persistVibrationSettings();
                       _testVibration();
-                      _showIosVibrationAvailabilityMessage();
                     })),
-            ListTile(
-                title: Text(AppLocalizations.of(context)!.vibrationIntensity,
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Slider(
-                    value: _vibrationIntensity.toDouble(),
-                    min: 1,
-                    max: 255,
-                    activeColor: colors.effectiveSeed,
-                    thumbColor: colors.effectiveSeed,
-                    onChanged: (val) {
-                      setState(() => _vibrationIntensity = val.toInt());
-                    },
-                    onChangeEnd: (val) {
-                      _persistVibrationSettings();
-                      _testVibration();
-                      _showIosVibrationAvailabilityMessage();
-                    })),
-            if (defaultTargetPlatform == TargetPlatform.iOS)
+            if (defaultTargetPlatform != TargetPlatform.iOS)
               ListTile(
-                leading: Icon(Icons.info_outline, color: colors.textSecondary),
-                title: Text(
-                  AppLocalizations.of(context)!
-                      .iosWakeAlarmVibrationNoticeTitle,
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Text(
-                  AppLocalizations.of(context)!.iosWakeAlarmVibrationNoticeBody,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ),
+                  title: Text(AppLocalizations.of(context)!.vibrationIntensity,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Slider(
+                      value: _vibrationIntensity.toDouble(),
+                      min: 1,
+                      max: 255,
+                      activeColor: colors.effectiveSeed,
+                      thumbColor: colors.effectiveSeed,
+                      onChanged: (val) {
+                        setState(() => _vibrationIntensity = val.toInt());
+                      },
+                      onChangeEnd: (val) {
+                        _persistVibrationSettings();
+                        _testVibration();
+                      })),
             Divider(color: colors.divider),
             ListTile(
               title: Text(wakeAlarmLabel,

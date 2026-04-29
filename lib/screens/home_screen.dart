@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart'; // Added import for persistence
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -65,7 +66,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadSavedTab(); // Load saved tab on startup
     _loadSettings(); // Load other settings
-    _determinePosition();
+    if (!kIsWeb) {
+      _determinePosition();
+    }
     _setupAuthListener();
   }
 
@@ -106,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed && !kIsWeb) {
       _determinePosition();
     }
   }

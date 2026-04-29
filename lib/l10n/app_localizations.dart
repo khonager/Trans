@@ -1412,18 +1412,6 @@ abstract class AppLocalizations {
   /// **'Vibration Intensity'**
   String get vibrationIntensity;
 
-  /// No description provided for @iosWakeAlarmVibrationNoticeTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'iPhone vibration limit'**
-  String get iosWakeAlarmVibrationNoticeTitle;
-
-  /// No description provided for @iosWakeAlarmVibrationNoticeBody.
-  ///
-  /// In en, this message translates to:
-  /// **'On iPhone, custom notification sounds work. Custom vibration only works while you are actively using the app. If the app is in the background, you will only get the sound.'**
-  String get iosWakeAlarmVibrationNoticeBody;
-
   /// No description provided for @alwaysWakeMe.
   ///
   /// In en, this message translates to:

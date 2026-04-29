@@ -37,6 +37,11 @@ class JourneyStep {
 
   // New: Alarm state
   final bool isWakeAlarmOn;
+  final double? alarmTargetLat;
+  final double? alarmTargetLng;
+  final double? alarmTargetOriginLat;
+  final double? alarmTargetOriginLng;
+  final String? alarmTargetName;
 
   // New: Display breakdown
   final Duration? walkDuration;
@@ -71,6 +76,11 @@ class JourneyStep {
     this.headsign,
     this.tripId,
     this.isWakeAlarmOn = false,
+    this.alarmTargetLat,
+    this.alarmTargetLng,
+    this.alarmTargetOriginLat,
+    this.alarmTargetOriginLng,
+    this.alarmTargetName,
     this.walkDuration,
     this.waitDuration,
   });
@@ -104,6 +114,12 @@ class JourneyStep {
     String? headsign,
     String? tripId,
     bool? isWakeAlarmOn,
+    double? alarmTargetLat,
+    double? alarmTargetLng,
+    double? alarmTargetOriginLat,
+    double? alarmTargetOriginLng,
+    String? alarmTargetName,
+    bool clearAlarmTarget = false,
     Duration? walkDuration,
     Duration? waitDuration,
   }) {
@@ -136,6 +152,21 @@ class JourneyStep {
       headsign: headsign ?? this.headsign,
       tripId: tripId ?? this.tripId,
       isWakeAlarmOn: isWakeAlarmOn ?? this.isWakeAlarmOn,
+      alarmTargetLat: clearAlarmTarget
+          ? null
+          : (alarmTargetLat ?? this.alarmTargetLat),
+      alarmTargetLng: clearAlarmTarget
+          ? null
+          : (alarmTargetLng ?? this.alarmTargetLng),
+      alarmTargetOriginLat: clearAlarmTarget
+          ? null
+          : (alarmTargetOriginLat ?? this.alarmTargetOriginLat),
+      alarmTargetOriginLng: clearAlarmTarget
+          ? null
+          : (alarmTargetOriginLng ?? this.alarmTargetOriginLng),
+      alarmTargetName: clearAlarmTarget
+          ? null
+          : (alarmTargetName ?? this.alarmTargetName),
       walkDuration: walkDuration ?? this.walkDuration,
       waitDuration: waitDuration ?? this.waitDuration,
     );
