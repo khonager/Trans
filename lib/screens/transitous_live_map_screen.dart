@@ -691,6 +691,17 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     return fullRoutePoints;
   }
 
+  List<LatLng> _selectedStopPointsFor(_LiveBusTrip trip) {
+    final fullStopPoints =
+        _selectedBus?.tripId == trip.id ? _selectedBus?.fullStopPoints : null;
+    if (fullStopPoints != null && fullStopPoints.isNotEmpty) {
+      return fullStopPoints;
+    }
+
+    if (trip.points.length < 2) return trip.points;
+    return _dedupeSequentialPoints([trip.points.first, trip.points.last]);
+  }
+
   String _selectedFromNameFor(_LiveBusTrip trip) {
     final selectedName =
         _selectedBus?.tripId == trip.id ? _selectedBus?.fullFromName : null;
@@ -743,6 +754,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
         _selectedBus = _selectedBus?.copyWith(
           isLoadingFullRoute: false,
           fullRoutePoints: fullRoute?.points,
+          fullStopPoints: fullRoute?.stopPoints,
           fullFromName: fullRoute?.fromName,
           fullToName: fullRoute?.toName,
         );
@@ -771,6 +783,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     if (legs == null || legs.isEmpty) return null;
 
     final routePoints = <LatLng>[];
+    final stopPoints = <LatLng>[];
     String? fromName;
     String? toName;
 
@@ -782,6 +795,11 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
       fromName ??= (leg['from'] as Map<String, dynamic>?)?['name']?.toString();
       toName =
           (leg['to'] as Map<String, dynamic>?)?['name']?.toString() ?? toName;
+
+      _appendUniqueRoutePoints(
+        stopPoints,
+        _fallbackPointsFromLegStops(leg),
+      );
 
       final legGeometry = leg['legGeometry'] as Map?;
       final encodedPoints = legGeometry?['points']?.toString();
@@ -813,6 +831,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
 
     return _FullTripRouteData(
       points: dedupedRoutePoints,
+      stopPoints: _dedupeSequentialPoints(stopPoints),
       fromName: fromName ?? 'Unknown stop',
       toName: toName ?? 'Unknown stop',
     );
@@ -1028,6 +1047,23 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildStopDot(Color borderColor) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: borderColor, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
     );
   }
@@ -1339,6 +1375,18 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
                     );
                   },
                 ),
+              if (selectedTrip != null)
+                MarkerLayer(
+                  markers: [
+                    for (final point in _selectedStopPointsFor(selectedTrip))
+                      Marker(
+                        point: point,
+                        width: 10,
+                        height: 10,
+                        child: _buildStopDot(selectedTrip.routeColor),
+                      ),
+                  ],
+                ),
               ValueListenableBuilder<DateTime>(
                 valueListenable: _clock,
                 builder: (context, now, _) {
@@ -1398,6 +1446,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
 class _SelectedBus {
   final String tripId;
   final List<LatLng>? fullRoutePoints;
+  final List<LatLng>? fullStopPoints;
   final String? fullFromName;
   final String? fullToName;
   final bool isLoadingFullRoute;
@@ -1405,6 +1454,7 @@ class _SelectedBus {
   const _SelectedBus({
     required this.tripId,
     this.fullRoutePoints,
+    this.fullStopPoints,
     this.fullFromName,
     this.fullToName,
     this.isLoadingFullRoute = false,
@@ -1414,6 +1464,8 @@ class _SelectedBus {
     String? tripId,
     List<LatLng>? fullRoutePoints,
     bool clearFullRoutePoints = false,
+    List<LatLng>? fullStopPoints,
+    bool clearFullStopPoints = false,
     String? fullFromName,
     bool clearFullFromName = false,
     String? fullToName,
@@ -1425,6 +1477,8 @@ class _SelectedBus {
       fullRoutePoints: clearFullRoutePoints
           ? null
           : (fullRoutePoints ?? this.fullRoutePoints),
+      fullStopPoints:
+          clearFullStopPoints ? null : (fullStopPoints ?? this.fullStopPoints),
       fullFromName:
           clearFullFromName ? null : (fullFromName ?? this.fullFromName),
       fullToName: clearFullToName ? null : (fullToName ?? this.fullToName),
@@ -1435,11 +1489,13 @@ class _SelectedBus {
 
 class _FullTripRouteData {
   final List<LatLng> points;
+  final List<LatLng> stopPoints;
   final String fromName;
   final String toName;
 
   const _FullTripRouteData({
     required this.points,
+    required this.stopPoints,
     required this.fromName,
     required this.toName,
   });
