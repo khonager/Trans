@@ -1,0 +1,67 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+
+import '../config/app_theme.dart';
+import '../models/favorite.dart';
+import '../utils/favorite_icons.dart';
+
+List<Marker> buildFavoriteMapMarkers(List<Favorite> favorites) {
+  final markers = <Marker>[];
+
+  for (final favorite in favorites) {
+    final station = favorite.station;
+    final latitude = station?.latitude;
+    final longitude = station?.longitude;
+    if (latitude == null || longitude == null) continue;
+
+    markers.add(
+      Marker(
+        point: LatLng(latitude, longitude),
+        width: 38,
+        height: 38,
+        child: Tooltip(
+          message: favorite.label,
+          child: _FavoriteMapMarker(favorite: favorite),
+        ),
+      ),
+    );
+  }
+
+  return markers;
+}
+
+class _FavoriteMapMarker extends StatelessWidget {
+  final Favorite favorite;
+
+  const _FavoriteMapMarker({required this.favorite});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    final markerColor = colors.navBarSelected;
+    final markerTextColor =
+        markerColor.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+    final icon = resolveFavoriteIcon(favorite);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: markerColor,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.22),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Icon(
+        icon,
+        size: 19,
+        color: markerTextColor,
+      ),
+    );
+  }
+}

@@ -65,6 +65,7 @@ class _SyntheticSeed {
 }
 
 class TransportApi {
+  static const String enabledApiSourcesPreferenceKey = 'enabled_api_sources';
   static const String advancedSettingsEnabledPreferenceKey =
       'advanced_settings_enabled_device';
   // Legacy keys kept for migration from slider-based advanced settings.
@@ -100,9 +101,15 @@ class TransportApi {
   static const String loadPhaseMotis = 'motis';
   static const String loadPhaseV6 = 'v6';
   static const String loadPhaseSynthetic = 'synthetic';
+  static const String sourceTransitous = 'transitous';
+  static const String sourceSyntheticTransitous = 'synthetic_transitous';
+  static const String sourceDbV6 = 'db_v6';
+  static const List<String> defaultEnabledSources = <String>[
+    sourceTransitous,
+    sourceSyntheticTransitous,
+  ];
 
-  /// API Mode: 'auto', 'motis', or 'v6'
-  static String apiMode = 'auto';
+  static Set<String> enabledSources = Set<String>.from(defaultEnabledSources);
 
   // In-memory caches with TTL
   static final Map<String, _CacheEntry<List<Station>>> _stationCache = {};
@@ -151,6 +158,49 @@ class TransportApi {
   // Use 60 minutes so routes requiring longer access/egress walks are found.
   static const int _motisMaxPreTransitTimeSeconds = 3600;
   static const int _motisMaxPostTransitTimeSeconds = 3600;
+
+  static void configureEnabledSources(Iterable<String> sources) {
+    final normalized = Set<String>.from(sources);
+    if (!normalized.contains(sourceTransitous)) {
+      normalized.remove(sourceSyntheticTransitous);
+    }
+    if (normalized.isEmpty) {
+      normalized.add(sourceTransitous);
+      normalized.add(sourceSyntheticTransitous);
+    }
+    enabledSources = normalized;
+  }
+
+  static Set<String> enabledSourcesFromPreferences(SharedPreferences prefs) {
+    final stored = prefs.getStringList(enabledApiSourcesPreferenceKey);
+    if (stored != null) {
+      final normalized = Set<String>.from(stored);
+      if (!normalized.contains(sourceTransitous)) {
+        normalized.remove(sourceSyntheticTransitous);
+      }
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+
+    final legacyMode = prefs.getString('api_mode');
+    if (legacyMode == 'v6') {
+      return <String>{sourceDbV6};
+    }
+
+    return Set<String>.from(defaultEnabledSources);
+  }
+
+  static bool get isTransitousEnabled =>
+      enabledSources.contains(sourceTransitous);
+
+  static bool get isSyntheticTransitousEnabled =>
+      isTransitousEnabled && enabledSources.contains(sourceSyntheticTransitous);
+
+  static bool get isDbV6Enabled => enabledSources.contains(sourceDbV6);
+
+  static bool get usesOnlyDbV6 =>
+      isDbV6Enabled && !isTransitousEnabled && !isSyntheticTransitousEnabled;
 
   static Future<void> _ensureAdvancedSettingsLoaded() async {
     if (_advancedSettingsLoaded) return;
@@ -632,8 +682,7 @@ class TransportApi {
       params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
       final maxWalkingTimeMinutes =
           maxWalkingTimeMinutesOverride ?? _advancedMaxWalkingTimeMinutes;
-      final maxWalkingTimeSeconds =
-          (maxWalkingTimeMinutes.clamp(5, 120) * 60);
+      final maxWalkingTimeSeconds = (maxWalkingTimeMinutes.clamp(5, 120) * 60);
       params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
       params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
 
@@ -659,7 +708,8 @@ class TransportApi {
       params['postTransitModes'] = postModes.join(',');
 
       if (useBikeForThisSearch) {
-        final cyclingSpeedMps = (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
+        final cyclingSpeedMps =
+            (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
         params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
       }
     }
@@ -704,8 +754,7 @@ class TransportApi {
     final attemptedKeys = <String>{};
 
     for (final retry in retries) {
-      final key =
-          '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
+      final key = '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
       if (!attemptedKeys.add(key)) continue;
 
       _syntheticLog(
@@ -776,7 +825,7 @@ class TransportApi {
     double? lat,
     double? lng,
   }) async {
-    if (apiMode == 'v6') {
+    if (usesOnlyDbV6) {
       final result = await _searchStationsV6(query, lat: lat, lng: lng);
       final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
       _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
@@ -797,7 +846,7 @@ class TransportApi {
       lng: lng,
     );
 
-    if (apiMode == 'motis') {
+    if (!isDbV6Enabled) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
         const Duration(hours: 1),
@@ -1346,10 +1395,23 @@ class TransportApi {
       _getMotisUri('/api/v5/map/trips', {
         'min': min,
         'max': max,
-        'startTime': startTime.toUtc().toIso8601String(),
-        'endTime': endTime.toUtc().toIso8601String(),
+        'startTime': _motisMapTime(startTime),
+        'endTime': _motisMapTime(endTime),
         'zoom': zoom.toStringAsFixed(2),
       });
+
+  static String _motisMapTime(DateTime time) {
+    final utc = time.toUtc();
+    return DateTime.utc(
+      utc.year,
+      utc.month,
+      utc.day,
+      utc.hour,
+      utc.minute,
+      utc.second,
+      utc.millisecond,
+    ).toIso8601String();
+  }
 
   /// Builds the MOTIS URI for `/api/v5/trip` with the required query
   /// parameters.  Exposed for unit-testing of parameter serialisation.
@@ -2690,7 +2752,7 @@ class TransportApi {
     void Function(List<Map<String, dynamic>> mergedJourneys)? onProgress,
     bool Function()? shouldContinue,
   }) async {
-    if (apiMode == 'v6' || journeys.isEmpty) {
+    if (!isSyntheticTransitousEnabled || journeys.isEmpty) {
       return journeys;
     }
 
@@ -2843,12 +2905,12 @@ class TransportApi {
     }
 
     _syntheticLog(
-      'search start: mode=$apiMode from=${from.name} to=${to.name} '
+      'search start: sources=${enabledSources.join(",")} from=${from.name} to=${to.name} '
       'when=${when?.toIso8601String() ?? 'now'} arriveBy=$isArrival results=$results',
     );
 
-    // 1. STRICT V6 MODE
-    if (apiMode == 'v6') {
+    // 1. DB-ONLY MODE
+    if (usesOnlyDbV6) {
       setPhase(loadPhaseV6, true);
       try {
         final res = await _searchJourneysV6(
@@ -2864,15 +2926,15 @@ class TransportApi {
           return j;
         }).toList();
         if (onPartialResults != null) onPartialResults(mapped);
-        _syntheticLog('search done: strict v6 returned=${mapped.length}');
+        _syntheticLog('search done: db-only returned=${mapped.length}');
         return mapped;
       } finally {
         setPhase(loadPhaseV6, false);
       }
     }
 
-    // 2. STRICT MOTIS MODE
-    if (apiMode == 'motis') {
+    // 2. TRANSITOUS-ONLY MODE
+    if (isTransitousEnabled && !isDbV6Enabled) {
       setPhase(loadPhaseMotis, true);
       try {
         final res = await _searchJourneysMotisWithFallback(
@@ -2884,28 +2946,31 @@ class TransportApi {
           results: results,
         );
         if (onPartialResults != null) onPartialResults(res);
-        setPhase(loadPhaseMotis, false);
-        setPhase(loadPhaseSynthetic, true);
-        final augmented = await _augmentJourneysWithSynthetic(
-          from,
-          to,
-          res,
-          when: when,
-          nahverkehrOnly: nahverkehrOnly,
-          isArrival: isArrival,
-          onProgress: onPartialResults,
-          shouldContinue: shouldContinue,
-        );
-        if (onPartialResults != null && augmented.length > res.length) {
-          onPartialResults(augmented);
+        List<Map<String, dynamic>> finalResults = res;
+        if (isSyntheticTransitousEnabled) {
+          setPhase(loadPhaseMotis, false);
+          setPhase(loadPhaseSynthetic, true);
+          finalResults = await _augmentJourneysWithSynthetic(
+            from,
+            to,
+            res,
+            when: when,
+            nahverkehrOnly: nahverkehrOnly,
+            isArrival: isArrival,
+            onProgress: onPartialResults,
+            shouldContinue: shouldContinue,
+          );
+          if (onPartialResults != null && finalResults.length > res.length) {
+            onPartialResults(finalResults);
+          }
         }
         _syntheticLog(
-          'search done: strict motis base=${res.length} final=${augmented.length}',
+          'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
-        return augmented;
+        return finalResults;
       } catch (e) {
         debugPrint('Transitous searchJourneys failed (strict mode): $e');
-        _syntheticLog('search fail: strict motis error=$e');
+        _syntheticLog('search fail: transitous-only error=$e');
         rethrow;
       } finally {
         setPhase(loadPhaseMotis, false);
@@ -2913,37 +2978,46 @@ class TransportApi {
       }
     }
 
-    // 3. AUTO MODE: HYBRID FETCHING
+    // 3. HYBRID MODE
     try {
-      // Launch both requests in parallel
-      setPhase(loadPhaseMotis, true);
-      final motisFuture = _searchJourneysMotisWithFallback(
-        from: from,
-        to: to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      ).then((res) => res).catchError((e) {
-        debugPrint('Hybrid: Transitous failed: $e');
-        return <Map<String, dynamic>>[];
-      }).whenComplete(() => setPhase(loadPhaseMotis, false));
+      Future<List<Map<String, dynamic>>> motisFuture =
+          Future<List<Map<String, dynamic>>>.value(
+        <Map<String, dynamic>>[],
+      );
+      if (isTransitousEnabled) {
+        setPhase(loadPhaseMotis, true);
+        motisFuture = _searchJourneysMotisWithFallback(
+          from: from,
+          to: to,
+          nahverkehrOnly: nahverkehrOnly,
+          when: when,
+          isArrival: isArrival,
+          results: results,
+        ).then((res) => res).catchError((e) {
+          debugPrint('Hybrid: Transitous failed: $e');
+          return <Map<String, dynamic>>[];
+        }).whenComplete(() => setPhase(loadPhaseMotis, false));
+      }
 
-      setPhase(loadPhaseV6, true);
-      final v6Future = _searchJourneysV6(
-        from,
-        to,
-        nahverkehrOnly: nahverkehrOnly,
-        when: when,
-        isArrival: isArrival,
-        results: results,
-      ).then((res) => res).catchError((e) {
-        debugPrint('Hybrid: v6 failed: $e');
-        return <Map<String, dynamic>>[];
-      }).whenComplete(() => setPhase(loadPhaseV6, false));
+      Future<List<Map<String, dynamic>>> v6Future =
+          Future<List<Map<String, dynamic>>>.value(<Map<String, dynamic>>[]);
+      if (isDbV6Enabled) {
+        setPhase(loadPhaseV6, true);
+        v6Future = _searchJourneysV6(
+          from,
+          to,
+          nahverkehrOnly: nahverkehrOnly,
+          when: when,
+          isArrival: isArrival,
+          results: results,
+        ).then((res) => res).catchError((e) {
+          debugPrint('Hybrid: v6 failed: $e');
+          return <Map<String, dynamic>>[];
+        }).whenComplete(() => setPhase(loadPhaseV6, false));
+      }
 
       if (onPartialResults != null) {
-        bool motisDone = false;
+        bool motisDone = !isTransitousEnabled;
 
         motisFuture.then((motisResults) {
           motisDone = true;
@@ -2980,25 +3054,28 @@ class TransportApi {
         final resultsList = await Future.wait([motisFuture, v6Future]);
         final merged = mergeResults(resultsList[0], resultsList[1]);
         final baseResults = merged.isEmpty ? resultsList[0] : merged;
-        setPhase(loadPhaseSynthetic, true);
-        final augmented = await _augmentJourneysWithSynthetic(
-          from,
-          to,
-          baseResults,
-          when: when,
-          nahverkehrOnly: nahverkehrOnly,
-          isArrival: isArrival,
-          onProgress: onPartialResults,
-          shouldContinue: shouldContinue,
-        );
-        if (augmented.length > baseResults.length) {
-          onPartialResults(augmented);
+        var finalResults = baseResults;
+        if (isSyntheticTransitousEnabled) {
+          setPhase(loadPhaseSynthetic, true);
+          finalResults = await _augmentJourneysWithSynthetic(
+            from,
+            to,
+            baseResults,
+            when: when,
+            nahverkehrOnly: nahverkehrOnly,
+            isArrival: isArrival,
+            onProgress: onPartialResults,
+            shouldContinue: shouldContinue,
+          );
+          if (finalResults.length > baseResults.length) {
+            onPartialResults(finalResults);
+          }
         }
         _syntheticLog(
-          'search done: auto(partial) motis=${resultsList[0].length} '
-          'v6=${resultsList[1].length} base=${baseResults.length} final=${augmented.length}',
+          'search done: hybrid(partial) motis=${resultsList[0].length} '
+          'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
         );
-        return augmented;
+        return finalResults;
       } else {
         // Wait for both to complete
         final resultsList = await Future.wait([motisFuture, v6Future]);
@@ -3014,30 +3091,33 @@ class TransportApi {
         final merged = mergeResults(motisResults, v6Results);
 
         if (merged.isEmpty) {
-          _syntheticLog('search done: auto merged empty');
+          _syntheticLog('search done: hybrid merged empty');
           throw Exception("No routes found on either API");
         }
 
-        setPhase(loadPhaseSynthetic, true);
-        final augmented = await _augmentJourneysWithSynthetic(
-          from,
-          to,
-          merged,
-          when: when,
-          nahverkehrOnly: nahverkehrOnly,
-          isArrival: isArrival,
-          onProgress: onPartialResults,
-          shouldContinue: shouldContinue,
-        );
+        var finalResults = merged;
+        if (isSyntheticTransitousEnabled) {
+          setPhase(loadPhaseSynthetic, true);
+          finalResults = await _augmentJourneysWithSynthetic(
+            from,
+            to,
+            merged,
+            when: when,
+            nahverkehrOnly: nahverkehrOnly,
+            isArrival: isArrival,
+            onProgress: onPartialResults,
+            shouldContinue: shouldContinue,
+          );
+        }
         _syntheticLog(
-          'search done: auto motis=${motisResults.length} v6=${v6Results.length} '
-          'base=${merged.length} final=${augmented.length}',
+          'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
+          'base=${merged.length} final=${finalResults.length}',
         );
-        return augmented;
+        return finalResults;
       }
     } catch (e) {
       debugPrint('Hybrid searchJourneys critical failure: $e');
-      _syntheticLog('search fail: auto error=$e');
+      _syntheticLog('search fail: hybrid error=$e');
       return [];
     } finally {
       setPhase(loadPhaseMotis, false);
@@ -3170,7 +3250,7 @@ class TransportApi {
     final start = startLocal.toUtc();
 
     // ── MOTIS ───────────────────────────────────────────────────────────────
-    if (apiMode != 'v6') {
+    if (isTransitousEnabled) {
       try {
         return await _fetchMotisStopDepartures(
           stationId,
@@ -3180,7 +3260,7 @@ class TransportApi {
         );
       } catch (e) {
         debugPrint('MOTIS fetchStopDepartures failed: $e');
-        if (apiMode == 'motis') rethrow;
+        if (!isDbV6Enabled) rethrow;
       }
     }
 

@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
+import 'package:trans/services/transport_api.dart';
 import 'package:trans/screens/transitous_live_map_screen.dart';
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
@@ -76,6 +77,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final hasAcceptedCommunityTerms =
         await CommunitySafetyService.hasAcceptedTerms();
+    TransportApi.configureEnabledSources(
+      TransportApi.enabledSourcesFromPreferences(prefs),
+    );
     if (mounted) {
       setState(() {
         _showTrainNumbers = prefs.getBool('show_train_numbers') ?? false;
