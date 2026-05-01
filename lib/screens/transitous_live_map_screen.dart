@@ -9,8 +9,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/app_theme.dart';
+import '../services/favorites_manager.dart';
 import '../services/transport_api.dart';
 import '../utils/app_error.dart';
+import '../widgets/favorite_map_markers.dart';
 
 class TransitousLiveMapScreen extends StatefulWidget {
   final Position? currentPosition;
@@ -54,6 +56,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   _SelectedBus? _selectedBus;
   List<_LiveBusTrip> _displayedTripsCache = const [];
   String? _displayedTripsCacheKey;
+  List<Marker> _favoriteMarkers = const [];
 
   Timer? _fetchDebounce;
   Timer? _refreshTimer;
@@ -67,6 +70,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _bootstrap();
+    _loadFavoriteMarkers();
     _startTimers();
   }
 
@@ -114,6 +118,16 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     _refreshTimer = null;
     _animationTimer?.cancel();
     _animationTimer = null;
+  }
+
+  Future<void> _loadFavoriteMarkers() async {
+    final favorites = await FavoritesManager.getFavorites();
+    if (!mounted) return;
+    setState(() {
+      _favoriteMarkers = buildFavoriteMapMarkers(
+        favorites.where((favorite) => favorite.type == 'station').toList(),
+      );
+    });
   }
 
   Future<void> _bootstrap() async {
@@ -1332,6 +1346,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.trans',
               ),
+              if (_favoriteMarkers.isNotEmpty)
+                MarkerLayer(markers: _favoriteMarkers),
               if (selectedTrip != null)
                 ValueListenableBuilder<DateTime>(
                   valueListenable: _clock,

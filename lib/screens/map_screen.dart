@@ -9,6 +9,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/widgets/favorite_map_markers.dart';
 
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
@@ -99,6 +101,7 @@ class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   List<LatLng> _routePoints = [];
   List<Marker> _markers = [];
+  List<Marker> _favoriteMarkers = [];
   LatLngBounds? _bounds;
   bool _isLoadingPath = true;
   Position? _liveCurrentPosition;
@@ -114,6 +117,7 @@ class _MapScreenState extends State<MapScreen> {
     super.initState();
     _liveCurrentPosition = widget.currentPosition;
     _startLiveLocationUpdates();
+    _loadFavoriteMarkers();
     _loadRoute();
   }
 
@@ -124,6 +128,16 @@ class _MapScreenState extends State<MapScreen> {
         widget.currentPosition != oldWidget.currentPosition) {
       setState(() => _liveCurrentPosition = widget.currentPosition);
     }
+  }
+
+  Future<void> _loadFavoriteMarkers() async {
+    final favorites = await FavoritesManager.getFavorites();
+    if (!mounted) return;
+    setState(() {
+      _favoriteMarkers = buildFavoriteMapMarkers(
+        favorites.where((favorite) => favorite.type == 'station').toList(),
+      );
+    });
   }
 
   @override
@@ -647,6 +661,8 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ],
             ),
+          if (_favoriteMarkers.isNotEmpty)
+            MarkerLayer(markers: _favoriteMarkers),
           MarkerLayer(markers: displayedMarkers),
         ],
       ),
