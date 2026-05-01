@@ -934,6 +934,17 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     return '+$delayMinutes min';
   }
 
+  String _nextStopArrivalLabel(BuildContext context, _LiveBusTrip trip) {
+    if (trip.timestampsMs.isEmpty) return 'Arrival time unavailable';
+
+    final arrival = DateTime.fromMillisecondsSinceEpoch(
+      trip.timestampsMs.last,
+      isUtc: true,
+    ).toLocal();
+    final arrivalTime = TimeOfDay.fromDateTime(arrival).format(context);
+    return 'Arrives at $arrivalTime';
+  }
+
   Widget _buildBusMarker(
       BuildContext context, _LiveBusTrip trip, _TripSample sample,
       {required double scale}) {
@@ -1190,16 +1201,20 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
                 ),
               ),
               const SizedBox(height: 6),
-              ValueListenableBuilder<DateTime>(
-                valueListenable: _clock,
-                builder: (context, now, _) {
-                  final sample = selected.sample(now);
-                  return Text(
-                    'Lat ${sample.position.latitude.toStringAsFixed(5)}, '
-                    'Lng ${sample.position.longitude.toStringAsFixed(5)}',
-                    style: TextStyle(color: colors.textSecondary),
-                  );
-                },
+              Text(
+                'Next stop: ${selected.toName}',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _nextStopArrivalLabel(context, selected),
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
