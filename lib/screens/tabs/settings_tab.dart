@@ -129,7 +129,8 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _leaveAlarmVibrationEnabled = true;
   bool _isWakeAlarmPreviewPlaying = false;
   int _stopsBeforeAlarm = 1;
-  String _apiMode = 'auto';
+  Set<String> _enabledApiSources =
+      Set<String>.from(TransportApi.defaultEnabledSources);
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
   bool _advancedSettingsEnabledForDevice = false;
   int _advancedMinTransferTimeMinutes = _defaultAdvancedMinTransferTimeMinutes;
@@ -225,6 +226,7 @@ class _SettingsTabState extends State<SettingsTab> {
   Future<void> _loadSettings() async {
     await WakeAlarmSettings.loadPersistedCustomSound();
     final prefs = await SharedPreferences.getInstance();
+    final enabledApiSources = TransportApi.enabledSourcesFromPreferences(prefs);
     if (mounted) {
       setState(() {
         _vibrationPattern = prefs.getString('vibration_pattern') ?? 'standard';
@@ -245,7 +247,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 WakeAlarmSettings.leaveVibrationEnabledPreferenceKey) ??
             true;
         _stopsBeforeAlarm = prefs.getInt('alarm_stops_before') ?? 1;
-        _apiMode = prefs.getString('api_mode') ?? 'auto';
+        _enabledApiSources = enabledApiSources;
         _alarmTriggerThreshold =
             prefs.getString('alarm_trigger_threshold') ?? '5%';
         _advancedSettingsEnabledForDevice = prefs.getBool(
@@ -262,20 +264,21 @@ class _SettingsTabState extends State<SettingsTab> {
                 ) ??
                 0.0)
             .clamp(0.0, 1.0);
-        _advancedMinTransferTimeMinutes =
-            prefs.getInt(TransportApi.advancedMinTransferTimeMinutesPreferenceKey) ??
-                (2 + (legacyTransferComfort * 5)).round();
+        _advancedMinTransferTimeMinutes = prefs.getInt(
+                TransportApi.advancedMinTransferTimeMinutesPreferenceKey) ??
+            (2 + (legacyTransferComfort * 5)).round();
         _advancedAdditionalTransferTimeMinutes = prefs.getInt(
               TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
             ) ??
             (legacyTransferComfort * 4).round();
         _advancedTransferTimeFactor = ((prefs.getDouble(
-                      TransportApi.advancedTransferTimeFactorPreferenceKey,
-                    ) ??
-                    (0.8 + legacyTransferComfort))
-                .clamp(0.7, 2.5) *
-            10)
-            .round() /
+                              TransportApi
+                                  .advancedTransferTimeFactorPreferenceKey,
+                            ) ??
+                            (0.8 + legacyTransferComfort))
+                        .clamp(0.7, 2.5) *
+                    10)
+                .round() /
             10;
         _advancedPreTransitWalkEnabled = prefs.getBool(
               TransportApi.advancedPreTransitWalkEnabledPreferenceKey,
@@ -308,7 +311,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
                 .clamp(8.0, 30.0))
             .roundToDouble();
-        TransportApi.apiMode = _apiMode;
+        TransportApi.configureEnabledSources(_enabledApiSources);
         TransportApi.configureAdvancedSearchSettings(
           enabledForDevice: _advancedSettingsEnabledForDevice,
           minTransferTimeMinutes: _advancedMinTransferTimeMinutes,
@@ -494,14 +497,73 @@ class _SettingsTabState extends State<SettingsTab> {
         {'alarm_trigger_threshold': threshold});
   }
 
-  Future<void> _saveApiMode(String mode) async {
+  Future<void> _saveEnabledApiSources(Set<String> sources) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('api_mode', mode);
+    final normalized = Set<String>.from(sources);
+    if (!normalized.contains(TransportApi.sourceTransitous)) {
+      normalized.remove(TransportApi.sourceSyntheticTransitous);
+    }
+    if (normalized.isEmpty) {
+      normalized.addAll(TransportApi.defaultEnabledSources);
+    }
+    await prefs.setStringList(
+      TransportApi.enabledApiSourcesPreferenceKey,
+      normalized.toList()..sort(),
+    );
     setState(() {
-      _apiMode = mode;
-      TransportApi.apiMode = mode;
+      _enabledApiSources = normalized;
     });
+    TransportApi.configureEnabledSources(normalized);
   }
+
+  Future<void> _toggleApiSource(String source, bool enabled) async {
+    final updated = Set<String>.from(_enabledApiSources);
+    if (enabled) {
+      updated.add(source);
+      if (source == TransportApi.sourceSyntheticTransitous) {
+        updated.add(TransportApi.sourceTransitous);
+      }
+    } else {
+      updated.remove(source);
+      if (source == TransportApi.sourceTransitous) {
+        updated.remove(TransportApi.sourceSyntheticTransitous);
+      }
+    }
+    await _saveEnabledApiSources(updated);
+  }
+
+  String _selectedApiSourcesSummary(AppLocalizations l10n) {
+    final labels = <String>[];
+    if (_enabledApiSources.contains(TransportApi.sourceTransitous)) {
+      labels.add('Transitous');
+    }
+    if (_enabledApiSources.contains(TransportApi.sourceSyntheticTransitous)) {
+      labels.add(_syntheticTransitousLabel(l10n));
+    }
+    if (_enabledApiSources.contains(TransportApi.sourceDbV6)) {
+      labels.add(l10n.dbV6);
+    }
+    if (labels.isEmpty) {
+      labels.add('Transitous');
+    }
+    return labels.join(' + ');
+  }
+
+  String _syntheticTransitousLabel(AppLocalizations l10n) =>
+      l10n.localeName.startsWith('de')
+          ? 'Synthetisches Transitous'
+          : 'Synthetic Transitous';
+
+  String _syntheticTransitousDescription(AppLocalizations l10n) =>
+      l10n.localeName.startsWith('de')
+          ? 'Erweitert Transitous um zusätzliche synthetische Verbindungen'
+          : 'Adds extra synthetic Transitous connections';
+
+  bool _canDisableTransitous() =>
+      _enabledApiSources.contains(TransportApi.sourceDbV6);
+
+  bool _canDisableDbV6() =>
+      _enabledApiSources.contains(TransportApi.sourceTransitous);
 
   Future<void> _persistAdvancedSearchPreferences() async {
     final prefs = await SharedPreferences.getInstance();
@@ -812,7 +874,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.alt_route, size: 18, color: colors.textPrimary),
+                      Icon(Icons.alt_route,
+                          size: 18, color: colors.textPrimary),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -873,7 +936,8 @@ class _SettingsTabState extends State<SettingsTab> {
                       isGerman
                           ? 'Grund: Ø Umstiegszeit ${minPerTransfer.toStringAsFixed(1)} min < Minimum $min min'
                           : 'Reason: avg transfer time ${minPerTransfer.toStringAsFixed(1)} min < minimum $min min',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade300),
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.red.shade300),
                     ),
                 ],
               ),
@@ -2060,1136 +2124,1240 @@ class _SettingsTabState extends State<SettingsTab> {
           child: ListView(
             padding: const EdgeInsets.only(top: 16.0, bottom: 150.0),
             children: [
-          SizedBox(height: topPadding),
-          // Header Restored
-          Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.asset(
-                  Theme.of(context).brightness == Brightness.dark
-                      ? 'lib/assets/logo_light.png'
-                      : 'lib/assets/logo_dark.png',
-                  height: 48,
-                  width: 48,
-                  errorBuilder: (c, e, s) => Icon(Icons.directions_transit,
-                      size: 48, color: primaryColor),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Text(AppLocalizations.of(context)!.appName,
-                  style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: colors.textPrimary)),
-              // DEV badge - only shows on dev builds
-              if (_isDevBuild && !_isUnstableBuild) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.orange,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text("DEV",
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white)),
-                ),
-              ],
-              if (_isUnstableBuild) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade700,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text("UNSTABLE",
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white)),
-                ),
-              ],
-              const Spacer(),
-              // Version Display & Link
-              if (!_isUnstableBuild && _version.isNotEmpty)
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (_) => _startAdvancedUnlockHold(),
-                  onTapUp: (_) => _cancelAdvancedUnlockHold(),
-                  onTapCancel: _cancelAdvancedUnlockHold,
-                  child: InkWell(
-                    onTap: () {
-                      if (_suppressNextChangelogTap) {
-                        _suppressNextChangelogTap = false;
-                        return;
-                      }
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                ChangelogScreen(currentVersion: _version)),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      child: Text("v$_version",
-                          style: TextStyle(
-                              color:
-                                  colors.textSecondary.withValues(alpha: 0.7),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14)),
+              SizedBox(height: topPadding),
+              // Header Restored
+              Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.asset(
+                      Theme.of(context).brightness == Brightness.dark
+                          ? 'lib/assets/logo_light.png'
+                          : 'lib/assets/logo_dark.png',
+                      height: 48,
+                      width: 48,
+                      errorBuilder: (c, e, s) => Icon(Icons.directions_transit,
+                          size: 48, color: primaryColor),
                     ),
                   ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 30),
+                  const SizedBox(width: 16),
+                  Text(AppLocalizations.of(context)!.appName,
+                      style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: colors.textPrimary)),
+                  // DEV badge - only shows on dev builds
+                  if (_isDevBuild && !_isUnstableBuild) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.orange,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text("DEV",
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white)),
+                    ),
+                  ],
+                  if (_isUnstableBuild) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade700,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text("UNSTABLE",
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white)),
+                    ),
+                  ],
+                  const Spacer(),
+                  // Version Display & Link
+                  if (!_isUnstableBuild && _version.isNotEmpty)
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) => _startAdvancedUnlockHold(),
+                      onTapUp: (_) => _cancelAdvancedUnlockHold(),
+                      onTapCancel: _cancelAdvancedUnlockHold,
+                      child: InkWell(
+                        onTap: () {
+                          if (_suppressNextChangelogTap) {
+                            _suppressNextChangelogTap = false;
+                            return;
+                          }
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    ChangelogScreen(currentVersion: _version)),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          child: Text("v$_version",
+                              style: TextStyle(
+                                  color: colors.textSecondary
+                                      .withValues(alpha: 0.7),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14)),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 30),
 
-          if (user != null) ...[
-            Text(AppLocalizations.of(context)!.privacy,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: colors.settingsHeader)),
-            const SizedBox(height: 8),
-            _buildSection(context, [
-              SwitchListTile(
-                  title: Text(AppLocalizations.of(context)!.ghostMode,
+              if (user != null) ...[
+                Text(AppLocalizations.of(context)!.privacy,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: colors.settingsHeader)),
+                const SizedBox(height: 8),
+                _buildSection(context, [
+                  SwitchListTile(
+                      title: Text(AppLocalizations.of(context)!.ghostMode,
+                          style: TextStyle(color: colors.textPrimary)),
+                      subtitle: Text(AppLocalizations.of(context)!.hideLocation,
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary)),
+                      value: widget.isGhostMode,
+                      activeTrackColor: Colors.red,
+                      thumbColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return Colors.white;
+                        }
+                        return null;
+                      }),
+                      onChanged: (val) {
+                        widget.onGhostModeChanged(val);
+                        // Give it a moment to update DB then reload profile to see status change
+                        Future.delayed(
+                            const Duration(milliseconds: 500), _loadProfile);
+                      }),
+                ]),
+                const SizedBox(height: 20),
+              ],
+
+              _buildSection(context, [
+                ListTile(
+                  title: Text(AppLocalizations.of(context)!.darkMode,
                       style: TextStyle(color: colors.textPrimary)),
-                  subtitle: Text(AppLocalizations.of(context)!.hideLocation,
+                  subtitle: widget.useSystemTheme
+                      ? Text(AppLocalizations.of(context)!.syncedWithSystem,
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary))
+                      : null,
+                  trailing: Switch(
+                    value: widget.isDarkMode,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return widget.useSystemTheme
+                            ? Colors.grey
+                            : primaryColor;
+                      }
+                      return null;
+                    }),
+                    onChanged: widget.useSystemTheme
+                        ? (val) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(AppLocalizations.of(context)!
+                                    .systemSyncActive)));
+                          }
+                        : widget.onThemeChanged,
+                  ),
+                  onLongPress: () {
+                    bool newState = !widget.useSystemTheme;
+                    widget.onSystemSyncChanged(newState);
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(newState
+                            ? AppLocalizations.of(context)!.systemSyncEnabled
+                            : AppLocalizations.of(context)!
+                                .manualModeEnabled)));
+                  },
+                ),
+                SwitchListTile(
+                    title: Text(
+                        AppLocalizations.of(context)!.deutschlandTicketMode,
+                        style: TextStyle(color: colors.textPrimary)),
+                    subtitle: Text(
+                        AppLocalizations.of(context)!.onlyLocalTransport,
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary)),
+                    value: widget.onlyNahverkehr,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return primaryColor;
+                      }
+                      return null;
+                    }),
+                    onChanged: widget.onNahverkehrChanged),
+              ]),
+
+              const SizedBox(height: 20),
+              Text(AppLocalizations.of(context)!.appearance,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: colors.settingsHeader)),
+              const SizedBox(height: 8),
+              _buildSection(context, [
+                ListTile(
+                  title: Text(AppLocalizations.of(context)!.themeColor,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        height: 40,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            ...appThemeColors.map((c) => _colorCircle(c)),
+                            _colorSeparator(),
+                            if (_isBuiltInColor(widget.currentColor))
+                              _customColorButton()
+                            else
+                              _customColorCircle(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        Localizations.localeOf(context).languageCode == 'de'
+                            ? 'Tippe auf eine Farbe${!_isBuiltInColor(widget.currentColor) ? ' oder tippe die eigene Farbe erneut an' : ''}, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
+                            : 'Tap a color${!_isBuiltInColor(widget.currentColor) ? ' or tap the custom color again' : ''} to change. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(color: colors.divider), // Separator
+                SwitchListTile(
+                  title: Text(AppLocalizations.of(context)!.showTrainNumbers,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Text(AppLocalizations.of(context)!.displayTripIds,
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary)),
-                  value: widget.isGhostMode,
-                  activeTrackColor: Colors.red,
+                  value: widget.showTrainNumbers,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected)) {
-                      return Colors.white;
-                    }
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
                     return null;
                   }),
-                  onChanged: (val) {
-                    widget.onGhostModeChanged(val);
-                    // Give it a moment to update DB then reload profile to see status change
-                    Future.delayed(
-                        const Duration(milliseconds: 500), _loadProfile);
-                  }),
-            ]),
-            const SizedBox(height: 20),
-          ],
-
-          _buildSection(context, [
-            ListTile(
-              title: Text(AppLocalizations.of(context)!.darkMode,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: widget.useSystemTheme
-                  ? Text(AppLocalizations.of(context)!.syncedWithSystem,
-                      style:
-                          TextStyle(fontSize: 12, color: colors.textSecondary))
-                  : null,
-              trailing: Switch(
-                value: widget.isDarkMode,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return widget.useSystemTheme ? Colors.grey : primaryColor;
-                  }
-                  return null;
-                }),
-                onChanged: widget.useSystemTheme
-                    ? (val) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(AppLocalizations.of(context)!
-                                .systemSyncActive)));
-                      }
-                    : widget.onThemeChanged,
-              ),
-              onLongPress: () {
-                bool newState = !widget.useSystemTheme;
-                widget.onSystemSyncChanged(newState);
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(newState
-                        ? AppLocalizations.of(context)!.systemSyncEnabled
-                        : AppLocalizations.of(context)!.manualModeEnabled)));
-              },
-            ),
-            SwitchListTile(
-                title: Text(AppLocalizations.of(context)!.deutschlandTicketMode,
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Text(AppLocalizations.of(context)!.onlyLocalTransport,
-                    style:
-                        TextStyle(fontSize: 12, color: colors.textSecondary)),
-                value: widget.onlyNahverkehr,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return primaryColor;
-                  }
-                  return null;
-                }),
-                onChanged: widget.onNahverkehrChanged),
-          ]),
-
-          const SizedBox(height: 20),
-          Text(AppLocalizations.of(context)!.appearance,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: colors.settingsHeader)),
-          const SizedBox(height: 8),
-          _buildSection(context, [
-            ListTile(
-              title: Text(AppLocalizations.of(context)!.themeColor,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    height: 40,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        ...appThemeColors.map((c) => _colorCircle(c)),
-                        _colorSeparator(),
-                        if (_isBuiltInColor(widget.currentColor))
-                          _customColorButton()
-                        else
-                          _customColorCircle(),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    Localizations.localeOf(context).languageCode == 'de'
-                        ? 'Tippe auf eine Farbe${!_isBuiltInColor(widget.currentColor) ? ' oder tippe die eigene Farbe erneut an' : ''}, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
-                        : 'Tap a color${!_isBuiltInColor(widget.currentColor) ? ' or tap the custom color again' : ''} to change. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                ],
-              ),
-            ),
-            Divider(color: colors.divider), // Separator
-            SwitchListTile(
-              title: Text(AppLocalizations.of(context)!.showTrainNumbers,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(AppLocalizations.of(context)!.displayTripIds,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              value: widget.showTrainNumbers,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: widget.onShowTrainNumbersChanged,
-            ),
-            Divider(color: colors.divider),
-            ListTile(
-              title: Text(AppLocalizations.of(context)!.language,
-                  style: TextStyle(color: colors.textPrimary)),
-              trailing: DropdownButton<String>(
-                value: widget.locale?.languageCode ?? 'en',
-                dropdownColor: colors.cardBg,
-                underline: const SizedBox(),
-                items: [
-                  DropdownMenuItem(
-                      value: 'en',
-                      child: Text(AppLocalizations.of(context)!.english)),
-                  DropdownMenuItem(
-                      value: 'de',
-                      child: Text(AppLocalizations.of(context)!.german)),
-                ],
-                onChanged: (val) {
-                  if (val != null) {
-                    widget.onLocaleChanged(Locale(val));
-                  }
-                },
-              ),
-            ),
-          ]),
-
-          const SizedBox(height: 20),
-          Text(AppLocalizations.of(context)!.notificationsAndHaptics,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: colors.settingsHeader)),
-          const SizedBox(height: 8),
-          _buildSection(context, [
-            ListTile(
-                title: Text(AppLocalizations.of(context)!.alarmTrigger,
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Text(
-                    _stopsBeforeAlarm == 0
-                        ? AppLocalizations.of(context)!.alertAtDestination
-                        : AppLocalizations.of(context)!
-                            .alertStopsBefore(_stopsBeforeAlarm.toString()),
-                    style:
-                        TextStyle(fontSize: 12, color: colors.textSecondary)),
-                trailing: DropdownButton<int>(
-                    value: _stopsBeforeAlarm,
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
-                    items: [
-                      DropdownMenuItem(
-                          value: 0,
-                          child: Text(AppLocalizations.of(context)!.atDest)),
-                      DropdownMenuItem(
-                          value: 1,
-                          child: Text(AppLocalizations.of(context)!.oneStop)),
-                      DropdownMenuItem(
-                          value: 2,
-                          child: Text(AppLocalizations.of(context)!.twoStops)),
-                      DropdownMenuItem(
-                          value: 3,
-                          child:
-                              Text(AppLocalizations.of(context)!.threeStops)),
-                    ],
-                    onChanged: (val) => _saveAlarmSettings(val!))),
-            Divider(color: colors.divider),
-            ListTile(
-                title: Text(AppLocalizations.of(context)!.triggerThreshold,
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Text(
-                    AppLocalizations.of(context)!.notifyAtThreshold(
-                        _alarmTriggerThreshold,
-                        (_alarmTriggerThreshold.contains('%'))
-                            ? AppLocalizations.of(context)!.ofLegCovered
-                            : AppLocalizations.of(context)!.fromTarget),
-                    style:
-                        TextStyle(fontSize: 12, color: colors.textSecondary)),
-                trailing: DropdownButton<String>(
-                    value: _alarmTriggerThreshold,
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
-                    items: [
-                      DropdownMenuItem(
-                          value: '5%',
-                          child: Text(AppLocalizations.of(context)!
-                              .fivePercentRemaining)),
-                      DropdownMenuItem(
-                          value: '10%',
-                          child: Text(AppLocalizations.of(context)!
-                              .tenPercentRemaining)),
-                      DropdownMenuItem(
-                          value: '500m',
-                          child: Text(AppLocalizations.of(context)!.fixed500m)),
-                    ],
-                    onChanged: (val) => _saveAlarmThreshold(val!))),
-            Divider(color: colors.divider),
-            ListTile(
-              title: Builder(
-                builder: (context) {
-                  final alarmSoundTitle = InkWell(
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: kIsWeb ? null : _previewWakeAlarmSound,
-                    onLongPress: kIsWeb ? null : _showHiddenManualTimerDialog,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(
-                        AppLocalizations.of(context)!.alarmSound,
-                        style: TextStyle(color: colors.textPrimary),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  );
-
-                  if (kIsWeb || !_showPreviewTooltip) return alarmSoundTitle;
-
-                  return Tooltip(
-                    message: AppLocalizations.of(context)!.previewSound,
-                    child: alarmSoundTitle,
-                  );
-                },
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  onChanged: widget.onShowTrainNumbersChanged,
                 ),
-              ),
-              trailing: DropdownButton<String>(
-                value: _wakeAlarmSound,
-                dropdownColor: colors.cardBg,
-                underline: const SizedBox(),
-                isDense: true,
-                selectedItemBuilder: (context) => [
-                  ...WakeAlarmSettings.soundOptions.map(
-                    (option) => SizedBox(
-                      width: 120,
-                      child: Text(
-                        option.label,
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ),
-                  ),
-                  if (!kIsWeb)
-                    const SizedBox(
-                      width: 120,
-                      child: Text(
-                        'Add custom audio...',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ),
-                ],
-                items: [
-                  ...WakeAlarmSettings.soundOptions.map(
-                    (option) => DropdownMenuItem(
-                      value: option.id,
-                      child: SizedBox(
-                        width: 170,
-                        child: option.isCustomSound
-                            ? Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      option.label,
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 1,
-                                    ),
-                                  ),
-                                  GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () async {
-                                      Navigator.of(context).pop();
-                                      await _removeCustomWakeAlarmSound(
-                                        option,
-                                      );
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 8),
-                                      child: Icon(
-                                        Icons.delete_outline,
-                                        size: 18,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : Text(
-                                option.label,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                      ),
-                    ),
-                  ),
-                  if (!kIsWeb)
-                    const DropdownMenuItem(
-                      value: _pickCustomSoundValue,
-                      child: Text('Add custom audio...'),
-                    ),
-                ],
-                onChanged: (val) async {
-                  if (val == null) return;
-                  await _selectWakeAlarmSound(val);
-                  if (!mounted) return;
-                  setState(() => _isWakeAlarmPreviewPlaying = false);
-                },
-              ),
-            ),
-            Divider(color: colors.divider),
-            ListTile(
-                title: Text(AppLocalizations.of(context)!.alarmPattern,
-                    style: TextStyle(color: colors.textPrimary)),
-                trailing: DropdownButton<String>(
-                    value: _vibrationPattern,
+                Divider(color: colors.divider),
+                ListTile(
+                  title: Text(AppLocalizations.of(context)!.language,
+                      style: TextStyle(color: colors.textPrimary)),
+                  trailing: DropdownButton<String>(
+                    value: widget.locale?.languageCode ?? 'en',
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
-                    items: const [
+                    items: [
                       DropdownMenuItem(
-                          value: 'standard', child: Text("Standard")),
+                          value: 'en',
+                          child: Text(AppLocalizations.of(context)!.english)),
                       DropdownMenuItem(
-                          value: 'heartbeat', child: Text("Heartbeat")),
-                      DropdownMenuItem(value: 'tick', child: Text("Tick")),
-                      DropdownMenuItem(value: 'mario', child: Text("Mario")),
-                      DropdownMenuItem(
-                          value: 'fox', child: Text("20th Century")),
-                      DropdownMenuItem(
-                          value: 'imperial', child: Text("Imperial March")),
-                      DropdownMenuItem(
-                          value: 'potter', child: Text("Harry Potter")),
-                      DropdownMenuItem(
-                          value: 'indy', child: Text("Indiana Jones")),
-                      DropdownMenuItem(
-                          value: 'mission', child: Text("Mission Impossible")),
-                      DropdownMenuItem(
-                          value: 'terminator', child: Text("Terminator")),
-                      DropdownMenuItem(
-                          value: 'future', child: Text("Back to Future")),
-                      DropdownMenuItem(value: 'eva', child: Text("Evangelion")),
-                      DropdownMenuItem(
-                          value: 'pokemon', child: Text("Pokémon")),
-                      DropdownMenuItem(
-                          value: 'titan', child: Text("Attack on Titan")),
-                      DropdownMenuItem(
-                          value: 'bebop', child: Text("Cowboy Bebop")),
+                          value: 'de',
+                          child: Text(AppLocalizations.of(context)!.german)),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        widget.onLocaleChanged(Locale(val));
+                      }
+                    },
+                  ),
+                ),
+              ]),
+
+              const SizedBox(height: 20),
+              Text(AppLocalizations.of(context)!.notificationsAndHaptics,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: colors.settingsHeader)),
+              const SizedBox(height: 8),
+              _buildSection(context, [
+                ListTile(
+                    title: Text(AppLocalizations.of(context)!.alarmTrigger,
+                        style: TextStyle(color: colors.textPrimary)),
+                    subtitle: Text(
+                        _stopsBeforeAlarm == 0
+                            ? AppLocalizations.of(context)!.alertAtDestination
+                            : AppLocalizations.of(context)!
+                                .alertStopsBefore(_stopsBeforeAlarm.toString()),
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary)),
+                    trailing: DropdownButton<int>(
+                        value: _stopsBeforeAlarm,
+                        dropdownColor: colors.cardBg,
+                        underline: const SizedBox(),
+                        items: [
+                          DropdownMenuItem(
+                              value: 0,
+                              child:
+                                  Text(AppLocalizations.of(context)!.atDest)),
+                          DropdownMenuItem(
+                              value: 1,
+                              child:
+                                  Text(AppLocalizations.of(context)!.oneStop)),
+                          DropdownMenuItem(
+                              value: 2,
+                              child:
+                                  Text(AppLocalizations.of(context)!.twoStops)),
+                          DropdownMenuItem(
+                              value: 3,
+                              child: Text(
+                                  AppLocalizations.of(context)!.threeStops)),
+                        ],
+                        onChanged: (val) => _saveAlarmSettings(val!))),
+                Divider(color: colors.divider),
+                ListTile(
+                    title: Text(AppLocalizations.of(context)!.triggerThreshold,
+                        style: TextStyle(color: colors.textPrimary)),
+                    subtitle: Text(
+                        AppLocalizations.of(context)!.notifyAtThreshold(
+                            _alarmTriggerThreshold,
+                            (_alarmTriggerThreshold.contains('%'))
+                                ? AppLocalizations.of(context)!.ofLegCovered
+                                : AppLocalizations.of(context)!.fromTarget),
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary)),
+                    trailing: DropdownButton<String>(
+                        value: _alarmTriggerThreshold,
+                        dropdownColor: colors.cardBg,
+                        underline: const SizedBox(),
+                        items: [
+                          DropdownMenuItem(
+                              value: '5%',
+                              child: Text(AppLocalizations.of(context)!
+                                  .fivePercentRemaining)),
+                          DropdownMenuItem(
+                              value: '10%',
+                              child: Text(AppLocalizations.of(context)!
+                                  .tenPercentRemaining)),
+                          DropdownMenuItem(
+                              value: '500m',
+                              child: Text(
+                                  AppLocalizations.of(context)!.fixed500m)),
+                        ],
+                        onChanged: (val) => _saveAlarmThreshold(val!))),
+                Divider(color: colors.divider),
+                ListTile(
+                  title: Builder(
+                    builder: (context) {
+                      final alarmSoundTitle = InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: kIsWeb ? null : _previewWakeAlarmSound,
+                        onLongPress:
+                            kIsWeb ? null : _showHiddenManualTimerDialog,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Text(
+                            AppLocalizations.of(context)!.alarmSound,
+                            style: TextStyle(color: colors.textPrimary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      );
+
+                      if (kIsWeb || !_showPreviewTooltip)
+                        return alarmSoundTitle;
+
+                      return Tooltip(
+                        message: AppLocalizations.of(context)!.previewSound,
+                        child: alarmSoundTitle,
+                      );
+                    },
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      WakeAlarmSettings.soundForId(_wakeAlarmSound).label,
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  trailing: DropdownButton<String>(
+                    value: _wakeAlarmSound,
+                    dropdownColor: colors.cardBg,
+                    underline: const SizedBox(),
+                    isDense: true,
+                    selectedItemBuilder: (context) => [
+                      ...WakeAlarmSettings.soundOptions.map(
+                        (option) => SizedBox(
+                          width: 120,
+                          child: Text(
+                            option.label,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                      ),
+                      if (!kIsWeb)
+                        const SizedBox(
+                          width: 120,
+                          child: Text(
+                            'Add custom audio...',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                    ],
+                    items: [
+                      ...WakeAlarmSettings.soundOptions.map(
+                        (option) => DropdownMenuItem(
+                          value: option.id,
+                          child: SizedBox(
+                            width: 170,
+                            child: option.isCustomSound
+                                ? Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          option.label,
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                      GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () async {
+                                          Navigator.of(context).pop();
+                                          await _removeCustomWakeAlarmSound(
+                                            option,
+                                          );
+                                        },
+                                        child: Padding(
+                                          padding:
+                                              const EdgeInsets.only(left: 8),
+                                          child: Icon(
+                                            Icons.delete_outline,
+                                            size: 18,
+                                            color: colors.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    option.label,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                          ),
+                        ),
+                      ),
+                      if (!kIsWeb)
+                        const DropdownMenuItem(
+                          value: _pickCustomSoundValue,
+                          child: Text('Add custom audio...'),
+                        ),
                     ],
                     onChanged: (val) async {
                       if (val == null) return;
-                      setState(() => _vibrationPattern = val);
-                      await _persistVibrationSettings();
-                      _testVibration();
-                    })),
-            if (defaultTargetPlatform != TargetPlatform.iOS)
-              ListTile(
-                  title: Text(AppLocalizations.of(context)!.vibrationIntensity,
-                      style: TextStyle(color: colors.textPrimary)),
-                  subtitle: Slider(
-                      value: _vibrationIntensity.toDouble(),
-                      min: 1,
-                      max: 255,
-                      activeColor: colors.effectiveSeed,
-                      thumbColor: colors.effectiveSeed,
-                      onChanged: (val) {
-                        setState(() => _vibrationIntensity = val.toInt());
-                      },
-                      onChangeEnd: (val) {
-                        _persistVibrationSettings();
-                        _testVibration();
-                      })),
-            Divider(color: colors.divider),
-            ListTile(
-              title: Text(wakeAlarmLabel,
-                  style: TextStyle(
-                      color: colors.textSecondary,
-                      fontWeight: FontWeight.w600)),
-            ),
-            SwitchListTile(
-              title: Text(soundEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _wakeAlarmSoundEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _wakeAlarmSoundEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
-            ),
-            Divider(color: colors.divider),
-            SwitchListTile(
-              title: Text(vibrationEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _wakeAlarmVibrationEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _wakeAlarmVibrationEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
-            ),
-            Divider(color: colors.divider),
-            SwitchListTile(
-              title: Text(AppLocalizations.of(context)!.alwaysWakeMe,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(AppLocalizations.of(context)!.turnOnAlarmDefault,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              value: widget.alwaysWakeMe,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: widget.onAlwaysWakeMeChanged,
-            ),
-            Divider(color: colors.divider),
-            ListTile(
-              title: Text(leaveReminderLabel,
-                  style: TextStyle(
-                      color: colors.textSecondary,
-                      fontWeight: FontWeight.w600)),
-            ),
-            SwitchListTile(
-              title: Text(soundEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _leaveAlarmSoundEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _leaveAlarmSoundEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
-            ),
-            Divider(color: colors.divider),
-            SwitchListTile(
-              title: Text(vibrationEnabledLabel,
-                  style: TextStyle(color: colors.textPrimary)),
-              value: _leaveAlarmVibrationEnabled,
-              thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) return primaryColor;
-                return null;
-              }),
-              onChanged: (val) async {
-                setState(() => _leaveAlarmVibrationEnabled = val);
-                await _persistAlarmDeliverySettings();
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 20),
-          Text(AppLocalizations.of(context)!.dataAndPrivacy,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: colors.settingsHeader)),
-          const SizedBox(height: 8),
-          _buildSection(context, [
-            ListTile(
-                leading:
-                    Icon(Icons.gavel_outlined, color: colors.settingsHeader),
-                title: Text(
-                    isGerman
-                        ? 'Nutzungsbedingungen & Community-Regeln'
-                        : 'Terms of Use & Community Rules',
-                    style: TextStyle(color: colors.textPrimary)),
-                subtitle: Text(
-                    isGerman
-                        ? 'Keine Toleranz für anstößige Inhalte oder missbräuchliche Nutzer.'
-                        : 'No tolerance for objectionable content or abusive users.',
-                    style:
-                        TextStyle(fontSize: 12, color: colors.textSecondary)),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () =>
-                    CommunitySafetyService.showCommunityTerms(context)),
-            Divider(height: 1, color: colors.divider),
-            ListTile(
-                leading: Icon(Icons.block, color: colors.iconBlock),
-                title: Text(AppLocalizations.of(context)!.blockedUsers,
-                    style: TextStyle(color: colors.textPrimary)),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: _showBlockedUsers),
-            Divider(height: 1, color: colors.divider),
-            ListTile(
-                leading: Icon(Icons.delete_outline, color: colors.iconDelete),
-                title: Text(AppLocalizations.of(context)!.clearSearchHistory,
-                    style: TextStyle(color: Colors.red)),
-                onTap: _clearHistory),
-          ]),
-
-          const SizedBox(height: 20),
-          Text(AppLocalizations.of(context)!.dataSourceAdvanced,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: colors.settingsHeader)),
-          const SizedBox(height: 8),
-          _buildSection(context, [
-            ListTile(
-              title: Text(AppLocalizations.of(context)!.transportApi,
-                  style: TextStyle(color: colors.textPrimary)),
-              subtitle: Text(
-                  AppLocalizations.of(context)!.selectedApiMode(_apiMode ==
-                          'auto'
-                      ? AppLocalizations.of(context)!.autoRecommended
-                      : _apiMode == 'motis'
-                          ? AppLocalizations.of(context)!.transitousOpenSource
-                          : AppLocalizations.of(context)!.deutscheBahnLegacy),
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              trailing: DropdownButton<String>(
-                value: _apiMode,
-                dropdownColor: colors.cardBg,
-                underline: const SizedBox(),
-                items: [
-                  DropdownMenuItem(
-                      value: 'auto',
-                      child: Text(AppLocalizations.of(context)!.autoModeShort)),
-                  const DropdownMenuItem(
-                      value: 'motis', child: Text("Transitous")),
-                  DropdownMenuItem(
-                      value: 'v6',
-                      child: Text(AppLocalizations.of(context)!.dbV6)),
-                ],
-                onChanged: (val) => _saveApiMode(val!),
-              ),
-            )
-          ]),
-          if (_advancedSettingsEnabledForDevice) ...[
-            const SizedBox(height: 20),
-            Text(
-              isGerman
-                  ? 'Erweiterte Suche (Gerät)'
-                  : 'Advanced Search (Device)',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: colors.settingsHeader,
-              ),
-            ),
-            const SizedBox(height: 8),
-            _buildSection(context, [
-              ListTile(
-                title: Text(
-                  isGerman ? 'Minimale Umstiegszeit' : 'Minimum transfer time',
-                  style: TextStyle(color: colors.textPrimary),
+                      await _selectWakeAlarmSound(val);
+                      if (!mounted) return;
+                      setState(() => _isWakeAlarmPreviewPlaying = false);
+                    },
+                  ),
                 ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isGerman
-                          ? 'Unter diesem Wert werden Verbindungen mit zu knappem Umstieg verworfen. Aktuell: $_advancedMinTransferTimeMinutes min.'
-                          : 'Connections requiring less than this change time are filtered out. Current: $_advancedMinTransferTimeMinutes min.',
+                Divider(color: colors.divider),
+                ListTile(
+                    title: Text(AppLocalizations.of(context)!.alarmPattern,
+                        style: TextStyle(color: colors.textPrimary)),
+                    trailing: DropdownButton<String>(
+                        value: _vibrationPattern,
+                        dropdownColor: colors.cardBg,
+                        underline: const SizedBox(),
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'standard', child: Text("Standard")),
+                          DropdownMenuItem(
+                              value: 'heartbeat', child: Text("Heartbeat")),
+                          DropdownMenuItem(value: 'tick', child: Text("Tick")),
+                          DropdownMenuItem(
+                              value: 'mario', child: Text("Mario")),
+                          DropdownMenuItem(
+                              value: 'fox', child: Text("20th Century")),
+                          DropdownMenuItem(
+                              value: 'imperial', child: Text("Imperial March")),
+                          DropdownMenuItem(
+                              value: 'potter', child: Text("Harry Potter")),
+                          DropdownMenuItem(
+                              value: 'indy', child: Text("Indiana Jones")),
+                          DropdownMenuItem(
+                              value: 'mission',
+                              child: Text("Mission Impossible")),
+                          DropdownMenuItem(
+                              value: 'terminator', child: Text("Terminator")),
+                          DropdownMenuItem(
+                              value: 'future', child: Text("Back to Future")),
+                          DropdownMenuItem(
+                              value: 'eva', child: Text("Evangelion")),
+                          DropdownMenuItem(
+                              value: 'pokemon', child: Text("Pokémon")),
+                          DropdownMenuItem(
+                              value: 'titan', child: Text("Attack on Titan")),
+                          DropdownMenuItem(
+                              value: 'bebop', child: Text("Cowboy Bebop")),
+                        ],
+                        onChanged: (val) async {
+                          if (val == null) return;
+                          setState(() => _vibrationPattern = val);
+                          await _persistVibrationSettings();
+                          _testVibration();
+                        })),
+                if (defaultTargetPlatform != TargetPlatform.iOS)
+                  ListTile(
+                      title: Text(
+                          AppLocalizations.of(context)!.vibrationIntensity,
+                          style: TextStyle(color: colors.textPrimary)),
+                      subtitle: Slider(
+                          value: _vibrationIntensity.toDouble(),
+                          min: 1,
+                          max: 255,
+                          activeColor: colors.effectiveSeed,
+                          thumbColor: colors.effectiveSeed,
+                          onChanged: (val) {
+                            setState(() => _vibrationIntensity = val.toInt());
+                          },
+                          onChangeEnd: (val) {
+                            _persistVibrationSettings();
+                            _testVibration();
+                          })),
+                Divider(color: colors.divider),
+                ListTile(
+                  title: Text(wakeAlarmLabel,
                       style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
+                          color: colors.textSecondary,
+                          fontWeight: FontWeight.w600)),
+                ),
+                SwitchListTile(
+                  title: Text(soundEnabledLabel,
+                      style: TextStyle(color: colors.textPrimary)),
+                  value: _wakeAlarmSoundEnabled,
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
+                    return null;
+                  }),
+                  onChanged: (val) async {
+                    setState(() => _wakeAlarmSoundEnabled = val);
+                    await _persistAlarmDeliverySettings();
+                  },
+                ),
+                Divider(color: colors.divider),
+                SwitchListTile(
+                  title: Text(vibrationEnabledLabel,
+                      style: TextStyle(color: colors.textPrimary)),
+                  value: _wakeAlarmVibrationEnabled,
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
+                    return null;
+                  }),
+                  onChanged: (val) async {
+                    setState(() => _wakeAlarmVibrationEnabled = val);
+                    await _persistAlarmDeliverySettings();
+                  },
+                ),
+                Divider(color: colors.divider),
+                SwitchListTile(
+                  title: Text(AppLocalizations.of(context)!.alwaysWakeMe,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Text(
+                      AppLocalizations.of(context)!.turnOnAlarmDefault,
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary)),
+                  value: widget.alwaysWakeMe,
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
+                    return null;
+                  }),
+                  onChanged: widget.onAlwaysWakeMeChanged,
+                ),
+                Divider(color: colors.divider),
+                ListTile(
+                  title: Text(leaveReminderLabel,
+                      style: TextStyle(
+                          color: colors.textSecondary,
+                          fontWeight: FontWeight.w600)),
+                ),
+                SwitchListTile(
+                  title: Text(soundEnabledLabel,
+                      style: TextStyle(color: colors.textPrimary)),
+                  value: _leaveAlarmSoundEnabled,
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
+                    return null;
+                  }),
+                  onChanged: (val) async {
+                    setState(() => _leaveAlarmSoundEnabled = val);
+                    await _persistAlarmDeliverySettings();
+                  },
+                ),
+                Divider(color: colors.divider),
+                SwitchListTile(
+                  title: Text(vibrationEnabledLabel,
+                      style: TextStyle(color: colors.textPrimary)),
+                  value: _leaveAlarmVibrationEnabled,
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected))
+                      return primaryColor;
+                    return null;
+                  }),
+                  onChanged: (val) async {
+                    setState(() => _leaveAlarmVibrationEnabled = val);
+                    await _persistAlarmDeliverySettings();
+                  },
+                ),
+              ]),
+
+              const SizedBox(height: 20),
+              Text(AppLocalizations.of(context)!.dataAndPrivacy,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: colors.settingsHeader)),
+              const SizedBox(height: 8),
+              _buildSection(context, [
+                ListTile(
+                    leading: Icon(Icons.gavel_outlined,
+                        color: colors.settingsHeader),
+                    title: Text(
+                        isGerman
+                            ? 'Nutzungsbedingungen & Community-Regeln'
+                            : 'Terms of Use & Community Rules',
+                        style: TextStyle(color: colors.textPrimary)),
+                    subtitle: Text(
+                        isGerman
+                            ? 'Keine Toleranz für anstößige Inhalte oder missbräuchliche Nutzer.'
+                            : 'No tolerance for objectionable content or abusive users.',
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () =>
+                        CommunitySafetyService.showCommunityTerms(context)),
+                Divider(height: 1, color: colors.divider),
+                ListTile(
+                    leading: Icon(Icons.block, color: colors.iconBlock),
+                    title: Text(AppLocalizations.of(context)!.blockedUsers,
+                        style: TextStyle(color: colors.textPrimary)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: _showBlockedUsers),
+                Divider(height: 1, color: colors.divider),
+                ListTile(
+                    leading:
+                        Icon(Icons.delete_outline, color: colors.iconDelete),
+                    title: Text(
+                        AppLocalizations.of(context)!.clearSearchHistory,
+                        style: TextStyle(color: Colors.red)),
+                    onTap: _clearHistory),
+              ]),
+
+              const SizedBox(height: 20),
+              Text(AppLocalizations.of(context)!.dataSourceAdvanced,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: colors.settingsHeader)),
+              const SizedBox(height: 8),
+              _buildSection(context, [
+                ListTile(
+                  title: Text(AppLocalizations.of(context)!.transportApi,
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Text(
+                      AppLocalizations.of(context)!.selectedApiMode(
+                        _selectedApiSourcesSummary(
+                            AppLocalizations.of(context)!),
                       ),
+                      style:
+                          TextStyle(fontSize: 12, color: colors.textSecondary)),
+                )
+              ]),
+              const SizedBox(height: 8),
+              _buildSection(context, [
+                CheckboxListTile(
+                  value: _enabledApiSources
+                      .contains(TransportApi.sourceTransitous),
+                  activeColor: Colors.blue,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  title: Text(
+                    'Transitous',
+                    style: TextStyle(color: colors.textPrimary),
+                  ),
+                  subtitle: Text(
+                    AppLocalizations.of(context)!.transitousOpenSource,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  secondary:
+                      const Icon(Icons.circle, color: Colors.blue, size: 14),
+                  onChanged: _enabledApiSources.contains(
+                            TransportApi.sourceTransitous,
+                          ) &&
+                          !_canDisableTransitous()
+                      ? null
+                      : (value) => _toggleApiSource(
+                            TransportApi.sourceTransitous,
+                            value ?? false,
+                          ),
+                ),
+                Divider(height: 1, color: colors.divider),
+                CheckboxListTile(
+                  value: _enabledApiSources.contains(
+                    TransportApi.sourceSyntheticTransitous,
+                  ),
+                  activeColor: Colors.green,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  title: Text(
+                    _syntheticTransitousLabel(AppLocalizations.of(context)!),
+                    style: TextStyle(color: colors.textPrimary),
+                  ),
+                  subtitle: Text(
+                    _syntheticTransitousDescription(
+                        AppLocalizations.of(context)!),
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  secondary:
+                      const Icon(Icons.circle, color: Colors.green, size: 14),
+                  onChanged:
+                      _enabledApiSources.contains(TransportApi.sourceTransitous)
+                          ? (value) => _toggleApiSource(
+                                TransportApi.sourceSyntheticTransitous,
+                                value ?? false,
+                              )
+                          : null,
+                ),
+                Divider(height: 1, color: colors.divider),
+                CheckboxListTile(
+                  value: _enabledApiSources.contains(TransportApi.sourceDbV6),
+                  activeColor: Colors.red,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  title: Text(
+                    AppLocalizations.of(context)!.dbV6,
+                    style: TextStyle(color: colors.textPrimary),
+                  ),
+                  subtitle: Text(
+                    AppLocalizations.of(context)!.deutscheBahnLegacy,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  secondary:
+                      const Icon(Icons.circle, color: Colors.red, size: 14),
+                  onChanged:
+                      _enabledApiSources.contains(TransportApi.sourceDbV6) &&
+                              !_canDisableDbV6()
+                          ? null
+                          : (value) => _toggleApiSource(
+                                TransportApi.sourceDbV6,
+                                value ?? false,
+                              ),
+                ),
+              ]),
+              if (_advancedSettingsEnabledForDevice) ...[
+                const SizedBox(height: 20),
+                Text(
+                  isGerman
+                      ? 'Erweiterte Suche (Gerät)'
+                      : 'Advanced Search (Device)',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: colors.settingsHeader,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildSection(context, [
+                  ListTile(
+                    title: Text(
+                      isGerman
+                          ? 'Minimale Umstiegszeit'
+                          : 'Minimum transfer time',
+                      style: TextStyle(color: colors.textPrimary),
                     ),
-                    Row(
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value: _advancedMinTransferTimeMinutes.toDouble(),
-                            min: 0,
-                            max: 20,
-                            divisions: 20,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(
-                                () =>
-                                    _advancedMinTransferTimeMinutes = value.round(),
-                              );
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
+                        Text(
+                          isGerman
+                              ? 'Unter diesem Wert werden Verbindungen mit zu knappem Umstieg verworfen. Aktuell: $_advancedMinTransferTimeMinutes min.'
+                              : 'Connections requiring less than this change time are filtered out. Current: $_advancedMinTransferTimeMinutes min.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
                           ),
                         ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: _advancedMinTransferTimeMinutes ==
-                                  _defaultAdvancedMinTransferTimeMinutes
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedMinTransferTimeMinutes =
-                                        _defaultAdvancedMinTransferTimeMinutes;
-                                  });
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value:
+                                    _advancedMinTransferTimeMinutes.toDouble(),
+                                min: 0,
+                                max: 20,
+                                divisions: 20,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                    () => _advancedMinTransferTimeMinutes =
+                                        value.round(),
+                                  );
+                                },
+                                onChangeEnd: (_) async {
                                   await _persistAdvancedSearchPreferences();
                                 },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: _advancedMinTransferTimeMinutes ==
+                                      _defaultAdvancedMinTransferTimeMinutes
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedMinTransferTimeMinutes =
+                                            _defaultAdvancedMinTransferTimeMinutes;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman
-                      ? 'Zusätzliche Umstiegszeit'
-                      : 'Additional transfer time',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
                       isGerman
-                          ? 'Fügt jedem Umstieg pauschal Extra-Puffer hinzu. Höher = sicherer, aber oft langsamer. Aktuell: $_advancedAdditionalTransferTimeMinutes min.'
-                          : 'Adds fixed extra buffer to every transfer. Higher = safer, but often slower. Current: $_advancedAdditionalTransferTimeMinutes min.',
-                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                          ? 'Zusätzliche Umstiegszeit'
+                          : 'Additional transfer time',
+                      style: TextStyle(color: colors.textPrimary),
                     ),
-                    Row(
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value:
-                                _advancedAdditionalTransferTimeMinutes.toDouble(),
-                            min: 0,
-                            max: 15,
-                            divisions: 15,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(
-                                () => _advancedAdditionalTransferTimeMinutes =
-                                    value.round(),
-                              );
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
-                          ),
+                        Text(
+                          isGerman
+                              ? 'Fügt jedem Umstieg pauschal Extra-Puffer hinzu. Höher = sicherer, aber oft langsamer. Aktuell: $_advancedAdditionalTransferTimeMinutes min.'
+                              : 'Adds fixed extra buffer to every transfer. Higher = safer, but often slower. Current: $_advancedAdditionalTransferTimeMinutes min.',
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
                         ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: _advancedAdditionalTransferTimeMinutes ==
-                                  _defaultAdvancedAdditionalTransferTimeMinutes
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedAdditionalTransferTimeMinutes =
-                                        _defaultAdvancedAdditionalTransferTimeMinutes;
-                                  });
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _advancedAdditionalTransferTimeMinutes
+                                    .toDouble(),
+                                min: 0,
+                                max: 15,
+                                divisions: 15,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                    () =>
+                                        _advancedAdditionalTransferTimeMinutes =
+                                            value.round(),
+                                  );
+                                },
+                                onChangeEnd: (_) async {
                                   await _persistAdvancedSearchPreferences();
                                 },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: _advancedAdditionalTransferTimeMinutes ==
+                                      _defaultAdvancedAdditionalTransferTimeMinutes
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedAdditionalTransferTimeMinutes =
+                                            _defaultAdvancedAdditionalTransferTimeMinutes;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman ? 'Umstiegsfaktor' : 'Transfer time factor',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isGerman
-                          ? 'Gewichtet Umstiegszeit in der Routenbewertung. Höher = weniger/entspanntere Umstiege bevorzugt, niedriger = aggressiv schneller. Aktuell: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.'
-                          : 'Weights transfer time in route scoring. Higher = prefers fewer/looser transfers, lower = more aggressive fast options. Current: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.',
-                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Umstiegsfaktor' : 'Transfer time factor',
+                      style: TextStyle(color: colors.textPrimary),
                     ),
-                    Row(
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value: _advancedTransferTimeFactor,
-                            min: 0.7,
-                            max: 2.5,
-                            divisions: 18,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(
-                                () => _advancedTransferTimeFactor =
-                                    (value * 10).round() / 10,
-                              );
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
-                          ),
+                        Text(
+                          isGerman
+                              ? 'Gewichtet Umstiegszeit in der Routenbewertung. Höher = weniger/entspanntere Umstiege bevorzugt, niedriger = aggressiv schneller. Aktuell: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.'
+                              : 'Weights transfer time in route scoring. Higher = prefers fewer/looser transfers, lower = more aggressive fast options. Current: ${_advancedTransferTimeFactor.toStringAsFixed(1)}.',
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
                         ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: (_advancedTransferTimeFactor -
-                                          _defaultAdvancedTransferTimeFactor)
-                                      .abs() <
-                                  0.0001
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedTransferTimeFactor =
-                                        _defaultAdvancedTransferTimeFactor;
-                                  });
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _advancedTransferTimeFactor,
+                                min: 0.7,
+                                max: 2.5,
+                                divisions: 18,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                    () => _advancedTransferTimeFactor =
+                                        (value * 10).round() / 10,
+                                  );
+                                },
+                                onChangeEnd: (_) async {
                                   await _persistAdvancedSearchPreferences();
                                 },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: (_advancedTransferTimeFactor -
+                                              _defaultAdvancedTransferTimeFactor)
+                                          .abs() <
+                                      0.0001
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedTransferTimeFactor =
+                                            _defaultAdvancedTransferTimeFactor;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              _buildTransferImpactPreview(isGerman, colors),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman
-                      ? 'Pre-Transit Modi'
-                      : 'Pre-transit modes',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Text(
-                  isGerman
-                      ? 'Modi vor dem ersten ÖPNV-Abschnitt.'
-                      : 'Modes before the first transit leg.',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-              ),
-              SwitchListTile(
-                title: Text(
-                  _modeLabel('WALK', isGerman),
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                value: _advancedPreTransitWalkEnabled,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) return primaryColor;
-                  return null;
-                }),
-                onChanged: (value) async {
-                  setState(() => _advancedPreTransitWalkEnabled = value);
-                  await _persistAdvancedSearchPreferences();
-                },
-              ),
-              Divider(color: colors.divider),
-              SwitchListTile(
-                title: Text(
-                  _modeLabel('BICYCLE', isGerman),
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                value: _advancedPreTransitBikeEnabled,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) return primaryColor;
-                  return null;
-                }),
-                onChanged: (value) async {
-                  setState(() => _advancedPreTransitBikeEnabled = value);
-                  await _persistAdvancedSearchPreferences();
-                },
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman
-                      ? 'Post-Transit Modi'
-                      : 'Post-transit modes',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Text(
-                  isGerman
-                      ? 'Modi nach dem letzten ÖPNV-Abschnitt.'
-                      : 'Modes after the last transit leg.',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-              ),
-              SwitchListTile(
-                title: Text(
-                  _modeLabel('WALK', isGerman),
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                value: _advancedPostTransitWalkEnabled,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) return primaryColor;
-                  return null;
-                }),
-                onChanged: (value) async {
-                  setState(() => _advancedPostTransitWalkEnabled = value);
-                  await _persistAdvancedSearchPreferences();
-                },
-              ),
-              Divider(color: colors.divider),
-              SwitchListTile(
-                title: Text(
-                  _modeLabel('BICYCLE', isGerman),
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                value: _advancedPostTransitBikeEnabled,
-                thumbColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) return primaryColor;
-                  return null;
-                }),
-                onChanged: (value) async {
-                  setState(() => _advancedPostTransitBikeEnabled = value);
-                  await _persistAdvancedSearchPreferences();
-                },
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman ? 'Gehgeschwindigkeit' : 'Walking speed',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+                  ),
+                  _buildTransferImpactPreview(isGerman, colors),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Pre-Transit Modi' : 'Pre-transit modes',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
                       isGerman
-                          ? 'Beeinflusst Fußwege und Transfers. Aktuell: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h'
-                          : 'Affects walking legs and transfers. Current: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h',
+                          ? 'Modi vor dem ersten ÖPNV-Abschnitt.'
+                          : 'Modes before the first transit leg.',
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Slider(
-                            value: _advancedPedestrianSpeedKmh,
-                            min: 2,
-                            max: 10,
-                            divisions: 80,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(
-                                () => _advancedPedestrianSpeedKmh =
-                                    (value * 10).round() / 10,
-                              );
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: (_advancedPedestrianSpeedKmh -
-                                          _defaultAdvancedPedestrianSpeedKmh)
-                                      .abs() <
-                                  0.0001
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedPedestrianSpeedKmh =
-                                        _defaultAdvancedPedestrianSpeedKmh;
-                                  });
-                                  await _persistAdvancedSearchPreferences();
-                                },
-                        ),
-                      ],
+                  ),
+                  SwitchListTile(
+                    title: Text(
+                      _modeLabel('WALK', isGerman),
+                      style: TextStyle(color: colors.textPrimary),
                     ),
-                  ],
-                ),
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman
-                      ? 'Maximale Gehzeit'
-                      : 'Maximum walking time',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+                    value: _advancedPreTransitWalkEnabled,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected))
+                        return primaryColor;
+                      return null;
+                    }),
+                    onChanged: (value) async {
+                      setState(() => _advancedPreTransitWalkEnabled = value);
+                      await _persistAdvancedSearchPreferences();
+                    },
+                  ),
+                  Divider(color: colors.divider),
+                  SwitchListTile(
+                    title: Text(
+                      _modeLabel('BICYCLE', isGerman),
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    value: _advancedPreTransitBikeEnabled,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected))
+                        return primaryColor;
+                      return null;
+                    }),
+                    onChanged: (value) async {
+                      setState(() => _advancedPreTransitBikeEnabled = value);
+                      await _persistAdvancedSearchPreferences();
+                    },
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Post-Transit Modi' : 'Post-transit modes',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
                       isGerman
-                          ? 'Begrenzt Zu-/Abweg zu Transit in Minuten (pre/post). Aktuell: $_advancedMaxWalkingTimeMinutes min'
-                          : 'Limits first/last-mile walking to transit in minutes (pre/post). Current: $_advancedMaxWalkingTimeMinutes min',
+                          ? 'Modi nach dem letzten ÖPNV-Abschnitt.'
+                          : 'Modes after the last transit leg.',
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
-                    Row(
+                  ),
+                  SwitchListTile(
+                    title: Text(
+                      _modeLabel('WALK', isGerman),
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    value: _advancedPostTransitWalkEnabled,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected))
+                        return primaryColor;
+                      return null;
+                    }),
+                    onChanged: (value) async {
+                      setState(() => _advancedPostTransitWalkEnabled = value);
+                      await _persistAdvancedSearchPreferences();
+                    },
+                  ),
+                  Divider(color: colors.divider),
+                  SwitchListTile(
+                    title: Text(
+                      _modeLabel('BICYCLE', isGerman),
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    value: _advancedPostTransitBikeEnabled,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected))
+                        return primaryColor;
+                      return null;
+                    }),
+                    onChanged: (value) async {
+                      setState(() => _advancedPostTransitBikeEnabled = value);
+                      await _persistAdvancedSearchPreferences();
+                    },
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Gehgeschwindigkeit' : 'Walking speed',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value: _advancedMaxWalkingTimeMinutes.toDouble(),
-                            min: 5,
-                            max: 120,
-                            divisions: 23,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(
-                                () => _advancedMaxWalkingTimeMinutes =
-                                    value.round(),
-                              );
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
-                          ),
+                        Text(
+                          isGerman
+                              ? 'Beeinflusst Fußwege und Transfers. Aktuell: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h'
+                              : 'Affects walking legs and transfers. Current: ${_advancedPedestrianSpeedKmh.toStringAsFixed(1)} km/h',
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
                         ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: _advancedMaxWalkingTimeMinutes ==
-                                  _defaultAdvancedMaxWalkingTimeMinutes
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedMaxWalkingTimeMinutes =
-                                        _defaultAdvancedMaxWalkingTimeMinutes;
-                                  });
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _advancedPedestrianSpeedKmh,
+                                min: 2,
+                                max: 10,
+                                divisions: 80,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                    () => _advancedPedestrianSpeedKmh =
+                                        (value * 10).round() / 10,
+                                  );
+                                },
+                                onChangeEnd: (_) async {
                                   await _persistAdvancedSearchPreferences();
                                 },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: (_advancedPedestrianSpeedKmh -
+                                              _defaultAdvancedPedestrianSpeedKmh)
+                                          .abs() <
+                                      0.0001
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedPedestrianSpeedKmh =
+                                            _defaultAdvancedPedestrianSpeedKmh;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              Divider(color: colors.divider),
-              ListTile(
-                title: Text(
-                  isGerman ? 'Fahrradgeschwindigkeit' : 'Cycling speed',
-                  style: TextStyle(color: colors.textPrimary),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isGerman
-                          ? 'Wird nur genutzt, wenn Fahrrad-Modi aktiv sind. Aktuell: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h'
-                          : 'Used only when bicycle modes are enabled. Current: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h',
-                      style:
-                          TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Maximale Gehzeit' : 'Maximum walking time',
+                      style: TextStyle(color: colors.textPrimary),
                     ),
-                    Row(
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value: _advancedCyclingSpeedKmh,
-                            min: 8,
-                            max: 30,
-                            divisions: 22,
-                            activeColor: colors.effectiveSeed,
-                            thumbColor: colors.effectiveSeed,
-                            onChanged: (value) {
-                              setState(() => _advancedCyclingSpeedKmh = value);
-                            },
-                            onChangeEnd: (_) async {
-                              await _persistAdvancedSearchPreferences();
-                            },
-                          ),
+                        Text(
+                          isGerman
+                              ? 'Begrenzt Zu-/Abweg zu Transit in Minuten (pre/post). Aktuell: $_advancedMaxWalkingTimeMinutes min'
+                              : 'Limits first/last-mile walking to transit in minutes (pre/post). Current: $_advancedMaxWalkingTimeMinutes min',
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
                         ),
-                        IconButton(
-                          tooltip: isGerman
-                              ? 'Auf Standard zurücksetzen'
-                              : 'Reset to default',
-                          icon: Icon(Icons.refresh, color: colors.textSecondary),
-                          onPressed: (_advancedCyclingSpeedKmh -
-                                          _defaultAdvancedCyclingSpeedKmh)
-                                      .abs() <
-                                  0.0001
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _advancedCyclingSpeedKmh =
-                                        _defaultAdvancedCyclingSpeedKmh;
-                                  });
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value:
+                                    _advancedMaxWalkingTimeMinutes.toDouble(),
+                                min: 5,
+                                max: 120,
+                                divisions: 23,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                    () => _advancedMaxWalkingTimeMinutes =
+                                        value.round(),
+                                  );
+                                },
+                                onChangeEnd: (_) async {
                                   await _persistAdvancedSearchPreferences();
                                 },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: _advancedMaxWalkingTimeMinutes ==
+                                      _defaultAdvancedMaxWalkingTimeMinutes
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedMaxWalkingTimeMinutes =
+                                            _defaultAdvancedMaxWalkingTimeMinutes;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-            ]),
-          ],
-          const SizedBox(height: 20),
-          if (user == null)
-            _buildAuthForm(context, colors)
-          else
-            _buildProfileSection(context, user, colors),
+                  ),
+                  Divider(color: colors.divider),
+                  ListTile(
+                    title: Text(
+                      isGerman ? 'Fahrradgeschwindigkeit' : 'Cycling speed',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isGerman
+                              ? 'Wird nur genutzt, wenn Fahrrad-Modi aktiv sind. Aktuell: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h'
+                              : 'Used only when bicycle modes are enabled. Current: ${_advancedCyclingSpeedKmh.toStringAsFixed(0)} km/h',
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _advancedCyclingSpeedKmh,
+                                min: 8,
+                                max: 30,
+                                divisions: 22,
+                                activeColor: colors.effectiveSeed,
+                                thumbColor: colors.effectiveSeed,
+                                onChanged: (value) {
+                                  setState(
+                                      () => _advancedCyclingSpeedKmh = value);
+                                },
+                                onChangeEnd: (_) async {
+                                  await _persistAdvancedSearchPreferences();
+                                },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: isGerman
+                                  ? 'Auf Standard zurücksetzen'
+                                  : 'Reset to default',
+                              icon: Icon(Icons.refresh,
+                                  color: colors.textSecondary),
+                              onPressed: (_advancedCyclingSpeedKmh -
+                                              _defaultAdvancedCyclingSpeedKmh)
+                                          .abs() <
+                                      0.0001
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _advancedCyclingSpeedKmh =
+                                            _defaultAdvancedCyclingSpeedKmh;
+                                      });
+                                      await _persistAdvancedSearchPreferences();
+                                    },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ]),
+              ],
+              const SizedBox(height: 20),
+              if (user == null)
+                _buildAuthForm(context, colors)
+              else
+                _buildProfileSection(context, user, colors),
             ],
           ),
         ),
