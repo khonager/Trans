@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../config/app_theme.dart';
 import '../models/favorite.dart';
 
 List<Marker> buildFavoriteMapMarkers(List<Favorite> favorites) {
@@ -36,12 +37,15 @@ class _FavoriteMapMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final colors = TransColors.of(context);
+    final markerColor = colors.navBarSelected;
+    final markerTextColor =
+        markerColor.computeLuminance() > 0.5 ? Colors.black : Colors.white;
     final icon = _favoriteIcon(favorite);
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colorScheme.primary,
+        color: markerColor,
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: 2),
         boxShadow: [
@@ -55,7 +59,7 @@ class _FavoriteMapMarker extends StatelessWidget {
       child: Icon(
         icon,
         size: 19,
-        color: colorScheme.onPrimary,
+        color: markerTextColor,
       ),
     );
   }
