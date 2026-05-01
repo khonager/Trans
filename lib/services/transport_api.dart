@@ -1346,10 +1346,23 @@ class TransportApi {
       _getMotisUri('/api/v5/map/trips', {
         'min': min,
         'max': max,
-        'startTime': startTime.toUtc().toIso8601String(),
-        'endTime': endTime.toUtc().toIso8601String(),
+        'startTime': _motisMapTime(startTime),
+        'endTime': _motisMapTime(endTime),
         'zoom': zoom.toStringAsFixed(2),
       });
+
+  static String _motisMapTime(DateTime time) {
+    final utc = time.toUtc();
+    return DateTime.utc(
+      utc.year,
+      utc.month,
+      utc.day,
+      utc.hour,
+      utc.minute,
+      utc.second,
+      utc.millisecond,
+    ).toIso8601String();
+  }
 
   /// Builds the MOTIS URI for `/api/v5/trip` with the required query
   /// parameters.  Exposed for unit-testing of parameter serialisation.

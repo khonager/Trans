@@ -75,6 +75,20 @@ void main() {
       expect(uri.queryParameters['zoom'], '15.68');
     });
 
+    test('truncates microseconds from map request times', () {
+      final uri = TransportApi.buildLiveMapTripsUri(
+        min: '0.0,0.0',
+        max: '1.0,1.0',
+        startTime: DateTime.utc(2026, 5, 1, 15, 7, 40, 568, 520),
+        endTime: DateTime.utc(2026, 5, 1, 16, 27, 40, 723, 466),
+        zoom: 15.0,
+      );
+      final params = uri.queryParameters;
+
+      expect(params['startTime'], '2026-05-01T15:07:40.568Z');
+      expect(params['endTime'], '2026-05-01T16:27:40.723Z');
+    });
+
     test('passes min and max verbatim', () {
       final uri = TransportApi.buildLiveMapTripsUri(
         min: '48.0,11.0',
