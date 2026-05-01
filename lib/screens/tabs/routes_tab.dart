@@ -233,6 +233,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _hasBikeModesConfiguredForDevice = false;
 
   bool _isWakeAlarmSet = false;
+  int _alarmStopsBefore = 1;
   StreamSubscription<Position>? _gpsStream;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
@@ -281,6 +282,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _loadDeviceRoutePreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    final alarmStopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
     final advancedEnabled = prefs.getBool(
           TransportApi.advancedSettingsEnabledPreferenceKey,
         ) ??
@@ -307,6 +309,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     TransportApi.setBikeToggleEnabledForDevice(effectiveToggleEnabled);
     if (!mounted) return;
     setState(() {
+      _alarmStopsBefore = alarmStopsBefore;
       _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
       _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
     });
@@ -753,6 +756,81 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     } else if (!anyAlarmOn && _isWakeAlarmSet) {
       _stopWakeAlarm();
     }
+  }
+
+  bool _coordsMatch(double? firstLat, double? firstLng, double? secondLat,
+      double? secondLng) {
+    if (firstLat == null ||
+        firstLng == null ||
+        secondLat == null ||
+        secondLng == null) {
+      return false;
+    }
+    const epsilon = 0.00001;
+    return (firstLat - secondLat).abs() < epsilon &&
+        (firstLng - secondLng).abs() < epsilon;
+  }
+
+  bool _isIntermediateAlarmSelectedForStep(
+    JourneyStep step, {
+    required int stopIndex,
+    required String stopName,
+    required double? targetLat,
+    required double? targetLng,
+  }) {
+    if (!step.isWakeAlarmOn) return false;
+
+    if (step.alarmTargetName != null) {
+      if (_coordsMatch(
+        step.alarmTargetLat,
+        step.alarmTargetLng,
+        targetLat,
+        targetLng,
+      )) {
+        return true;
+      }
+      return step.alarmTargetName == stopName;
+    }
+
+    if (_alarmStopsBefore <= 0) return false;
+    final stopovers = step.stopovers;
+    if (stopovers == null || stopovers.isEmpty) return false;
+    final targetIndex = stopovers.length - _alarmStopsBefore;
+    return stopIndex == targetIndex;
+  }
+
+  void _toggleIntermediateStopAlarm(
+    RouteTab route,
+    JourneyStep step, {
+    required int stopIndex,
+    required String stopName,
+    required double? targetLat,
+    required double? targetLng,
+    required double? originLat,
+    required double? originLng,
+  }) {
+    final isSelected = _isIntermediateAlarmSelectedForStep(
+      step,
+      stopIndex: stopIndex,
+      stopName: stopName,
+      targetLat: targetLat,
+      targetLng: targetLng,
+    );
+
+    if (isSelected) {
+      _toggleStepAlarm(route, step);
+      return;
+    }
+
+    _setIntermediateStopAlarm(
+      route,
+      step,
+      stopName: stopName,
+      targetLat: targetLat,
+      targetLng: targetLng,
+      originLat: originLat,
+      originLng: originLng,
+    );
   }
 
   void _setIntermediateStopAlarm(
@@ -5351,19 +5429,25 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           context, stationId, route.destination, time,
                           lat: lat, lng: lng, stationName: name),
                   onIntermediateAlarmLongPress: (stopName,
-                          {double? targetLat,
+                          {required int stopIndex,
+                          double? targetLat,
                           double? targetLng,
                           double? originLat,
                           double? originLng}) =>
-                      _setIntermediateStopAlarm(route, route.steps[i],
-                          stopName: stopName,
-                          targetLat: targetLat,
-                          targetLng: targetLng,
-                          originLat: originLat,
-                          originLng: originLng),
+                      _toggleIntermediateStopAlarm(
+                        route,
+                        route.steps[i],
+                        stopIndex: stopIndex,
+                        stopName: stopName,
+                        targetLat: targetLat,
+                        targetLng: targetLng,
+                        originLat: originLat,
+                        originLng: originLng,
+                      ),
                   onChat: (line) => _showChat(context, line),
                   onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
                   onMapTap: () => _openMap(route, focusStep: route.steps[i]),
+                  alarmStopsBefore: _alarmStopsBefore,
                   showTrainNumbers: widget.showTrainNumbers)
           ]),
     );
@@ -5384,6 +5468,7 @@ class _StepCard extends StatefulWidget {
       onOpenAlternatives;
   final Function(
     String, {
+    required int stopIndex,
     double? targetLat,
     double? targetLng,
     double? originLat,
@@ -5392,6 +5477,7 @@ class _StepCard extends StatefulWidget {
   final Function(String) onChat;
   final VoidCallback onAlarmToggle;
   final VoidCallback onMapTap;
+  final int alarmStopsBefore;
   final bool showTrainNumbers;
 
   const _StepCard({
@@ -5404,6 +5490,7 @@ class _StepCard extends StatefulWidget {
     required this.onChat,
     required this.onAlarmToggle,
     required this.onMapTap,
+    required this.alarmStopsBefore,
     required this.showTrainNumbers,
   });
 
@@ -5413,6 +5500,49 @@ class _StepCard extends StatefulWidget {
 
 class _StepCardState extends State<_StepCard> {
   bool _isExpanded = false;
+
+  bool get _hasCustomAlarmTarget => widget.step.alarmTargetName != null;
+
+  bool _coordsMatch(double? firstLat, double? firstLng, double? secondLat,
+      double? secondLng) {
+    if (firstLat == null ||
+        firstLng == null ||
+        secondLat == null ||
+        secondLng == null) {
+      return false;
+    }
+    const epsilon = 0.00001;
+    return (firstLat - secondLat).abs() < epsilon &&
+        (firstLng - secondLng).abs() < epsilon;
+  }
+
+  bool _isIntermediateAlarmSelected({
+    required int stopIndex,
+    required String displayName,
+    required double? stopLat,
+    required double? stopLng,
+  }) {
+    final step = widget.step;
+    if (!step.isWakeAlarmOn) return false;
+
+    if (_hasCustomAlarmTarget) {
+      if (_coordsMatch(
+        step.alarmTargetLat,
+        step.alarmTargetLng,
+        stopLat,
+        stopLng,
+      )) {
+        return true;
+      }
+      return step.alarmTargetName == displayName;
+    }
+
+    if (widget.alarmStopsBefore <= 0) return false;
+    final stopovers = step.stopovers;
+    if (stopovers == null || stopovers.isEmpty) return false;
+    final targetIndex = stopovers.length - widget.alarmStopsBefore;
+    return stopIndex == targetIndex;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5603,7 +5733,10 @@ class _StepCardState extends State<_StepCard> {
                                                 .alarmOn
                                             : AppLocalizations.of(context)!
                                                 .wakeMe,
-                                        isActive: step.isWakeAlarmOn,
+                                        isActive: step.isWakeAlarmOn &&
+                                            !_hasCustomAlarmTarget,
+                                        outlined: step.isWakeAlarmOn &&
+                                            _hasCustomAlarmTarget,
                                         onTap: widget.onAlarmToggle)
                                   ]))),
                           const SizedBox(width: 8),
@@ -5747,12 +5880,18 @@ class _StepCardState extends State<_StepCard> {
                                   }
                                 }
                               }
+                              final isAlarmSelected =
+                                  _isIntermediateAlarmSelected(
+                                stopIndex: idx,
+                                displayName: name as String? ?? displayName,
+                                stopLat: stopLat,
+                                stopLng: stopLng,
+                              );
                               return GestureDetector(
                                   onLongPress: stopId != null
                                       ? () => widget.onShowStopDepartures(
                                             stopId: stopId as String,
-                                            stopName:
-                                                name as String? ?? displayName,
+                                            stopName: name ?? displayName,
                                             date: exactStopDate ??
                                                 widget.step.dateTime ??
                                                 DateTime.now(),
@@ -5783,31 +5922,50 @@ class _StepCardState extends State<_StepCard> {
                                               GestureDetector(
                                                 onLongPress: () => widget
                                                     .onIntermediateAlarmLongPress(
-                                                  name as String? ??
-                                                      displayName,
+                                                  name ?? displayName,
+                                                  stopIndex: idx,
                                                   targetLat: stopLat,
                                                   targetLng: stopLng,
                                                   originLat: previousLat,
                                                   originLng: previousLng,
                                                 ),
                                                 child: IconButton(
-                                                    icon: const Icon(
-                                                        Icons.alt_route,
-                                                        size: 16,
-                                                        color: Colors.blue),
-                                                    // Pass exact stop time and location if available.
-                                                    onPressed: () => widget
-                                                        .onOpenAlternatives(
-                                                            stopId as String,
-                                                            exactStopDate!,
-                                                            lat: stop['stop']
-                                                                    ['location']
-                                                                ?['latitude'],
-                                                            lng: stop['stop']
-                                                                    ['location']
-                                                                ?['longitude'],
-                                                            name: name
-                                                                as String?)),
+                                                  onPressed: () =>
+                                                      widget.onOpenAlternatives(
+                                                    stopId as String,
+                                                    exactStopDate!,
+                                                    lat: stop['stop']
+                                                            ['location']
+                                                        ?['latitude'],
+                                                    lng: stop['stop']
+                                                            ['location']
+                                                        ?['longitude'],
+                                                    name: name,
+                                                  ),
+                                                  style: IconButton.styleFrom(
+                                                    minimumSize:
+                                                        const Size(28, 28),
+                                                    padding: EdgeInsets.zero,
+                                                    tapTargetSize:
+                                                        MaterialTapTargetSize
+                                                            .shrinkWrap,
+                                                    backgroundColor:
+                                                        isAlarmSelected
+                                                            ? colors
+                                                                .chipActiveBg
+                                                            : Colors
+                                                                .transparent,
+                                                  ),
+                                                  icon: Icon(
+                                                    isAlarmSelected
+                                                        ? Icons.vibration
+                                                        : Icons.alt_route,
+                                                    size: 16,
+                                                    color: isAlarmSelected
+                                                        ? colors.chipActiveFg
+                                                        : Colors.blue,
+                                                  ),
+                                                ),
                                               )
                                           ])));
                             }))
@@ -5881,7 +6039,9 @@ class _StepCardState extends State<_StepCard> {
   }
 
   Widget _buildActionChip(BuildContext context, IconData icon, String label,
-      {bool isActive = false, required VoidCallback onTap}) {
+      {bool isActive = false,
+      bool outlined = false,
+      required VoidCallback onTap}) {
     final colors = TransColors.of(context);
     return GestureDetector(
         onTap: onTap,
@@ -5889,7 +6049,10 @@ class _StepCardState extends State<_StepCard> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
                 color: isActive ? colors.chipActiveBg : colors.chipBg,
-                borderRadius: BorderRadius.circular(20)),
+                borderRadius: BorderRadius.circular(20),
+                border: outlined
+                    ? Border.all(color: colors.chipActiveBg, width: 1.4)
+                    : null),
             child: Row(children: [
               Icon(icon,
                   size: 14,
