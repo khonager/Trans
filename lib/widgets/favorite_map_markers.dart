@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../config/app_theme.dart';
 import '../models/favorite.dart';
+import '../utils/favorite_icons.dart';
 
 List<Marker> buildFavoriteMapMarkers(List<Favorite> favorites) {
   final markers = <Marker>[];
@@ -41,7 +42,7 @@ class _FavoriteMapMarker extends StatelessWidget {
     final markerColor = colors.navBarSelected;
     final markerTextColor =
         markerColor.computeLuminance() > 0.5 ? Colors.black : Colors.white;
-    final icon = _favoriteIcon(favorite);
+    final icon = resolveFavoriteIcon(favorite);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -63,21 +64,4 @@ class _FavoriteMapMarker extends StatelessWidget {
       ),
     );
   }
-}
-
-IconData _favoriteIcon(Favorite favorite) {
-  if (favorite.iconCode != null) {
-    return IconData(favorite.iconCode!, fontFamily: 'MaterialIcons');
-  }
-
-  final label = favorite.label.trim().toLowerCase();
-  if (label == 'home') return Icons.home;
-  if (label == 'work') return Icons.work;
-
-  final stationType = favorite.station?.type.trim().toLowerCase();
-  if (stationType == 'address' || stationType == 'location') {
-    return Icons.place_rounded;
-  }
-
-  return Icons.star_rounded;
 }

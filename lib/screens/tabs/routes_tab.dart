@@ -21,6 +21,7 @@ import 'package:trans/services/notification_manager.dart';
 import 'package:trans/services/foreground_haptics.dart';
 import 'package:trans/services/wake_alarm_preview_player.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
+import 'package:trans/utils/favorite_icons.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/config/app_theme.dart';
@@ -30,21 +31,6 @@ import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
 
-const List<IconData> kAvailableIcons = [
-  Icons.star,
-  Icons.home,
-  Icons.work,
-  Icons.favorite,
-  Icons.train,
-  Icons.directions_bus,
-  Icons.school,
-  Icons.person,
-  Icons.location_on,
-  Icons.shopping_cart,
-  Icons.fitness_center,
-  Icons.local_cafe,
-  Icons.local_airport
-];
 const int _activeJourneyRefreshWindowSize = 8;
 
 enum RouteHistoryView { frequent, recent }
@@ -604,17 +590,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   IconData _favoriteIcon(Favorite favorite) {
-    if (favorite.iconCode != null) {
-      return kAvailableIcons.firstWhere(
-        (icon) => icon.codePoint == favorite.iconCode,
-        orElse: () => Icons.star,
-      );
-    }
-
-    final lowerLabel = favorite.label.toLowerCase();
-    if (lowerLabel == 'home') return Icons.home;
-    if (lowerLabel == 'work') return Icons.work;
-    return Icons.star;
+    return resolveFavoriteIcon(favorite);
   }
 
   Future<void> _loadFavorites() async {
@@ -6140,7 +6116,7 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                 SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(
-                        children: kAvailableIcons.map((icon) {
+                        children: kAvailableFavoriteIcons.map((icon) {
                       final isSelected = _selectedIconCode == icon.codePoint;
                       return GestureDetector(
                           onTap: () => setState(
