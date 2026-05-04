@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
@@ -9,7 +8,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trans/config/app_theme.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
 
 class MapScreen extends StatefulWidget {
@@ -26,75 +27,6 @@ class MapScreen extends StatefulWidget {
 
   @override
   State<MapScreen> createState() => _MapScreenState();
-}
-
-class CompassIconPainter extends CustomPainter {
-  final Color color;
-  CompassIconPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill
-      ..strokeWidth = 2; // For the dot if drawn as circle
-
-    final center = Offset(size.width / 2, size.height / 2);
-    final w = size.width;
-    final h = size.height;
-
-    // Draw Dot
-    canvas.drawCircle(center, 2.5, paint);
-
-    // Arrow 1: Bottom Left to Center
-    // Tip at center - offset slightly to not cover dot? Or touch dot.
-    // Let's make arrows "point to" the dot.
-    // Start: Bottom Left (0, h) -> End: Center (w/2, h/2)
-    // Actually user said: "one arrow from the bottom left to the middle... and another arrow from the other side, the top right to the middle"
-
-    final p1 = Path();
-    // Arrow head at center-ish
-    // Let's draw a simple stylized arrow
-    // Bottom Left Arrow
-    p1.moveTo(2, h - 2); // Start bottom left
-    p1.lineTo(w / 2 - 4, h / 2 + 4); // To near center
-    // Make it an arrow? Or just a line? "two arrows pointing to a dot"
-    // Let's add arrow heads.
-    // This is small (icon size). Simple chevron or triangle might be best.
-
-    // Draw Arrow 1 (Bottom Left -> Center)
-    _drawArrow(canvas, paint, Offset(2, h - 2), Offset(w / 2 - 3, h / 2 + 3));
-
-    // Draw Arrow 2 (Top Right -> Center)
-    _drawArrow(canvas, paint, Offset(w - 2, 2), Offset(w / 2 + 3, h / 2 - 3));
-  }
-
-  void _drawArrow(Canvas canvas, Paint paint, Offset start, Offset end) {
-    // Draw line
-    paint.style = PaintingStyle.stroke;
-    paint.strokeWidth = 2.5;
-    canvas.drawLine(start, end, paint);
-
-    // Draw head
-    // Vector
-    final dx = end.dx - start.dx;
-    final dy = end.dy - start.dy;
-    final angle = atan2(dy, dx);
-
-    final arrowSize = 6.0;
-    final p = Path();
-    p.moveTo(end.dx - arrowSize * cos(angle - pi / 6),
-        end.dy - arrowSize * sin(angle - pi / 6));
-    p.lineTo(end.dx, end.dy);
-    p.lineTo(end.dx - arrowSize * cos(angle + pi / 6),
-        end.dy - arrowSize * sin(angle + pi / 6));
-
-    paint.style = PaintingStyle.stroke;
-    canvas.drawPath(p, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _MapScreenState extends State<MapScreen> {
@@ -535,6 +467,7 @@ class _MapScreenState extends State<MapScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final colors = TransColors.of(context);
     final initialCenter = _bounds?.center ?? const LatLng(51.1657, 10.4515);
 
     final displayedMarkers = <Marker>[
@@ -547,10 +480,10 @@ class _MapScreenState extends State<MapScreen> {
           height: 32,
           child: Container(
               decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.3),
+                  color: colors.navBarSelected.withValues(alpha: 0.3),
                   shape: BoxShape.circle),
-              child:
-                  const Icon(Icons.my_location, color: Colors.blue, size: 16)),
+              child: Icon(Icons.my_location,
+                  color: colors.navBarSelected, size: 16)),
         ),
     ];
 
@@ -593,9 +526,8 @@ class _MapScreenState extends State<MapScreen> {
                   FloatingActionButton(
                     heroTag: "compass",
                     mini: true,
-                    backgroundColor: _isCompassMode
-                        ? Theme.of(context).primaryColor
-                        : Colors.white,
+                    backgroundColor:
+                        _isCompassMode ? colors.navBarSelected : Colors.white,
                     foregroundColor:
                         _isCompassMode ? Colors.white : Colors.black,
                     onPressed: _toggleCompassMode,
