@@ -94,6 +94,12 @@ class TransportApi {
       'advanced_pedestrian_speed_kmh';
   static const String advancedMaxWalkingTimeMinutesPreferenceKey =
       'advanced_max_walking_time_minutes';
+  static const int defaultAdvancedMinTransferTimeMinutes = 0;
+  static const int defaultAdvancedAdditionalTransferTimeMinutes = 0;
+  static const double defaultAdvancedTransferTimeFactor = 1.0;
+  static const double defaultAdvancedPedestrianSpeedKmh = 5.0;
+  static const int defaultAdvancedMaxWalkingTimeMinutes = 60;
+  static const double defaultAdvancedCyclingSpeedKmh = 16.0;
 
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
@@ -127,16 +133,19 @@ class TransportApi {
   static String? _userAgent;
   static bool _advancedSettingsLoaded = false;
   static bool _advancedSettingsEnabledForDevice = false;
-  static int _advancedMinTransferTimeMinutes = 4;
-  static int _advancedAdditionalTransferTimeMinutes = 2;
-  static double _advancedTransferTimeFactor = 1.3;
+  static int _advancedMinTransferTimeMinutes =
+      defaultAdvancedMinTransferTimeMinutes;
+  static int _advancedAdditionalTransferTimeMinutes =
+      defaultAdvancedAdditionalTransferTimeMinutes;
+  static double _advancedTransferTimeFactor = defaultAdvancedTransferTimeFactor;
   static bool _advancedPreTransitWalkEnabled = true;
   static bool _advancedPreTransitBikeEnabled = false;
   static bool _advancedPostTransitWalkEnabled = true;
   static bool _advancedPostTransitBikeEnabled = false;
-  static double _advancedCyclingSpeedKmh = 16.0;
-  static double _advancedPedestrianSpeedKmh = 5.0;
-  static int _advancedMaxWalkingTimeMinutes = 15;
+  static double _advancedCyclingSpeedKmh = defaultAdvancedCyclingSpeedKmh;
+  static double _advancedPedestrianSpeedKmh = defaultAdvancedPedestrianSpeedKmh;
+  static int _advancedMaxWalkingTimeMinutes =
+      defaultAdvancedMaxWalkingTimeMinutes;
   static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
@@ -207,44 +216,59 @@ class TransportApi {
     final prefs = await SharedPreferences.getInstance();
     _advancedSettingsEnabledForDevice =
         prefs.getBool(advancedSettingsEnabledPreferenceKey) ?? false;
-    final legacyTransferComfort =
-        (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
-            .clamp(0.0, 1.0);
-    final legacyBikePreference =
-        (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0);
+    final hasLegacyTransferComfort =
+        prefs.containsKey(advancedTransferComfortPreferenceKey);
+    final legacyTransferComfort = hasLegacyTransferComfort
+        ? (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
+            .clamp(0.0, 1.0)
+        : null;
+    final hasLegacyBikePreference =
+        prefs.containsKey(advancedBikePreferenceKey);
+    final legacyBikePreference = hasLegacyBikePreference
+        ? (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0)
+        : null;
     _advancedMinTransferTimeMinutes =
         prefs.getInt(advancedMinTransferTimeMinutesPreferenceKey) ??
-            (2 + (legacyTransferComfort * 5)).round();
+            (legacyTransferComfort != null
+                ? (2 + (legacyTransferComfort * 5)).round()
+                : defaultAdvancedMinTransferTimeMinutes);
     _advancedAdditionalTransferTimeMinutes =
         prefs.getInt(advancedAdditionalTransferTimeMinutesPreferenceKey) ??
-            (legacyTransferComfort * 4).round();
+            (legacyTransferComfort != null
+                ? (legacyTransferComfort * 4).round()
+                : defaultAdvancedAdditionalTransferTimeMinutes);
     _advancedTransferTimeFactor = (prefs.getDouble(
               advancedTransferTimeFactorPreferenceKey,
             ) ??
-            (0.8 + (legacyTransferComfort * 1.0)))
+            (legacyTransferComfort != null
+                ? (0.8 + (legacyTransferComfort * 1.0))
+                : defaultAdvancedTransferTimeFactor))
         .clamp(0.7, 2.5);
     _advancedPreTransitWalkEnabled =
         prefs.getBool(advancedPreTransitWalkEnabledPreferenceKey) ?? true;
     _advancedPreTransitBikeEnabled =
         prefs.getBool(advancedPreTransitBikeEnabledPreferenceKey) ??
-            legacyBikePreference > 0.01;
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
     _advancedPostTransitWalkEnabled =
         prefs.getBool(advancedPostTransitWalkEnabledPreferenceKey) ?? true;
     _advancedPostTransitBikeEnabled =
         prefs.getBool(advancedPostTransitBikeEnabledPreferenceKey) ??
-            legacyBikePreference > 0.01;
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
     _advancedCyclingSpeedKmh = (prefs.getDouble(
               advancedCyclingSpeedKmhPreferenceKey,
             ) ??
-            ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+            (legacyBikePreference != null
+                ? ((3.2 + (legacyBikePreference * 2.4)) * 3.6)
+                : defaultAdvancedCyclingSpeedKmh))
         .clamp(8.0, 30.0);
     _advancedPedestrianSpeedKmh = (prefs.getDouble(
               advancedPedestrianSpeedKmhPreferenceKey,
             ) ??
-            5.0)
+            defaultAdvancedPedestrianSpeedKmh)
         .clamp(2.0, 10.0);
     _advancedMaxWalkingTimeMinutes =
-        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 15;
+        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ??
+            defaultAdvancedMaxWalkingTimeMinutes;
     _advancedBikeToggleEnabledForDevice =
         prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
     _advancedSettingsLoaded = true;
@@ -576,41 +600,38 @@ class TransportApi {
     );
   }
 
-  static Future<List<Station>> _searchStationsMotis(
-    String query, {
-    double? lat,
-    double? lng,
-  }) async {
-    final Map<String, dynamic> params = {'text': query};
-
-    if (lat != null && lng != null) {
-      params['place'] = '$lat,$lng';
-      // Bias ranking toward nearby matches without restricting the search area.
-      params['placeBias'] = '2';
+  static bool get _hasAdvancedSearchOverrides {
+    if (!_advancedSettingsEnabledForDevice) return false;
+    if (_advancedMinTransferTimeMinutes !=
+        defaultAdvancedMinTransferTimeMinutes) {
+      return true;
     }
-
-    final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
-    final List<dynamic> data = json.decode(response.body);
-
-    // Convert MOTIS Match format to Station
-    return data.map((match) => stationFromMotisMatch(match)).toList();
+    if (_advancedAdditionalTransferTimeMinutes !=
+        defaultAdvancedAdditionalTransferTimeMinutes) {
+      return true;
+    }
+    if ((_advancedTransferTimeFactor - defaultAdvancedTransferTimeFactor)
+            .abs() >
+        0.0001) {
+      return true;
+    }
+    if ((_advancedPedestrianSpeedKmh - defaultAdvancedPedestrianSpeedKmh)
+            .abs() >
+        0.0001) {
+      return true;
+    }
+    if (_advancedMaxWalkingTimeMinutes !=
+        defaultAdvancedMaxWalkingTimeMinutes) {
+      return true;
+    }
+    final usesBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
+        (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
+    return !_advancedPreTransitWalkEnabled ||
+        !_advancedPostTransitWalkEnabled ||
+        usesBikeForThisSearch;
   }
 
-  static Future<List<Station>> _getNearbyStopsMotis(
-    double lat,
-    double lng,
-  ) async {
-    final response = await _fetch(
-      _getMotisUri('/api/v1/reverse-geocode', {
-        'place': '$lat,$lng',
-        'type': 'STOP', // Only return transit stops
-      }),
-    );
-    final List<dynamic> data = json.decode(response.body);
-    return data.map((match) => stationFromMotisMatch(match)).toList();
-  }
-
-  static Future<List<Map<String, dynamic>>> _searchJourneysMotis(
+  static Map<String, dynamic> _buildMotisJourneySearchParams(
     Station from,
     Station to, {
     bool nahverkehrOnly = false,
@@ -619,9 +640,7 @@ class TransportApi {
     int results = 3,
     double? pedestrianSpeedKmhOverride,
     int? maxWalkingTimeMinutesOverride,
-  }) async {
-    await _ensureAdvancedSettingsLoaded();
-
+  }) {
     final Map<String, dynamic> params = {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
@@ -670,49 +689,130 @@ class TransportApi {
     }
 
     if (_advancedSettingsEnabledForDevice) {
-      params['minTransferTime'] =
-          (_advancedMinTransferTimeMinutes * 60).toString();
-      params['additionalTransferTime'] =
-          (_advancedAdditionalTransferTimeMinutes * 60).toString();
-      params['transferTimeFactor'] =
-          _advancedTransferTimeFactor.toStringAsFixed(2);
+      if (_advancedMinTransferTimeMinutes !=
+          defaultAdvancedMinTransferTimeMinutes) {
+        params['minTransferTime'] = _advancedMinTransferTimeMinutes.toString();
+      }
+      if (_advancedAdditionalTransferTimeMinutes !=
+          defaultAdvancedAdditionalTransferTimeMinutes) {
+        params['additionalTransferTime'] =
+            _advancedAdditionalTransferTimeMinutes.toString();
+      }
+      if ((_advancedTransferTimeFactor - defaultAdvancedTransferTimeFactor)
+              .abs() >
+          0.0001) {
+        params['transferTimeFactor'] =
+            _advancedTransferTimeFactor.toStringAsFixed(2);
+      }
+
       final pedestrianSpeedKmh =
           pedestrianSpeedKmhOverride ?? _advancedPedestrianSpeedKmh;
-      final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
-      params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      if ((pedestrianSpeedKmh - defaultAdvancedPedestrianSpeedKmh).abs() >
+          0.0001) {
+        final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
+        params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      }
+
       final maxWalkingTimeMinutes =
           maxWalkingTimeMinutesOverride ?? _advancedMaxWalkingTimeMinutes;
-      final maxWalkingTimeSeconds = (maxWalkingTimeMinutes.clamp(5, 120) * 60);
-      params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
-      params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
+      if (maxWalkingTimeMinutes != defaultAdvancedMaxWalkingTimeMinutes) {
+        final maxWalkingTimeSeconds =
+            (maxWalkingTimeMinutes.clamp(5, 120) * 60);
+        params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
+        params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
+      }
 
       final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
           (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
-      final preModes = <String>[];
-      final postModes = <String>[];
+      final hasModeOverride = !_advancedPreTransitWalkEnabled ||
+          !_advancedPostTransitWalkEnabled ||
+          useBikeForThisSearch;
+      if (hasModeOverride) {
+        final preModes = <String>[];
+        final postModes = <String>[];
 
-      if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
-      if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
-      if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
-        preModes.add('BICYCLE');
-      }
-      if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
-        postModes.add('BICYCLE');
-      }
+        if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
+        if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
+        if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
+          preModes.add('BIKE');
+        }
+        if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
+          postModes.add('BIKE');
+        }
 
-      // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
-      if (preModes.isEmpty) preModes.add('WALK');
-      if (postModes.isEmpty) postModes.add('WALK');
+        // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
+        if (preModes.isEmpty) preModes.add('WALK');
+        if (postModes.isEmpty) postModes.add('WALK');
 
-      params['preTransitModes'] = preModes.join(',');
-      params['postTransitModes'] = postModes.join(',');
+        params['preTransitModes'] = preModes.join(',');
+        params['postTransitModes'] = postModes.join(',');
 
-      if (useBikeForThisSearch) {
-        final cyclingSpeedMps =
-            (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
-        params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+        if (useBikeForThisSearch) {
+          final cyclingSpeedMps =
+              (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
+          params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+        }
       }
     }
+
+    return params;
+  }
+
+  static Future<List<Station>> _searchStationsMotis(
+    String query, {
+    double? lat,
+    double? lng,
+  }) async {
+    final Map<String, dynamic> params = {'text': query};
+
+    if (lat != null && lng != null) {
+      params['place'] = '$lat,$lng';
+      // Bias ranking toward nearby matches without restricting the search area.
+      params['placeBias'] = '2';
+    }
+
+    final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
+    final List<dynamic> data = json.decode(response.body);
+
+    // Convert MOTIS Match format to Station
+    return data.map((match) => stationFromMotisMatch(match)).toList();
+  }
+
+  static Future<List<Station>> _getNearbyStopsMotis(
+    double lat,
+    double lng,
+  ) async {
+    final response = await _fetch(
+      _getMotisUri('/api/v1/reverse-geocode', {
+        'place': '$lat,$lng',
+        'type': 'STOP', // Only return transit stops
+      }),
+    );
+    final List<dynamic> data = json.decode(response.body);
+    return data.map((match) => stationFromMotisMatch(match)).toList();
+  }
+
+  static Future<List<Map<String, dynamic>>> _searchJourneysMotis(
+    Station from,
+    Station to, {
+    bool nahverkehrOnly = false,
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
+  }) async {
+    await _ensureAdvancedSettingsLoaded();
+    final params = _buildMotisJourneySearchParams(
+      from,
+      to,
+      nahverkehrOnly: nahverkehrOnly,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+      pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+      maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
+    );
 
     final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
@@ -741,7 +841,7 @@ class TransportApi {
     if (primary.isNotEmpty) return primary;
 
     await _ensureAdvancedSettingsLoaded();
-    if (!_advancedSettingsEnabledForDevice) return primary;
+    if (!_hasAdvancedSearchOverrides) return primary;
 
     // Some provider/network combinations are unstable in narrow speed bands.
     // Retry using conservative, known-stable walking speeds and wider
@@ -1353,6 +1453,28 @@ class TransportApi {
 
   static Uri _getMotisPlanUri(Map<String, dynamic> params) =>
       _getMotisUri('/api/v5/plan', params);
+
+  @visibleForTesting
+  static Map<String, dynamic> buildMotisJourneySearchParamsForTesting(
+    Station from,
+    Station to, {
+    bool nahverkehrOnly = false,
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
+  }) =>
+      _buildMotisJourneySearchParams(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+        pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+        maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
+      );
 
   /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
   ///
