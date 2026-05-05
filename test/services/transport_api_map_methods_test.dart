@@ -409,4 +409,73 @@ void main() {
       expect(result.every((journey) => journey['source'] == 'motis'), isTrue);
     });
   });
+
+  group('TransportApi direct journey fallback helpers', () {
+    test('builds direct WALK and BIKE fallback parameters', () {
+      final from = Station(
+        id: 'gps',
+        name: 'From',
+        type: 'location',
+        latitude: 40.007733,
+        longitude: 4.1537476,
+      );
+      final to = Station(
+        id: 'gps',
+        name: 'To',
+        type: 'location',
+        latitude: 40.0220224,
+        longitude: 4.1787784,
+      );
+
+      final params = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        from,
+        to,
+        when: DateTime.utc(2026, 5, 5, 6, 12, 17),
+      );
+
+      expect(params['fromPlace'], '40.007733,4.1537476');
+      expect(params['toPlace'], '40.0220224,4.1787784');
+      expect(params['directModes'], 'WALK,BIKE');
+      expect(params['maxDirectTime'], '7200');
+      expect(params, isNot(contains('transitModes')));
+      expect(params, isNot(contains('preTransitModes')));
+      expect(params, isNot(contains('postTransitModes')));
+      expect(params, isNot(contains('maxPreTransitTime')));
+      expect(params, isNot(contains('maxPostTransitTime')));
+    });
+
+    test('decodes direct itineraries from the MOTIS direct array', () {
+      final result = TransportApi.decodeMotisDirectPlanJourneys({
+        'itineraries': [],
+        'direct': [
+          {
+            'duration': 600,
+            'startTime': '2026-05-05T06:12:00Z',
+            'endTime': '2026-05-05T06:22:00Z',
+            'transfers': 0,
+            'legs': [
+              {
+                'mode': 'BIKE',
+                'from': {'name': 'START', 'lat': 40.0, 'lon': 4.0},
+                'to': {'name': 'END', 'lat': 40.1, 'lon': 4.1},
+                'startTime': '2026-05-05T06:12:00Z',
+                'endTime': '2026-05-05T06:22:00Z',
+                'scheduledStartTime': '2026-05-05T06:12:00Z',
+                'scheduledEndTime': '2026-05-05T06:22:00Z',
+                'distance': 2500,
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.length, 1);
+      expect(result.first['source'], 'motis');
+      expect(result.first['direct'], isTrue);
+      final legs = result.first['legs'] as List<dynamic>;
+      expect(legs.length, 1);
+      expect((legs.first as Map<String, dynamic>)['walking'], isTrue);
+      expect(legs.first['distance'], 2500);
+    });
+  });
 }

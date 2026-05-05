@@ -167,6 +167,7 @@ class TransportApi {
   // Use 60 minutes so routes requiring longer access/egress walks are found.
   static const int _motisMaxPreTransitTimeSeconds = 3600;
   static const int _motisMaxPostTransitTimeSeconds = 3600;
+  static const int _motisDirectFallbackMaxMinutes = 120;
 
   static void configureEnabledSources(Iterable<String> sources) {
     final normalized = Set<String>.from(sources);
@@ -758,6 +759,48 @@ class TransportApi {
     return params;
   }
 
+  static Map<String, dynamic> _buildMotisDirectJourneySearchParams(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) {
+    final params = _buildMotisJourneySearchParams(
+      from,
+      to,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+
+    if (from.latitude != null && from.longitude != null) {
+      params['fromPlace'] = '${from.latitude},${from.longitude}';
+    }
+    if (to.latitude != null && to.longitude != null) {
+      params['toPlace'] = '${to.latitude},${to.longitude}';
+    }
+
+    params
+      ..remove('transitModes')
+      ..remove('preTransitModes')
+      ..remove('postTransitModes')
+      ..remove('maxPreTransitTime')
+      ..remove('maxPostTransitTime')
+      ..remove('minTransferTime')
+      ..remove('additionalTransferTime')
+      ..remove('transferTimeFactor')
+      ..['directModes'] = 'WALK,BIKE'
+      ..['maxDirectTime'] = (_motisDirectFallbackMaxMinutes * 60).toString()
+      ..['pedestrianSpeed'] = (_advancedPedestrianSpeedKmh / 3.6)
+          .clamp(0.55, 2.8)
+          .toStringAsFixed(2)
+      ..['cyclingSpeed'] =
+          (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5).toStringAsFixed(2);
+
+    return params;
+  }
+
   static Future<List<Station>> _searchStationsMotis(
     String query, {
     double? lat,
@@ -819,6 +862,29 @@ class TransportApi {
     return decodeMotisPlanJourneys(data);
   }
 
+  static Future<List<Map<String, dynamic>>> _searchDirectJourneysMotis(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) async {
+    await _ensureAdvancedSettingsLoaded();
+    final params = _buildMotisDirectJourneySearchParams(
+      from,
+      to,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+
+    final response = await _fetch(_getMotisPlanUri(params));
+    final data = json.decode(response.body);
+    final directJourneys = decodeMotisDirectPlanJourneys(data);
+    _syntheticLog('direct fallback result: routes=${directJourneys.length}');
+    return directJourneys;
+  }
+
   /// Retry empty MOTIS search with safer walking parameters for edge-case
   /// combinations where high walking speed / short pre-post windows can
   /// suppress otherwise valid itineraries.
@@ -829,6 +895,7 @@ class TransportApi {
     required DateTime? when,
     required bool isArrival,
     required int results,
+    bool allowDirectFallback = true,
   }) async {
     final primary = await _searchJourneysMotis(
       from,
@@ -841,43 +908,55 @@ class TransportApi {
     if (primary.isNotEmpty) return primary;
 
     await _ensureAdvancedSettingsLoaded();
-    if (!_hasAdvancedSearchOverrides) return primary;
+    if (_hasAdvancedSearchOverrides) {
+      // Some provider/network combinations are unstable in narrow speed bands.
+      // Retry using conservative, known-stable walking speeds and wider
+      // first/last-mile windows before giving up.
+      final retries = <(double speedKmh, int walkMinutes)>[
+        (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+        (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+        (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
+      ];
+      final attemptedKeys = <String>{};
 
-    // Some provider/network combinations are unstable in narrow speed bands.
-    // Retry using conservative, known-stable walking speeds and wider
-    // first/last-mile windows before giving up.
-    final retries = <(double speedKmh, int walkMinutes)>[
-      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
-      (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
-      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
-    ];
-    final attemptedKeys = <String>{};
+      for (final retry in retries) {
+        final key = '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
+        if (!attemptedKeys.add(key)) continue;
 
-    for (final retry in retries) {
-      final key = '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
-      if (!attemptedKeys.add(key)) continue;
+        _syntheticLog(
+          'motis retry: empty primary, fallback pedestrianSpeed='
+          '${retry.$1.toStringAsFixed(1)}km/h '
+          'maxWalk=${retry.$2}min',
+        );
 
-      _syntheticLog(
-        'motis retry: empty primary, fallback pedestrianSpeed='
-        '${retry.$1.toStringAsFixed(1)}km/h '
-        'maxWalk=${retry.$2}min',
-      );
+        final fallback = await _searchJourneysMotis(
+          from,
+          to,
+          nahverkehrOnly: nahverkehrOnly,
+          when: when,
+          isArrival: isArrival,
+          results: results,
+          pedestrianSpeedKmhOverride: retry.$1,
+          maxWalkingTimeMinutesOverride: retry.$2,
+        );
+        _syntheticLog(
+          'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
+          'maxWalk=${retry.$2}min itineraries=${fallback.length}',
+        );
+        if (fallback.isNotEmpty) return fallback;
+      }
+    }
 
-      final fallback = await _searchJourneysMotis(
+    if (allowDirectFallback) {
+      _syntheticLog('direct fallback: empty public transport results');
+      final direct = await _searchDirectJourneysMotis(
         from,
         to,
-        nahverkehrOnly: nahverkehrOnly,
         when: when,
         isArrival: isArrival,
         results: results,
-        pedestrianSpeedKmhOverride: retry.$1,
-        maxWalkingTimeMinutesOverride: retry.$2,
       );
-      _syntheticLog(
-        'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
-        'maxWalk=${retry.$2}min itineraries=${fallback.length}',
-      );
-      if (fallback.isNotEmpty) return fallback;
+      if (direct.isNotEmpty) return direct;
     }
 
     return primary;
@@ -1476,6 +1555,22 @@ class TransportApi {
         maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
       );
 
+  @visibleForTesting
+  static Map<String, dynamic> buildMotisDirectJourneySearchParamsForTesting(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) =>
+      _buildMotisDirectJourneySearchParams(
+        from,
+        to,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      );
+
   /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
   ///
   /// Transitous data quality can vary by provider/country; this parser is
@@ -1499,6 +1594,32 @@ class TransportApi {
         journeys.add(journey);
       } catch (error) {
         debugPrint('Skipping malformed MOTIS itinerary: $error');
+      }
+    }
+    return journeys;
+  }
+
+  @visibleForTesting
+  static List<Map<String, dynamic>> decodeMotisDirectPlanJourneys(
+    dynamic data,
+  ) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Unsupported MOTIS plan response');
+    }
+
+    final rawDirect = data['direct'];
+    if (rawDirect is! List) return const <Map<String, dynamic>>[];
+
+    final journeys = <Map<String, dynamic>>[];
+    for (final raw in rawDirect) {
+      if (raw is! Map) continue;
+      try {
+        final journey = journeyFromMotisItinerary(raw.cast<String, dynamic>());
+        journey['source'] = 'motis';
+        journey['direct'] = true;
+        journeys.add(journey);
+      } catch (error) {
+        debugPrint('Skipping malformed MOTIS direct itinerary: $error');
       }
     }
     return journeys;
@@ -3115,6 +3236,7 @@ class TransportApi {
           when: when,
           isArrival: isArrival,
           results: results,
+          allowDirectFallback: false,
         ).then((res) => res).catchError((e) {
           debugPrint('Hybrid: Transitous failed: $e');
           return <Map<String, dynamic>>[];
@@ -3175,7 +3297,19 @@ class TransportApi {
         // Wait for both to formally complete the function call
         final resultsList = await Future.wait([motisFuture, v6Future]);
         final merged = mergeResults(resultsList[0], resultsList[1]);
-        final baseResults = merged.isEmpty ? resultsList[0] : merged;
+        var baseResults = merged.isEmpty ? resultsList[0] : merged;
+        if (baseResults.isEmpty && isTransitousEnabled) {
+          baseResults = await _searchDirectJourneysMotis(
+            from,
+            to,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          );
+          if (baseResults.isNotEmpty) {
+            onPartialResults(baseResults);
+          }
+        }
         var finalResults = baseResults;
         if (isSyntheticTransitousEnabled) {
           setPhase(loadPhaseSynthetic, true);
@@ -3212,18 +3346,29 @@ class TransportApi {
         // Merge results
         final merged = mergeResults(motisResults, v6Results);
 
-        if (merged.isEmpty) {
+        var baseResults = merged;
+        if (baseResults.isEmpty && isTransitousEnabled) {
+          baseResults = await _searchDirectJourneysMotis(
+            from,
+            to,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          );
+        }
+
+        if (baseResults.isEmpty) {
           _syntheticLog('search done: hybrid merged empty');
           throw Exception("No routes found on either API");
         }
 
-        var finalResults = merged;
+        var finalResults = baseResults;
         if (isSyntheticTransitousEnabled) {
           setPhase(loadPhaseSynthetic, true);
           finalResults = await _augmentJourneysWithSynthetic(
             from,
             to,
-            merged,
+            baseResults,
             when: when,
             nahverkehrOnly: nahverkehrOnly,
             isArrival: isArrival,
@@ -3233,7 +3378,7 @@ class TransportApi {
         }
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
-          'base=${merged.length} final=${finalResults.length}',
+          'base=${baseResults.length} final=${finalResults.length}',
         );
         return finalResults;
       }
