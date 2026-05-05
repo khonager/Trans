@@ -703,6 +703,7 @@ class _SettingsTabState extends State<SettingsTab> {
       maxWalkingTimeMinutes: _advancedMaxWalkingTimeMinutes,
       cyclingSpeedKmh: _advancedCyclingSpeedKmh,
     );
+    SupabaseService.settingsRefreshNotifier.value++;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1877,6 +1878,7 @@ class _SettingsTabState extends State<SettingsTab> {
       _isAuthSubmitting = true;
     }
 
+    bool shouldRefreshApp = false;
     try {
       if (_isLoginMode) {
         await SupabaseService.signIn(email, password);
@@ -1908,7 +1910,10 @@ class _SettingsTabState extends State<SettingsTab> {
         }
       }
       _passwordCtrl.clear();
-      await _loadProfile();
+      shouldRefreshApp = SupabaseService.currentUser != null;
+      if (!shouldRefreshApp) {
+        await _loadProfile();
+      }
       if (mounted) setState(() {});
     } catch (e, st) {
       if (!mounted) return;
@@ -1924,6 +1929,10 @@ class _SettingsTabState extends State<SettingsTab> {
       } else {
         _isAuthSubmitting = false;
       }
+    }
+
+    if (shouldRefreshApp) {
+      SupabaseService.requestAppRefresh();
     }
   }
 

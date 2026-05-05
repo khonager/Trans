@@ -24,6 +24,7 @@ class SupabaseService {
 
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
   static final ValueNotifier<int> settingsRefreshNotifier = ValueNotifier(0);
+  static final ValueNotifier<int> appRefreshNotifier = ValueNotifier(0);
   static StreamSubscription? _friendReqSubscription;
   static StreamSubscription? _msgSubscription;
   static Future<void>? _pendingSignInPreparation;
@@ -154,6 +155,10 @@ class SupabaseService {
   @visibleForTesting
   static void triggerFriendsListRefresh() {
     friendsListRefresh.value++;
+  }
+
+  static void requestAppRefresh() {
+    appRefreshNotifier.value++;
   }
 
   @visibleForTesting
@@ -528,6 +533,7 @@ class SupabaseService {
     _pendingSignInPreparation = null;
     await client.auth.signOut();
     triggerFriendsListRefresh();
+    requestAppRefresh();
   }
 
   static Future<void> updatePassword(String newPassword) async {
@@ -746,8 +752,7 @@ class SupabaseService {
       }
       if (settings
           .containsKey(TransportApi.advancedTransferComfortPreferenceKey)) {
-        final raw =
-            settings[TransportApi.advancedTransferComfortPreferenceKey];
+        final raw = settings[TransportApi.advancedTransferComfortPreferenceKey];
         if (raw is num) {
           await prefs.setDouble(
             TransportApi.advancedTransferComfortPreferenceKey,
@@ -764,8 +769,8 @@ class SupabaseService {
           );
         }
       }
-      if (settings
-          .containsKey(TransportApi.advancedMinTransferTimeMinutesPreferenceKey)) {
+      if (settings.containsKey(
+          TransportApi.advancedMinTransferTimeMinutesPreferenceKey)) {
         final raw =
             settings[TransportApi.advancedMinTransferTimeMinutesPreferenceKey];
         if (raw is num) {
@@ -788,7 +793,8 @@ class SupabaseService {
       }
       if (settings
           .containsKey(TransportApi.advancedTransferTimeFactorPreferenceKey)) {
-        final raw = settings[TransportApi.advancedTransferTimeFactorPreferenceKey];
+        final raw =
+            settings[TransportApi.advancedTransferTimeFactorPreferenceKey];
         if (raw is num) {
           await prefs.setDouble(
             TransportApi.advancedTransferTimeFactorPreferenceKey,
@@ -796,8 +802,8 @@ class SupabaseService {
           );
         }
       }
-      if (settings
-          .containsKey(TransportApi.advancedPreTransitWalkEnabledPreferenceKey)) {
+      if (settings.containsKey(
+          TransportApi.advancedPreTransitWalkEnabledPreferenceKey)) {
         final raw =
             settings[TransportApi.advancedPreTransitWalkEnabledPreferenceKey];
         if (raw is bool) {
@@ -807,8 +813,8 @@ class SupabaseService {
           );
         }
       }
-      if (settings
-          .containsKey(TransportApi.advancedPreTransitBikeEnabledPreferenceKey)) {
+      if (settings.containsKey(
+          TransportApi.advancedPreTransitBikeEnabledPreferenceKey)) {
         final raw =
             settings[TransportApi.advancedPreTransitBikeEnabledPreferenceKey];
         if (raw is bool) {
@@ -861,8 +867,8 @@ class SupabaseService {
           );
         }
       }
-      if (settings
-          .containsKey(TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey)) {
+      if (settings.containsKey(
+          TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey)) {
         final raw =
             settings[TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey];
         if (raw is num) {

@@ -158,6 +158,8 @@ class _TransAppState extends State<TransApp> {
   Color _themeColor = appThemeColors[0];
   Locale? _locale;
   StreamSubscription<Uri>? _authLinkSubscription;
+  int _appRefreshKey = 0;
+  bool _isAppRefreshing = false;
 
   @override
   void initState() {
@@ -165,6 +167,7 @@ class _TransAppState extends State<TransApp> {
     _readPreferences(); // Show immediate local state
     _initSync(); // Start cloud sync
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
+    SupabaseService.appRefreshNotifier.addListener(_handleAppRefreshRequest);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (widget.startupAuthNotice != null) {
         await _showStartupAuthNotice(widget.startupAuthNotice!);
@@ -177,11 +180,33 @@ class _TransAppState extends State<TransApp> {
   void dispose() {
     _authLinkSubscription?.cancel();
     SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
+    SupabaseService.appRefreshNotifier.removeListener(_handleAppRefreshRequest);
     super.dispose();
   }
 
   Future<void> _initSync() async {
     await SupabaseService.loadAndSyncSettings();
+  }
+
+  void _handleAppRefreshRequest() {
+    unawaited(_refreshAppShell());
+  }
+
+  Future<void> _refreshAppShell() async {
+    if (_isAppRefreshing) return;
+    if (!mounted) return;
+
+    setState(() => _isAppRefreshing = true);
+    await Future.wait<void>([
+      _readPreferences(),
+      Future<void>.delayed(const Duration(milliseconds: 650)),
+    ]);
+
+    if (!mounted) return;
+    setState(() {
+      _appRefreshKey++;
+      _isAppRefreshing = false;
+    });
   }
 
   Future<void> _showStartupAuthNotice(StartupAuthNotice notice) async {
@@ -246,6 +271,7 @@ class _TransAppState extends State<TransApp> {
       if (SupabaseService.isPortfolioBridgeUri(uri)) {
         await SupabaseService.handlePortfolioBridgeUri(uri);
         await _showStartupAuthNotice(StartupAuthNotice.portfolioSignedIn);
+        SupabaseService.requestAppRefresh();
         return;
       }
 
@@ -264,10 +290,16 @@ class _TransAppState extends State<TransApp> {
           default:
             break;
         }
+        if (SupabaseService.currentUser != null) {
+          SupabaseService.requestAppRefresh();
+        }
         return;
       }
 
-      await SupabaseService.handleAuthSessionUri(uri);
+      final handled = await SupabaseService.handleAuthSessionUri(uri);
+      if (handled) {
+        SupabaseService.requestAppRefresh();
+      }
     } catch (e, st) {
       AppError.log(e, stackTrace: st, source: 'auth confirm callback');
       if (SupabaseService.shouldHandleAuthCallbackManually(uri)) {
@@ -412,36 +444,103 @@ class _TransAppState extends State<TransApp> {
       themeMode: _themeMode,
       theme: AppTheme.lightTheme(_themeColor),
       darkTheme: AppTheme.darkTheme(_themeColor),
-      home: Scaffold(
-        body: Column(
-          children: [
-            if (widget.initFailed)
-              Container(
-                color: Colors.red,
-                padding: const EdgeInsets.all(8),
-                width: double.infinity,
-                child: Text(
-                  'Initialization Error: ${widget.initError}',
-                  style: const TextStyle(color: Colors.white),
+      home: Stack(
+        children: [
+          Scaffold(
+            body: Column(
+              children: [
+                if (widget.initFailed)
+                  Container(
+                    color: Colors.red,
+                    padding: const EdgeInsets.all(8),
+                    width: double.infinity,
+                    child: Text(
+                      'Initialization Error: ${widget.initError}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                Expanded(
+                  child: HomeScreen(
+                    key: ValueKey(_appRefreshKey),
+                    isDarkMode: _themeMode == ThemeMode.dark,
+                    onThemeChanged: _toggleTheme,
+                    useSystemTheme: _useSystemTheme,
+                    onSystemSyncChanged: _toggleSystemSync,
+                    onlyNahverkehr: _onlyNahverkehr,
+                    onNahverkehrChanged: _toggleNahverkehr,
+                    isGhostMode: _isGhostMode,
+                    onGhostModeChanged: _toggleGhostMode,
+                    onColorChanged: _updateThemeColor,
+                    currentColor: _themeColor,
+                    locale: _locale,
+                    onLocaleChanged: _changeLocale,
+                  ),
                 ),
-              ),
-            Expanded(
-              child: HomeScreen(
-                isDarkMode: _themeMode == ThemeMode.dark,
-                onThemeChanged: _toggleTheme,
-                useSystemTheme: _useSystemTheme,
-                onSystemSyncChanged: _toggleSystemSync,
-                onlyNahverkehr: _onlyNahverkehr,
-                onNahverkehrChanged: _toggleNahverkehr,
-                isGhostMode: _isGhostMode,
-                onGhostModeChanged: _toggleGhostMode,
-                onColorChanged: _updateThemeColor,
-                currentColor: _themeColor,
-                locale: _locale,
-                onLocaleChanged: _changeLocale,
+              ],
+            ),
+          ),
+          if (_isAppRefreshing)
+            const Positioned.fill(child: _AppRefreshOverlay()),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppRefreshOverlay extends StatefulWidget {
+  const _AppRefreshOverlay();
+
+  @override
+  State<_AppRefreshOverlay> createState() => _AppRefreshOverlayState();
+}
+
+class _AppRefreshOverlayState extends State<_AppRefreshOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _offset;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..repeat(reverse: true);
+    _offset = Tween<Offset>(
+      begin: const Offset(0, 0.08),
+      end: const Offset(0, -0.08),
+    ).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.94),
+      child: Center(
+        child: SlideTransition(
+          position: _offset,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Image.asset(
+              isDark ? 'lib/assets/logo_light.png' : 'lib/assets/logo_dark.png',
+              width: 88,
+              height: 88,
+              errorBuilder: (context, error, stackTrace) => Icon(
+                Icons.directions_transit,
+                size: 72,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
