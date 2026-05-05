@@ -526,8 +526,11 @@ class _JourneyCard extends StatelessWidget {
     final arrStr = DateFormat('HH:mm').format(journey.arrival);
     final durStr = FormatUtils.formatDuration(journey.duration.inMinutes);
     final hasWalkingSummary = journey.totalWalkingDuration.inMinutes > 0;
+    final hasBikingSummary = journey.totalBikingDuration.inMinutes > 0;
     final walkStr =
         FormatUtils.formatDuration(journey.totalWalkingDuration.inMinutes);
+    final bikeStr =
+        FormatUtils.formatDuration(journey.totalBikingDuration.inMinutes);
     final isSynthetic = journey.source == 'motis_synthetic';
     final badgeLabel = isSynthetic
         ? 'TRANS/SYN'
@@ -659,6 +662,29 @@ class _JourneyCard extends StatelessWidget {
                           const SizedBox(width: 4),
                           Text(
                             walkStr,
+                            style: TextStyle(
+                              color: colors.stepTransferText,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                        if (hasBikingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                            width: 1,
+                            height: 14,
+                            color: Colors.white24,
+                          ),
+                          const SizedBox(width: 10),
+                          Icon(
+                            Icons.pedal_bike,
+                            size: 14,
+                            color: colors.stepTransferText,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            bikeStr,
                             style: TextStyle(
                               color: colors.stepTransferText,
                               fontWeight: FontWeight.bold,

@@ -1,7 +1,7 @@
 import 'package:trans/models/station.dart';
 
 class JourneyStep {
-  final String type; // 'ride', 'wait', 'transfer', 'walk'
+  final String type; // 'ride', 'wait', 'transfer', 'walk', 'bike'
   final String line;
   final String instruction;
   final String duration;
@@ -45,6 +45,7 @@ class JourneyStep {
 
   // New: Display breakdown
   final Duration? walkDuration;
+  final Duration? bikeDuration;
   final Duration? waitDuration;
 
   JourneyStep({
@@ -82,6 +83,7 @@ class JourneyStep {
     this.alarmTargetOriginLng,
     this.alarmTargetName,
     this.walkDuration,
+    this.bikeDuration,
     this.waitDuration,
   });
 
@@ -121,6 +123,7 @@ class JourneyStep {
     String? alarmTargetName,
     bool clearAlarmTarget = false,
     Duration? walkDuration,
+    Duration? bikeDuration,
     Duration? waitDuration,
   }) {
     return JourneyStep(
@@ -152,22 +155,20 @@ class JourneyStep {
       headsign: headsign ?? this.headsign,
       tripId: tripId ?? this.tripId,
       isWakeAlarmOn: isWakeAlarmOn ?? this.isWakeAlarmOn,
-      alarmTargetLat: clearAlarmTarget
-          ? null
-          : (alarmTargetLat ?? this.alarmTargetLat),
-      alarmTargetLng: clearAlarmTarget
-          ? null
-          : (alarmTargetLng ?? this.alarmTargetLng),
+      alarmTargetLat:
+          clearAlarmTarget ? null : (alarmTargetLat ?? this.alarmTargetLat),
+      alarmTargetLng:
+          clearAlarmTarget ? null : (alarmTargetLng ?? this.alarmTargetLng),
       alarmTargetOriginLat: clearAlarmTarget
           ? null
           : (alarmTargetOriginLat ?? this.alarmTargetOriginLat),
       alarmTargetOriginLng: clearAlarmTarget
           ? null
           : (alarmTargetOriginLng ?? this.alarmTargetOriginLng),
-      alarmTargetName: clearAlarmTarget
-          ? null
-          : (alarmTargetName ?? this.alarmTargetName),
+      alarmTargetName:
+          clearAlarmTarget ? null : (alarmTargetName ?? this.alarmTargetName),
       walkDuration: walkDuration ?? this.walkDuration,
+      bikeDuration: bikeDuration ?? this.bikeDuration,
       waitDuration: waitDuration ?? this.waitDuration,
     );
   }
@@ -183,6 +184,7 @@ class Journey {
   final Map<String, dynamic> rawSource;
   final String source; // 'motis', 'v6'
   final Duration totalWalkingDuration;
+  final Duration totalBikingDuration;
   final DateTime? plannedDeparture; // NEW
   final DateTime? plannedArrival; // NEW
 
@@ -196,6 +198,7 @@ class Journey {
     required this.rawSource,
     required this.source,
     this.totalWalkingDuration = Duration.zero,
+    this.totalBikingDuration = Duration.zero,
     this.plannedDeparture,
     this.plannedArrival,
   });
@@ -210,6 +213,7 @@ class Journey {
     Map<String, dynamic>? rawSource,
     String? source,
     Duration? totalWalkingDuration,
+    Duration? totalBikingDuration,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
   }) {
@@ -223,6 +227,7 @@ class Journey {
       rawSource: rawSource ?? this.rawSource,
       source: source ?? this.source,
       totalWalkingDuration: totalWalkingDuration ?? this.totalWalkingDuration,
+      totalBikingDuration: totalBikingDuration ?? this.totalBikingDuration,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
     );

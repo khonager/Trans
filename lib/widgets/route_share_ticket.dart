@@ -304,6 +304,23 @@ class RouteShareTicket extends StatelessWidget {
       );
     }
 
+    if (step.type == 'bike') {
+      return Row(
+        children: [
+          const Icon(Icons.pedal_bike, size: 14, color: Colors.orange),
+          const SizedBox(width: 8),
+          Text('BIKE',
+              style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14)),
+          const SizedBox(width: 8),
+          Text(step.duration,
+              style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        ],
+      );
+    }
+
     if (step.type == 'transfer') {
       return Row(
         children: [

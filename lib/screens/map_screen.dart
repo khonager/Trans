@@ -13,6 +13,36 @@ import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
 
+String googleMapsTravelModeForRoute({
+  required List<JourneyStep> steps,
+  JourneyStep? focusStep,
+}) {
+  if (focusStep != null) {
+    return focusStep.type == 'bike' ? 'bicycling' : 'walking';
+  }
+
+  final navigableSteps =
+      steps.where((step) => step.type != 'wait' && step.type != 'transfer');
+  if (navigableSteps.isNotEmpty &&
+      navigableSteps.every((step) => step.type == 'bike')) {
+    return 'bicycling';
+  }
+
+  return 'walking';
+}
+
+Uri buildGoogleMapsDirectionsUri({
+  required LatLng start,
+  required LatLng end,
+  required String travelMode,
+}) =>
+    Uri.parse(
+      'https://www.google.com/maps/dir/?api=1'
+      '&origin=${start.latitude},${start.longitude}'
+      '&destination=${end.latitude},${end.longitude}'
+      '&travelmode=$travelMode',
+    );
+
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
   final JourneyStep? focusStep;
@@ -454,8 +484,15 @@ class _MapScreenState extends State<MapScreen> {
     if (_routePoints.isEmpty) return;
     final start = _routePoints.first;
     final end = _routePoints.last;
-    final url = Uri.parse(
-        "https://www.google.com/maps/dir/?api=1&origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}&travelmode=walking");
+    final travelMode = googleMapsTravelModeForRoute(
+      steps: widget.steps,
+      focusStep: widget.focusStep,
+    );
+    final url = buildGoogleMapsDirectionsUri(
+      start: start,
+      end: end,
+      travelMode: travelMode,
+    );
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }

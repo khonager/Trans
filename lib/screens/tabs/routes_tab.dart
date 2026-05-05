@@ -2099,7 +2099,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final to = Station.fromJson(Map<String, dynamic>.from(toJson));
     Journey savedJourney;
     try {
-      savedJourney = _createJourney(Map<String, dynamic>.from(rawJourney));
+      savedJourney = _createJourney(
+        Map<String, dynamic>.from(rawJourney),
+        destinationNameOverride: to.name,
+      );
     } catch (_) {
       return (
         stillPossible: false,
@@ -2121,7 +2124,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final freshJourneys = <Journey>[];
     for (final data in freshData) {
       try {
-        freshJourneys.add(_createJourney(data));
+        freshJourneys.add(
+          _createJourney(data, destinationNameOverride: to.name),
+        );
       } catch (_) {
         // Skip invalid candidate
       }
@@ -2217,8 +2222,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
             Journey savedJourney;
             try {
-              savedJourney =
-                  _createJourney(Map<String, dynamic>.from(rawJourney));
+              savedJourney = _createJourney(
+                Map<String, dynamic>.from(rawJourney),
+                destinationNameOverride: item['toName']?.toString(),
+              );
             } catch (_) {
               continue;
             }
@@ -2624,7 +2631,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
-            final j = _createJourney(journey);
+            final j = _createJourney(
+              journey,
+              destinationNameOverride: toDummy.name,
+            );
             setState(() {
               if (_activeTabId != null) {
                 final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
@@ -2658,7 +2668,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  List<JourneyStep> _processLegs(List legs) {
+  List<JourneyStep> _processLegs(
+    List legs, {
+    String? destinationNameOverride,
+  }) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
@@ -2675,6 +2688,35 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         : (loc != null ? loc['longitude'] : null);
     String? stationId(dynamic loc) => loc?['id']?.toString();
     String? stationName(dynamic loc) => loc?['name']?.toString();
+    bool isBikeTransferLeg(dynamic leg) =>
+        leg is Map && leg['mode']?.toString().toUpperCase() == 'BIKE';
+    bool isGenericEndpointName(String? name) {
+      final normalized = name?.trim().toUpperCase();
+      return normalized == 'END' || normalized == 'DESTINATION';
+    }
+
+    String? displayDestinationName(String? name) {
+      if (isGenericEndpointName(name) &&
+          destinationNameOverride != null &&
+          destinationNameOverride.trim().isNotEmpty) {
+        return destinationNameOverride;
+      }
+      return name;
+    }
+
+    String bikeInstruction(String? destinationName, {bool isFinal = false}) {
+      final isGerman = Localizations.localeOf(context).languageCode == 'de';
+      if (isFinal) {
+        return isGerman ? 'Mit dem Fahrrad zum Ziel' : 'Bike to destination';
+      }
+      if (destinationName != null && destinationName.trim().isNotEmpty) {
+        return isGerman
+            ? 'Mit dem Fahrrad zu $destinationName'
+            : 'Bike to $destinationName';
+      }
+      return isGerman ? 'Fahrrad fahren' : 'Bike';
+    }
+
     bool sameStationByIdOrName(
         String? leftId, String? leftName, String? rightId, String? rightName) {
       final aId = leftId?.trim();
@@ -2736,6 +2778,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       int waitMinutes = totalGapMinutes - walkMinutes;
       if (waitMinutes < 0) waitMinutes = 0;
+      final isBikeTransfer = transferBuffer.isNotEmpty &&
+          transferBuffer.every((leg) => isBikeTransferLeg(leg));
 
       double? startLat = getLat(
           transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -2758,6 +2802,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (destName == null && transferBuffer.isNotEmpty) {
         destName = transferBuffer.last['destination']?['name'];
       }
+      destName = displayDestinationName(destName);
 
       // Determine instruction text based on context
       String instruction;
@@ -2851,6 +2896,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 " ${AppLocalizations.of(context)!.atPlatform(fmtPlat(nextPlat))}";
           }
         }
+      } else if (isBikeTransfer) {
+        if (isFirstStep && destName != null) {
+          instruction = bikeInstruction(destName);
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
+        } else if (isFinalWalk) {
+          instruction = bikeInstruction(destName, isFinal: true);
+        } else {
+          instruction = bikeInstruction(destName);
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
+        }
       } else {
         // It is a walk
         if (isFirstStep && destName != null) {
@@ -2874,15 +2929,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       steps.add(JourneyStep(
-        type: isWaitInstruction ? 'wait' : 'walk',
-        line: 'Transfer',
+        type: isWaitInstruction ? 'wait' : (isBikeTransfer ? 'bike' : 'walk'),
+        line: isBikeTransfer ? 'Bike' : 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime:
             "${blockStart.hour.toString().padLeft(2, '0')}:${blockStart.minute.toString().padLeft(2, '0')}",
         arrivalTime:
             "${blockEnd.hour.toString().padLeft(2, '0')}:${blockEnd.minute.toString().padLeft(2, '0')}",
-        isWalking: walkMinutes > 0 || isSignificantWalk,
+        isWalking: !isBikeTransfer && (walkMinutes > 0 || isSignificantWalk),
         startLat: startLat,
         startLng: startLng,
         endLat: endLat,
@@ -2891,7 +2946,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             ? transferBuffer.first['decodedPath']
             : null,
         dateTime: blockStart,
-        walkDuration: Duration(minutes: walkMinutes),
+        walkDuration:
+            isBikeTransfer ? Duration.zero : Duration(minutes: walkMinutes),
+        bikeDuration:
+            isBikeTransfer ? Duration(minutes: walkMinutes) : Duration.zero,
         waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
@@ -3006,10 +3064,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return steps;
   }
 
-  Journey _createJourney(Map<String, dynamic> journeyData) {
+  Journey _createJourney(
+    Map<String, dynamic> journeyData, {
+    String? destinationNameOverride,
+  }) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
-    final List<JourneyStep> steps = _processLegs(legs);
+    final List<JourneyStep> steps = _processLegs(
+      legs,
+      destinationNameOverride: destinationNameOverride,
+    );
 
     DateTime? dep, arr;
     DateTime? pDep, pArr;
@@ -3089,6 +3153,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     }
 
+    int bikeMinutes = 0;
+    for (var step in steps) {
+      if (step.type == 'bike') {
+        if (step.bikeDuration != null) {
+          bikeMinutes += step.bikeDuration!.inMinutes;
+          continue;
+        }
+        try {
+          final parts = step.duration.split(' ');
+          if (parts.isNotEmpty) bikeMinutes += int.tryParse(parts[0]) ?? 0;
+        } catch (e) {/* ignore */}
+      }
+    }
+
     return Journey(
       steps: steps,
       departure: dep ?? DateTime.now(),
@@ -3102,6 +3180,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       rawSource: journeyData,
       source: journeyData['source'] ?? 'unknown',
       totalWalkingDuration: Duration(minutes: walkMinutes),
+      totalBikingDuration: Duration(minutes: bikeMinutes),
     );
   }
 
@@ -3120,7 +3199,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (candidatesData != null) {
       for (var d in candidatesData) {
         try {
-          candidates.add(_createJourney(d));
+          candidates
+              .add(_createJourney(d, destinationNameOverride: dest?.name));
         } catch (e) {/* ignore */}
       }
       if (candidates.isNotEmpty && dest == null) {
@@ -3138,7 +3218,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     } else if (singleJourneyData != null) {
       try {
-        activeJourney = _createJourney(singleJourneyData);
+        activeJourney = _createJourney(
+          singleJourneyData,
+          destinationNameOverride: dest?.name,
+        );
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
         if (dest == null) {
@@ -3196,7 +3279,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in rawData) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(
+                d,
+                destinationNameOverride: currentTab.destination.name,
+              ),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -4821,7 +4909,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(d,
+                  destinationNameOverride: route.destination.name),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -4933,7 +5024,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(d,
+                  destinationNameOverride: route.destination.name),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -5148,7 +5242,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(
+                d,
+                destinationNameOverride: currentRoute.destination.name,
+              ),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -5261,9 +5360,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final colors = TransColors.of(context);
     final totalWalkingMinutes =
         route.activeJourney?.totalWalkingDuration.inMinutes ?? 0;
+    final totalBikingMinutes =
+        route.activeJourney?.totalBikingDuration.inMinutes ?? 0;
     final hasWalkingSummary = totalWalkingMinutes > 0;
+    final hasBikingSummary = totalBikingMinutes > 0;
     final totalWalkingDurationLabel =
         FormatUtils.formatDuration(totalWalkingMinutes);
+    final totalBikingDurationLabel =
+        FormatUtils.formatDuration(totalBikingMinutes);
     return RefreshIndicator(
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
@@ -5345,6 +5449,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               size: 16, color: colors.stepTransferText),
                           const SizedBox(width: 4),
                           Text(totalWalkingDurationLabel,
+                              style: TextStyle(
+                                  color: colors.stepTransferText,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                        if (hasBikingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                              width: 1, height: 14, color: Colors.white24),
+                          const SizedBox(width: 10),
+                          Icon(Icons.pedal_bike,
+                              size: 16, color: colors.stepTransferText),
+                          const SizedBox(width: 4),
+                          Text(totalBikingDurationLabel,
                               style: TextStyle(
                                   color: colors.stepTransferText,
                                   fontWeight: FontWeight.bold)),
@@ -5525,12 +5642,17 @@ class _StepCardState extends State<_StepCard> {
     final colors = TransColors.of(context);
     final step = widget.step;
     final bool isWait = step.type == 'wait';
-    final isTransfer = step.type == 'transfer' || isWait || step.type == 'walk';
+    final bool isBike = step.type == 'bike';
+    final isTransfer =
+        step.type == 'transfer' || isWait || step.type == 'walk' || isBike;
 
     if (isTransfer) {
       Widget iconWidget =
           Icon(Icons.directions_walk, color: colors.stepTransferText);
       if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText);
+      if (isBike) {
+        iconWidget = Icon(Icons.pedal_bike, color: colors.stepTransferText);
+      }
 
       final bool hasWalking =
           step.walkDuration != null && step.walkDuration!.inMinutes > 0;
@@ -5558,7 +5680,12 @@ class _StepCardState extends State<_StepCard> {
                               color: colors.textPrimary)),
 
                       // Show Breakdown if available
-                      if (step.walkDuration != null &&
+                      if (isBike && step.bikeDuration != null)
+                        Text(
+                            "Bike ${FormatUtils.formatDuration(step.bikeDuration!.inMinutes)}",
+                            style: TextStyle(
+                                color: colors.stepTransferText, fontSize: 12))
+                      else if (step.walkDuration != null &&
                           step.waitDuration != null &&
                           !isWait)
                         RichText(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -31,6 +32,8 @@ void main() {
     );
 
     await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SingleChildScrollView(
           child: RouteShareTicket(
@@ -42,8 +45,8 @@ void main() {
     ));
 
     expect(find.text('IC 1234'), findsOneWidget);
-    expect(find.text('Berlin'), findsOneWidget); // Destination
-    expect(find.text('30 min'), findsOneWidget);
+    expect(find.text('BERLIN'), findsOneWidget); // Destination
+    expect(find.text('30 MIN'), findsOneWidget);
     expect(find.byType(QrImageView), findsOneWidget);
   });
 }

@@ -625,11 +625,37 @@ class TransportApi {
         defaultAdvancedMaxWalkingTimeMinutes) {
       return true;
     }
-    final usesBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
-        (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
+    final usesBikeForThisSearch = _usesPreTransitBike || _usesPostTransitBike;
     return !_advancedPreTransitWalkEnabled ||
         !_advancedPostTransitWalkEnabled ||
         usesBikeForThisSearch;
+  }
+
+  static bool get _usesPreTransitBike =>
+      _advancedSettingsEnabledForDevice &&
+      _advancedPreTransitBikeEnabled &&
+      (_advancedBikeToggleEnabledForDevice || !_advancedPreTransitWalkEnabled);
+
+  static bool get _usesPostTransitBike =>
+      _advancedSettingsEnabledForDevice &&
+      _advancedPostTransitBikeEnabled &&
+      (_advancedBikeToggleEnabledForDevice || !_advancedPostTransitWalkEnabled);
+
+  static List<String> _motisDirectModesForCurrentSettings() {
+    if (!_advancedSettingsEnabledForDevice) {
+      return const <String>['WALK', 'BIKE'];
+    }
+
+    final modes = <String>[];
+    if (_advancedPreTransitWalkEnabled || _advancedPostTransitWalkEnabled) {
+      modes.add('WALK');
+    }
+    if (_usesPreTransitBike || _usesPostTransitBike) {
+      modes.add('BIKE');
+    }
+
+    if (modes.isEmpty) return const <String>['WALK'];
+    return modes;
   }
 
   static Map<String, dynamic> _buildMotisJourneySearchParams(
@@ -723,8 +749,7 @@ class TransportApi {
         params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
       }
 
-      final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
-          (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
+      final useBikeForThisSearch = _usesPreTransitBike || _usesPostTransitBike;
       final hasModeOverride = !_advancedPreTransitWalkEnabled ||
           !_advancedPostTransitWalkEnabled ||
           useBikeForThisSearch;
@@ -734,10 +759,10 @@ class TransportApi {
 
         if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
         if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
-        if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
+        if (_usesPreTransitBike) {
           preModes.add('BIKE');
         }
-        if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
+        if (_usesPostTransitBike) {
           postModes.add('BIKE');
         }
 
@@ -781,6 +806,8 @@ class TransportApi {
       params['toPlace'] = '${to.latitude},${to.longitude}';
     }
 
+    final directModes = _motisDirectModesForCurrentSettings();
+
     params
       ..remove('transitModes')
       ..remove('preTransitModes')
@@ -790,13 +817,20 @@ class TransportApi {
       ..remove('minTransferTime')
       ..remove('additionalTransferTime')
       ..remove('transferTimeFactor')
-      ..['directModes'] = 'WALK,BIKE'
+      ..remove('pedestrianSpeed')
+      ..remove('cyclingSpeed')
+      ..['directModes'] = directModes.join(',')
       ..['maxDirectTime'] = (_motisDirectFallbackMaxMinutes * 60).toString()
-      ..['pedestrianSpeed'] = (_advancedPedestrianSpeedKmh / 3.6)
-          .clamp(0.55, 2.8)
-          .toStringAsFixed(2)
-      ..['cyclingSpeed'] =
-          (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5).toStringAsFixed(2);
+      ..addAll({
+        if (directModes.contains('WALK'))
+          'pedestrianSpeed': (_advancedPedestrianSpeedKmh / 3.6)
+              .clamp(0.55, 2.8)
+              .toStringAsFixed(2),
+        if (directModes.contains('BIKE'))
+          'cyclingSpeed': (_advancedCyclingSpeedKmh / 3.6)
+              .clamp(1.5, 8.5)
+              .toStringAsFixed(2),
+      });
 
     return params;
   }
