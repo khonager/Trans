@@ -634,16 +634,16 @@ class TransportApi {
   static bool get _usesPreTransitBike =>
       _advancedSettingsEnabledForDevice &&
       _advancedPreTransitBikeEnabled &&
-      (_advancedBikeToggleEnabledForDevice || !_advancedPreTransitWalkEnabled);
+      _advancedBikeToggleEnabledForDevice;
 
   static bool get _usesPostTransitBike =>
       _advancedSettingsEnabledForDevice &&
       _advancedPostTransitBikeEnabled &&
-      (_advancedBikeToggleEnabledForDevice || !_advancedPostTransitWalkEnabled);
+      _advancedBikeToggleEnabledForDevice;
 
   static List<String> _motisDirectModesForCurrentSettings() {
     if (!_advancedSettingsEnabledForDevice) {
-      return const <String>['WALK', 'BIKE'];
+      return const <String>['WALK'];
     }
 
     final modes = <String>[];

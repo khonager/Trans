@@ -249,6 +249,20 @@ void main() {
       expect(advancedDefault['maxPostTransitTime'], '3600');
     });
 
+    test('direct fallback is walking-only when bike routing is not enabled',
+        () {
+      configureDefaultAdvanced(enabled: false);
+
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(direct['directModes'], 'WALK');
+      expect(direct, isNot(contains('cyclingSpeed')));
+      expect(direct, contains('pedestrianSpeed'));
+    });
+
     test('serialises transfer settings in Transitous minutes, not seconds', () {
       TransportApi.configureAdvancedSearchSettings(
         enabledForDevice: true,
@@ -332,7 +346,47 @@ void main() {
       expect(params['cyclingSpeed'], '5.00');
     });
 
-    test('uses BIKE when bicycle is the only pre/post transit mode', () {
+    test('uses BIKE when bicycle is the only mode and route toggle is on', () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: false,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: false,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: 20,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(true);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['preTransitModes'], 'BIKE');
+      expect(params['postTransitModes'], 'BIKE');
+      expect(params['cyclingSpeed'], '5.56');
+      expect(params['preTransitModes'], isNot(contains('WALK')));
+      expect(params['postTransitModes'], isNot(contains('WALK')));
+      expect(direct['directModes'], 'BIKE');
+      expect(direct['cyclingSpeed'], '5.56');
+      expect(direct, isNot(contains('pedestrianSpeed')));
+    });
+
+    test(
+        'falls back to WALK when bicycle is configured but route toggle is off',
+        () {
       TransportApi.configureAdvancedSearchSettings(
         enabledForDevice: true,
         minTransferTimeMinutes:
@@ -360,14 +414,12 @@ void main() {
         testTo,
       );
 
-      expect(params['preTransitModes'], 'BIKE');
-      expect(params['postTransitModes'], 'BIKE');
-      expect(params['cyclingSpeed'], '5.56');
-      expect(params['preTransitModes'], isNot(contains('WALK')));
-      expect(params['postTransitModes'], isNot(contains('WALK')));
-      expect(direct['directModes'], 'BIKE');
-      expect(direct['cyclingSpeed'], '5.56');
-      expect(direct, isNot(contains('pedestrianSpeed')));
+      expect(params['preTransitModes'], 'WALK');
+      expect(params['postTransitModes'], 'WALK');
+      expect(params, isNot(contains('cyclingSpeed')));
+      expect(direct['directModes'], 'WALK');
+      expect(direct, isNot(contains('cyclingSpeed')));
+      expect(direct, contains('pedestrianSpeed'));
     });
 
     test(
@@ -435,10 +487,10 @@ void main() {
         testTo,
       );
 
-      expect(params['preTransitModes'], 'BIKE');
+      expect(params['preTransitModes'], 'WALK');
       expect(params['postTransitModes'], 'WALK');
-      expect(params['cyclingSpeed'], '4.44');
-      expect(direct['directModes'], 'WALK,BIKE');
+      expect(params, isNot(contains('cyclingSpeed')));
+      expect(direct['directModes'], 'WALK');
     });
   });
 
@@ -520,7 +572,26 @@ void main() {
   });
 
   group('TransportApi direct journey fallback helpers', () {
-    test('builds direct WALK and BIKE fallback parameters', () {
+    test('builds direct WALK and BIKE fallback parameters when bike is enabled',
+        () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: TransportApi.defaultAdvancedCyclingSpeedKmh,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(true);
+
       final from = Station(
         id: 'gps',
         name: 'From',
