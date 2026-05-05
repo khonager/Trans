@@ -31,9 +31,20 @@ void main() {
       );
     });
 
+    test('uses bicycling when a mixed route includes a bike leg', () {
+      expect(
+        googleMapsTravelModeForRoute(steps: [step('walk'), step('bike')]),
+        'bicycling',
+      );
+      expect(
+        googleMapsTravelModeForRoute(steps: [step('ride'), step('bike')]),
+        'bicycling',
+      );
+    });
+
     test('keeps walking mode for mixed or walking routes', () {
       expect(
-        googleMapsTravelModeForRoute(steps: [step('bike'), step('ride')]),
+        googleMapsTravelModeForRoute(steps: [step('walk'), step('ride')]),
         'walking',
       );
       expect(

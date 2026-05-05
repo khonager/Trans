@@ -21,10 +21,7 @@ String googleMapsTravelModeForRoute({
     return focusStep.type == 'bike' ? 'bicycling' : 'walking';
   }
 
-  final navigableSteps =
-      steps.where((step) => step.type != 'wait' && step.type != 'transfer');
-  if (navigableSteps.isNotEmpty &&
-      navigableSteps.every((step) => step.type == 'bike')) {
+  if (steps.any((step) => step.type == 'bike')) {
     return 'bicycling';
   }
 
