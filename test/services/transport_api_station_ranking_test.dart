@@ -3,6 +3,42 @@ import 'package:trans/models/station.dart';
 import 'package:trans/services/transport_api.dart';
 
 void main() {
+  group('TransportApi.shouldSupplementSparseStationResults', () {
+    test('supplements sparse station-like short queries', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 10,
+          requestedLimit: 60,
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not supplement when station-like results already fill batch',
+        () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 20,
+          requestedLimit: 20,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not supplement specific longer non-station queries', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'frankfurt airport terminal 1',
+          currentCount: 8,
+          requestedLimit: 60,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('TransportApi.rankStationsForQuery', () {
     test('prefers a main transit hub over an exact city place without location',
         () {

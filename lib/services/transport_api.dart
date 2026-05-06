@@ -1097,9 +1097,17 @@ class TransportApi {
       return rankedMotis;
     }
 
-    // In auto mode, Transitous is the primary source.
-    // Only fall back to v6 when Transitous returns no station results.
-    if (rankedMotis.isNotEmpty) {
+    final queryTokens = _searchTokens(query);
+    final shouldSupplement = _shouldSupplementSparseStationResults(
+      queryTokens,
+      currentCount: rankedMotis.length,
+      requestedLimit: limit,
+    );
+
+    // In auto mode, Transitous stays primary, but broad queries like "hbf"
+    // often return a short list even when more useful matches exist. When the
+    // result set is sparse, supplement it with v6 before returning.
+    if (rankedMotis.isNotEmpty && !shouldSupplement) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
         const Duration(hours: 1),
@@ -1113,7 +1121,10 @@ class TransportApi {
       lng: lng,
       limit: limit,
     );
-    final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
+    final merged = rankedMotis.isEmpty
+        ? v6Results
+        : _mergeStationSearchResults(rankedMotis, v6Results);
+    final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
   }
@@ -1467,6 +1478,36 @@ class TransportApi {
   static bool _isStationLikeQuery(List<String> queryTokens) => queryTokens.any(
         (token) => _stationEquivalentTokens(token).length > 1,
       );
+
+  @visibleForTesting
+  static bool shouldSupplementSparseStationResults(
+    String query, {
+    required int currentCount,
+    required int requestedLimit,
+  }) {
+    return _shouldSupplementSparseStationResults(
+      _searchTokens(query),
+      currentCount: currentCount,
+      requestedLimit: requestedLimit,
+    );
+  }
+
+  static bool _shouldSupplementSparseStationResults(
+    List<String> queryTokens, {
+    required int currentCount,
+    required int requestedLimit,
+  }) {
+    if (currentCount <= 0) return true;
+    if (currentCount >= requestedLimit) return false;
+    if (queryTokens.isEmpty) return false;
+
+    final stationLike = _isStationLikeQuery(queryTokens);
+    final broadQuery = queryTokens.length <= 2;
+    if (!stationLike && !broadQuery) return false;
+
+    final minimumUsefulResults = math.min(12, requestedLimit);
+    return currentCount < minimumUsefulResults;
+  }
 
   static Map<String, Set<String>> _expandEquivalentSearchTokens(
     List<String> tokens,

@@ -211,7 +211,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Set<int> _cancelledRouteSearchTokens = <int>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
-  int _visibleStationSuggestionCount = 12;
 
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
@@ -251,9 +250,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
 
-  static const int _initialVisibleStationSuggestionCount = 12;
-  static const int _stationSuggestionPageSize = 12;
-
   @override
   void initState() {
     super.initState();
@@ -266,7 +262,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
-    _suggestionsScrollController.addListener(_onSuggestionsScroll);
     _resolveCurrentAddress();
     _loadHistoryData();
   }
@@ -308,27 +303,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void _handleDeviceRouteSettingsRefresh() {
     unawaited(_loadDeviceRoutePreferences());
-  }
-
-  void _onSuggestionsScroll() {
-    if (!_suggestionsScrollController.hasClients) return;
-    final position = _suggestionsScrollController.position;
-    if (position.pixels < position.maxScrollExtent - 120) return;
-    _loadMoreSuggestionResults();
-  }
-
-  void _resetVisibleSuggestionCount() {
-    _visibleStationSuggestionCount = _initialVisibleStationSuggestionCount;
-  }
-
-  void _loadMoreSuggestionResults() {
-    final totalStations = _suggestions.whereType<Station>().length;
-    if (_visibleStationSuggestionCount >= totalStations) return;
-    setState(() {
-      _visibleStationSuggestionCount =
-          (_visibleStationSuggestionCount + _stationSuggestionPageSize)
-              .clamp(0, totalStations);
-    });
   }
 
   Future<void> _setBikeSearchToggleEnabledForDevice(bool enabled) async {
@@ -524,7 +498,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.dispose();
     _toFocusNode.dispose();
     _scrollController.dispose();
-    _suggestionsScrollController.removeListener(_onSuggestionsScroll);
     _suggestionsScrollController.dispose();
     _debounce?.cancel();
     _focusDebounce?.cancel();
@@ -1165,7 +1138,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final history = await SearchHistoryManager.getHistory();
       if (mounted) {
         setState(() {
-          _resetVisibleSuggestionCount();
           _suggestions = history;
           if (updateLoadingState) _isSuggestionsLoading = false;
         });
@@ -1195,7 +1167,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     if (mounted) {
       setState(() {
-        _resetVisibleSuggestionCount();
         _suggestions = results;
         if (updateLoadingState) _isSuggestionsLoading = false;
       });
@@ -1263,8 +1234,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final favorites = <Favorite>[];
     final stations = <Station>[];
 
-    final visibleItems = _visibleSuggestionItems();
-    for (final item in visibleItems) {
+    for (final item in _suggestions) {
       if (item is Favorite) {
         favorites.add(item);
       } else if (item is Station) {
@@ -1291,24 +1261,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     return sections;
-  }
-
-  List<dynamic> _visibleSuggestionItems() {
-    final favorites = <dynamic>[];
-    final stations = <dynamic>[];
-
-    for (final item in _suggestions) {
-      if (item is Favorite) {
-        favorites.add(item);
-      } else {
-        stations.add(item);
-      }
-    }
-
-    final visibleStations = stations
-        .take(_visibleStationSuggestionCount.clamp(0, stations.length))
-        .toList(growable: false);
-    return <dynamic>[...favorites, ...visibleStations];
   }
 
   void _onSearchChanged(String query, String field) {
@@ -1343,7 +1295,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
     setState(() {
-      _resetVisibleSuggestionCount();
       _suggestions = matchingFavs;
       _isSuggestionsLoading = sanitizedQuery.length > 2;
     });
@@ -1389,7 +1340,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
         if (mounted) {
           setState(() {
-            _resetVisibleSuggestionCount();
             if (apiResults.isEmpty && matchingFavs.isEmpty) {
               // Show message if no results at all
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -4652,108 +4602,107 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (_isSuggestionsLoading) const SizedBox.shrink(),
               Flexible(
-                  child: ListView.builder(
-                      controller: _suggestionsScrollController,
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      itemCount: sections.length,
-                      itemBuilder: (ctx, idx) {
-                        final section = sections[idx];
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (section.title != null)
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(14, 12, 14, 6),
-                                child: Text(
-                                  section.title!,
-                                  style: TextStyle(
-                                    color: colors.searchHintText,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.4,
-                                  ),
-                                ),
+                child: ListView.builder(
+                  controller: _suggestionsScrollController,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: sections.length,
+                  itemBuilder: (ctx, idx) {
+                    final section = sections[idx];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (section.title != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+                            child: Text(
+                              section.title!,
+                              style: TextStyle(
+                                color: colors.searchHintText,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
                               ),
-                            ...section.items.asMap().entries.map((entry) {
-                              final item = entry.value;
-                              final isLastItem = idx == sections.length - 1 &&
-                                  entry.key == section.items.length - 1;
+                            ),
+                          ),
+                        ...section.items.asMap().entries.map((entry) {
+                          final item = entry.value;
+                          final isLastItem = idx == sections.length - 1 &&
+                              entry.key == section.items.length - 1;
 
-                              Widget tile;
-                              if (item is Favorite) {
-                                tile = ListTile(
-                                  leading: Icon(_favoriteIcon(item),
-                                      size: 16, color: Colors.orange),
-                                  title: Text(item.label,
+                          Widget tile;
+                          if (item is Favorite) {
+                            tile = ListTile(
+                              leading: Icon(_favoriteIcon(item),
+                                  size: 16, color: Colors.orange),
+                              title: Text(item.label,
+                                  style: TextStyle(
+                                      color: colors.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold)),
+                              onTap: () => _selectItem(item),
+                              hoverColor: Colors.white10,
+                            );
+                          } else {
+                            final station = item as Station;
+                            IconData leadingIcon = Icons.place;
+                            if (station.type == 'address') {
+                              leadingIcon = Icons.home_work;
+                            } else if (station.type == 'stop') {
+                              leadingIcon = Icons.train;
+                            }
+
+                            final distanceText =
+                                _distanceTextForStation(station);
+
+                            tile = ListTile(
+                              leading: Icon(leadingIcon,
+                                  size: 16, color: Colors.grey),
+                              title: Text(station.name,
+                                  style: TextStyle(
+                                      color: colors.textPrimary, fontSize: 14)),
+                              subtitle: station.locationSummary != null
+                                  ? Text(station.locationSummary!,
                                       style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold)),
-                                  onTap: () => _selectItem(item),
-                                  hoverColor: Colors.white10,
-                                );
-                              } else {
-                                final station = item as Station;
-                                IconData leadingIcon = Icons.place;
-                                if (station.type == 'address') {
-                                  leadingIcon = Icons.home_work;
-                                } else if (station.type == 'stop') {
-                                  leadingIcon = Icons.train;
-                                }
-
-                                final distanceText =
-                                    _distanceTextForStation(station);
-
-                                tile = ListTile(
-                                  leading: Icon(leadingIcon,
-                                      size: 16, color: Colors.grey),
-                                  title: Text(station.name,
+                                          color: colors.searchHintText,
+                                          fontSize: 11))
+                                  : null,
+                              trailing: distanceText != null
+                                  ? Text(distanceText,
                                       style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 14)),
-                                  subtitle: station.locationSummary != null
-                                      ? Text(station.locationSummary!,
-                                          style: TextStyle(
-                                              color: colors.searchHintText,
-                                              fontSize: 11))
-                                      : null,
-                                  trailing: distanceText != null
-                                      ? Text(distanceText,
-                                          style: TextStyle(
-                                              color: colors.searchHintText,
-                                              fontSize: 12))
-                                      : null,
-                                  onTap: () => _selectItem(station),
-                                  hoverColor: Colors.white10,
-                                  onLongPress: () {
-                                    final newFav = Favorite(
-                                        id: DateTime.now()
-                                            .millisecondsSinceEpoch
-                                            .toString(),
-                                        label: station.name,
-                                        type: 'station',
-                                        station: station);
-                                    _showEditFavoriteDialog(newFav);
-                                  },
-                                );
-                              }
+                                          color: colors.searchHintText,
+                                          fontSize: 12))
+                                  : null,
+                              onTap: () => _selectItem(station),
+                              hoverColor: Colors.white10,
+                              onLongPress: () {
+                                final newFav = Favorite(
+                                    id: DateTime.now()
+                                        .millisecondsSinceEpoch
+                                        .toString(),
+                                    label: station.name,
+                                    type: 'station',
+                                    station: station);
+                                _showEditFavoriteDialog(newFav);
+                              },
+                            );
+                          }
 
-                              if (isLastItem) return tile;
+                          if (isLastItem) return tile;
 
-                              return Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  tile,
-                                  const Divider(
-                                      height: 1, color: Colors.white10),
-                                ],
-                              );
-                            }),
-                          ],
-                        );
-                      }))
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              tile,
+                              const Divider(height: 1, color: Colors.white10),
+                            ],
+                          );
+                        }),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ]),
           )),
     );
