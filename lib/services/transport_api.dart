@@ -1268,8 +1268,17 @@ class TransportApi {
       score += 75;
     }
 
-    if (isTransitStop) score += 65;
-    if (station.type == 'address') score -= 20;
+    if (isTransitStop) {
+      score += 105;
+      if (queryLooksLikeStation) score += 55;
+    } else {
+      if (station.type == 'location') score -= 25;
+      if (station.type == 'address') score -= 55;
+      if (queryLooksLikeStation) {
+        if (station.type == 'location') score -= 95;
+        if (station.type == 'address') score -= 120;
+      }
+    }
 
     if (_looksLikeTransitHub(normalizedName, nameTokens)) {
       score += 95;

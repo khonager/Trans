@@ -280,5 +280,32 @@ void main() {
 
       expect(ranked.first.id, 'wiesbaden-hbf');
     });
+
+    test('generally prefers transit stops over similarly named places', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'poi',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'location',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -26.5,
+          ),
+          Station(
+            id: 'stop',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+        ],
+        'wiesbaden hauptbahnhof',
+      );
+
+      expect(ranked.first.id, 'stop');
+    });
   });
 }
