@@ -1209,6 +1209,8 @@ class TransportApi {
     final isSingleTokenQuery = queryTokens.length == 1;
     final wantsSpecificAirportDetail =
         _queryRequestsSpecificAirportDetail(queryTokens);
+    final expandedQueryTokens = _expandEquivalentSearchTokens(queryTokens);
+    final queryLooksLikeStation = _isStationLikeQuery(queryTokens);
 
     var score = 0;
 
@@ -1222,24 +1224,29 @@ class TransportApi {
 
     var matchedQueryTokens = 0;
     for (final token in queryTokens) {
-      final exactNameMatch = nameTokens.contains(token);
-      final prefixNameMatch = nameTokens.any(
-        (nameToken) =>
-            nameToken.startsWith(token) || token.startsWith(nameToken),
+      final equivalentTokens = expandedQueryTokens[token] ?? <String>{token};
+      final exactNameMatch = equivalentTokens.any(nameTokens.contains);
+      final prefixNameMatch = equivalentTokens.any(
+        (variant) => nameTokens.any(
+          (nameToken) =>
+              nameToken.startsWith(variant) || variant.startsWith(nameToken),
+        ),
       );
-      final exactCityMatch = cityTokens.contains(token);
-      final prefixCityMatch = cityTokens.any(
-        (cityToken) =>
-            cityToken.startsWith(token) || token.startsWith(cityToken),
+      final exactCityMatch = equivalentTokens.any(cityTokens.contains);
+      final prefixCityMatch = equivalentTokens.any(
+        (variant) => cityTokens.any(
+          (cityToken) =>
+              cityToken.startsWith(variant) || variant.startsWith(cityToken),
+        ),
       );
-      final categoryMatch = categoryTokens.contains(token) ||
-          typeTokens.contains(token) ||
-          countryTokens.contains(token);
-      final weakRegionMatch = regionTokens.contains(token);
+      final categoryMatch = equivalentTokens.any(categoryTokens.contains) ||
+          equivalentTokens.any(typeTokens.contains) ||
+          equivalentTokens.any(countryTokens.contains);
+      final weakRegionMatch = equivalentTokens.any(regionTokens.contains);
 
       if (exactNameMatch) {
         matchedQueryTokens++;
-        score += 55;
+        score += equivalentTokens.length > 1 ? 60 : 55;
       } else if (prefixNameMatch) {
         matchedQueryTokens++;
         score += 24;
@@ -1272,6 +1279,11 @@ class TransportApi {
     }
     if (station.searchScore != null) {
       score += (-station.searchScore!).round();
+    }
+    if (queryLooksLikeStation &&
+        !isTransitStop &&
+        _looksLikeCommercialPoi(categoryTokens, nameTokens)) {
+      score -= 140;
     }
 
     if (!hasLocationBias &&
@@ -1442,6 +1454,47 @@ class TransportApi {
             token.startsWith('airpor') ||
             token.startsWith('aerodrom'),
       );
+
+  static bool _isStationLikeQuery(List<String> queryTokens) => queryTokens.any(
+        (token) => _stationEquivalentTokens(token).length > 1,
+      );
+
+  static Map<String, Set<String>> _expandEquivalentSearchTokens(
+    List<String> tokens,
+  ) {
+    return {
+      for (final token in tokens) token: _stationEquivalentTokens(token),
+    };
+  }
+
+  static Set<String> _stationEquivalentTokens(String token) {
+    switch (token) {
+      case 'hbf':
+      case 'hauptbahnhof':
+        return {'hbf', 'hauptbahnhof'};
+      case 'bf':
+      case 'bahnhof':
+        return {'bf', 'bahnhof'};
+      default:
+        return {token};
+    }
+  }
+
+  static bool _looksLikeCommercialPoi(
+    List<String> categoryTokens,
+    List<String> nameTokens,
+  ) {
+    const commercialTokens = {
+      'shop',
+      'mall',
+      'retail',
+      'supermarket',
+      'commercial',
+      'einkaufsbahnhof',
+    };
+    return categoryTokens.any(commercialTokens.contains) ||
+        nameTokens.any(commercialTokens.contains);
+  }
 
   static List<String> _searchTokens(String text) => _splitSearchTokens(
         _normalizeSearchText(text),

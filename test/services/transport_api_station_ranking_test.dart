@@ -251,5 +251,34 @@ void main() {
 
       expect(ranked.first.id, 'wiesbaden-luisenplatz');
     });
+
+    test('prefers actual hauptbahnhof over einkaufsbahnhof poi for hbf query',
+        () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'einkaufsbahnhof',
+            name: 'Einkaufsbahnhof Wiesbaden Hbf',
+            type: 'location',
+            city: 'Wiesbaden',
+            country: 'DE',
+            category: 'shop_other_16',
+            searchScore: -23.5,
+          ),
+          Station(
+            id: 'wiesbaden-hbf',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+        ],
+        'wiesbaden hbf',
+      );
+
+      expect(ranked.first.id, 'wiesbaden-hbf');
+    });
   });
 }
