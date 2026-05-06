@@ -153,6 +153,8 @@ class TransportApi {
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
   static const int _syntheticProgressBatchSize = 4;
+  static const int _defaultStationSearchLimit = 20;
+  static const int _expandedStationSearchLimit = 60;
   static const List<String> _nonDeutschlandticketServiceTokens = [
     'ICE',
     'IC',
@@ -387,10 +389,11 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final Map<String, dynamic> params = {
       'query': query,
-      'results': 20,
+      'results': limit.clamp(1, _expandedStationSearchLimit),
       'poi': 'true',
       'addresses': 'true',
     };
@@ -839,8 +842,12 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
-    final Map<String, dynamic> params = {'text': query};
+    final Map<String, dynamic> params = {
+      'text': query,
+      'limit': limit.clamp(1, _expandedStationSearchLimit),
+    };
 
     if (lat != null && lng != null) {
       params['place'] = '$lat,$lng';
@@ -1006,12 +1013,13 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final sanitizedQuery = _sanitizeStationQuery(query);
     if (sanitizedQuery.isEmpty) return [];
 
     // Check cache first
-    final cacheKey = 'stations:$sanitizedQuery:$lat:$lng';
+    final cacheKey = 'stations:$sanitizedQuery:$lat:$lng:$limit';
     final cached = _stationCache[cacheKey];
     if (cached != null && !cached.isExpired) {
       debugPrint('Cache hit for stations: $sanitizedQuery');
@@ -1026,6 +1034,7 @@ class TransportApi {
       cacheKey,
       lat: lat,
       lng: lng,
+      limit: limit,
     );
     _stationSearchInFlight[cacheKey] = future;
     future.whenComplete(() => _stationSearchInFlight.remove(cacheKey));
@@ -1037,9 +1046,15 @@ class TransportApi {
     String cacheKey, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     if (usesOnlyDbV6) {
-      final result = await _searchStationsV6(query, lat: lat, lng: lng);
+      final result = await _searchStationsV6(
+        query,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
       final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
       _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
       return ranked;
@@ -1047,7 +1062,22 @@ class TransportApi {
 
     List<Station> motisResults = [];
     try {
-      motisResults = await _searchStationsMotis(query, lat: lat, lng: lng);
+      motisResults = await _searchStationsMotis(
+        query,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
+      for (final alternateQuery in _alternateStationQueries(query)) {
+        final alternateResults = await _searchStationsMotis(
+          alternateQuery,
+          lat: lat,
+          lng: lng,
+          limit: limit,
+        );
+        motisResults =
+            _mergeStationSearchResults(motisResults, alternateResults);
+      }
     } catch (error) {
       debugPrint('Transitous searchStations failed: $error');
     }
@@ -1081,6 +1111,7 @@ class TransportApi {
       query,
       lat: lat,
       lng: lng,
+      limit: limit,
     );
     final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
@@ -1091,6 +1122,7 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final cooldownUntil = _v6StationsCooldownUntil;
     if (cooldownUntil != null && DateTime.now().isBefore(cooldownUntil)) {
@@ -1101,7 +1133,7 @@ class TransportApi {
     }
 
     try {
-      return await _searchStationsV6(query, lat: lat, lng: lng);
+      return await _searchStationsV6(query, lat: lat, lng: lng, limit: limit);
     } catch (error) {
       debugPrint('v6.db searchStations failed: $error');
       _v6StationsCooldownUntil = DateTime.now().add(
@@ -1159,21 +1191,24 @@ class TransportApi {
   }) {
     final normalizedName = _normalizeSearchText(station.name);
     final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(
-      _normalizeSearchText(
-        [
-          station.city,
-          station.region,
-          station.country,
-          station.category,
-          station.type,
-        ].whereType<String>().join(' '),
-      ),
-    );
+    final cityTokens = _searchTokens(station.city ?? '');
+    final regionTokens = _searchTokens(station.region ?? '');
+    final countryTokens = _searchTokens(station.country ?? '');
+    final categoryTokens = _searchTokens(station.category ?? '');
+    final typeTokens = _searchTokens(station.type);
+    final metadataTokens = <String>{
+      ...cityTokens,
+      ...regionTokens,
+      ...countryTokens,
+      ...categoryTokens,
+      ...typeTokens,
+    }.toList(growable: false);
     final isTransitStop = station.type == 'station' || station.type == 'stop';
     final isAirportQuery = _isAirportLikeQuery(queryTokens);
     final hasLocationBias = lat != null && lng != null;
     final isSingleTokenQuery = queryTokens.length == 1;
+    final wantsSpecificAirportDetail =
+        _queryRequestsSpecificAirportDetail(queryTokens);
 
     var score = 0;
 
@@ -1192,7 +1227,15 @@ class TransportApi {
         (nameToken) =>
             nameToken.startsWith(token) || token.startsWith(nameToken),
       );
-      final metadataMatch = metadataTokens.contains(token);
+      final exactCityMatch = cityTokens.contains(token);
+      final prefixCityMatch = cityTokens.any(
+        (cityToken) =>
+            cityToken.startsWith(token) || token.startsWith(cityToken),
+      );
+      final categoryMatch = categoryTokens.contains(token) ||
+          typeTokens.contains(token) ||
+          countryTokens.contains(token);
+      final weakRegionMatch = regionTokens.contains(token);
 
       if (exactNameMatch) {
         matchedQueryTokens++;
@@ -1200,9 +1243,17 @@ class TransportApi {
       } else if (prefixNameMatch) {
         matchedQueryTokens++;
         score += 24;
-      } else if (metadataMatch) {
+      } else if (exactCityMatch) {
+        matchedQueryTokens++;
+        score += 42;
+      } else if (prefixCityMatch) {
+        matchedQueryTokens++;
+        score += 18;
+      } else if (categoryMatch) {
         matchedQueryTokens++;
         score += 10;
+      } else if (weakRegionMatch) {
+        score += 3;
       }
     }
 
@@ -1215,6 +1266,12 @@ class TransportApi {
 
     if (_looksLikeTransitHub(normalizedName, nameTokens)) {
       score += 95;
+    }
+    if (station.searchImportance != null) {
+      score += (station.searchImportance! * 140).round();
+    }
+    if (station.searchScore != null) {
+      score += (-station.searchScore!).round();
     }
 
     if (!hasLocationBias &&
@@ -1231,9 +1288,17 @@ class TransportApi {
         score += 180;
       }
       if (isTransitStop) score += 120;
+      if (_looksLikeAirportRailHub(normalizedName, nameTokens)) {
+        score += 260;
+      }
       if (station.type == 'address') score -= 140;
       if (_isGenericAirportLabel(normalizedName)) score -= 110;
       if (_looksLikeRoadOrNeighborhood(nameTokens)) score -= 95;
+      if (!wantsSpecificAirportDetail &&
+          _looksLikeOverSpecificAirportResult(normalizedName, nameTokens) &&
+          !_looksLikeAirportRailHub(normalizedName, nameTokens)) {
+        score -= 170;
+      }
       if (normalizedName.contains('bahnhof') ||
           normalizedName.contains('regionalbf') ||
           normalizedName.contains('fernbf') ||
@@ -1307,6 +1372,49 @@ class TransportApi {
     return nameTokens.any(hubTokens.contains);
   }
 
+  static bool _looksLikeAirportRailHub(
+    String normalizedName,
+    List<String> nameTokens,
+  ) {
+    if (!_looksLikeAirport(nameTokens, nameTokens)) return false;
+    return normalizedName.contains('bahnhof') ||
+        normalizedName.contains('regionalbf') ||
+        normalizedName.contains('fernbf') ||
+        nameTokens.contains('bf') ||
+        nameTokens.contains('hbf');
+  }
+
+  static bool _looksLikeOverSpecificAirportResult(
+    String normalizedName,
+    List<String> nameTokens,
+  ) {
+    if (RegExp(r'\bp\d{1,3}\b').hasMatch(normalizedName)) return true;
+    if (RegExp(r'\bterminal\s*[0-9a-z]+\b').hasMatch(normalizedName)) {
+      return true;
+    }
+
+    const detailTokens = {
+      'gate',
+      'pier',
+      'stand',
+      'parking',
+      'park',
+    };
+    return nameTokens.any(detailTokens.contains);
+  }
+
+  static bool _queryRequestsSpecificAirportDetail(List<String> queryTokens) {
+    if (queryTokens.any((token) => RegExp(r'^p\d{1,3}$').hasMatch(token))) {
+      return true;
+    }
+    if (queryTokens.any((token) => RegExp(r'^[0-9]+[a-z]?$').hasMatch(token))) {
+      return true;
+    }
+    return queryTokens.contains('terminal') ||
+        queryTokens.contains('gate') ||
+        queryTokens.contains('pier');
+  }
+
   static bool _isGenericAirportLabel(String normalizedName) =>
       normalizedName == 'airport' || normalizedName == 'flughafen';
 
@@ -1371,6 +1479,64 @@ class TransportApi {
 
   static String _sanitizeStationQuery(String query) =>
       query.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  static List<String> _alternateStationQueries(String query) {
+    final sanitized = _sanitizeStationQuery(query);
+    if (sanitized.isEmpty) return const <String>[];
+
+    final lower = sanitized.toLowerCase();
+    final alternates = <String>{};
+    if (lower.contains('airport')) {
+      alternates.add(
+        sanitized.replaceAll(
+          RegExp('airport', caseSensitive: false),
+          'Flughafen',
+        ),
+      );
+    }
+    if (lower.contains('flughafen')) {
+      alternates.add(
+        sanitized.replaceAll(
+          RegExp('flughafen', caseSensitive: false),
+          'Airport',
+        ),
+      );
+    }
+    alternates.removeWhere((value) => value.trim().toLowerCase() == lower);
+    return alternates.toList(growable: false);
+  }
+
+  static List<Station> _mergeStationSearchResults(
+    List<Station> primary,
+    List<Station> secondary,
+  ) {
+    if (primary.isEmpty) return secondary;
+    if (secondary.isEmpty) return primary;
+
+    final merged = <Station>[...primary];
+    final seen = <String>{
+      for (final station in primary) _stationDedupKey(station),
+    };
+    for (final station in secondary) {
+      if (seen.add(_stationDedupKey(station))) {
+        merged.add(station);
+      }
+    }
+    return merged;
+  }
+
+  static String _stationDedupKey(Station station) {
+    final id = station.id.trim();
+    if (id.isNotEmpty) return 'id:$id';
+
+    final lat =
+        station.latitude != null ? station.latitude!.toStringAsFixed(4) : '';
+    final lng =
+        station.longitude != null ? station.longitude!.toStringAsFixed(4) : '';
+    final city = _normalizeSearchText(station.city ?? '');
+    final name = _normalizeSearchText(station.name);
+    return 'name:$name|city:$city|lat:$lat|lng:$lng';
+  }
 
   static String _normalizeSearchText(String text) {
     const replacements = {

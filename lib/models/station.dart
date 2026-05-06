@@ -10,6 +10,8 @@ class Station {
   final String? country;
   final String? postalCode;
   final String? category;
+  final double? searchScore;
+  final double? searchImportance;
 
   Station({
     required this.id,
@@ -23,6 +25,8 @@ class Station {
     this.country,
     this.postalCode,
     this.category,
+    this.searchScore,
+    this.searchImportance,
   });
 
   Map<String, dynamic> toJson() => {
@@ -37,6 +41,8 @@ class Station {
         'country': country,
         'postalCode': postalCode,
         'category': category,
+        'score': searchScore,
+        'importance': searchImportance,
       };
 
   factory Station.fromJson(Map<String, dynamic> json) {
@@ -50,6 +56,8 @@ class Station {
     String? postalCode =
         _stringOrNull(json['postalCode']) ?? _stringOrNull(json['zip']);
     String? category = _stringOrNull(json['category']);
+    final searchScore = (json['score'] as num?)?.toDouble();
+    final searchImportance = (json['importance'] as num?)?.toDouble();
 
     // Address handling
     if (json['address'] != null) {
@@ -116,6 +124,8 @@ class Station {
       country: country,
       postalCode: postalCode,
       category: category,
+      searchScore: searchScore,
+      searchImportance: searchImportance,
     );
   }
 
@@ -131,6 +141,8 @@ class Station {
     String id = json['id']?.toString() ?? '';
     final lat = (json['lat'] as num?)?.toDouble();
     final lon = (json['lon'] as num?)?.toDouble();
+    final searchScore = (json['score'] as num?)?.toDouble();
+    final searchImportance = (json['importance'] as num?)?.toDouble();
 
     // Fallback ID from coordinates
     if (id.isEmpty && lat != null && lon != null) {
@@ -176,6 +188,8 @@ class Station {
       country: _stringOrNull(json['country']),
       postalCode: _stringOrNull(json['zip']),
       category: _stringOrNull(json['category']),
+      searchScore: searchScore,
+      searchImportance: searchImportance,
     );
   }
 

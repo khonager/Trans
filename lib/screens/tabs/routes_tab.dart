@@ -211,6 +211,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Set<int> _cancelledRouteSearchTokens = <int>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
+  int _visibleStationSuggestionCount = 12;
 
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
@@ -250,6 +251,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
 
+  static const int _initialVisibleStationSuggestionCount = 12;
+  static const int _stationSuggestionPageSize = 12;
+
   @override
   void initState() {
     super.initState();
@@ -262,6 +266,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
+    _suggestionsScrollController.addListener(_onSuggestionsScroll);
     _resolveCurrentAddress();
     _loadHistoryData();
   }
@@ -303,6 +308,27 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void _handleDeviceRouteSettingsRefresh() {
     unawaited(_loadDeviceRoutePreferences());
+  }
+
+  void _onSuggestionsScroll() {
+    if (!_suggestionsScrollController.hasClients) return;
+    final position = _suggestionsScrollController.position;
+    if (position.pixels < position.maxScrollExtent - 120) return;
+    _loadMoreSuggestionResults();
+  }
+
+  void _resetVisibleSuggestionCount() {
+    _visibleStationSuggestionCount = _initialVisibleStationSuggestionCount;
+  }
+
+  void _loadMoreSuggestionResults() {
+    final totalStations = _suggestions.whereType<Station>().length;
+    if (_visibleStationSuggestionCount >= totalStations) return;
+    setState(() {
+      _visibleStationSuggestionCount =
+          (_visibleStationSuggestionCount + _stationSuggestionPageSize)
+              .clamp(0, totalStations);
+    });
   }
 
   Future<void> _setBikeSearchToggleEnabledForDevice(bool enabled) async {
@@ -498,6 +524,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _fromFocusNode.dispose();
     _toFocusNode.dispose();
     _scrollController.dispose();
+    _suggestionsScrollController.removeListener(_onSuggestionsScroll);
     _suggestionsScrollController.dispose();
     _debounce?.cancel();
     _focusDebounce?.cancel();
@@ -1138,6 +1165,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final history = await SearchHistoryManager.getHistory();
       if (mounted) {
         setState(() {
+          _resetVisibleSuggestionCount();
           _suggestions = history;
           if (updateLoadingState) _isSuggestionsLoading = false;
         });
@@ -1167,6 +1195,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     if (mounted) {
       setState(() {
+        _resetVisibleSuggestionCount();
         _suggestions = results;
         if (updateLoadingState) _isSuggestionsLoading = false;
       });
@@ -1230,32 +1259,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return "${distInKm.toStringAsFixed(1)} km";
   }
 
-  double? _distanceFromReference(Station station) {
-    final ref = _suggestionReferencePoint();
-    if (ref.lat == null ||
-        ref.lng == null ||
-        station.latitude == null ||
-        station.longitude == null) {
-      return null;
-    }
-
-    return Geolocator.distanceBetween(
-        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
-  }
-
   List<_SuggestionSection> _buildSuggestionSections() {
     final favorites = <Favorite>[];
     final stations = <Station>[];
-    final stationOrder = <String, int>{};
-    final cityOrderIndex = <String, int>{};
 
-    for (final (index, item) in _suggestions.indexed) {
+    final visibleItems = _visibleSuggestionItems();
+    for (final item in visibleItems) {
       if (item is Favorite) {
         favorites.add(item);
       } else if (item is Station) {
         stations.add(item);
-        stationOrder[_stationOrderKey(item)] = index;
-        cityOrderIndex.putIfAbsent(item.cityGroupLabel, () => index);
       }
     }
 
@@ -1264,64 +1277,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       sections.add(_SuggestionSection(items: favorites));
     }
 
-    final groupedStations = <String, List<Station>>{};
-    final cityOrder = <String>[];
     for (final station in stations) {
       final city = station.cityGroupLabel;
-      if (!groupedStations.containsKey(city)) {
-        groupedStations[city] = <Station>[];
-        cityOrder.add(city);
+      final existingSectionIndex = sections.indexWhere(
+        (section) => section.title == city,
+      );
+      if (existingSectionIndex >= 0) {
+        sections[existingSectionIndex].items.add(station);
+      } else {
+        sections
+            .add(_SuggestionSection(title: city, items: <dynamic>[station]));
       }
-      groupedStations[city]!.add(station);
-    }
-
-    cityOrder.sort((a, b) {
-      final aBest = groupedStations[a]!
-          .map(_distanceFromReference)
-          .whereType<double>()
-          .fold<double?>(null,
-              (best, value) => best == null || value < best ? value : best);
-      final bBest = groupedStations[b]!
-          .map(_distanceFromReference)
-          .whereType<double>()
-          .fold<double?>(null,
-              (best, value) => best == null || value < best ? value : best);
-
-      if (aBest != null && bBest != null) {
-        return aBest.compareTo(bBest);
-      }
-      if (aBest != null) return -1;
-      if (bBest != null) return 1;
-      return (cityOrderIndex[a] ?? 1 << 20)
-          .compareTo(cityOrderIndex[b] ?? 1 << 20);
-    });
-
-    for (final city in cityOrder) {
-      final cityStations = groupedStations[city]!;
-      cityStations.sort((a, b) {
-        final distA = _distanceFromReference(a);
-        final distB = _distanceFromReference(b);
-
-        if (distA != null && distB != null) {
-          final distanceComparison = distA.compareTo(distB);
-          if (distanceComparison != 0) return distanceComparison;
-        } else if (distA != null) {
-          return -1;
-        } else if (distB != null) {
-          return 1;
-        }
-
-        return (stationOrder[_stationOrderKey(a)] ?? 1 << 20)
-            .compareTo(stationOrder[_stationOrderKey(b)] ?? 1 << 20);
-      });
-      sections.add(_SuggestionSection(title: city, items: cityStations));
     }
 
     return sections;
   }
 
-  String _stationOrderKey(Station station) =>
-      '${station.id}|${station.name}|${station.latitude}|${station.longitude}';
+  List<dynamic> _visibleSuggestionItems() {
+    final favorites = <dynamic>[];
+    final stations = <dynamic>[];
+
+    for (final item in _suggestions) {
+      if (item is Favorite) {
+        favorites.add(item);
+      } else {
+        stations.add(item);
+      }
+    }
+
+    final visibleStations = stations
+        .take(_visibleStationSuggestionCount.clamp(0, stations.length))
+        .toList(growable: false);
+    return <dynamic>[...favorites, ...visibleStations];
+  }
 
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
@@ -1355,6 +1343,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
     setState(() {
+      _resetVisibleSuggestionCount();
       _suggestions = matchingFavs;
       _isSuggestionsLoading = sanitizedQuery.length > 2;
     });
@@ -1390,12 +1379,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       try {
-        final apiResults = await TransportApi.searchStations(sanitizedQuery,
-            lat: refLat, lng: refLng);
+        final apiResults = await TransportApi.searchStations(
+          sanitizedQuery,
+          lat: refLat,
+          lng: refLng,
+          limit: 60,
+        );
         if (!mounted || requestToken != _suggestionRequestToken) return;
         final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
         if (mounted) {
           setState(() {
+            _resetVisibleSuggestionCount();
             if (apiResults.isEmpty && matchingFavs.isEmpty) {
               // Show message if no results at all
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
