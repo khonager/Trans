@@ -1062,22 +1062,12 @@ class TransportApi {
 
     List<Station> motisResults = [];
     try {
-      motisResults = await _searchStationsMotis(
+      motisResults = await _searchStationsMotisExpanded(
         query,
         lat: lat,
         lng: lng,
         limit: limit,
       );
-      for (final alternateQuery in _alternateStationQueries(query)) {
-        final alternateResults = await _searchStationsMotis(
-          alternateQuery,
-          lat: lat,
-          lng: lng,
-          limit: limit,
-        );
-        motisResults =
-            _mergeStationSearchResults(motisResults, alternateResults);
-      }
     } catch (error) {
       debugPrint('Transitous searchStations failed: $error');
     }
@@ -1097,17 +1087,9 @@ class TransportApi {
       return rankedMotis;
     }
 
-    final queryTokens = _searchTokens(query);
-    final shouldSupplement = _shouldSupplementSparseStationResults(
-      queryTokens,
-      currentCount: rankedMotis.length,
-      requestedLimit: limit,
-    );
-
-    // In auto mode, Transitous stays primary, but broad queries like "hbf"
-    // often return a short list even when more useful matches exist. When the
-    // result set is sparse, supplement it with v6 before returning.
-    if (rankedMotis.isNotEmpty && !shouldSupplement) {
+    // Keep v6 as an empty-result fallback only. Synthetic expansion stays on
+    // Transitous by combining biased and unbiased result pools.
+    if (rankedMotis.isNotEmpty) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
         const Duration(hours: 1),
@@ -1121,12 +1103,64 @@ class TransportApi {
       lng: lng,
       limit: limit,
     );
-    final merged = rankedMotis.isEmpty
-        ? v6Results
-        : _mergeStationSearchResults(rankedMotis, v6Results);
-    final ranked = rankStationsForQuery(merged, query, lat: lat, lng: lng);
+    final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
+  }
+
+  static Future<List<Station>> _searchStationsMotisExpanded(
+    String query, {
+    double? lat,
+    double? lng,
+    required int limit,
+  }) async {
+    var results = await _searchStationsMotisQuerySet(
+      query,
+      lat: lat,
+      lng: lng,
+      limit: limit,
+    );
+
+    final shouldTryWithoutBias = shouldSupplementSparseStationResults(
+      query,
+      currentCount: results.length,
+      requestedLimit: limit,
+      hasLocationBias: lat != null && lng != null,
+    );
+
+    if (shouldTryWithoutBias) {
+      final unbiasedResults = await _searchStationsMotisQuerySet(
+        query,
+        limit: limit,
+      );
+      results = _mergeStationSearchResults(results, unbiasedResults);
+    }
+
+    return results;
+  }
+
+  static Future<List<Station>> _searchStationsMotisQuerySet(
+    String query, {
+    double? lat,
+    double? lng,
+    required int limit,
+  }) async {
+    var results = await _searchStationsMotis(
+      query,
+      lat: lat,
+      lng: lng,
+      limit: limit,
+    );
+    for (final alternateQuery in _alternateStationQueries(query)) {
+      final alternateResults = await _searchStationsMotis(
+        alternateQuery,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
+      results = _mergeStationSearchResults(results, alternateResults);
+    }
+    return results;
   }
 
   static Future<List<Station>> _searchStationsV6WithCooldown(
@@ -1484,11 +1518,13 @@ class TransportApi {
     String query, {
     required int currentCount,
     required int requestedLimit,
+    bool hasLocationBias = true,
   }) {
     return _shouldSupplementSparseStationResults(
       _searchTokens(query),
       currentCount: currentCount,
       requestedLimit: requestedLimit,
+      hasLocationBias: hasLocationBias,
     );
   }
 
@@ -1496,7 +1532,9 @@ class TransportApi {
     List<String> queryTokens, {
     required int currentCount,
     required int requestedLimit,
+    required bool hasLocationBias,
   }) {
+    if (!hasLocationBias) return false;
     if (currentCount <= 0) return true;
     if (currentCount >= requestedLimit) return false;
     if (queryTokens.isEmpty) return false;

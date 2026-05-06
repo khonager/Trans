@@ -10,6 +10,7 @@ void main() {
           'hbf',
           currentCount: 10,
           requestedLimit: 60,
+          hasLocationBias: true,
         ),
         isTrue,
       );
@@ -22,6 +23,7 @@ void main() {
           'hbf',
           currentCount: 20,
           requestedLimit: 20,
+          hasLocationBias: true,
         ),
         isFalse,
       );
@@ -33,6 +35,19 @@ void main() {
           'frankfurt airport terminal 1',
           currentCount: 8,
           requestedLimit: 60,
+          hasLocationBias: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not supplement when there is no location bias to remove', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 6,
+          requestedLimit: 60,
+          hasLocationBias: false,
         ),
         isFalse,
       );
