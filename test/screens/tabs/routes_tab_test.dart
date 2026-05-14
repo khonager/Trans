@@ -86,4 +86,51 @@ void main() {
     expect(first, second);
     expect(first, greaterThanOrEqualTo(0));
   });
+
+  test('alternative journey display departure prefers planned departure', () {
+    final departure = alternativeJourneyDisplayDepartureLocal({
+      'legs': [
+        {
+          'plannedDeparture': '2026-05-14T14:16:00Z',
+          'departure': '2026-05-14T14:15:00Z',
+          'line': {'name': '37'},
+        },
+      ],
+    });
+
+    expect(departure, DateTime.parse('2026-05-14T14:16:00Z').toLocal());
+  });
+
+  test('mergeAlternativeJourneys dedupes by display departure and arrival', () {
+    final journeys = mergeAlternativeJourneys(const [], [
+      {
+        'legs': [
+          {
+            'plannedDeparture': '2026-05-14T14:16:00Z',
+            'departure': '2026-05-14T14:15:00Z',
+            'line': {'name': '37'},
+          },
+          {
+            'plannedArrival': '2026-05-14T14:53:00Z',
+            'arrival': '2026-05-14T14:52:00Z',
+          },
+        ],
+      },
+      {
+        'legs': [
+          {
+            'plannedDeparture': '2026-05-14T14:16:00Z',
+            'departure': '2026-05-14T14:16:00Z',
+            'line': {'name': '37'},
+          },
+          {
+            'plannedArrival': '2026-05-14T14:53:00Z',
+            'arrival': '2026-05-14T14:53:00Z',
+          },
+        ],
+      },
+    ]);
+
+    expect(journeys, hasLength(1));
+  });
 }

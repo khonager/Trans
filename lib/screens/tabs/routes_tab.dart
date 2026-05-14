@@ -153,6 +153,79 @@ int savedRouteStatusNotificationIdForKey(String routeKey) {
       0x7fffffff;
 }
 
+@visibleForTesting
+DateTime? alternativeJourneyDisplayDepartureLocal(
+    Map<String, dynamic> journey) {
+  try {
+    final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+    if (legs == null || legs.isEmpty) return null;
+
+    final firstLeg = legs.first;
+    final firstRide = legs.firstWhere(
+      (leg) => leg['line'] != null,
+      orElse: () => firstLeg,
+    );
+    final rawTime = firstLeg['plannedDeparture'] ??
+        firstLeg['departure'] ??
+        firstRide['plannedDeparture'] ??
+        firstRide['departure'];
+    if (rawTime == null) return null;
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return null;
+  }
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> mergeAlternativeJourneys(
+  Iterable<Map<String, dynamic>> existing,
+  Iterable<Map<String, dynamic>> incoming,
+) {
+  final merged = <Map<String, dynamic>>[];
+  final seenIds = <String>{};
+
+  void addJourney(Map<String, dynamic> journey) {
+    final departure = alternativeJourneyDisplayDepartureLocal(journey);
+    if (departure == null) return;
+
+    final arrival = (() {
+      try {
+        final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+        if (legs == null || legs.isEmpty) return null;
+        final lastLeg = legs.last;
+        final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
+        if (rawTime == null) return null;
+        return DateTime.parse(rawTime.toString()).toLocal();
+      } catch (_) {
+        return null;
+      }
+    })();
+    if (arrival == null) return;
+
+    final id =
+        '${departure.millisecondsSinceEpoch}_${arrival.millisecondsSinceEpoch}';
+    if (!seenIds.add(id)) return;
+    merged.add(journey);
+  }
+
+  for (final journey in existing) {
+    addJourney(journey);
+  }
+  for (final journey in incoming) {
+    addJourney(journey);
+  }
+
+  merged.sort((a, b) {
+    final depA = alternativeJourneyDisplayDepartureLocal(a);
+    final depB = alternativeJourneyDisplayDepartureLocal(b);
+    if (depA == null && depB == null) return 0;
+    if (depA == null) return 1;
+    if (depB == null) return -1;
+    return depA.compareTo(depB);
+  });
+  return merged;
+}
+
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
   return journeys
       .map((j) =>
@@ -6372,28 +6445,10 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          _results.clear();
-          final existingIds = <String>{};
-          for (final j in res) {
-            final id = _getJId(j);
-            if (!existingIds.contains(id)) {
-              _results.add(j);
-              existingIds.add(id);
-            }
-          }
-          _results.sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
-
-          // Find the "split point": the first connection at or after initialTime
-          final splitIdx = _results.indexWhere((j) => _getDepTime(j).isAfter(
-              widget.initialTime.subtract(const Duration(minutes: 1))));
-          if (splitIdx != -1) {
-            // Include one connection BEFORE the split point for context
-            final int startIdx = splitIdx > 0 ? splitIdx - 1 : 0;
-            final itemsToShow = _results.sublist(startIdx);
-            _results.clear();
-            _results.addAll(itemsToShow);
-          }
-
+          final merged = mergeAlternativeJourneys(const [], res);
+          _results
+            ..clear()
+            ..addAll(merged);
           _isLoading = false;
           _error = null;
         });
@@ -6443,22 +6498,16 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         .isBefore(widget.initialTime.subtract(const Duration(seconds: 15))));
   }
 
-  Future<void> _fetch(DateTime time, bool isArrival,
-      {bool prepend = false}) async {
+  Future<void> _fetch(DateTime time, bool isArrival) async {
     if (mounted) setState(() => _isMoreLoading = true);
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          final existingIds = _results.map(_getJId).toSet();
-          final unique =
-              res.where((r) => !existingIds.contains(_getJId(r))).toList();
-          if (prepend) {
-            _results.insertAll(0, unique);
-          } else {
-            _results.addAll(unique);
-          }
-          _results.sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
+          final merged = mergeAlternativeJourneys(_results, res);
+          _results
+            ..clear()
+            ..addAll(merged);
           _isLoading = false;
           _isMoreLoading = false;
           _error = null;
@@ -6488,45 +6537,14 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
     }
   }
 
-  String _getJId(Map<String, dynamic> j) {
-    final dep = _getDepTime(j);
-    final arr = _getArrTime(j);
-    return "${dep.millisecondsSinceEpoch}_${arr.millisecondsSinceEpoch}";
-  }
-
   DateTime _getDepTime(Map<String, dynamic> j) {
-    try {
-      final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final firstLeg = legs.first;
-      final firstRide =
-          legs.firstWhere((l) => l['line'] != null, orElse: () => firstLeg);
-      return DateTime.parse(
-        firstLeg['departure'] ??
-            firstLeg['plannedDeparture'] ??
-            firstRide['departure'] ??
-            firstRide['plannedDeparture'],
-      ).toLocal();
-    } catch (e) {
-      return DateTime.now();
-    }
-  }
-
-  DateTime _getArrTime(Map<String, dynamic> j) {
-    try {
-      final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final last = legs.last;
-      return DateTime.parse(last['arrival'] ?? last['plannedArrival'])
-          .toLocal();
-    } catch (e) {
-      return DateTime.now();
-    }
+    return alternativeJourneyDisplayDepartureLocal(j) ?? DateTime.now();
   }
 
   void _loadEarlier() {
     if (_results.isEmpty) return;
     _fetch(
-        _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true,
-        prepend: true);
+        _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true);
   }
 
   void _loadLater() {
