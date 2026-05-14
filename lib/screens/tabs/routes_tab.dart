@@ -316,6 +316,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
+  final Set<String> _savingRouteIds = <String>{};
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
@@ -1572,21 +1573,37 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _toggleSavedRoute(RouteTab route) async {
     final from = route.origin;
     final activeJourney = route.activeJourney;
-    if (from == null || activeJourney == null) return;
+    if (from == null ||
+        activeJourney == null ||
+        _savingRouteIds.contains(route.id)) {
+      return;
+    }
 
-    final saved = await SearchHistoryManager.toggleSavedJourney(
-      from: from,
-      to: route.destination,
-      journeyData: activeJourney.rawSource,
-      departure: activeJourney.plannedDeparture ?? activeJourney.departure,
-      arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
-    );
-    await _loadHistoryData();
+    setState(() {
+      _savingRouteIds.add(route.id);
+    });
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            saved ? 'Connection saved' : 'Connection removed from saved')));
+    try {
+      final saved = await SearchHistoryManager.toggleSavedJourney(
+        from: from,
+        to: route.destination,
+        journeyData: activeJourney.rawSource,
+        departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+        arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+      );
+      await _loadHistoryData();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              saved ? 'Connection saved' : 'Connection removed from saved')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingRouteIds.remove(route.id);
+        });
+      }
+    }
   }
 
   Future<void> _openSavedJourney(Map<String, dynamic> item) async {
@@ -5399,6 +5416,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   final timeLabel = route.activeJourney != null
                       ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
                       : route.subtitle;
+                  final isSavingRoute = _savingRouteIds.contains(route.id);
 
                   Widget timeText({double fontSize = 24}) => FittedBox(
                       fit: BoxFit.scaleDown,
@@ -5428,15 +5446,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               })),
                     if (showBackButton) const SizedBox(width: 8),
                     IconButton(
-                        icon: Icon(
-                            _isRouteSaved(route)
-                                ? Icons.bookmark
-                                : Icons.bookmark_border,
-                            color: colors.navBarSelected),
-                        onPressed:
-                            route.origin == null || route.activeJourney == null
-                                ? null
-                                : () => _toggleSavedRoute(route)),
+                        icon: isSavingRoute
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      colors.navBarSelected),
+                                ),
+                              )
+                            : Icon(
+                                _isRouteSaved(route)
+                                    ? Icons.bookmark
+                                    : Icons.bookmark_border,
+                                color: colors.navBarSelected),
+                        onPressed: route.origin == null ||
+                                route.activeJourney == null ||
+                                isSavingRoute
+                            ? null
+                            : () => _toggleSavedRoute(route)),
                     IconButton(
                         icon: const Icon(Icons.map, color: Colors.blue),
                         onPressed: () => _openMap(route)),
