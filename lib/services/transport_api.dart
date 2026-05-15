@@ -127,6 +127,8 @@ class TransportApi {
       _tripItineraryCache = {};
   static final Map<String, Future<Map<String, dynamic>?>>
       _tripItineraryInFlight = {};
+  static final Map<String, _CacheEntry<List<Map<String, dynamic>>>>
+      _stopEventsCache = {};
   static final List<String> _syntheticDebugBuffer = <String>[];
 
   // Cache the User-Agent
@@ -150,6 +152,7 @@ class TransportApi {
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
+  static const Duration _stopEventsCacheTtl = Duration(minutes: 2);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
   static const int _syntheticProgressBatchSize = 4;
@@ -900,7 +903,8 @@ class TransportApi {
 
     final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
-    return decodeMotisPlanJourneys(data);
+    final journeys = decodeMotisPlanJourneys(data);
+    return _enrichJourneysWithPlatforms(journeys);
   }
 
   static Future<List<Map<String, dynamic>>> _searchDirectJourneysMotis(
@@ -923,7 +927,7 @@ class TransportApi {
     final data = json.decode(response.body);
     final directJourneys = decodeMotisDirectPlanJourneys(data);
     _syntheticLog('direct fallback result: routes=${directJourneys.length}');
-    return directJourneys;
+    return _enrichJourneysWithPlatforms(directJourneys);
   }
 
   /// Retry empty MOTIS search with safer walking parameters for edge-case
@@ -1796,6 +1800,414 @@ class TransportApi {
     }
   }
 
+  static String? _platformFromPlace(Map<String, dynamic>? place) {
+    final platform =
+        place?['track'] ?? place?['scheduledTrack'] ?? place?['platform'];
+    final normalized = platform?.toString().trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return normalized;
+  }
+
+  static String? _stopLabelFromPlace(Map<String, dynamic>? place) {
+    final description = place?['description']?.toString().trim();
+    if (description != null && description.isNotEmpty) {
+      final normalizedName = place?['name']?.toString().trim();
+      if (normalizedName == null || normalizedName != description) {
+        return description;
+      }
+    }
+
+    final stopLabel = place?['stopLabel']?.toString().trim();
+    if (stopLabel == null || stopLabel.isEmpty) return null;
+    return stopLabel;
+  }
+
+  static String? _platformFromStopEvent(Map<String, dynamic> dep) {
+    final place = (dep['place'] as Map?)?.cast<String, dynamic>();
+    final platform = _platformFromPlace(place) ??
+        dep['platform']?.toString().trim() ??
+        dep['plannedPlatform']?.toString().trim();
+    if (platform == null || platform.isEmpty) return null;
+    return platform;
+  }
+
+  static DateTime? _journeyLegTimeLocal(
+    Map<String, dynamic> leg,
+    String plannedKey,
+    String realtimeKey,
+  ) {
+    final raw = leg[plannedKey] ?? leg[realtimeKey];
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw.toString()).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _journeyLegLineDisplayName(Map<String, dynamic> leg) {
+    final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+    final name = line?['name']?.toString().trim();
+    if (name != null && name.isNotEmpty) return name;
+    return '';
+  }
+
+  static String _journeyLegHeadsign(Map<String, dynamic> leg) {
+    final headsign = leg['direction']?.toString().trim();
+    if (headsign != null && headsign.isNotEmpty) return headsign;
+    return '';
+  }
+
+  static DateTime? _stopEventBestTimeLocal(Map<String, dynamic> dep) {
+    final departure = dep['departure'];
+    if (departure is Map<String, dynamic>) {
+      final raw = departure['scheduledTime'] ?? departure['time'];
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          return DateTime.parse(raw).toLocal();
+        } catch (_) {}
+      }
+    }
+
+    final arrival = dep['arrival'];
+    if (arrival is Map<String, dynamic>) {
+      final raw = arrival['scheduledTime'] ?? arrival['time'];
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          return DateTime.parse(raw).toLocal();
+        } catch (_) {}
+      }
+    }
+
+    return _stopDepartureDateTimeLocal(dep);
+  }
+
+  static Duration? _eventTimeDistance(
+    Map<String, dynamic> dep,
+    DateTime? expectedTime,
+  ) {
+    if (expectedTime == null) return null;
+    final eventTime = _stopEventBestTimeLocal(dep);
+    if (eventTime == null) return null;
+    return eventTime.difference(expectedTime).abs();
+  }
+
+  static String? _matchPlatformFromStopEvents(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final tripId = _journeyLegTripId(leg)?.trim();
+    final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final directionKey = _normalizeTransitKey(_journeyLegHeadsign(leg));
+
+    Map<String, dynamic>? bestLineMatch;
+    Duration? bestLineDistance;
+
+    for (final event in events) {
+      final platform = _platformFromStopEvent(event);
+      if (platform == null) continue;
+
+      final eventTripId = _stopDepartureTripId(event)?.trim();
+      if (tripId != null && tripId.isNotEmpty && eventTripId == tripId) {
+        return platform;
+      }
+
+      final eventLineKey = _normalizeTransitKey(_stopDepartureLineKey(event));
+      if (lineKey.isEmpty || eventLineKey != lineKey) continue;
+
+      final eventDirectionKey =
+          _normalizeTransitKey(_stopDepartureDirectionKey(event));
+      if (directionKey.isNotEmpty &&
+          eventDirectionKey.isNotEmpty &&
+          eventDirectionKey != directionKey) {
+        continue;
+      }
+
+      final distance = _eventTimeDistance(event, expectedTime);
+      if (distance != null && distance > const Duration(minutes: 5)) {
+        continue;
+      }
+
+      if (bestLineMatch == null ||
+          distance == null ||
+          bestLineDistance == null ||
+          distance < bestLineDistance) {
+        bestLineMatch = event;
+        bestLineDistance = distance;
+      }
+    }
+
+    if (bestLineMatch == null) return null;
+    return _platformFromStopEvent(bestLineMatch);
+  }
+
+  static Map<String, dynamic>? _matchStopEventForLeg(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final tripId = _journeyLegTripId(leg)?.trim();
+    final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final directionKey = _normalizeTransitKey(_journeyLegHeadsign(leg));
+
+    Map<String, dynamic>? bestLineMatch;
+    Duration? bestLineDistance;
+
+    for (final event in events) {
+      final eventPlace = (event['place'] as Map?)?.cast<String, dynamic>();
+      if (eventPlace == null) continue;
+
+      final eventTripId = _stopDepartureTripId(event)?.trim();
+      if (tripId != null && tripId.isNotEmpty && eventTripId == tripId) {
+        return event;
+      }
+
+      final eventLineKey = _normalizeTransitKey(_stopDepartureLineKey(event));
+      if (lineKey.isEmpty || eventLineKey != lineKey) continue;
+
+      final eventDirectionKey =
+          _normalizeTransitKey(_stopDepartureDirectionKey(event));
+      if (directionKey.isNotEmpty &&
+          eventDirectionKey.isNotEmpty &&
+          eventDirectionKey != directionKey) {
+        continue;
+      }
+
+      final distance = _eventTimeDistance(event, expectedTime);
+      if (distance != null && distance > const Duration(minutes: 5)) {
+        continue;
+      }
+
+      if (bestLineMatch == null ||
+          distance == null ||
+          bestLineDistance == null ||
+          distance < bestLineDistance) {
+        bestLineMatch = event;
+        bestLineDistance = distance;
+      }
+    }
+
+    return bestLineMatch;
+  }
+
+  @visibleForTesting
+  static String? matchPlatformFromStopEventsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) =>
+      _matchPlatformFromStopEvents(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+
+  @visibleForTesting
+  static ({
+    String? platform,
+    String? stopLabel,
+    String? stopId,
+    String? parentId,
+  }) matchStopEventDetailsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final event = _matchStopEventForLeg(
+      events,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+    final place = (event?['place'] as Map?)?.cast<String, dynamic>();
+    return (
+      platform: event == null ? null : _platformFromStopEvent(event),
+      stopLabel: _stopLabelFromPlace(place),
+      stopId: _stringOrNull(place?['stopId']),
+      parentId: _stringOrNull(place?['parentId']),
+    );
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchMotisStopEvents(
+    String stationId, {
+    required DateTime timeLocal,
+    required String direction,
+    int maxResults = 80,
+  }) async {
+    final cacheKey =
+        '$stationId|$direction|${timeLocal.toIso8601String()}|$maxResults';
+    final cached = _stopEventsCache[cacheKey];
+    if (cached != null && !cached.isExpired) {
+      return cached.data;
+    }
+
+    final response = await _fetch(
+      _getMotisUri('/api/v5/stoptimes', {
+        'stopId': stationId,
+        'time': timeLocal.toUtc().toIso8601String(),
+        'direction': direction,
+        'n': maxResults.toString(),
+      }),
+    );
+    final data = json.decode(response.body);
+    final events = decodeStopDeparturesResponse(data);
+    _stopEventsCache[cacheKey] = _CacheEntry(events, _stopEventsCacheTtl);
+    return events;
+  }
+
+  static Future<
+      ({
+        String? platform,
+        String? stopLabel,
+        String? stopId,
+        String? parentId,
+      })?> _backfillStopDetailsForLegPlace(
+    Map<String, dynamic> leg,
+    Map<String, dynamic> place, {
+    required DateTime? expectedTime,
+  }) async {
+    final existingPlatform = _platformFromPlace(place);
+    final existingStopLabel = _stopLabelFromPlace(place);
+    final existingStopId = _stringOrNull(place['exactStopId']);
+    final existingParentId = _stringOrNull(place['parentId']);
+    if (existingPlatform != null ||
+        existingStopLabel != null ||
+        existingStopId != null) {
+      return (
+        platform: existingPlatform,
+        stopLabel: existingStopLabel,
+        stopId: existingStopId,
+        parentId: existingParentId,
+      );
+    }
+
+    final stopId = _stringOrNull(place['id']) ?? _stringOrNull(place['stopId']);
+    if (stopId == null || stopId.isEmpty || expectedTime == null) return null;
+
+    final beforeTime = expectedTime.subtract(const Duration(minutes: 3));
+    final requests = <Future<List<Map<String, dynamic>>>>[
+      _fetchMotisStopEvents(
+        stopId,
+        timeLocal: beforeTime,
+        direction: 'LATER',
+      ),
+      _fetchMotisStopEvents(
+        stopId,
+        timeLocal: expectedTime,
+        direction: 'EARLIER',
+      ),
+    ];
+
+    final results = await Future.wait(requests);
+    for (final events in results) {
+      final matchedEvent = _matchStopEventForLeg(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+      final matchedPlace =
+          (matchedEvent?['place'] as Map?)?.cast<String, dynamic>();
+      if (matchedPlace == null) continue;
+
+      final platform = _platformFromStopEvent(matchedEvent!);
+      final stopLabel = _stopLabelFromPlace(matchedPlace);
+      final exactStopId = _stringOrNull(matchedPlace['stopId']);
+      final parentId = _stringOrNull(matchedPlace['parentId']);
+      if (platform != null ||
+          stopLabel != null ||
+          exactStopId != null ||
+          parentId != null) {
+        return (
+          platform: platform,
+          stopLabel: stopLabel,
+          stopId: exactStopId,
+          parentId: parentId,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  static Future<List<Map<String, dynamic>>> _enrichJourneysWithPlatforms(
+    List<Map<String, dynamic>> journeys,
+  ) async {
+    for (final journey in journeys) {
+      final source = journey['source']?.toString();
+      if (source != 'motis' && source != 'motis_synthetic') continue;
+
+      final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+      if (legs == null || legs.isEmpty) continue;
+
+      for (final rawLeg in legs) {
+        final leg = rawLeg.cast<String, dynamic>();
+        if (leg['walking'] == true || leg['line'] == null) continue;
+
+        final origin = (leg['origin'] as Map?)?.cast<String, dynamic>();
+        final destination =
+            (leg['destination'] as Map?)?.cast<String, dynamic>();
+        final departureTime =
+            _journeyLegTimeLocal(leg, 'plannedDeparture', 'departure');
+        final arrivalTime =
+            _journeyLegTimeLocal(leg, 'plannedArrival', 'arrival');
+
+        if (origin != null) {
+          final details = await _backfillStopDetailsForLegPlace(
+            leg,
+            origin,
+            expectedTime: departureTime,
+          );
+          if (details != null) {
+            if (details.platform != null && details.platform!.isNotEmpty) {
+              origin.putIfAbsent('platform', () => details.platform!);
+              origin.putIfAbsent(
+                'scheduledPlatform',
+                () => details.platform!,
+              );
+            }
+            if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
+              origin.putIfAbsent('stopLabel', () => details.stopLabel!);
+            }
+            if (details.stopId != null && details.stopId!.isNotEmpty) {
+              origin.putIfAbsent('exactStopId', () => details.stopId!);
+            }
+            if (details.parentId != null && details.parentId!.isNotEmpty) {
+              origin.putIfAbsent('parentId', () => details.parentId!);
+            }
+          }
+        }
+
+        if (destination != null) {
+          final details = await _backfillStopDetailsForLegPlace(
+            leg,
+            destination,
+            expectedTime: arrivalTime,
+          );
+          if (details != null) {
+            if (details.platform != null && details.platform!.isNotEmpty) {
+              destination.putIfAbsent('platform', () => details.platform!);
+              destination.putIfAbsent(
+                'scheduledPlatform',
+                () => details.platform!,
+              );
+            }
+            if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
+              destination.putIfAbsent('stopLabel', () => details.stopLabel!);
+            }
+            if (details.stopId != null && details.stopId!.isNotEmpty) {
+              destination.putIfAbsent('exactStopId', () => details.stopId!);
+            }
+            if (details.parentId != null && details.parentId!.isNotEmpty) {
+              destination.putIfAbsent('parentId', () => details.parentId!);
+            }
+          }
+        }
+      }
+    }
+
+    return journeys;
+  }
+
   static Future<List<Map<String, dynamic>>> _fetchMotisStopDepartures(
     String stationId, {
     required DateTime startLocal,
@@ -2416,6 +2828,8 @@ class TransportApi {
       if (platform != null) 'platform': platform,
       if (place['scheduledTrack'] != null)
         'scheduledPlatform': place['scheduledTrack'],
+      if (place['description'] != null) 'stopLabel': place['description'],
+      if (place['parentId'] != null) 'parentId': place['parentId'],
     };
   }
 
@@ -3548,6 +3962,7 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
+        finalResults = await _enrichJourneysWithPlatforms(finalResults);
         _syntheticLog(
           'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
@@ -3668,6 +4083,7 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
+        finalResults = await _enrichJourneysWithPlatforms(finalResults);
         _syntheticLog(
           'search done: hybrid(partial) motis=${resultsList[0].length} '
           'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
@@ -3717,6 +4133,7 @@ class TransportApi {
             shouldContinue: shouldContinue,
           );
         }
+        finalResults = await _enrichJourneysWithPlatforms(finalResults);
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
           'base=${baseResults.length} final=${finalResults.length}',
@@ -3900,6 +4317,7 @@ class TransportApi {
     _syntheticStopDeparturesCache.clear();
     _tripItineraryCache.clear();
     _tripItineraryInFlight.clear();
+    _stopEventsCache.clear();
     debugPrint('TransportApi cache cleared');
   }
 }

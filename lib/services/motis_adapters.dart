@@ -27,6 +27,8 @@ Map<String, dynamic> _placeToLocation(Map<String, dynamic> place) {
     if (platform != null) 'platform': platform,
     if (place['scheduledTrack'] != null)
       'scheduledPlatform': place['scheduledTrack'],
+    if (place['description'] != null) 'stopLabel': place['description'],
+    if (place['parentId'] != null) 'parentId': place['parentId'],
   };
 }
 

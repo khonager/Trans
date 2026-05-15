@@ -118,6 +118,185 @@ String formatRideDisplayLine({
   return displayLine;
 }
 
+String? _normalizeStopDetailLabel(String? label, {String? stationName}) {
+  final normalized = label?.trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final station = stationName?.trim();
+  if (station != null &&
+      station.isNotEmpty &&
+      normalized.toLowerCase() == station.toLowerCase()) {
+    return null;
+  }
+  if (_looksLikeOpaqueStopCode(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+bool _looksLikeOpaqueStopCode(String label) {
+  final lower = label.toLowerCase();
+  const userFacingKeywords = <String>[
+    'gleis',
+    'bahnsteig',
+    'bussteig',
+    'bussteige',
+    'tramsteig',
+    'haltestelle',
+    'steig',
+    'bstg',
+    'pos.',
+    'position',
+    'platform',
+    'stop',
+  ];
+  if (userFacingKeywords.any(lower.contains)) return false;
+
+  final compact = label.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  if (compact.isEmpty) return true;
+
+  final hasDigit = RegExp(r'\d').hasMatch(compact);
+  final hasLower = RegExp(r'[a-z]').hasMatch(compact);
+  final hasUpper = RegExp(r'[A-Z]').hasMatch(compact);
+
+  if (!hasDigit &&
+      compact.length <= 16 &&
+      (RegExp(r'^[NSEWV][A-Z][A-Za-z]+$').hasMatch(compact) ||
+          RegExp(r'^[A-Z]{2,}[A-Za-z]{0,8}$').hasMatch(compact) ||
+          (hasUpper && !hasLower))) {
+    return true;
+  }
+
+  return false;
+}
+
+String _cleanStopDetailLabel(String label) {
+  final trimmed = label.trim();
+  final match = RegExp(
+    r'^(.*?\b(?:platz|steig|bussteig|bussteige|bahnsteig|haltestelle|bstg\.?)\s+[A-Za-z0-9]+)(?:\s+[A-Z]{2,}.*)$',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (match != null) {
+    return match.group(1)!.trim();
+  }
+  return trimmed;
+}
+
+bool _matchesSimpleStopLabel(
+  String lowerStopLabel,
+  String lowerPlatform,
+  List<String> prefixes,
+) {
+  for (final prefix in prefixes) {
+    if (lowerStopLabel == '$prefix $lowerPlatform') return true;
+  }
+  return false;
+}
+
+@visibleForTesting
+String? combinePlatformAndStopLabel(
+  String? platform,
+  String? stopLabel, {
+  String? stationName,
+}) {
+  final normalizedPlatform = platform?.trim();
+  final normalizedStopLabel = _normalizeStopDetailLabel(
+    stopLabel,
+    stationName: stationName,
+  );
+
+  if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
+    return normalizedStopLabel;
+  }
+  if (normalizedStopLabel == null || normalizedStopLabel.isEmpty) {
+    return normalizedPlatform;
+  }
+
+  final cleanedStopLabel = _cleanStopDetailLabel(normalizedStopLabel);
+
+  final lowerPlatform = normalizedPlatform.toLowerCase();
+  final lowerStopLabel = cleanedStopLabel.toLowerCase();
+
+  if (lowerStopLabel == lowerPlatform) {
+    return normalizedPlatform;
+  }
+
+  if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
+    'gleis',
+    'bahnsteig gleis',
+    's-bahnsteig gleis',
+    'u-bahnsteig gleis',
+  ])) {
+    return normalizedPlatform;
+  }
+
+  if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
+    'bussteig',
+    'bussteige',
+    'steig',
+    'platz',
+    'bstg.',
+    'bstg',
+    'haltestelle',
+  ])) {
+    return cleanedStopLabel;
+  }
+
+  return '$normalizedPlatform • $cleanedStopLabel';
+}
+
+String _formatBoardingText(
+  AppLocalizations l10n, {
+  required String stationName,
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: stationName,
+  );
+  if (combinedStopDetail != null) {
+    return '${l10n.boardAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
+  }
+
+  return l10n.boardAt(stationName);
+}
+
+String _formatAlightingText(
+  AppLocalizations l10n, {
+  required String stationName,
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: stationName,
+  );
+  if (combinedStopDetail != null) {
+    return '${l10n.getOffAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
+  }
+
+  return l10n.getOffAt(stationName);
+}
+
+String _formatIntermediateStopTitle(
+  String name, {
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: name,
+  );
+  if (combinedStopDetail != null) {
+    return '$name ($combinedStopDetail)';
+  }
+
+  return name;
+}
+
 @visibleForTesting
 bool savedJourneyLongPressShowsDelete({
   required bool isCompleted,
@@ -3063,9 +3242,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           departureTime: DateFormat('HH:mm').format(dep),
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
-          startStationId: leg['origin']?['id']?.toString(),
+          startStationId: leg['origin']?['exactStopId']?.toString() ??
+              leg['origin']?['id']?.toString(),
+          destinationStationId:
+              leg['destination']?['exactStopId']?.toString() ??
+                  leg['destination']?['id']?.toString(),
           platform: leg['origin']?['platform']?.toString(),
           arrivalPlatform: leg['destination']?['platform']?.toString(),
+          departureStopLabel: leg['origin']?['stopLabel']?.toString(),
+          arrivalStopLabel: leg['destination']?['stopLabel']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']),
           startLng: getLng(leg['origin']),
@@ -5156,8 +5341,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         departureTime: match.departureTime,
         arrivalTime: match.arrivalTime,
         dateTime: match.dateTime,
+        startStationId: match.startStationId ?? step.startStationId,
+        destinationStationId:
+            match.destinationStationId ?? step.destinationStationId,
         platform: match.platform ?? step.platform,
         arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
+        departureStopLabel: match.departureStopLabel ?? step.departureStopLabel,
+        arrivalStopLabel: match.arrivalStopLabel ?? step.arrivalStopLabel,
         departureDelay: match.departureDelay,
         arrivalDelay: match.arrivalDelay,
         isCancelled: match.isCancelled,
@@ -5948,13 +6138,12 @@ class _StepCardState extends State<_StepCard> {
                                 leading: const Icon(Icons.login,
                                     size: 14, color: Colors.green),
                                 title: Text(
-                                    step.platform != null
-                                        ? AppLocalizations.of(context)!
-                                            .boardAtPlatform(
-                                                step.startStationName ?? '',
-                                                step.platform!)
-                                        : AppLocalizations.of(context)!.boardAt(
-                                            step.startStationName ?? ''),
+                                    _formatBoardingText(
+                                      AppLocalizations.of(context)!,
+                                      stationName: step.startStationName ?? '',
+                                      platform: step.platform,
+                                      stopLabel: step.departureStopLabel,
+                                    ),
                                     style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 14,
@@ -5984,9 +6173,14 @@ class _StepCardState extends State<_StepCard> {
                               final stopId = stop['stop']['id'];
                               final platform =
                                   stop['platform'] ?? stop['stop']?['platform'];
-                              final String displayName = platform != null
-                                  ? "$name (Pl. $platform)"
-                                  : name;
+                              final stopLabel =
+                                  stop['stop']?['stopLabel']?.toString();
+                              final String displayName =
+                                  _formatIntermediateStopTitle(
+                                (name ?? '').toString(),
+                                platform: platform?.toString(),
+                                stopLabel: stopLabel,
+                              );
                               final plannedDep = stop['plannedDeparture'] ??
                                   stop['scheduledDeparture'] ??
                                   stop['plannedArrival'] ??
@@ -6135,8 +6329,9 @@ class _StepCardState extends State<_StepCard> {
                                     lastStopoverId = step.stopovers!
                                         .last['stop']?['id'] as String?;
                                   }
-                                  final destId =
-                                      lastStopoverId ?? step.startStationId!;
+                                  final destId = lastStopoverId ??
+                                      step.destinationStationId ??
+                                      step.startStationId!;
                                   final destDate = step.plannedArrival ??
                                       step.dateTime ??
                                       DateTime.now();
@@ -6156,14 +6351,13 @@ class _StepCardState extends State<_StepCard> {
                             leading: const Icon(Icons.flag,
                                 size: 14, color: Colors.red),
                             title: Text(
-                                step.arrivalPlatform != null
-                                    ? AppLocalizations.of(context)!
-                                        .getOffAtPlatform(
-                                            step.destinationName ??
-                                                'Destination',
-                                            step.arrivalPlatform!)
-                                    : AppLocalizations.of(context)!.getOffAt(
-                                        step.destinationName ?? 'Destination'),
+                                _formatAlightingText(
+                                  AppLocalizations.of(context)!,
+                                  stationName:
+                                      step.destinationName ?? 'Destination',
+                                  platform: step.arrivalPlatform,
+                                  stopLabel: step.arrivalStopLabel,
+                                ),
                                 style: TextStyle(
                                     color: colors.textPrimary,
                                     fontSize: 14,

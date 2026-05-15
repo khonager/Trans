@@ -14,8 +14,11 @@ class JourneyStep {
   final double? endLng;
   final List<dynamic>? path; // [[lat, lng], ...]
   final String? startStationId;
+  final String? destinationStationId;
   final String? platform;
   final String? arrivalPlatform;
+  final String? departureStopLabel;
+  final String? arrivalStopLabel;
   final List<dynamic>? stopovers;
   final int? chatCount;
 
@@ -62,8 +65,11 @@ class JourneyStep {
     this.endLng,
     this.path,
     this.startStationId,
+    this.destinationStationId,
     this.platform,
     this.arrivalPlatform,
+    this.departureStopLabel,
+    this.arrivalStopLabel,
     this.stopovers,
     this.chatCount,
     this.dateTime,
@@ -101,8 +107,11 @@ class JourneyStep {
     double? endLng,
     List<dynamic>? path,
     String? startStationId,
+    String? destinationStationId,
     String? platform,
     String? arrivalPlatform,
+    String? departureStopLabel,
+    String? arrivalStopLabel,
     List<dynamic>? stopovers,
     int? chatCount,
     DateTime? dateTime,
@@ -140,8 +149,11 @@ class JourneyStep {
       endLng: endLng ?? this.endLng,
       path: path ?? this.path,
       startStationId: startStationId ?? this.startStationId,
+      destinationStationId: destinationStationId ?? this.destinationStationId,
       platform: platform ?? this.platform,
       arrivalPlatform: arrivalPlatform ?? this.arrivalPlatform,
+      departureStopLabel: departureStopLabel ?? this.departureStopLabel,
+      arrivalStopLabel: arrivalStopLabel ?? this.arrivalStopLabel,
       stopovers: stopovers ?? this.stopovers,
       chatCount: chatCount ?? this.chatCount,
       dateTime: dateTime ?? this.dateTime,
