@@ -2572,6 +2572,7 @@ class TransportApi {
     Map<String, dynamic> journey, {
     void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
     bool preferBahnForRail = false,
+    bool fastBahnRailOnly = false,
   }) async {
     final journeys = <Map<String, dynamic>>[journey];
     await _enrichJourneysWithPlatforms(
@@ -2580,6 +2581,7 @@ class TransportApi {
           ? null
           : (enrichedSoFar) => onProgress(enrichedSoFar.first),
       preferBahnForRail: preferBahnForRail,
+      fastBahnRailOnly: fastBahnRailOnly,
     );
     return journeys.first;
   }
@@ -2663,6 +2665,92 @@ class TransportApi {
       debugPrint('bahn.de platform lookup failed for $evaNumber: $error');
       return null;
     }
+  }
+
+  static void _applyBackfilledStopDetails(
+    Map<String, dynamic> place, {
+    required String? platform,
+    required String? stopLabel,
+    required String? stopId,
+    required String? parentId,
+  }) {
+    if (platform != null && platform.isNotEmpty) {
+      _setIfBlankMapValue(place, 'platform', platform);
+      _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+    }
+    if (stopLabel != null && stopLabel.isNotEmpty) {
+      _setIfBlankMapValue(place, 'stopLabel', stopLabel);
+    }
+    if (stopId != null && stopId.isNotEmpty) {
+      _setIfBlankMapValue(place, 'exactStopId', stopId);
+    }
+    if (parentId != null && parentId.isNotEmpty) {
+      _setIfBlankMapValue(place, 'parentId', parentId);
+    }
+  }
+
+  static Future<void> _enrichJourneyRailPlatformsFromBahnBoardFast(
+    Map<String, dynamic> journey, {
+    void Function()? onProgress,
+  }) async {
+    final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+    if (legs == null || legs.isEmpty) return;
+
+    final tasks = <Future<void>>[];
+    for (final rawLeg in legs) {
+      final leg = rawLeg.cast<String, dynamic>();
+      if (leg['walking'] == true ||
+          leg['line'] == null ||
+          !_journeyLegLooksRail(leg)) {
+        continue;
+      }
+
+      void addLookup(
+        Map<String, dynamic>? place, {
+        required DateTime? expectedTime,
+        required bool arrivals,
+      }) {
+        if (place == null || _platformFromPlace(place) != null) return;
+        tasks.add(() async {
+          final details = await _backfillStopDetailsFromBahnBoard(
+            leg,
+            place,
+            expectedTime: expectedTime,
+            arrivals: arrivals,
+          );
+          if (details == null || details.platform == null) return;
+          _applyBackfilledStopDetails(
+            place,
+            platform: details.platform,
+            stopLabel: details.stopLabel,
+            stopId: details.stopId,
+            parentId: details.parentId,
+          );
+          onProgress?.call();
+        }());
+      }
+
+      addLookup(
+        (leg['origin'] as Map?)?.cast<String, dynamic>(),
+        expectedTime: _journeyLegTimeLocal(
+          leg,
+          'plannedDeparture',
+          'departure',
+        ),
+        arrivals: false,
+      );
+      addLookup(
+        (leg['destination'] as Map?)?.cast<String, dynamic>(),
+        expectedTime: _journeyLegTimeLocal(
+          leg,
+          'plannedArrival',
+          'arrival',
+        ),
+        arrivals: true,
+      );
+    }
+
+    await Future.wait(tasks);
   }
 
   static Future<List<Map<String, dynamic>>> _fetchMotisStopEvents(
@@ -2850,6 +2938,7 @@ class TransportApi {
     List<Map<String, dynamic>> journeys, {
     void Function(List<Map<String, dynamic>> enrichedSoFar)? onProgress,
     bool preferBahnForRail = false,
+    bool fastBahnRailOnly = false,
   }) async {
     for (var journeyIndex = 0; journeyIndex < journeys.length; journeyIndex++) {
       final journey = journeys[journeyIndex];
@@ -2863,6 +2952,16 @@ class TransportApi {
 
       final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
       if (legs == null || legs.isEmpty) continue;
+
+      if (fastBahnRailOnly) {
+        await _enrichJourneyRailPlatformsFromBahnBoardFast(
+          journey,
+          onProgress: () =>
+              onProgress?.call(List<Map<String, dynamic>>.from(journeys)),
+        );
+        onProgress?.call(List<Map<String, dynamic>>.from(journeys));
+        continue;
+      }
 
       for (final rawLeg in legs) {
         final leg = rawLeg.cast<String, dynamic>();
@@ -2885,20 +2984,13 @@ class TransportApi {
             preferBahnForRail: preferBahnForRail,
           );
           if (details != null) {
-            if (details.platform != null && details.platform!.isNotEmpty) {
-              _setIfBlankMapValue(origin, 'platform', details.platform!);
-              _setIfBlankMapValue(
-                  origin, 'scheduledPlatform', details.platform!);
-            }
-            if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
-              _setIfBlankMapValue(origin, 'stopLabel', details.stopLabel!);
-            }
-            if (details.stopId != null && details.stopId!.isNotEmpty) {
-              _setIfBlankMapValue(origin, 'exactStopId', details.stopId!);
-            }
-            if (details.parentId != null && details.parentId!.isNotEmpty) {
-              _setIfBlankMapValue(origin, 'parentId', details.parentId!);
-            }
+            _applyBackfilledStopDetails(
+              origin,
+              platform: details.platform,
+              stopLabel: details.stopLabel,
+              stopId: details.stopId,
+              parentId: details.parentId,
+            );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }
@@ -2912,20 +3004,13 @@ class TransportApi {
             preferBahnForRail: preferBahnForRail,
           );
           if (details != null) {
-            if (details.platform != null && details.platform!.isNotEmpty) {
-              _setIfBlankMapValue(destination, 'platform', details.platform!);
-              _setIfBlankMapValue(
-                  destination, 'scheduledPlatform', details.platform!);
-            }
-            if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
-              _setIfBlankMapValue(destination, 'stopLabel', details.stopLabel!);
-            }
-            if (details.stopId != null && details.stopId!.isNotEmpty) {
-              _setIfBlankMapValue(destination, 'exactStopId', details.stopId!);
-            }
-            if (details.parentId != null && details.parentId!.isNotEmpty) {
-              _setIfBlankMapValue(destination, 'parentId', details.parentId!);
-            }
+            _applyBackfilledStopDetails(
+              destination,
+              platform: details.platform,
+              stopLabel: details.stopLabel,
+              stopId: details.stopId,
+              parentId: details.parentId,
+            );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }

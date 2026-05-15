@@ -6040,6 +6040,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final enrichedRaw = await TransportApi.enrichJourneyWithPlatforms(
         Map<String, dynamic>.from(selectedJourney.rawSource),
         preferBahnForRail: true,
+        fastBahnRailOnly: true,
         onProgress: (enrichedSoFar) {
           applyEnrichedRaw(
             enrichedSoFar,
