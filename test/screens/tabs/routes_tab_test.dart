@@ -4,7 +4,7 @@ import 'package:trans/screens/tabs/routes_tab.dart';
 void main() {
   test('formats ride line with numeric platform', () {
     final formatted = formatRideLineWithPlatform('RB21', '6');
-    expect(formatted, 'RB21 (Pl. 6)');
+    expect(formatted, 'RB21 (Gl. 6)');
   });
 
   test('does not duplicate platform suffix when already present', () {
@@ -100,7 +100,7 @@ void main() {
       tripId: '4616',
       showTrainNumbers: false,
     );
-    expect(formatted, 'RE54 (Pl. 2)');
+    expect(formatted, 'RE54 (Gl. 2)');
   });
 
   test('hides parenthesized train number even when tripId is missing', () {
@@ -111,7 +111,7 @@ void main() {
       tripId: null,
       showTrainNumbers: false,
     );
-    expect(formatted, 'IC (Pl. 7)');
+    expect(formatted, 'IC (Gl. 7)');
   });
 
   test('hides parenthesized numeric segment from middle of line', () {

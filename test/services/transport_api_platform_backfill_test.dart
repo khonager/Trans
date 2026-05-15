@@ -112,5 +112,169 @@ void main() {
       expect(details.stopId, 'de-VBB_de:11000:900003201::2');
       expect(details.parentId, 'de-VBB_de:11000:900003201');
     });
+
+    test('prefers related platform event over exact trip without platform', () {
+      final details = TransportApi.matchStopEventDetailsForTesting(
+        [
+          {
+            'displayName': 'RE1 (73734)',
+            'headsign': 'Brandenburg Hbf',
+            'tripId': 'delfi-trip',
+            'place': {
+              'stopId': 'de-DELFI_de:11000:900003201_G',
+              'name': 'S+U Berlin Hauptbahnhof',
+            },
+            'departure': {'scheduledTime': '2026-05-15T12:24:00Z'},
+          },
+          {
+            'displayName': 'RE1',
+            'headsign': 'Brandenburg Hbf',
+            'tripId': 'vbb-trip',
+            'place': {
+              'stopId': 'de-VBB_de:11000:900003201:2:53',
+              'name': 'S+U Berlin Hauptbahnhof',
+              'track': '14',
+              'description': 'Bahnsteig Gleis 14',
+            },
+            'departure': {'scheduledTime': '2026-05-15T12:24:00Z'},
+          },
+        ],
+        leg: {
+          'line': {'name': 'RE1 (73734)', 'tripId': 'delfi-trip'},
+          'direction': 'Brandenburg Hbf',
+        },
+        expectedTime: DateTime.parse('2026-05-15T12:24:00Z').toLocal(),
+      );
+
+      expect(details.platform, '14');
+      expect(details.stopId, 'de-VBB_de:11000:900003201:2:53');
+    });
+
+    test('matches rail platform from exact trip itinerary stop', () {
+      final details = TransportApi.matchStopDetailsFromTripItineraryForTesting(
+        {
+          'legs': [
+            {
+              'from': {
+                'stopId': 'de-DELFI_de:16052:8010125',
+                'name': 'Gera Hbf',
+                'track': '6b',
+              },
+              'to': {
+                'stopId': 'de-DELFI_de:16051:8010101',
+                'name': 'Erfurt Hbf',
+                'track': '8',
+              },
+              'scheduledStartTime': '2026-05-15T17:05:00Z',
+              'startTime': '2026-05-15T17:05:00Z',
+              'scheduledEndTime': '2026-05-15T18:07:00Z',
+              'endTime': '2026-05-15T18:07:00Z',
+            },
+          ],
+        },
+        targetPlace: {
+          'id': 'de-DELFI_de:16052:8010125',
+          'name': 'Gera Hbf',
+        },
+        expectedTime: DateTime.parse('2026-05-15T17:05:00Z').toLocal(),
+      );
+
+      expect(details?.platform, '6b');
+      expect(details?.stopId, 'de-DELFI_de:16052:8010125');
+    });
+
+    test('prefers timed trip stop when a station appears more than once', () {
+      final details = TransportApi.matchStopDetailsFromTripItineraryForTesting(
+        {
+          'legs': [
+            {
+              'from': {
+                'stopId': 'loop-station',
+                'name': 'Loop Hbf',
+                'track': '1',
+              },
+              'to': {
+                'stopId': 'loop-station',
+                'name': 'Loop Hbf',
+                'track': '7',
+              },
+              'scheduledStartTime': '2026-05-15T08:00:00Z',
+              'startTime': '2026-05-15T08:00:00Z',
+              'scheduledEndTime': '2026-05-15T09:00:00Z',
+              'endTime': '2026-05-15T09:00:00Z',
+            },
+          ],
+        },
+        targetPlace: {
+          'id': 'loop-station',
+          'name': 'Loop Hbf',
+        },
+        expectedTime: DateTime.parse('2026-05-15T09:00:00Z').toLocal(),
+      );
+
+      expect(details?.platform, '7');
+    });
+
+    test('matches bahn board platform by rail line and time', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-05-15T18:01:00',
+            'gleis': '6b',
+            'verkehrmittel': {'mittelText': 'RE12'},
+          },
+          {
+            'zeit': '2026-05-15T18:04:00',
+            'gleis': '3b',
+            'verkehrmittel': {'mittelText': 'IC 2150'},
+          },
+        ],
+        leg: {
+          'mode': 'LONG_DISTANCE',
+          'line': {'name': 'IC 2150'},
+        },
+        expectedTime: DateTime.parse('2026-05-15T18:04:00').toLocal(),
+      );
+
+      expect(platform, '3b');
+    });
+
+    test('matches bahn board line when Transitous only has train number', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-05-15T22:49:00',
+            'gleis': '2',
+            'verkehrmittel': {'mittelText': 'ICE 79'},
+          },
+        ],
+        leg: {
+          'mode': 'HIGHSPEED_RAIL',
+          'line': {'name': '79'},
+        },
+        expectedTime: DateTime.parse('2026-05-15T22:49:00').toLocal(),
+      );
+
+      expect(platform, '2');
+    });
+
+    test('ignores bahn board platforms outside the matching time window', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-05-15T18:25:00',
+            'gleis': '9',
+            'verkehrmittel': {'mittelText': 'IC 2150'},
+          },
+        ],
+        leg: {
+          'mode': 'LONG_DISTANCE',
+          'line': {'name': 'IC 2150'},
+        },
+        expectedTime: DateTime.parse('2026-05-15T18:04:00').toLocal(),
+      );
+
+      expect(platform, isNull);
+    });
   });
 }

@@ -57,9 +57,26 @@ String formatRideLineWithPlatform(String line, String? platform) {
   }
 
   final isNumericPlatform = int.tryParse(normalizedPlatform) != null;
-  final formattedPlatform =
-      isNumericPlatform ? 'Pl. $normalizedPlatform' : normalizedPlatform;
+  final formattedPlatform = isNumericPlatform
+      ? '${_lineLooksRailForPlatformLabel(normalizedLine) ? 'Gl.' : 'Pl.'} $normalizedPlatform'
+      : normalizedPlatform;
   return '$normalizedLine ($formattedPlatform)';
+}
+
+bool _lineLooksRailForPlatformLabel(String line) {
+  final normalized = line.trim().toUpperCase();
+  if (normalized.isEmpty) return false;
+  const railPrefixes = ['ICE', 'ECE', 'IC', 'EC', 'RE', 'RB', 'IR'];
+  for (final prefix in railPrefixes) {
+    if (!normalized.startsWith(prefix)) continue;
+    if (normalized.length == prefix.length) return true;
+    final next = normalized[prefix.length];
+    return next == ' ' || int.tryParse(next) != null;
+  }
+  if (!normalized.startsWith('S')) return false;
+  if (normalized.length == 1) return true;
+  final next = normalized[1];
+  return next == ' ' || int.tryParse(next) != null;
 }
 
 final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
@@ -410,6 +427,43 @@ String _journeyRefreshSignature(Iterable<Journey> journeys) {
       .map((j) =>
           "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
       .join("||");
+}
+
+String _journeyListKey(Journey journey) {
+  final departure = journey.plannedDeparture?.millisecondsSinceEpoch ??
+      journey.departure.millisecondsSinceEpoch;
+  final arrival = journey.plannedArrival?.millisecondsSinceEpoch ??
+      journey.arrival.millisecondsSinceEpoch;
+  String firstLine = '';
+  String firstTripId = '';
+  for (final step in journey.steps) {
+    if (step.type != 'ride') continue;
+    firstLine = step.line;
+    firstTripId = step.tripId ?? '';
+    break;
+  }
+  return '$departure|$arrival|$firstLine|$firstTripId';
+}
+
+int _journeyPlatformSignal(Journey journey) {
+  var score = 0;
+  for (final step in journey.steps.where((step) => step.type == 'ride')) {
+    if ((step.platform ?? '').trim().isNotEmpty) score += 2;
+    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) score += 1;
+    if ((step.departureStopLabel ?? '').trim().isNotEmpty) score += 1;
+    if ((step.arrivalStopLabel ?? '').trim().isNotEmpty) score += 1;
+  }
+  return score;
+}
+
+Journey _preferJourneyWithMorePlatformDetail(
+  Journey existing,
+  Journey incoming,
+) {
+  final incomingScore = _journeyPlatformSignal(incoming);
+  final existingScore = _journeyPlatformSignal(existing);
+  if (incomingScore > existingScore) return incoming;
+  return existing;
 }
 
 class _SuggestionSection {
@@ -3511,21 +3565,52 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final Map<String, Journey> uniqueMap = {};
         if (currentTab.candidates != null) {
           for (var j in currentTab.candidates!) {
-            final key =
-                "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
+            final key = _journeyListKey(j);
             uniqueMap[key] = j;
           }
         }
         for (var j in newJourneys) {
-          final key =
-              "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
-          if (!uniqueMap.containsKey(key)) uniqueMap[key] = j;
+          final key = _journeyListKey(j);
+          final existing = uniqueMap[key];
+          uniqueMap[key] = existing == null
+              ? j
+              : _preferJourneyWithMorePlatformDetail(existing, j);
         }
 
         final updatedCandidates = uniqueMap.values.toList();
         updatedCandidates.sort((a, b) => a.departure.compareTo(b.departure));
 
-        _tabs[idx] = currentTab.copyWith(candidates: updatedCandidates);
+        var updatedActiveJourney = currentTab.activeJourney;
+        var updatedSteps = currentTab.steps;
+        var updatedStack = currentTab.stack;
+        if (updatedActiveJourney != null) {
+          final activeKey = _journeyListKey(updatedActiveJourney);
+          final enrichedActiveJourney = uniqueMap[activeKey];
+          if (enrichedActiveJourney != null) {
+            final preferredActiveJourney = _preferJourneyWithMorePlatformDetail(
+              updatedActiveJourney,
+              enrichedActiveJourney,
+            );
+            if (!identical(preferredActiveJourney, updatedActiveJourney)) {
+              updatedActiveJourney = preferredActiveJourney;
+              updatedSteps = preferredActiveJourney.steps;
+              updatedStack = currentTab.stack
+                  .map(
+                    (journey) => _journeyListKey(journey) == activeKey
+                        ? preferredActiveJourney
+                        : journey,
+                  )
+                  .toList();
+            }
+          }
+        }
+
+        _tabs[idx] = currentTab.copyWith(
+          candidates: updatedCandidates,
+          activeJourney: updatedActiveJourney,
+          steps: updatedSteps,
+          stack: updatedStack,
+        );
       }
     });
   }
@@ -5095,17 +5180,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     // Determine reference time
     DateTime refDate;
     bool isArrival;
+    DateTime? earlierBoundary;
+    DateTime? earlierWindowStart;
 
     if (earlier) {
       if (route.candidates == null || route.candidates!.isEmpty) return;
-      refDate = route.candidates!.first.departure
-          .subtract(const Duration(minutes: 1));
-      isArrival =
-          true; // Find connections arriving before the first one's departure
+      earlierBoundary = route.candidates!
+          .map((journey) => journey.plannedDeparture ?? journey.departure)
+          .reduce((a, b) => a.isBefore(b) ? a : b);
+      earlierWindowStart = earlierBoundary.subtract(const Duration(hours: 2));
+      refDate = earlierWindowStart;
+      isArrival = false;
     } else {
       if (route.candidates == null || route.candidates!.isEmpty) return;
-      refDate =
-          route.candidates!.last.departure.add(const Duration(minutes: 1));
+      refDate = route.candidates!
+          .map((journey) => journey.plannedDeparture ?? journey.departure)
+          .reduce((a, b) => a.isAfter(b) ? a : b)
+          .add(const Duration(minutes: 1));
       isArrival = false; // Find connections departing after the last one
     }
 
@@ -5133,28 +5224,40 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             );
           } catch (e) {/* ignore */}
         }
+        if (earlier && earlierBoundary != null && earlierWindowStart != null) {
+          newJourneys.removeWhere((journey) {
+            final departure = journey.plannedDeparture ?? journey.departure;
+            return !departure.isBefore(earlierBoundary!) ||
+                departure.isBefore(earlierWindowStart!);
+          });
+        }
+        if (newJourneys.isEmpty) {
+          _releaseBlockingRouteLoad(loadToken);
+          if (!visibleResults.isCompleted) {
+            visibleResults.complete();
+          }
+          return;
+        }
 
         setState(() {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
-            final currentIds = currentRoute.candidates!
-                .map((j) =>
-                    "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}")
-                .toSet();
-            final uniqueNew = newJourneys
-                .where((j) => !currentIds.contains(
-                    "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}"))
-                .toList();
-
-            if (uniqueNew.isNotEmpty) {
-              final updatedCandidates =
-                  List<Journey>.from(currentRoute.candidates!);
-              updatedCandidates.addAll(uniqueNew);
-              updatedCandidates
-                  .sort((a, b) => a.departure.compareTo(b.departure));
-              _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            final byKey = <String, Journey>{};
+            for (final journey in currentRoute.candidates!) {
+              byKey[_journeyListKey(journey)] = journey;
             }
+            for (final journey in newJourneys) {
+              final key = _journeyListKey(journey);
+              final existing = byKey[key];
+              byKey[key] = existing == null
+                  ? journey
+                  : _preferJourneyWithMorePlatformDetail(existing, journey);
+            }
+
+            final updatedCandidates = byKey.values.toList()
+              ..sort((a, b) => a.departure.compareTo(b.departure));
+            _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
           }
         });
         _releaseBlockingRouteLoad(loadToken);
