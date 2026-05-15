@@ -5832,6 +5832,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
+    _activePlatformEnrichmentKeys
+        .removeWhere((key) => key.startsWith('${route.id}|'));
+    _completedActivePlatformEnrichmentKeys
+        .removeWhere((key) => key.startsWith('${route.id}|'));
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
@@ -5880,6 +5884,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (matched != null) {
           final upd =
               _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
+          _activePlatformEnrichmentKeys
+              .removeWhere((key) => key.startsWith('${route.id}|'));
+          _completedActivePlatformEnrichmentKeys
+              .removeWhere((key) => key.startsWith('${route.id}|'));
           final updatedSignature = _savedJourneyRealtimeSignature(upd);
           final hasChanged = updatedSignature != previousSignature;
           setState(() {
@@ -5905,6 +5913,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
           });
           hasMatchedUpdate = true;
+          unawaited(_enrichActiveJourneyPlatforms(route.id, upd));
           completionMessage = hasChanged
               ? "Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: matched)}."
               : "Route refresh finished: no changes.";
