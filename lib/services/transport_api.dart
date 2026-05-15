@@ -910,7 +910,7 @@ class TransportApi {
     final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
     final journeys = decodeMotisPlanJourneys(data);
-    return _enrichJourneysWithPlatforms(journeys);
+    return journeys;
   }
 
   static Future<List<Map<String, dynamic>>> _searchDirectJourneysMotis(
@@ -933,7 +933,7 @@ class TransportApi {
     final data = json.decode(response.body);
     final directJourneys = decodeMotisDirectPlanJourneys(data);
     _syntheticLog('direct fallback result: routes=${directJourneys.length}');
-    return _enrichJourneysWithPlatforms(directJourneys);
+    return directJourneys;
   }
 
   /// Retry empty MOTIS search with safer walking parameters for edge-case
@@ -2495,6 +2495,106 @@ class TransportApi {
         expectedTime: expectedTime,
       );
 
+  static Future<Map<String, dynamic>> debugLookupBahnPlatform({
+    required String stationName,
+    required String lineName,
+    required DateTime expectedTime,
+    required bool arrivals,
+  }) async {
+    final place = <String, dynamic>{'name': stationName};
+    final leg = <String, dynamic>{
+      'line': <String, dynamic>{'name': lineName},
+    };
+    final evaNumber = await _resolveBahnEvaForPlace(place);
+    if (evaNumber == null) {
+      return <String, dynamic>{
+        'station': stationName,
+        'line': lineName,
+        'time': expectedTime.toIso8601String(),
+        'arrivals': arrivals,
+        'error': 'No bahn.de EVA station id found',
+      };
+    }
+
+    final events = await _fetchBahnBoardEvents(
+      evaNumber,
+      expectedTime: expectedTime,
+      arrivals: arrivals,
+    );
+    final platform = _matchPlatformFromBahnBoardEvents(
+      events,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+
+    Map<String, dynamic> simplifyEntry(Map<String, dynamic> entry) {
+      final vehicle = (entry['verkehrmittel'] as Map?)?.cast<String, dynamic>();
+      final line = vehicle?['mittelText'] ??
+          vehicle?['name'] ??
+          vehicle?['linienNummer'];
+      return <String, dynamic>{
+        'time': entry['zeit']?.toString(),
+        'realtimeTime': entry['ezZeit']?.toString(),
+        'line': line?.toString(),
+        'direction': entry['richtung']?.toString(),
+        'platform': entry['gleis']?.toString(),
+        'lineKey': _bahnBoardLineKey(entry),
+        'minutesFromExpected':
+            _bahnBoardTimeDistance(entry, expectedTime)?.inMinutes.toString(),
+      };
+    }
+
+    final lineKey = _normalizeTransitKey(lineName);
+    final relevantEntries = events
+        .where((entry) =>
+            _transitLineKeysLikelyMatch(lineKey, _bahnBoardLineKey(entry)) ||
+            (_bahnBoardTimeDistance(entry, expectedTime) != null &&
+                _bahnBoardTimeDistance(entry, expectedTime)! <=
+                    const Duration(minutes: 20)))
+        .map(simplifyEntry)
+        .take(20)
+        .toList();
+
+    return <String, dynamic>{
+      'station': stationName,
+      'eva': evaNumber,
+      'line': lineName,
+      'lineKey': lineKey,
+      'time': expectedTime.toIso8601String(),
+      'arrivals': arrivals,
+      'platform': platform,
+      'entriesReturned': events.length,
+      'entries': relevantEntries,
+    };
+  }
+
+  static Future<Map<String, dynamic>> enrichJourneyWithPlatforms(
+    Map<String, dynamic> journey,
+  ) async {
+    final journeys = <Map<String, dynamic>>[journey];
+    await _enrichJourneysWithPlatforms(journeys);
+    return journeys.first;
+  }
+
+  static void _setIfBlankMapValue(
+    Map<String, dynamic> map,
+    String key,
+    String value,
+  ) {
+    final current = map[key]?.toString().trim();
+    if (current == null || current.isEmpty) {
+      map[key] = value;
+    }
+  }
+
+  @visibleForTesting
+  static void setIfBlankMapValueForTesting(
+    Map<String, dynamic> map,
+    String key,
+    String value,
+  ) =>
+      _setIfBlankMapValue(map, key, value);
+
   static Future<
       ({
         String? platform,
@@ -2719,9 +2819,11 @@ class TransportApi {
   }
 
   static Future<List<Map<String, dynamic>>> _enrichJourneysWithPlatforms(
-    List<Map<String, dynamic>> journeys,
-  ) async {
-    for (final journey in journeys) {
+    List<Map<String, dynamic>> journeys, {
+    void Function(List<Map<String, dynamic>> enrichedSoFar)? onProgress,
+  }) async {
+    for (var journeyIndex = 0; journeyIndex < journeys.length; journeyIndex++) {
+      final journey = journeys[journeyIndex];
       final source = journey['source']?.toString();
       if (source != 'motis' && source != 'motis_synthetic') continue;
 
@@ -2749,20 +2851,18 @@ class TransportApi {
           );
           if (details != null) {
             if (details.platform != null && details.platform!.isNotEmpty) {
-              origin.putIfAbsent('platform', () => details.platform!);
-              origin.putIfAbsent(
-                'scheduledPlatform',
-                () => details.platform!,
-              );
+              _setIfBlankMapValue(origin, 'platform', details.platform!);
+              _setIfBlankMapValue(
+                  origin, 'scheduledPlatform', details.platform!);
             }
             if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
-              origin.putIfAbsent('stopLabel', () => details.stopLabel!);
+              _setIfBlankMapValue(origin, 'stopLabel', details.stopLabel!);
             }
             if (details.stopId != null && details.stopId!.isNotEmpty) {
-              origin.putIfAbsent('exactStopId', () => details.stopId!);
+              _setIfBlankMapValue(origin, 'exactStopId', details.stopId!);
             }
             if (details.parentId != null && details.parentId!.isNotEmpty) {
-              origin.putIfAbsent('parentId', () => details.parentId!);
+              _setIfBlankMapValue(origin, 'parentId', details.parentId!);
             }
           }
         }
@@ -2776,24 +2876,24 @@ class TransportApi {
           );
           if (details != null) {
             if (details.platform != null && details.platform!.isNotEmpty) {
-              destination.putIfAbsent('platform', () => details.platform!);
-              destination.putIfAbsent(
-                'scheduledPlatform',
-                () => details.platform!,
-              );
+              _setIfBlankMapValue(destination, 'platform', details.platform!);
+              _setIfBlankMapValue(
+                  destination, 'scheduledPlatform', details.platform!);
             }
             if (details.stopLabel != null && details.stopLabel!.isNotEmpty) {
-              destination.putIfAbsent('stopLabel', () => details.stopLabel!);
+              _setIfBlankMapValue(destination, 'stopLabel', details.stopLabel!);
             }
             if (details.stopId != null && details.stopId!.isNotEmpty) {
-              destination.putIfAbsent('exactStopId', () => details.stopId!);
+              _setIfBlankMapValue(destination, 'exactStopId', details.stopId!);
             }
             if (details.parentId != null && details.parentId!.isNotEmpty) {
-              destination.putIfAbsent('parentId', () => details.parentId!);
+              _setIfBlankMapValue(destination, 'parentId', details.parentId!);
             }
           }
         }
       }
+
+      onProgress?.call(List<Map<String, dynamic>>.from(journeys));
     }
 
     return journeys;
@@ -4553,7 +4653,10 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(finalResults);
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
@@ -4658,6 +4761,9 @@ class TransportApi {
           }
         }
         var finalResults = baseResults;
+        if (baseResults.isNotEmpty) {
+          onPartialResults(baseResults);
+        }
         if (isSyntheticTransitousEnabled) {
           setPhase(loadPhaseSynthetic, true);
           finalResults = await _augmentJourneysWithSynthetic(
@@ -4674,7 +4780,10 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(finalResults);
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: hybrid(partial) motis=${resultsList[0].length} '
           'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
@@ -4724,7 +4833,10 @@ class TransportApi {
             shouldContinue: shouldContinue,
           );
         }
-        finalResults = await _enrichJourneysWithPlatforms(finalResults);
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
           'base=${baseResults.length} final=${finalResults.length}',

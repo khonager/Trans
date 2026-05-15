@@ -276,5 +276,36 @@ void main() {
 
       expect(platform, isNull);
     });
+
+    test('platform writeback replaces blank existing values', () {
+      final place = <String, dynamic>{
+        'platform': null,
+        'scheduledPlatform': '',
+        'stopLabel': '  ',
+        'exactStopId': 'existing-child',
+      };
+
+      TransportApi.setIfBlankMapValueForTesting(place, 'platform', '2');
+      TransportApi.setIfBlankMapValueForTesting(
+        place,
+        'scheduledPlatform',
+        '2',
+      );
+      TransportApi.setIfBlankMapValueForTesting(
+        place,
+        'stopLabel',
+        'Gleis 2',
+      );
+      TransportApi.setIfBlankMapValueForTesting(
+        place,
+        'exactStopId',
+        'new-child',
+      );
+
+      expect(place['platform'], '2');
+      expect(place['scheduledPlatform'], '2');
+      expect(place['stopLabel'], 'Gleis 2');
+      expect(place['exactStopId'], 'existing-child');
+    });
   });
 }
