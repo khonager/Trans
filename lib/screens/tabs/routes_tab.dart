@@ -510,6 +510,12 @@ Journey _bestCurrentJourneyVersion(
   return best;
 }
 
+bool _journeyHasDeparturePlatformsForEveryRide(Journey journey) {
+  final rideSteps = journey.steps.where((step) => step.type == 'ride').toList();
+  if (rideSteps.isEmpty) return true;
+  return rideSteps.every((step) => (step.platform ?? '').trim().isNotEmpty);
+}
+
 class _SuggestionSection {
   final String? title;
   final List<dynamic> items;
@@ -559,6 +565,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   int _nextRouteSearchToken = 0;
   int? _activeRouteSearchToken;
   final Set<int> _cancelledRouteSearchTokens = <int>{};
+  final Set<String> _activePlatformEnrichmentKeys = <String>{};
+  final Set<String> _completedActivePlatformEnrichmentKeys = <String>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
@@ -5942,86 +5950,114 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     String tabId,
     Journey selectedJourney,
   ) async {
-    if (_journeyPlatformSignal(selectedJourney) > 0) return;
+    if (_journeyHasDeparturePlatformsForEveryRide(selectedJourney)) return;
+    final enrichmentKey = '$tabId|${_journeyListKey(selectedJourney)}';
+    if (_completedActivePlatformEnrichmentKeys.contains(enrichmentKey)) return;
+    if (!_activePlatformEnrichmentKeys.add(enrichmentKey)) return;
 
     try {
-      final enrichedRaw = await TransportApi.enrichJourneyWithPlatforms(
-        Map<String, dynamic>.from(selectedJourney.rawSource),
-      );
-      if (!mounted) return;
+      var appliedAnyUpdate = false;
+      bool applyEnrichedRaw(
+        Map<String, dynamic> enrichedRaw, {
+        required bool logNoImprovement,
+      }) {
+        if (!mounted) return false;
 
-      final idx = _tabs.indexWhere((t) => t.id == tabId);
-      if (idx == -1) return;
-      final currentRoute = _tabs[idx];
-      final currentActive = currentRoute.activeJourney;
-      if (currentActive == null ||
-          !_journeysLikelySameRoute(currentActive, selectedJourney)) {
-        return;
-      }
-
-      final enrichedJourney = _createJourney(
-        enrichedRaw,
-        destinationNameOverride: currentRoute.destination.name,
-      );
-      final preferredActive = _preferJourneyWithMorePlatformDetail(
-        currentActive,
-        enrichedJourney,
-      );
-      if (identical(preferredActive, currentActive)) {
-        TransportApi.addSyntheticDebugLog(
-          'ui: active platform enrich no improvement tab=$tabId activeSignal=${_journeyPlatformSignal(currentActive)} enrichedSignal=${_journeyPlatformSignal(enrichedJourney)}',
-        );
-        return;
-      }
-
-      setState(() {
-        final latestIdx = _tabs.indexWhere((t) => t.id == tabId);
-        if (latestIdx == -1) return;
-        final latest = _tabs[latestIdx];
-        final latestActive = latest.activeJourney;
-        if (latestActive == null ||
-            !_journeysLikelySameRoute(latestActive, selectedJourney)) {
-          return;
+        final idx = _tabs.indexWhere((t) => t.id == tabId);
+        if (idx == -1) return false;
+        final currentRoute = _tabs[idx];
+        final currentActive = currentRoute.activeJourney;
+        if (currentActive == null ||
+            !_journeysLikelySameRoute(currentActive, selectedJourney)) {
+          return false;
         }
 
-        final updatedCandidates = latest.candidates
-            ?.map(
-              (candidate) => _journeysLikelySameRoute(
-                candidate,
-                preferredActive,
-              )
-                  ? _preferJourneyWithMorePlatformDetail(
-                      candidate,
-                      preferredActive,
-                    )
-                  : candidate,
-            )
-            .toList();
-        final updatedStack = latest.stack
-            .map(
-              (journey) => _journeysLikelySameRoute(journey, preferredActive)
-                  ? _preferJourneyWithMorePlatformDetail(
-                      journey,
-                      preferredActive,
-                    )
-                  : journey,
-            )
-            .toList();
+        final enrichedJourney = _createJourney(
+          enrichedRaw,
+          destinationNameOverride: currentRoute.destination.name,
+        );
+        final preferredActive = _preferJourneyWithMorePlatformDetail(
+          currentActive,
+          enrichedJourney,
+        );
+        if (identical(preferredActive, currentActive)) {
+          if (logNoImprovement) {
+            TransportApi.addSyntheticDebugLog(
+              'ui: active platform enrich no improvement tab=$tabId activeSignal=${_journeyPlatformSignal(currentActive)} enrichedSignal=${_journeyPlatformSignal(enrichedJourney)}',
+            );
+          }
+          return false;
+        }
 
-        TransportApi.addSyntheticDebugLog(
-          'ui: active platform enrich applied tab=$tabId activeSignal=${_journeyPlatformSignal(preferredActive)}',
-        );
-        _tabs[latestIdx] = latest.copyWith(
-          activeJourney: preferredActive,
-          steps: preferredActive.steps,
-          candidates: updatedCandidates,
-          stack: updatedStack,
-        );
-      });
+        setState(() {
+          final latestIdx = _tabs.indexWhere((t) => t.id == tabId);
+          if (latestIdx == -1) return;
+          final latest = _tabs[latestIdx];
+          final latestActive = latest.activeJourney;
+          if (latestActive == null ||
+              !_journeysLikelySameRoute(latestActive, selectedJourney)) {
+            return;
+          }
+
+          final updatedCandidates = latest.candidates
+              ?.map(
+                (candidate) => _journeysLikelySameRoute(
+                  candidate,
+                  preferredActive,
+                )
+                    ? _preferJourneyWithMorePlatformDetail(
+                        candidate,
+                        preferredActive,
+                      )
+                    : candidate,
+              )
+              .toList();
+          final updatedStack = latest.stack
+              .map(
+                (journey) => _journeysLikelySameRoute(journey, preferredActive)
+                    ? _preferJourneyWithMorePlatformDetail(
+                        journey,
+                        preferredActive,
+                      )
+                    : journey,
+              )
+              .toList();
+
+          TransportApi.addSyntheticDebugLog(
+            'ui: active platform enrich applied tab=$tabId activeSignal=${_journeyPlatformSignal(preferredActive)}',
+          );
+          _tabs[latestIdx] = latest.copyWith(
+            activeJourney: preferredActive,
+            steps: preferredActive.steps,
+            candidates: updatedCandidates,
+            stack: updatedStack,
+          );
+        });
+        appliedAnyUpdate = true;
+        return true;
+      }
+
+      final enrichedRaw = await TransportApi.enrichJourneyWithPlatforms(
+        Map<String, dynamic>.from(selectedJourney.rawSource),
+        preferBahnForRail: true,
+        onProgress: (enrichedSoFar) {
+          applyEnrichedRaw(
+            enrichedSoFar,
+            logNoImprovement: false,
+          );
+        },
+      );
+      applyEnrichedRaw(
+        enrichedRaw,
+        logNoImprovement: !appliedAnyUpdate,
+      );
+      _completedActivePlatformEnrichmentKeys.add(enrichmentKey);
     } catch (error) {
       TransportApi.addSyntheticDebugLog(
         'ui: active platform enrich failed tab=$tabId error=$error',
       );
+    } finally {
+      _activePlatformEnrichmentKeys.remove(enrichmentKey);
     }
   }
 
@@ -6032,6 +6068,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return RouteResultsView(
         candidates: route.candidates!,
         onSelect: (journey) {
+          Journey? selectedJourneyForEnrichment;
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
@@ -6040,6 +6077,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 journey,
                 currentRoute.candidates ?? route.candidates!,
               );
+              selectedJourneyForEnrichment = selectedJourney;
               final currentStack = List<Journey>.from(currentRoute.stack);
               if (!currentStack.any(
                 (existing) => _journeysLikelySameRoute(
@@ -6063,6 +6101,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               );
             }
           });
+          if (selectedJourneyForEnrichment != null) {
+            unawaited(_enrichActiveJourneyPlatforms(
+              route.id,
+              selectedJourneyForEnrichment!,
+            ));
+          }
         },
         onBack: () => _closeTab(route.id),
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
@@ -6085,6 +6129,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         FormatUtils.formatDuration(totalWalkingMinutes);
     final totalBikingDurationLabel =
         FormatUtils.formatDuration(totalBikingMinutes);
+    final activeJourney = route.activeJourney;
+    if (activeJourney != null &&
+        !_journeyHasDeparturePlatformsForEveryRide(activeJourney)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_enrichActiveJourneyPlatforms(route.id, activeJourney));
+      });
+    }
     return RefreshIndicator(
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),

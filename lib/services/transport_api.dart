@@ -2569,10 +2569,18 @@ class TransportApi {
   }
 
   static Future<Map<String, dynamic>> enrichJourneyWithPlatforms(
-    Map<String, dynamic> journey,
-  ) async {
+    Map<String, dynamic> journey, {
+    void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
+    bool preferBahnForRail = false,
+  }) async {
     final journeys = <Map<String, dynamic>>[journey];
-    await _enrichJourneysWithPlatforms(journeys);
+    await _enrichJourneysWithPlatforms(
+      journeys,
+      onProgress: onProgress == null
+          ? null
+          : (enrichedSoFar) => onProgress(enrichedSoFar.first),
+      preferBahnForRail: preferBahnForRail,
+    );
     return journeys.first;
   }
 
@@ -2695,6 +2703,7 @@ class TransportApi {
     Map<String, dynamic> place, {
     required DateTime? expectedTime,
     required bool arrivals,
+    bool preferBahnForRail = false,
   }) async {
     final existingPlatform = _platformFromPlace(place);
     final existingStopLabel = _stopLabelFromPlace(place);
@@ -2707,6 +2716,25 @@ class TransportApi {
         stopId: existingStopId,
         parentId: existingParentId,
       );
+    }
+
+    if (preferBahnForRail &&
+        expectedTime != null &&
+        _journeyLegLooksRail(leg)) {
+      final bahnDetails = await _backfillStopDetailsFromBahnBoard(
+        leg,
+        place,
+        expectedTime: expectedTime,
+        arrivals: arrivals,
+      );
+      if (bahnDetails != null && bahnDetails.platform != null) {
+        return (
+          platform: bahnDetails.platform,
+          stopLabel: bahnDetails.stopLabel ?? existingStopLabel,
+          stopId: bahnDetails.stopId ?? existingStopId,
+          parentId: bahnDetails.parentId ?? existingParentId,
+        );
+      }
     }
 
     final stopId = _stringOrNull(place['id']) ??
@@ -2821,11 +2849,17 @@ class TransportApi {
   static Future<List<Map<String, dynamic>>> _enrichJourneysWithPlatforms(
     List<Map<String, dynamic>> journeys, {
     void Function(List<Map<String, dynamic>> enrichedSoFar)? onProgress,
+    bool preferBahnForRail = false,
   }) async {
     for (var journeyIndex = 0; journeyIndex < journeys.length; journeyIndex++) {
       final journey = journeys[journeyIndex];
       final source = journey['source']?.toString();
-      if (source != 'motis' && source != 'motis_synthetic') continue;
+      if (source != 'motis' &&
+          source != 'motis_synthetic' &&
+          source != 'v6' &&
+          source != sourceDbV6) {
+        continue;
+      }
 
       final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
       if (legs == null || legs.isEmpty) continue;
@@ -2848,6 +2882,7 @@ class TransportApi {
             origin,
             expectedTime: departureTime,
             arrivals: false,
+            preferBahnForRail: preferBahnForRail,
           );
           if (details != null) {
             if (details.platform != null && details.platform!.isNotEmpty) {
@@ -2864,6 +2899,7 @@ class TransportApi {
             if (details.parentId != null && details.parentId!.isNotEmpty) {
               _setIfBlankMapValue(origin, 'parentId', details.parentId!);
             }
+            onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }
 
@@ -2873,6 +2909,7 @@ class TransportApi {
             destination,
             expectedTime: arrivalTime,
             arrivals: true,
+            preferBahnForRail: preferBahnForRail,
           );
           if (details != null) {
             if (details.platform != null && details.platform!.isNotEmpty) {
@@ -2889,6 +2926,7 @@ class TransportApi {
             if (details.parentId != null && details.parentId!.isNotEmpty) {
               _setIfBlankMapValue(destination, 'parentId', details.parentId!);
             }
+            onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }
       }
