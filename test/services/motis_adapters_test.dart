@@ -94,5 +94,20 @@ void main() {
       expect((legs.first as Map<String, dynamic>)['origin'], isNotNull);
       expect((legs.first)['destination'], isNotNull);
     });
+
+    test('preserves BIKE mode on direct non-transit legs', () {
+      final leg = legFromMotisLeg({
+        'mode': 'BIKE',
+        'from': {'name': 'Start', 'lat': 40.0, 'lon': 4.0},
+        'to': {'name': 'End', 'lat': 40.1, 'lon': 4.1},
+        'startTime': '2026-05-05T06:12:00Z',
+        'endTime': '2026-05-05T06:22:00Z',
+        'distance': 2500,
+      });
+
+      expect(leg['mode'], 'BIKE');
+      expect(leg['walking'], isTrue);
+      expect(leg, isNot(contains('line')));
+    });
   });
 }

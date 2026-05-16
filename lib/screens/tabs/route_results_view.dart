@@ -36,6 +36,39 @@ bool _shouldDisplaySummaryTripId(String? tripId) {
   return RegExp(r'\d').hasMatch(normalizedTripId);
 }
 
+String _summaryLineWithPlatform(String line, String? platform) {
+  final normalizedLine = line.trim();
+  final normalizedPlatform = platform?.trim();
+  if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
+    return normalizedLine;
+  }
+
+  final lowerLine = normalizedLine.toLowerCase();
+  final lowerPlatform = normalizedPlatform.toLowerCase();
+  if (lowerLine.contains('(pl. $lowerPlatform)') ||
+      lowerLine.contains('(gl. $lowerPlatform)')) {
+    return normalizedLine;
+  }
+  final platformPrefix = _summaryLineLooksRail(normalizedLine) ? 'Gl.' : 'Pl.';
+  return '$normalizedLine ($platformPrefix $normalizedPlatform)';
+}
+
+bool _summaryLineLooksRail(String line) {
+  final normalized = line.trim().toUpperCase();
+  if (normalized.isEmpty) return false;
+  const railPrefixes = ['ICE', 'ECE', 'IC', 'EC', 'RE', 'RB', 'IR'];
+  for (final prefix in railPrefixes) {
+    if (!normalized.startsWith(prefix)) continue;
+    if (normalized.length == prefix.length) return true;
+    final next = normalized[prefix.length];
+    return next == ' ' || int.tryParse(next) != null;
+  }
+  if (!normalized.startsWith('S')) return false;
+  if (normalized.length == 1) return true;
+  final next = normalized[1];
+  return next == ' ' || int.tryParse(next) != null;
+}
+
 class RouteResultsView extends StatefulWidget {
   final List<Journey> candidates;
   final Function(Journey) onSelect;
@@ -526,8 +559,11 @@ class _JourneyCard extends StatelessWidget {
     final arrStr = DateFormat('HH:mm').format(journey.arrival);
     final durStr = FormatUtils.formatDuration(journey.duration.inMinutes);
     final hasWalkingSummary = journey.totalWalkingDuration.inMinutes > 0;
+    final hasBikingSummary = journey.totalBikingDuration.inMinutes > 0;
     final walkStr =
         FormatUtils.formatDuration(journey.totalWalkingDuration.inMinutes);
+    final bikeStr =
+        FormatUtils.formatDuration(journey.totalBikingDuration.inMinutes);
     final isSynthetic = journey.source == 'motis_synthetic';
     final badgeLabel = isSynthetic
         ? 'TRANS/SYN'
@@ -666,6 +702,29 @@ class _JourneyCard extends StatelessWidget {
                             ),
                           ),
                         ],
+                        if (hasBikingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                            width: 1,
+                            height: 14,
+                            color: Colors.white24,
+                          ),
+                          const SizedBox(width: 10),
+                          Icon(
+                            Icons.pedal_bike,
+                            size: 14,
+                            color: colors.stepTransferText,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            bikeStr,
+                            style: TextStyle(
+                              color: colors.stepTransferText,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -741,6 +800,8 @@ class _JourneyCard extends StatelessWidget {
                     displayLine += " ($displayableTripId)";
                   }
                 }
+                displayLine =
+                    _summaryLineWithPlatform(displayLine, step.platform);
 
                 return Container(
                   margin: const EdgeInsets.only(right: 6),

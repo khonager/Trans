@@ -4,7 +4,7 @@ import 'package:trans/screens/tabs/routes_tab.dart';
 void main() {
   test('formats ride line with numeric platform', () {
     final formatted = formatRideLineWithPlatform('RB21', '6');
-    expect(formatted, 'RB21 (Pl. 6)');
+    expect(formatted, 'RB21 (Gl. 6)');
   });
 
   test('does not duplicate platform suffix when already present', () {
@@ -29,6 +29,69 @@ void main() {
     expect(formatted, 'RE29');
   });
 
+  test('combines train platform with richer stop label detail', () {
+    final combined = combinePlatformAndStopLabel(
+      '24',
+      'Gleis 24-25',
+      stationName: 'München Hbf',
+    );
+    expect(combined, '24 • Gleis 24-25');
+  });
+
+  test('does not duplicate stop label when it only repeats the platform', () {
+    final combined = combinePlatformAndStopLabel(
+      '7',
+      'Bahnsteig Gleis 7',
+      stationName: 'Berlin Hbf',
+    );
+    expect(combined, '7');
+  });
+
+  test('does not duplicate bus stand labels like Bussteig B', () {
+    final combined = combinePlatformAndStopLabel(
+      'B',
+      'Bussteig B',
+      stationName: 'Wiesbaden Hauptbahnhof',
+    );
+    expect(combined, 'Bussteig B');
+  });
+
+  test('prefers cleaned stop label for Platz B instead of B bullet B', () {
+    final combined = combinePlatformAndStopLabel(
+      'B',
+      'Platz B',
+      stationName: 'Wiesbaden Luisenplatz',
+    );
+    expect(combined, 'Platz B');
+  });
+
+  test('trims opaque suffix from stand label before deduping', () {
+    final combined = combinePlatformAndStopLabel(
+      'B',
+      'Steig B NAUROD',
+      stationName: 'Wiesbaden-Naurod Fondetter Straße',
+    );
+    expect(combined, 'Steig B');
+  });
+
+  test('suppresses opaque stop codes when a stand number exists', () {
+    final combined = combinePlatformAndStopLabel(
+      '1',
+      'NWaldstraße',
+      stationName: 'Wiesbaden-Biebrich Kahle Mühle P+R',
+    );
+    expect(combined, '1');
+  });
+
+  test('suppresses opaque stop codes even without a platform', () {
+    final combined = combinePlatformAndStopLabel(
+      null,
+      'VBhf SCHRGK',
+      stationName: 'Wiesbaden Schiersteiner Straße',
+    );
+    expect(combined, isNull);
+  });
+
   test('hides train number in parentheses but keeps platform', () {
     final formatted = formatRideDisplayLine(
       line: 'RE54 (4616)',
@@ -37,7 +100,7 @@ void main() {
       tripId: '4616',
       showTrainNumbers: false,
     );
-    expect(formatted, 'RE54 (Pl. 2)');
+    expect(formatted, 'RE54 (Gl. 2)');
   });
 
   test('hides parenthesized train number even when tripId is missing', () {
@@ -48,7 +111,7 @@ void main() {
       tripId: null,
       showTrainNumbers: false,
     );
-    expect(formatted, 'IC (Pl. 7)');
+    expect(formatted, 'IC (Gl. 7)');
   });
 
   test('hides parenthesized numeric segment from middle of line', () {
@@ -85,5 +148,52 @@ void main() {
     final second = savedRouteStatusNotificationIdForKey(key);
     expect(first, second);
     expect(first, greaterThanOrEqualTo(0));
+  });
+
+  test('alternative journey display departure prefers planned departure', () {
+    final departure = alternativeJourneyDisplayDepartureLocal({
+      'legs': [
+        {
+          'plannedDeparture': '2026-05-14T14:16:00Z',
+          'departure': '2026-05-14T14:15:00Z',
+          'line': {'name': '37'},
+        },
+      ],
+    });
+
+    expect(departure, DateTime.parse('2026-05-14T14:16:00Z').toLocal());
+  });
+
+  test('mergeAlternativeJourneys dedupes by display departure and arrival', () {
+    final journeys = mergeAlternativeJourneys(const [], [
+      {
+        'legs': [
+          {
+            'plannedDeparture': '2026-05-14T14:16:00Z',
+            'departure': '2026-05-14T14:15:00Z',
+            'line': {'name': '37'},
+          },
+          {
+            'plannedArrival': '2026-05-14T14:53:00Z',
+            'arrival': '2026-05-14T14:52:00Z',
+          },
+        ],
+      },
+      {
+        'legs': [
+          {
+            'plannedDeparture': '2026-05-14T14:16:00Z',
+            'departure': '2026-05-14T14:16:00Z',
+            'line': {'name': '37'},
+          },
+          {
+            'plannedArrival': '2026-05-14T14:53:00Z',
+            'arrival': '2026-05-14T14:53:00Z',
+          },
+        ],
+      },
+    ]);
+
+    expect(journeys, hasLength(1));
   });
 }

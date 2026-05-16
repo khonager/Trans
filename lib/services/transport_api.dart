@@ -94,10 +94,17 @@ class TransportApi {
       'advanced_pedestrian_speed_kmh';
   static const String advancedMaxWalkingTimeMinutesPreferenceKey =
       'advanced_max_walking_time_minutes';
+  static const int defaultAdvancedMinTransferTimeMinutes = 0;
+  static const int defaultAdvancedAdditionalTransferTimeMinutes = 0;
+  static const double defaultAdvancedTransferTimeFactor = 1.0;
+  static const double defaultAdvancedPedestrianSpeedKmh = 5.0;
+  static const int defaultAdvancedMaxWalkingTimeMinutes = 60;
+  static const double defaultAdvancedCyclingSpeedKmh = 16.0;
 
   // API endpoints
   static const String _motisUrl = 'https://api.transitous.org';
   static const String _v6Url = 'https://v6.db.transport.rest';
+  static const String _bahnWebUrl = 'https://www.bahn.de';
   static const String loadPhaseMotis = 'motis';
   static const String loadPhaseV6 = 'v6';
   static const String loadPhaseSynthetic = 'synthetic';
@@ -121,29 +128,42 @@ class TransportApi {
       _tripItineraryCache = {};
   static final Map<String, Future<Map<String, dynamic>?>>
       _tripItineraryInFlight = {};
+  static final Map<String, _CacheEntry<List<Map<String, dynamic>>>>
+      _stopEventsCache = {};
+  static final Map<String, _CacheEntry<List<Map<String, dynamic>>>>
+      _bahnBoardCache = {};
+  static final Map<String, _CacheEntry<String?>> _bahnEvaCache = {};
   static final List<String> _syntheticDebugBuffer = <String>[];
 
   // Cache the User-Agent
   static String? _userAgent;
   static bool _advancedSettingsLoaded = false;
   static bool _advancedSettingsEnabledForDevice = false;
-  static int _advancedMinTransferTimeMinutes = 4;
-  static int _advancedAdditionalTransferTimeMinutes = 2;
-  static double _advancedTransferTimeFactor = 1.3;
+  static int _advancedMinTransferTimeMinutes =
+      defaultAdvancedMinTransferTimeMinutes;
+  static int _advancedAdditionalTransferTimeMinutes =
+      defaultAdvancedAdditionalTransferTimeMinutes;
+  static double _advancedTransferTimeFactor = defaultAdvancedTransferTimeFactor;
   static bool _advancedPreTransitWalkEnabled = true;
   static bool _advancedPreTransitBikeEnabled = false;
   static bool _advancedPostTransitWalkEnabled = true;
   static bool _advancedPostTransitBikeEnabled = false;
-  static double _advancedCyclingSpeedKmh = 16.0;
-  static double _advancedPedestrianSpeedKmh = 5.0;
-  static int _advancedMaxWalkingTimeMinutes = 15;
+  static double _advancedCyclingSpeedKmh = defaultAdvancedCyclingSpeedKmh;
+  static double _advancedPedestrianSpeedKmh = defaultAdvancedPedestrianSpeedKmh;
+  static int _advancedMaxWalkingTimeMinutes =
+      defaultAdvancedMaxWalkingTimeMinutes;
   static bool _advancedBikeToggleEnabledForDevice = false;
   static DateTime? _v6StationsCooldownUntil;
   static const Duration _syntheticStopDeparturesCacheTtl = Duration(minutes: 2);
   static const Duration _tripItineraryCacheTtl = Duration(minutes: 10);
+  static const Duration _stopEventsCacheTtl = Duration(minutes: 2);
+  static const Duration _bahnBoardCacheTtl = Duration(minutes: 2);
+  static const Duration _bahnEvaCacheTtl = Duration(days: 7);
   static const Duration _syntheticTransferSlack = Duration(seconds: 15);
   static const int _syntheticOnwardResultsPerDeparture = 1;
   static const int _syntheticProgressBatchSize = 4;
+  static const int _defaultStationSearchLimit = 20;
+  static const int _expandedStationSearchLimit = 60;
   static const List<String> _nonDeutschlandticketServiceTokens = [
     'ICE',
     'IC',
@@ -158,6 +178,7 @@ class TransportApi {
   // Use 60 minutes so routes requiring longer access/egress walks are found.
   static const int _motisMaxPreTransitTimeSeconds = 3600;
   static const int _motisMaxPostTransitTimeSeconds = 3600;
+  static const int _motisDirectFallbackMaxMinutes = 120;
 
   static void configureEnabledSources(Iterable<String> sources) {
     final normalized = Set<String>.from(sources);
@@ -207,44 +228,59 @@ class TransportApi {
     final prefs = await SharedPreferences.getInstance();
     _advancedSettingsEnabledForDevice =
         prefs.getBool(advancedSettingsEnabledPreferenceKey) ?? false;
-    final legacyTransferComfort =
-        (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
-            .clamp(0.0, 1.0);
-    final legacyBikePreference =
-        (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0);
+    final hasLegacyTransferComfort =
+        prefs.containsKey(advancedTransferComfortPreferenceKey);
+    final legacyTransferComfort = hasLegacyTransferComfort
+        ? (prefs.getDouble(advancedTransferComfortPreferenceKey) ?? 0.5)
+            .clamp(0.0, 1.0)
+        : null;
+    final hasLegacyBikePreference =
+        prefs.containsKey(advancedBikePreferenceKey);
+    final legacyBikePreference = hasLegacyBikePreference
+        ? (prefs.getDouble(advancedBikePreferenceKey) ?? 0.0).clamp(0.0, 1.0)
+        : null;
     _advancedMinTransferTimeMinutes =
         prefs.getInt(advancedMinTransferTimeMinutesPreferenceKey) ??
-            (2 + (legacyTransferComfort * 5)).round();
+            (legacyTransferComfort != null
+                ? (2 + (legacyTransferComfort * 5)).round()
+                : defaultAdvancedMinTransferTimeMinutes);
     _advancedAdditionalTransferTimeMinutes =
         prefs.getInt(advancedAdditionalTransferTimeMinutesPreferenceKey) ??
-            (legacyTransferComfort * 4).round();
+            (legacyTransferComfort != null
+                ? (legacyTransferComfort * 4).round()
+                : defaultAdvancedAdditionalTransferTimeMinutes);
     _advancedTransferTimeFactor = (prefs.getDouble(
               advancedTransferTimeFactorPreferenceKey,
             ) ??
-            (0.8 + (legacyTransferComfort * 1.0)))
+            (legacyTransferComfort != null
+                ? (0.8 + (legacyTransferComfort * 1.0))
+                : defaultAdvancedTransferTimeFactor))
         .clamp(0.7, 2.5);
     _advancedPreTransitWalkEnabled =
         prefs.getBool(advancedPreTransitWalkEnabledPreferenceKey) ?? true;
     _advancedPreTransitBikeEnabled =
         prefs.getBool(advancedPreTransitBikeEnabledPreferenceKey) ??
-            legacyBikePreference > 0.01;
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
     _advancedPostTransitWalkEnabled =
         prefs.getBool(advancedPostTransitWalkEnabledPreferenceKey) ?? true;
     _advancedPostTransitBikeEnabled =
         prefs.getBool(advancedPostTransitBikeEnabledPreferenceKey) ??
-            legacyBikePreference > 0.01;
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
     _advancedCyclingSpeedKmh = (prefs.getDouble(
               advancedCyclingSpeedKmhPreferenceKey,
             ) ??
-            ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+            (legacyBikePreference != null
+                ? ((3.2 + (legacyBikePreference * 2.4)) * 3.6)
+                : defaultAdvancedCyclingSpeedKmh))
         .clamp(8.0, 30.0);
     _advancedPedestrianSpeedKmh = (prefs.getDouble(
               advancedPedestrianSpeedKmhPreferenceKey,
             ) ??
-            5.0)
+            defaultAdvancedPedestrianSpeedKmh)
         .clamp(2.0, 10.0);
     _advancedMaxWalkingTimeMinutes =
-        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ?? 15;
+        prefs.getInt(advancedMaxWalkingTimeMinutesPreferenceKey) ??
+            defaultAdvancedMaxWalkingTimeMinutes;
     _advancedBikeToggleEnabledForDevice =
         prefs.getBool(advancedBikeTogglePreferenceKey) ?? false;
     _advancedSettingsLoaded = true;
@@ -362,10 +398,11 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final Map<String, dynamic> params = {
       'query': query,
-      'results': 20,
+      'results': limit.clamp(1, _expandedStationSearchLimit),
       'poi': 'true',
       'addresses': 'true',
     };
@@ -576,41 +613,64 @@ class TransportApi {
     );
   }
 
-  static Future<List<Station>> _searchStationsMotis(
-    String query, {
-    double? lat,
-    double? lng,
-  }) async {
-    final Map<String, dynamic> params = {'text': query};
+  static bool get _hasAdvancedSearchOverrides {
+    if (!_advancedSettingsEnabledForDevice) return false;
+    if (_advancedMinTransferTimeMinutes !=
+        defaultAdvancedMinTransferTimeMinutes) {
+      return true;
+    }
+    if (_advancedAdditionalTransferTimeMinutes !=
+        defaultAdvancedAdditionalTransferTimeMinutes) {
+      return true;
+    }
+    if ((_advancedTransferTimeFactor - defaultAdvancedTransferTimeFactor)
+            .abs() >
+        0.0001) {
+      return true;
+    }
+    if ((_advancedPedestrianSpeedKmh - defaultAdvancedPedestrianSpeedKmh)
+            .abs() >
+        0.0001) {
+      return true;
+    }
+    if (_advancedMaxWalkingTimeMinutes !=
+        defaultAdvancedMaxWalkingTimeMinutes) {
+      return true;
+    }
+    final usesBikeForThisSearch = _usesPreTransitBike || _usesPostTransitBike;
+    return !_advancedPreTransitWalkEnabled ||
+        !_advancedPostTransitWalkEnabled ||
+        usesBikeForThisSearch;
+  }
 
-    if (lat != null && lng != null) {
-      params['place'] = '$lat,$lng';
-      // Bias ranking toward nearby matches without restricting the search area.
-      params['placeBias'] = '2';
+  static bool get _usesPreTransitBike =>
+      _advancedSettingsEnabledForDevice &&
+      _advancedPreTransitBikeEnabled &&
+      _advancedBikeToggleEnabledForDevice;
+
+  static bool get _usesPostTransitBike =>
+      _advancedSettingsEnabledForDevice &&
+      _advancedPostTransitBikeEnabled &&
+      _advancedBikeToggleEnabledForDevice;
+
+  static List<String> _motisDirectModesForCurrentSettings() {
+    if (!_advancedSettingsEnabledForDevice) {
+      return const <String>['WALK'];
     }
 
-    final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
-    final List<dynamic> data = json.decode(response.body);
+    final modes = <String>[];
+    if (_advancedPreTransitWalkEnabled || _advancedPostTransitWalkEnabled) {
+      modes.add('WALK');
+    }
+    if (_usesPreTransitBike || _usesPostTransitBike) {
+      modes.add('BIKE');
+    }
 
-    // Convert MOTIS Match format to Station
-    return data.map((match) => stationFromMotisMatch(match)).toList();
+    if (modes.isEmpty) return const <String>['WALK'];
+    return modes;
   }
 
-  static Future<List<Station>> _getNearbyStopsMotis(
-    double lat,
-    double lng,
-  ) async {
-    final response = await _fetch(
-      _getMotisUri('/api/v1/reverse-geocode', {
-        'place': '$lat,$lng',
-        'type': 'STOP', // Only return transit stops
-      }),
-    );
-    final List<dynamic> data = json.decode(response.body);
-    return data.map((match) => stationFromMotisMatch(match)).toList();
-  }
-
-  static Future<List<Map<String, dynamic>>> _searchJourneysMotis(
+  static Map<String, dynamic> _buildMotisJourneySearchParams(
     Station from,
     Station to, {
     bool nahverkehrOnly = false,
@@ -619,9 +679,7 @@ class TransportApi {
     int results = 3,
     double? pedestrianSpeedKmhOverride,
     int? maxWalkingTimeMinutesOverride,
-  }) async {
-    await _ensureAdvancedSettingsLoaded();
-
+  }) {
     final Map<String, dynamic> params = {
       'numItineraries': results.toString(),
       'detailedTransfers': 'true',
@@ -670,53 +728,212 @@ class TransportApi {
     }
 
     if (_advancedSettingsEnabledForDevice) {
-      params['minTransferTime'] =
-          (_advancedMinTransferTimeMinutes * 60).toString();
-      params['additionalTransferTime'] =
-          (_advancedAdditionalTransferTimeMinutes * 60).toString();
-      params['transferTimeFactor'] =
-          _advancedTransferTimeFactor.toStringAsFixed(2);
+      if (_advancedMinTransferTimeMinutes !=
+          defaultAdvancedMinTransferTimeMinutes) {
+        params['minTransferTime'] = _advancedMinTransferTimeMinutes.toString();
+      }
+      if (_advancedAdditionalTransferTimeMinutes !=
+          defaultAdvancedAdditionalTransferTimeMinutes) {
+        params['additionalTransferTime'] =
+            _advancedAdditionalTransferTimeMinutes.toString();
+      }
+      if ((_advancedTransferTimeFactor - defaultAdvancedTransferTimeFactor)
+              .abs() >
+          0.0001) {
+        params['transferTimeFactor'] =
+            _advancedTransferTimeFactor.toStringAsFixed(2);
+      }
+
       final pedestrianSpeedKmh =
           pedestrianSpeedKmhOverride ?? _advancedPedestrianSpeedKmh;
-      final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
-      params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      if ((pedestrianSpeedKmh - defaultAdvancedPedestrianSpeedKmh).abs() >
+          0.0001) {
+        final pedestrianSpeedMps = (pedestrianSpeedKmh / 3.6).clamp(0.55, 2.8);
+        params['pedestrianSpeed'] = pedestrianSpeedMps.toStringAsFixed(2);
+      }
+
       final maxWalkingTimeMinutes =
           maxWalkingTimeMinutesOverride ?? _advancedMaxWalkingTimeMinutes;
-      final maxWalkingTimeSeconds = (maxWalkingTimeMinutes.clamp(5, 120) * 60);
-      params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
-      params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
-
-      final useBikeForThisSearch = _advancedBikeToggleEnabledForDevice &&
-          (_advancedPreTransitBikeEnabled || _advancedPostTransitBikeEnabled);
-      final preModes = <String>[];
-      final postModes = <String>[];
-
-      if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
-      if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
-      if (useBikeForThisSearch && _advancedPreTransitBikeEnabled) {
-        preModes.add('BICYCLE');
-      }
-      if (useBikeForThisSearch && _advancedPostTransitBikeEnabled) {
-        postModes.add('BICYCLE');
+      if (maxWalkingTimeMinutes != defaultAdvancedMaxWalkingTimeMinutes) {
+        final maxWalkingTimeSeconds =
+            (maxWalkingTimeMinutes.clamp(5, 120) * 60);
+        params['maxPreTransitTime'] = maxWalkingTimeSeconds.toString();
+        params['maxPostTransitTime'] = maxWalkingTimeSeconds.toString();
       }
 
-      // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
-      if (preModes.isEmpty) preModes.add('WALK');
-      if (postModes.isEmpty) postModes.add('WALK');
+      final useBikeForThisSearch = _usesPreTransitBike || _usesPostTransitBike;
+      final hasModeOverride = !_advancedPreTransitWalkEnabled ||
+          !_advancedPostTransitWalkEnabled ||
+          useBikeForThisSearch;
+      if (hasModeOverride) {
+        final preModes = <String>[];
+        final postModes = <String>[];
 
-      params['preTransitModes'] = preModes.join(',');
-      params['postTransitModes'] = postModes.join(',');
+        if (_advancedPreTransitWalkEnabled) preModes.add('WALK');
+        if (_advancedPostTransitWalkEnabled) postModes.add('WALK');
+        if (_usesPreTransitBike) {
+          preModes.add('BIKE');
+        }
+        if (_usesPostTransitBike) {
+          postModes.add('BIKE');
+        }
 
-      if (useBikeForThisSearch) {
-        final cyclingSpeedMps =
-            (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
-        params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+        // Avoid invalid empty mode sets. If all options are off, fall back to WALK.
+        if (preModes.isEmpty) preModes.add('WALK');
+        if (postModes.isEmpty) postModes.add('WALK');
+
+        params['preTransitModes'] = preModes.join(',');
+        params['postTransitModes'] = postModes.join(',');
+
+        if (useBikeForThisSearch) {
+          final cyclingSpeedMps =
+              (_advancedCyclingSpeedKmh / 3.6).clamp(1.5, 8.5);
+          params['cyclingSpeed'] = cyclingSpeedMps.toStringAsFixed(2);
+        }
       }
     }
 
+    return params;
+  }
+
+  static Map<String, dynamic> _buildMotisDirectJourneySearchParams(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) {
+    final params = _buildMotisJourneySearchParams(
+      from,
+      to,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+
+    if (from.latitude != null && from.longitude != null) {
+      params['fromPlace'] = '${from.latitude},${from.longitude}';
+    }
+    if (to.latitude != null && to.longitude != null) {
+      params['toPlace'] = '${to.latitude},${to.longitude}';
+    }
+
+    final directModes = _motisDirectModesForCurrentSettings();
+
+    params
+      ..remove('transitModes')
+      ..remove('preTransitModes')
+      ..remove('postTransitModes')
+      ..remove('maxPreTransitTime')
+      ..remove('maxPostTransitTime')
+      ..remove('minTransferTime')
+      ..remove('additionalTransferTime')
+      ..remove('transferTimeFactor')
+      ..remove('pedestrianSpeed')
+      ..remove('cyclingSpeed')
+      ..['directModes'] = directModes.join(',')
+      ..['maxDirectTime'] = (_motisDirectFallbackMaxMinutes * 60).toString()
+      ..addAll({
+        if (directModes.contains('WALK'))
+          'pedestrianSpeed': (_advancedPedestrianSpeedKmh / 3.6)
+              .clamp(0.55, 2.8)
+              .toStringAsFixed(2),
+        if (directModes.contains('BIKE'))
+          'cyclingSpeed': (_advancedCyclingSpeedKmh / 3.6)
+              .clamp(1.5, 8.5)
+              .toStringAsFixed(2),
+      });
+
+    return params;
+  }
+
+  static Future<List<Station>> _searchStationsMotis(
+    String query, {
+    double? lat,
+    double? lng,
+    int limit = _defaultStationSearchLimit,
+  }) async {
+    final Map<String, dynamic> params = {
+      'text': query,
+      'limit': limit.clamp(1, _expandedStationSearchLimit),
+    };
+
+    if (lat != null && lng != null) {
+      params['place'] = '$lat,$lng';
+      // Bias ranking toward nearby matches without restricting the search area.
+      params['placeBias'] = '2';
+    }
+
+    final response = await _fetch(_getMotisUri('/api/v1/geocode', params));
+    final List<dynamic> data = json.decode(response.body);
+
+    // Convert MOTIS Match format to Station
+    return data.map((match) => stationFromMotisMatch(match)).toList();
+  }
+
+  static Future<List<Station>> _getNearbyStopsMotis(
+    double lat,
+    double lng,
+  ) async {
+    final response = await _fetch(
+      _getMotisUri('/api/v1/reverse-geocode', {
+        'place': '$lat,$lng',
+        'type': 'STOP', // Only return transit stops
+      }),
+    );
+    final List<dynamic> data = json.decode(response.body);
+    return data.map((match) => stationFromMotisMatch(match)).toList();
+  }
+
+  static Future<List<Map<String, dynamic>>> _searchJourneysMotis(
+    Station from,
+    Station to, {
+    bool nahverkehrOnly = false,
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
+  }) async {
+    await _ensureAdvancedSettingsLoaded();
+    final params = _buildMotisJourneySearchParams(
+      from,
+      to,
+      nahverkehrOnly: nahverkehrOnly,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+      pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+      maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
+    );
+
     final response = await _fetch(_getMotisPlanUri(params));
     final data = json.decode(response.body);
-    return decodeMotisPlanJourneys(data);
+    final journeys = decodeMotisPlanJourneys(data);
+    return journeys;
+  }
+
+  static Future<List<Map<String, dynamic>>> _searchDirectJourneysMotis(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) async {
+    await _ensureAdvancedSettingsLoaded();
+    final params = _buildMotisDirectJourneySearchParams(
+      from,
+      to,
+      when: when,
+      isArrival: isArrival,
+      results: results,
+    );
+
+    final response = await _fetch(_getMotisPlanUri(params));
+    final data = json.decode(response.body);
+    final directJourneys = decodeMotisDirectPlanJourneys(data);
+    _syntheticLog('direct fallback result: routes=${directJourneys.length}');
+    return directJourneys;
   }
 
   /// Retry empty MOTIS search with safer walking parameters for edge-case
@@ -729,6 +946,7 @@ class TransportApi {
     required DateTime? when,
     required bool isArrival,
     required int results,
+    bool allowDirectFallback = true,
   }) async {
     final primary = await _searchJourneysMotis(
       from,
@@ -741,43 +959,55 @@ class TransportApi {
     if (primary.isNotEmpty) return primary;
 
     await _ensureAdvancedSettingsLoaded();
-    if (!_advancedSettingsEnabledForDevice) return primary;
+    if (_hasAdvancedSearchOverrides) {
+      // Some provider/network combinations are unstable in narrow speed bands.
+      // Retry using conservative, known-stable walking speeds and wider
+      // first/last-mile windows before giving up.
+      final retries = <(double speedKmh, int walkMinutes)>[
+        (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+        (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
+        (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
+      ];
+      final attemptedKeys = <String>{};
 
-    // Some provider/network combinations are unstable in narrow speed bands.
-    // Retry using conservative, known-stable walking speeds and wider
-    // first/last-mile windows before giving up.
-    final retries = <(double speedKmh, int walkMinutes)>[
-      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 60)),
-      (4.5, math.max(_advancedMaxWalkingTimeMinutes, 60)),
-      (4.3, math.max(_advancedMaxWalkingTimeMinutes, 120)),
-    ];
-    final attemptedKeys = <String>{};
+      for (final retry in retries) {
+        final key = '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
+        if (!attemptedKeys.add(key)) continue;
 
-    for (final retry in retries) {
-      final key = '${retry.$1.toStringAsFixed(1)}:${retry.$2.toString()}';
-      if (!attemptedKeys.add(key)) continue;
+        _syntheticLog(
+          'motis retry: empty primary, fallback pedestrianSpeed='
+          '${retry.$1.toStringAsFixed(1)}km/h '
+          'maxWalk=${retry.$2}min',
+        );
 
-      _syntheticLog(
-        'motis retry: empty primary, fallback pedestrianSpeed='
-        '${retry.$1.toStringAsFixed(1)}km/h '
-        'maxWalk=${retry.$2}min',
-      );
+        final fallback = await _searchJourneysMotis(
+          from,
+          to,
+          nahverkehrOnly: nahverkehrOnly,
+          when: when,
+          isArrival: isArrival,
+          results: results,
+          pedestrianSpeedKmhOverride: retry.$1,
+          maxWalkingTimeMinutesOverride: retry.$2,
+        );
+        _syntheticLog(
+          'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
+          'maxWalk=${retry.$2}min itineraries=${fallback.length}',
+        );
+        if (fallback.isNotEmpty) return fallback;
+      }
+    }
 
-      final fallback = await _searchJourneysMotis(
+    if (allowDirectFallback) {
+      _syntheticLog('direct fallback: empty public transport results');
+      final direct = await _searchDirectJourneysMotis(
         from,
         to,
-        nahverkehrOnly: nahverkehrOnly,
         when: when,
         isArrival: isArrival,
         results: results,
-        pedestrianSpeedKmhOverride: retry.$1,
-        maxWalkingTimeMinutesOverride: retry.$2,
       );
-      _syntheticLog(
-        'motis retry result: speed=${retry.$1.toStringAsFixed(1)} '
-        'maxWalk=${retry.$2}min itineraries=${fallback.length}',
-      );
-      if (fallback.isNotEmpty) return fallback;
+      if (direct.isNotEmpty) return direct;
     }
 
     return primary;
@@ -793,12 +1023,13 @@ class TransportApi {
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final sanitizedQuery = _sanitizeStationQuery(query);
     if (sanitizedQuery.isEmpty) return [];
 
     // Check cache first
-    final cacheKey = 'stations:$sanitizedQuery:$lat:$lng';
+    final cacheKey = 'stations:$sanitizedQuery:$lat:$lng:$limit';
     final cached = _stationCache[cacheKey];
     if (cached != null && !cached.isExpired) {
       debugPrint('Cache hit for stations: $sanitizedQuery');
@@ -813,6 +1044,7 @@ class TransportApi {
       cacheKey,
       lat: lat,
       lng: lng,
+      limit: limit,
     );
     _stationSearchInFlight[cacheKey] = future;
     future.whenComplete(() => _stationSearchInFlight.remove(cacheKey));
@@ -824,9 +1056,15 @@ class TransportApi {
     String cacheKey, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     if (usesOnlyDbV6) {
-      final result = await _searchStationsV6(query, lat: lat, lng: lng);
+      final result = await _searchStationsV6(
+        query,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
       final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
       _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
       return ranked;
@@ -834,7 +1072,12 @@ class TransportApi {
 
     List<Station> motisResults = [];
     try {
-      motisResults = await _searchStationsMotis(query, lat: lat, lng: lng);
+      motisResults = await _searchStationsMotisExpanded(
+        query,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
     } catch (error) {
       debugPrint('Transitous searchStations failed: $error');
     }
@@ -854,8 +1097,8 @@ class TransportApi {
       return rankedMotis;
     }
 
-    // In auto mode, Transitous is the primary source.
-    // Only fall back to v6 when Transitous returns no station results.
+    // Keep v6 as an empty-result fallback only. Synthetic expansion stays on
+    // Transitous by combining biased and unbiased result pools.
     if (rankedMotis.isNotEmpty) {
       _stationCache[cacheKey] = _CacheEntry(
         rankedMotis,
@@ -868,16 +1111,73 @@ class TransportApi {
       query,
       lat: lat,
       lng: lng,
+      limit: limit,
     );
     final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
     _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
     return ranked;
   }
 
+  static Future<List<Station>> _searchStationsMotisExpanded(
+    String query, {
+    double? lat,
+    double? lng,
+    required int limit,
+  }) async {
+    var results = await _searchStationsMotisQuerySet(
+      query,
+      lat: lat,
+      lng: lng,
+      limit: limit,
+    );
+
+    final shouldTryWithoutBias = shouldSupplementSparseStationResults(
+      query,
+      currentCount: results.length,
+      requestedLimit: limit,
+      hasLocationBias: lat != null && lng != null,
+    );
+
+    if (shouldTryWithoutBias) {
+      final unbiasedResults = await _searchStationsMotisQuerySet(
+        query,
+        limit: limit,
+      );
+      results = _mergeStationSearchResults(results, unbiasedResults);
+    }
+
+    return results;
+  }
+
+  static Future<List<Station>> _searchStationsMotisQuerySet(
+    String query, {
+    double? lat,
+    double? lng,
+    required int limit,
+  }) async {
+    var results = await _searchStationsMotis(
+      query,
+      lat: lat,
+      lng: lng,
+      limit: limit,
+    );
+    for (final alternateQuery in _alternateStationQueries(query)) {
+      final alternateResults = await _searchStationsMotis(
+        alternateQuery,
+        lat: lat,
+        lng: lng,
+        limit: limit,
+      );
+      results = _mergeStationSearchResults(results, alternateResults);
+    }
+    return results;
+  }
+
   static Future<List<Station>> _searchStationsV6WithCooldown(
     String query, {
     double? lat,
     double? lng,
+    int limit = _defaultStationSearchLimit,
   }) async {
     final cooldownUntil = _v6StationsCooldownUntil;
     if (cooldownUntil != null && DateTime.now().isBefore(cooldownUntil)) {
@@ -888,7 +1188,7 @@ class TransportApi {
     }
 
     try {
-      return await _searchStationsV6(query, lat: lat, lng: lng);
+      return await _searchStationsV6(query, lat: lat, lng: lng, limit: limit);
     } catch (error) {
       debugPrint('v6.db searchStations failed: $error');
       _v6StationsCooldownUntil = DateTime.now().add(
@@ -946,21 +1246,26 @@ class TransportApi {
   }) {
     final normalizedName = _normalizeSearchText(station.name);
     final nameTokens = _splitSearchTokens(normalizedName);
-    final metadataTokens = _splitSearchTokens(
-      _normalizeSearchText(
-        [
-          station.city,
-          station.region,
-          station.country,
-          station.category,
-          station.type,
-        ].whereType<String>().join(' '),
-      ),
-    );
+    final cityTokens = _searchTokens(station.city ?? '');
+    final regionTokens = _searchTokens(station.region ?? '');
+    final countryTokens = _searchTokens(station.country ?? '');
+    final categoryTokens = _searchTokens(station.category ?? '');
+    final typeTokens = _searchTokens(station.type);
+    final metadataTokens = <String>{
+      ...cityTokens,
+      ...regionTokens,
+      ...countryTokens,
+      ...categoryTokens,
+      ...typeTokens,
+    }.toList(growable: false);
     final isTransitStop = station.type == 'station' || station.type == 'stop';
     final isAirportQuery = _isAirportLikeQuery(queryTokens);
     final hasLocationBias = lat != null && lng != null;
     final isSingleTokenQuery = queryTokens.length == 1;
+    final wantsSpecificAirportDetail =
+        _queryRequestsSpecificAirportDetail(queryTokens);
+    final expandedQueryTokens = _expandEquivalentSearchTokens(queryTokens);
+    final queryLooksLikeStation = _isStationLikeQuery(queryTokens);
 
     var score = 0;
 
@@ -974,22 +1279,43 @@ class TransportApi {
 
     var matchedQueryTokens = 0;
     for (final token in queryTokens) {
-      final exactNameMatch = nameTokens.contains(token);
-      final prefixNameMatch = nameTokens.any(
-        (nameToken) =>
-            nameToken.startsWith(token) || token.startsWith(nameToken),
+      final equivalentTokens = expandedQueryTokens[token] ?? <String>{token};
+      final exactNameMatch = equivalentTokens.any(nameTokens.contains);
+      final prefixNameMatch = equivalentTokens.any(
+        (variant) => nameTokens.any(
+          (nameToken) =>
+              nameToken.startsWith(variant) || variant.startsWith(nameToken),
+        ),
       );
-      final metadataMatch = metadataTokens.contains(token);
+      final exactCityMatch = equivalentTokens.any(cityTokens.contains);
+      final prefixCityMatch = equivalentTokens.any(
+        (variant) => cityTokens.any(
+          (cityToken) =>
+              cityToken.startsWith(variant) || variant.startsWith(cityToken),
+        ),
+      );
+      final categoryMatch = equivalentTokens.any(categoryTokens.contains) ||
+          equivalentTokens.any(typeTokens.contains) ||
+          equivalentTokens.any(countryTokens.contains);
+      final weakRegionMatch = equivalentTokens.any(regionTokens.contains);
 
       if (exactNameMatch) {
         matchedQueryTokens++;
-        score += 55;
+        score += equivalentTokens.length > 1 ? 60 : 55;
       } else if (prefixNameMatch) {
         matchedQueryTokens++;
         score += 24;
-      } else if (metadataMatch) {
+      } else if (exactCityMatch) {
+        matchedQueryTokens++;
+        score += 42;
+      } else if (prefixCityMatch) {
+        matchedQueryTokens++;
+        score += 18;
+      } else if (categoryMatch) {
         matchedQueryTokens++;
         score += 10;
+      } else if (weakRegionMatch) {
+        score += 3;
       }
     }
 
@@ -997,11 +1323,31 @@ class TransportApi {
       score += 75;
     }
 
-    if (isTransitStop) score += 65;
-    if (station.type == 'address') score -= 20;
+    if (isTransitStop) {
+      score += 105;
+      if (queryLooksLikeStation) score += 55;
+    } else {
+      if (station.type == 'location') score -= 25;
+      if (station.type == 'address') score -= 55;
+      if (queryLooksLikeStation) {
+        if (station.type == 'location') score -= 95;
+        if (station.type == 'address') score -= 120;
+      }
+    }
 
     if (_looksLikeTransitHub(normalizedName, nameTokens)) {
       score += 95;
+    }
+    if (station.searchImportance != null) {
+      score += (station.searchImportance! * 140).round();
+    }
+    if (station.searchScore != null) {
+      score += (-station.searchScore!).round();
+    }
+    if (queryLooksLikeStation &&
+        !isTransitStop &&
+        _looksLikeCommercialPoi(categoryTokens, nameTokens)) {
+      score -= 140;
     }
 
     if (!hasLocationBias &&
@@ -1018,9 +1364,17 @@ class TransportApi {
         score += 180;
       }
       if (isTransitStop) score += 120;
+      if (_looksLikeAirportRailHub(normalizedName, nameTokens)) {
+        score += 260;
+      }
       if (station.type == 'address') score -= 140;
       if (_isGenericAirportLabel(normalizedName)) score -= 110;
       if (_looksLikeRoadOrNeighborhood(nameTokens)) score -= 95;
+      if (!wantsSpecificAirportDetail &&
+          _looksLikeOverSpecificAirportResult(normalizedName, nameTokens) &&
+          !_looksLikeAirportRailHub(normalizedName, nameTokens)) {
+        score -= 170;
+      }
       if (normalizedName.contains('bahnhof') ||
           normalizedName.contains('regionalbf') ||
           normalizedName.contains('fernbf') ||
@@ -1094,6 +1448,49 @@ class TransportApi {
     return nameTokens.any(hubTokens.contains);
   }
 
+  static bool _looksLikeAirportRailHub(
+    String normalizedName,
+    List<String> nameTokens,
+  ) {
+    if (!_looksLikeAirport(nameTokens, nameTokens)) return false;
+    return normalizedName.contains('bahnhof') ||
+        normalizedName.contains('regionalbf') ||
+        normalizedName.contains('fernbf') ||
+        nameTokens.contains('bf') ||
+        nameTokens.contains('hbf');
+  }
+
+  static bool _looksLikeOverSpecificAirportResult(
+    String normalizedName,
+    List<String> nameTokens,
+  ) {
+    if (RegExp(r'\bp\d{1,3}\b').hasMatch(normalizedName)) return true;
+    if (RegExp(r'\bterminal\s*[0-9a-z]+\b').hasMatch(normalizedName)) {
+      return true;
+    }
+
+    const detailTokens = {
+      'gate',
+      'pier',
+      'stand',
+      'parking',
+      'park',
+    };
+    return nameTokens.any(detailTokens.contains);
+  }
+
+  static bool _queryRequestsSpecificAirportDetail(List<String> queryTokens) {
+    if (queryTokens.any((token) => RegExp(r'^p\d{1,3}$').hasMatch(token))) {
+      return true;
+    }
+    if (queryTokens.any((token) => RegExp(r'^[0-9]+[a-z]?$').hasMatch(token))) {
+      return true;
+    }
+    return queryTokens.contains('terminal') ||
+        queryTokens.contains('gate') ||
+        queryTokens.contains('pier');
+  }
+
   static bool _isGenericAirportLabel(String normalizedName) =>
       normalizedName == 'airport' || normalizedName == 'flughafen';
 
@@ -1121,6 +1518,81 @@ class TransportApi {
             token.startsWith('airpor') ||
             token.startsWith('aerodrom'),
       );
+
+  static bool _isStationLikeQuery(List<String> queryTokens) => queryTokens.any(
+        (token) => _stationEquivalentTokens(token).length > 1,
+      );
+
+  @visibleForTesting
+  static bool shouldSupplementSparseStationResults(
+    String query, {
+    required int currentCount,
+    required int requestedLimit,
+    bool hasLocationBias = true,
+  }) {
+    return _shouldSupplementSparseStationResults(
+      _searchTokens(query),
+      currentCount: currentCount,
+      requestedLimit: requestedLimit,
+      hasLocationBias: hasLocationBias,
+    );
+  }
+
+  static bool _shouldSupplementSparseStationResults(
+    List<String> queryTokens, {
+    required int currentCount,
+    required int requestedLimit,
+    required bool hasLocationBias,
+  }) {
+    if (!hasLocationBias) return false;
+    if (currentCount <= 0) return true;
+    if (currentCount >= requestedLimit) return false;
+    if (queryTokens.isEmpty) return false;
+
+    final stationLike = _isStationLikeQuery(queryTokens);
+    final broadQuery = queryTokens.length <= 2;
+    if (!stationLike && !broadQuery) return false;
+
+    final minimumUsefulResults = math.min(12, requestedLimit);
+    return currentCount < minimumUsefulResults;
+  }
+
+  static Map<String, Set<String>> _expandEquivalentSearchTokens(
+    List<String> tokens,
+  ) {
+    return {
+      for (final token in tokens) token: _stationEquivalentTokens(token),
+    };
+  }
+
+  static Set<String> _stationEquivalentTokens(String token) {
+    switch (token) {
+      case 'hbf':
+      case 'hauptbahnhof':
+        return {'hbf', 'hauptbahnhof'};
+      case 'bf':
+      case 'bahnhof':
+        return {'bf', 'bahnhof'};
+      default:
+        return {token};
+    }
+  }
+
+  static bool _looksLikeCommercialPoi(
+    List<String> categoryTokens,
+    List<String> nameTokens,
+  ) {
+    const commercialTokens = {
+      'shop',
+      'mall',
+      'retail',
+      'supermarket',
+      'commercial',
+      'einkaufsbahnhof',
+    };
+    return categoryTokens.any(commercialTokens.contains) ||
+        nameTokens.any(commercialTokens.contains);
+  }
 
   static List<String> _searchTokens(String text) => _splitSearchTokens(
         _normalizeSearchText(text),
@@ -1158,6 +1630,64 @@ class TransportApi {
 
   static String _sanitizeStationQuery(String query) =>
       query.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  static List<String> _alternateStationQueries(String query) {
+    final sanitized = _sanitizeStationQuery(query);
+    if (sanitized.isEmpty) return const <String>[];
+
+    final lower = sanitized.toLowerCase();
+    final alternates = <String>{};
+    if (lower.contains('airport')) {
+      alternates.add(
+        sanitized.replaceAll(
+          RegExp('airport', caseSensitive: false),
+          'Flughafen',
+        ),
+      );
+    }
+    if (lower.contains('flughafen')) {
+      alternates.add(
+        sanitized.replaceAll(
+          RegExp('flughafen', caseSensitive: false),
+          'Airport',
+        ),
+      );
+    }
+    alternates.removeWhere((value) => value.trim().toLowerCase() == lower);
+    return alternates.toList(growable: false);
+  }
+
+  static List<Station> _mergeStationSearchResults(
+    List<Station> primary,
+    List<Station> secondary,
+  ) {
+    if (primary.isEmpty) return secondary;
+    if (secondary.isEmpty) return primary;
+
+    final merged = <Station>[...primary];
+    final seen = <String>{
+      for (final station in primary) _stationDedupKey(station),
+    };
+    for (final station in secondary) {
+      if (seen.add(_stationDedupKey(station))) {
+        merged.add(station);
+      }
+    }
+    return merged;
+  }
+
+  static String _stationDedupKey(Station station) {
+    final id = station.id.trim();
+    if (id.isNotEmpty) return 'id:$id';
+
+    final lat =
+        station.latitude != null ? station.latitude!.toStringAsFixed(4) : '';
+    final lng =
+        station.longitude != null ? station.longitude!.toStringAsFixed(4) : '';
+    final city = _normalizeSearchText(station.city ?? '');
+    final name = _normalizeSearchText(station.name);
+    return 'name:$name|city:$city|lat:$lat|lng:$lng';
+  }
 
   static String _normalizeSearchText(String text) {
     const replacements = {
@@ -1276,6 +1806,1222 @@ class TransportApi {
     }
   }
 
+  static String? _platformFromPlace(Map<String, dynamic>? place) {
+    final platform =
+        place?['track'] ?? place?['scheduledTrack'] ?? place?['platform'];
+    final normalized = platform?.toString().trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return normalized;
+  }
+
+  static String? _stopLabelFromPlace(Map<String, dynamic>? place) {
+    final description = place?['description']?.toString().trim();
+    if (description != null && description.isNotEmpty) {
+      final normalizedName = place?['name']?.toString().trim();
+      if (normalizedName == null || normalizedName != description) {
+        return description;
+      }
+    }
+
+    final stopLabel = place?['stopLabel']?.toString().trim();
+    if (stopLabel == null || stopLabel.isEmpty) return null;
+    return stopLabel;
+  }
+
+  static String? _platformFromStopEvent(Map<String, dynamic> dep) {
+    final place = (dep['place'] as Map?)?.cast<String, dynamic>();
+    final platform = _platformFromPlace(place) ??
+        dep['platform']?.toString().trim() ??
+        dep['plannedPlatform']?.toString().trim();
+    if (platform == null || platform.isEmpty) return null;
+    return platform;
+  }
+
+  static DateTime? _journeyLegTimeLocal(
+    Map<String, dynamic> leg,
+    String plannedKey,
+    String realtimeKey,
+  ) {
+    final raw = leg[plannedKey] ?? leg[realtimeKey];
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw.toString()).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _journeyLegLineDisplayName(Map<String, dynamic> leg) {
+    final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+    final name = line?['name']?.toString().trim();
+    if (name != null && name.isNotEmpty) return name;
+    return '';
+  }
+
+  static String _journeyLegHeadsign(Map<String, dynamic> leg) {
+    final headsign = leg['direction']?.toString().trim();
+    if (headsign != null && headsign.isNotEmpty) return headsign;
+    return '';
+  }
+
+  static DateTime? _stopEventBestTimeLocal(Map<String, dynamic> dep) {
+    final departure = dep['departure'];
+    if (departure is Map<String, dynamic>) {
+      final raw = departure['scheduledTime'] ?? departure['time'];
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          return DateTime.parse(raw).toLocal();
+        } catch (_) {}
+      }
+    }
+
+    final arrival = dep['arrival'];
+    if (arrival is Map<String, dynamic>) {
+      final raw = arrival['scheduledTime'] ?? arrival['time'];
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          return DateTime.parse(raw).toLocal();
+        } catch (_) {}
+      }
+    }
+
+    return _stopDepartureDateTimeLocal(dep);
+  }
+
+  static Duration? _eventTimeDistance(
+    Map<String, dynamic> dep,
+    DateTime? expectedTime,
+  ) {
+    if (expectedTime == null) return null;
+    final eventTime = _stopEventBestTimeLocal(dep);
+    if (eventTime == null) return null;
+    return eventTime.difference(expectedTime).abs();
+  }
+
+  static bool _transitLineKeysMatch(String left, String right) {
+    if (left.isEmpty || right.isEmpty) return false;
+    if (left == right) return true;
+    return left.startsWith('$right ') || right.startsWith('$left ');
+  }
+
+  static Set<String> _transitLineNumberTokens(String value) {
+    return RegExp(r'\d+[A-Z]?')
+        .allMatches(value)
+        .map((match) => match.group(0) ?? '')
+        .where((token) => token.isNotEmpty)
+        .toSet();
+  }
+
+  static bool _transitLineKeysLikelyMatch(String left, String right) {
+    if (_transitLineKeysMatch(left, right)) return true;
+    final leftNumbers = _transitLineNumberTokens(left);
+    if (leftNumbers.isEmpty) return false;
+    final rightNumbers = _transitLineNumberTokens(right);
+    return rightNumbers.any(leftNumbers.contains);
+  }
+
+  static bool _journeyLegLooksRail(Map<String, dynamic> leg) {
+    final mode = normalizeServiceText(leg['mode']);
+    const railModes = {
+      'HIGHSPEED RAIL',
+      'LONG DISTANCE',
+      'NIGHT RAIL',
+      'REGIONAL FAST RAIL',
+      'REGIONAL RAIL',
+      'SUBURBAN',
+    };
+    if (railModes.contains(mode)) return true;
+
+    final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+    final productName = normalizeServiceText(line?['productName']);
+    final product =
+        normalizeServiceText(line?['product'] is Map ? null : line?['product']);
+    final lineName = normalizeServiceText(line?['name']);
+    const railTokens = ['ICE', 'IC', 'EC', 'ECE', 'RE', 'RB', 'S', 'IR'];
+    return _containsAnyServiceToken(productName, railTokens) ||
+        _containsAnyServiceToken(product, railTokens) ||
+        _containsAnyServiceToken(lineName, railTokens);
+  }
+
+  static String? _matchPlatformFromStopEvents(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final tripId = _journeyLegTripId(leg)?.trim();
+    final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final directionKey = _normalizeTransitKey(_journeyLegHeadsign(leg));
+
+    Map<String, dynamic>? bestLineMatch;
+    Duration? bestLineDistance;
+
+    for (final event in events) {
+      final platform = _platformFromStopEvent(event);
+      if (platform == null) continue;
+
+      final eventTripId = _stopDepartureTripId(event)?.trim();
+      if (tripId != null && tripId.isNotEmpty && eventTripId == tripId) {
+        return platform;
+      }
+
+      final eventLineKey = _normalizeTransitKey(_stopDepartureLineKey(event));
+      if (!_transitLineKeysLikelyMatch(lineKey, eventLineKey)) continue;
+
+      final eventDirectionKey =
+          _normalizeTransitKey(_stopDepartureDirectionKey(event));
+      if (directionKey.isNotEmpty &&
+          eventDirectionKey.isNotEmpty &&
+          eventDirectionKey != directionKey) {
+        continue;
+      }
+
+      final distance = _eventTimeDistance(event, expectedTime);
+      if (distance != null && distance > const Duration(minutes: 5)) {
+        continue;
+      }
+
+      if (bestLineMatch == null ||
+          distance == null ||
+          bestLineDistance == null ||
+          distance < bestLineDistance) {
+        bestLineMatch = event;
+        bestLineDistance = distance;
+      }
+    }
+
+    if (bestLineMatch == null) return null;
+    return _platformFromStopEvent(bestLineMatch);
+  }
+
+  static Map<String, dynamic>? _matchStopEventForLeg(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final tripId = _journeyLegTripId(leg)?.trim();
+    final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final directionKey = _normalizeTransitKey(_journeyLegHeadsign(leg));
+
+    Map<String, dynamic>? bestLineMatch;
+    Duration? bestLineDistance;
+    Map<String, dynamic>? exactTripWithoutPlatform;
+
+    for (final event in events) {
+      final eventPlace = (event['place'] as Map?)?.cast<String, dynamic>();
+      if (eventPlace == null) continue;
+
+      final eventTripId = _stopDepartureTripId(event)?.trim();
+      if (tripId != null && tripId.isNotEmpty && eventTripId == tripId) {
+        if (_platformFromStopEvent(event) != null ||
+            _stopLabelFromPlace(eventPlace) != null) {
+          return event;
+        }
+        exactTripWithoutPlatform ??= event;
+        continue;
+      }
+
+      final eventLineKey = _normalizeTransitKey(_stopDepartureLineKey(event));
+      if (!_transitLineKeysLikelyMatch(lineKey, eventLineKey)) continue;
+
+      final eventDirectionKey =
+          _normalizeTransitKey(_stopDepartureDirectionKey(event));
+      if (directionKey.isNotEmpty &&
+          eventDirectionKey.isNotEmpty &&
+          eventDirectionKey != directionKey) {
+        continue;
+      }
+
+      final distance = _eventTimeDistance(event, expectedTime);
+      if (distance != null && distance > const Duration(minutes: 5)) {
+        continue;
+      }
+
+      if (bestLineMatch == null ||
+          distance == null ||
+          bestLineDistance == null ||
+          distance < bestLineDistance) {
+        bestLineMatch = event;
+        bestLineDistance = distance;
+      }
+    }
+
+    return bestLineMatch ?? exactTripWithoutPlatform;
+  }
+
+  @visibleForTesting
+  static String? matchPlatformFromStopEventsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) =>
+      _matchPlatformFromStopEvents(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+
+  @visibleForTesting
+  static ({
+    String? platform,
+    String? stopLabel,
+    String? stopId,
+    String? parentId,
+  }) matchStopEventDetailsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final event = _matchStopEventForLeg(
+      events,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+    final place = (event?['place'] as Map?)?.cast<String, dynamic>();
+    return (
+      platform: event == null ? null : _platformFromStopEvent(event),
+      stopLabel: _stopLabelFromPlace(place),
+      stopId: _stringOrNull(place?['stopId']),
+      parentId: _stringOrNull(place?['parentId']),
+    );
+  }
+
+  static DateTime? _tripStopBestTimeLocal(
+    Map<String, dynamic> stop,
+    DateTime? expectedTime,
+  ) {
+    final times = <DateTime>[
+      if (_parseJourneyTimeLocal(stop['scheduledDeparture']) case final time?)
+        time,
+      if (_parseJourneyTimeLocal(stop['departure']) case final time?) time,
+      if (_parseJourneyTimeLocal(stop['scheduledArrival']) case final time?)
+        time,
+      if (_parseJourneyTimeLocal(stop['arrival']) case final time?) time,
+    ];
+    if (times.isEmpty) return null;
+    if (expectedTime == null) return times.first;
+
+    times.sort(
+      (a, b) => a
+          .difference(expectedTime)
+          .abs()
+          .compareTo(b.difference(expectedTime).abs()),
+    );
+    return times.first;
+  }
+
+  static Duration? _tripStopTimeDistance(
+    Map<String, dynamic> stop,
+    DateTime? expectedTime,
+  ) {
+    if (expectedTime == null) return null;
+    final stopTime = _tripStopBestTimeLocal(stop, expectedTime);
+    if (stopTime == null) return null;
+    return stopTime.difference(expectedTime).abs();
+  }
+
+  static ({
+    String? platform,
+    String? stopLabel,
+    String? stopId,
+    String? parentId,
+  })? _stopDetailsFromTripPlace(Map<String, dynamic>? place) {
+    if (place == null) return null;
+
+    final platform = _platformFromPlace(place);
+    final stopLabel = _stopLabelFromPlace(place);
+    final stopId = _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
+    final parentId = _stringOrNull(place['parentId']);
+    if (platform == null &&
+        stopLabel == null &&
+        stopId == null &&
+        parentId == null) {
+      return null;
+    }
+
+    return (
+      platform: platform,
+      stopLabel: stopLabel,
+      stopId: stopId,
+      parentId: parentId,
+    );
+  }
+
+  static ({
+    String? platform,
+    String? stopLabel,
+    String? stopId,
+    String? parentId,
+  })? _matchStopDetailsFromTripItinerary(
+    Map<String, dynamic> tripItinerary, {
+    required Map<String, dynamic> targetPlace,
+    required DateTime? expectedTime,
+  }) {
+    final stopId = _stringOrNull(targetPlace['exactStopId']) ??
+        _stringOrNull(targetPlace['stopId']) ??
+        _stringOrNull(targetPlace['id']);
+    final stopName = _stringOrNull(targetPlace['name']) ?? '';
+    if ((stopId == null || stopId.isEmpty) && stopName.isEmpty) return null;
+
+    ({
+      String? platform,
+      String? stopLabel,
+      String? stopId,
+      String? parentId
+    })? bestDetails;
+    Duration? bestDistance;
+    var bestHasPlatform = false;
+
+    final tripLegs =
+        (tripItinerary['legs'] as List?)?.whereType<Map>().toList() ??
+            const <Map>[];
+    for (final rawTripLeg in tripLegs) {
+      final tripLeg = rawTripLeg.cast<String, dynamic>();
+      final sequence = _tripLegStopSequence(tripLeg);
+      for (final stop in sequence) {
+        final tripPlace =
+            (stop['place'] as Map?)?.cast<String, dynamic>() ?? const {};
+        if (!_tripPlaceMatchesTarget(tripPlace, stopId ?? '', stopName)) {
+          continue;
+        }
+
+        final distance = _tripStopTimeDistance(stop, expectedTime);
+        if (distance != null && distance > const Duration(minutes: 15)) {
+          continue;
+        }
+
+        final details = _stopDetailsFromTripPlace(tripPlace);
+        if (details == null) continue;
+
+        final hasPlatform =
+            details.platform != null && details.platform!.isNotEmpty;
+        final isBetter = bestDetails == null ||
+            (hasPlatform && !bestHasPlatform) ||
+            (hasPlatform == bestHasPlatform &&
+                distance != null &&
+                (bestDistance == null || distance < bestDistance));
+
+        if (isBetter) {
+          bestDetails = details;
+          bestDistance = distance;
+          bestHasPlatform = hasPlatform;
+        }
+      }
+    }
+
+    return bestDetails;
+  }
+
+  @visibleForTesting
+  static ({
+    String? platform,
+    String? stopLabel,
+    String? stopId,
+    String? parentId,
+  })? matchStopDetailsFromTripItineraryForTesting(
+    Map<String, dynamic> tripItinerary, {
+    required Map<String, dynamic> targetPlace,
+    required DateTime? expectedTime,
+  }) =>
+      _matchStopDetailsFromTripItinerary(
+        tripItinerary,
+        targetPlace: targetPlace,
+        expectedTime: expectedTime,
+      );
+
+  static Future<
+      ({
+        String? platform,
+        String? stopLabel,
+        String? stopId,
+        String? parentId,
+      })?> _backfillStopDetailsFromTripItinerary(
+    Map<String, dynamic> leg,
+    Map<String, dynamic> place, {
+    required DateTime? expectedTime,
+  }) async {
+    final tripId = _journeyLegTripId(leg);
+    if (tripId == null || tripId.isEmpty) return null;
+
+    final tripItinerary = await _fetchTripItineraryCached(tripId);
+    if (tripItinerary == null) return null;
+
+    return _matchStopDetailsFromTripItinerary(
+      tripItinerary,
+      targetPlace: place,
+      expectedTime: expectedTime,
+    );
+  }
+
+  static String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+  static String _bahnDate(DateTime time) =>
+      '${time.year}-${_twoDigits(time.month)}-${_twoDigits(time.day)}';
+
+  static String _bahnTime(DateTime time) =>
+      '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}:00';
+
+  static Uri _getBahnWebUri(
+    String endpoint,
+    Map<String, List<String>> queryParameters,
+  ) {
+    final query = queryParameters.entries
+        .expand(
+          (entry) => entry.value.map(
+            (value) =>
+                '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(value)}',
+          ),
+        )
+        .join('&');
+    return Uri.parse('$_bahnWebUrl$endpoint?$query');
+  }
+
+  static String? _bahnEvaFromText(Object? value) {
+    final text = value?.toString();
+    if (text == null || text.isEmpty) return null;
+    final match = RegExp(r'(?<!\d)8\d{6}(?!\d)').firstMatch(text);
+    return match?.group(0);
+  }
+
+  static String? _bahnEvaFromPlace(Map<String, dynamic> place) {
+    final candidates = <Object?>[
+      place['exactStopId'],
+      place['id'],
+      place['stopId'],
+      place['parentId'],
+    ];
+    for (final candidate in candidates) {
+      final eva = _bahnEvaFromText(candidate);
+      if (eva != null) return eva;
+    }
+    return null;
+  }
+
+  static double? _placeLatitude(Map<String, dynamic> place) =>
+      (place['location'] as Map?)?['latitude'] is num
+          ? ((place['location'] as Map)['latitude'] as num).toDouble()
+          : (place['latitude'] is num
+              ? (place['latitude'] as num).toDouble()
+              : null);
+
+  static double? _placeLongitude(Map<String, dynamic> place) =>
+      (place['location'] as Map?)?['longitude'] is num
+          ? ((place['location'] as Map)['longitude'] as num).toDouble()
+          : (place['longitude'] is num
+              ? (place['longitude'] as num).toDouble()
+              : null);
+
+  static bool _bahnPlaceHasRailProducts(Map<String, dynamic> place) {
+    final products = place['products'];
+    if (products is! List) return false;
+    const railProducts = {'ICE', 'EC_IC', 'IR', 'REGIONAL', 'SBAHN'};
+    return products
+        .map((product) => product.toString())
+        .any(railProducts.contains);
+  }
+
+  static Future<String?> _resolveBahnEvaForPlace(
+    Map<String, dynamic> place,
+  ) async {
+    final existing = _bahnEvaFromPlace(place);
+    if (existing != null) return existing;
+
+    final name = _stringOrNull(place['name']);
+    if (name == null) return null;
+
+    final cacheKey = _normalizeTransitKey(name);
+    final cached = _bahnEvaCache[cacheKey];
+    if (cached != null && !cached.isExpired) return cached.data;
+
+    try {
+      final response = await _fetch(
+        _getBahnWebUri('/web/api/reiseloesung/orte', {
+          'suchbegriff': [name],
+        }),
+      );
+      final data = json.decode(response.body);
+      if (data is! List) return null;
+
+      final targetLat = _placeLatitude(place);
+      final targetLng = _placeLongitude(place);
+      Map<String, dynamic>? best;
+      var bestScore = -1.0;
+
+      for (final raw in data.whereType<Map>()) {
+        final candidate = raw.cast<String, dynamic>();
+        final extId = _stringOrNull(candidate['extId']);
+        if (extId == null || _bahnEvaFromText(extId) == null) continue;
+
+        var score = 0.0;
+        if (extId.startsWith('8')) score += 100;
+        if (_bahnPlaceHasRailProducts(candidate)) score += 50;
+        final candidateName = _normalizeTransitKey(candidate['name']);
+        if (candidateName == cacheKey) {
+          score += 40;
+        } else if (candidateName.contains(cacheKey) ||
+            cacheKey.contains(candidateName)) {
+          score += 20;
+        }
+
+        final candidateLat = (candidate['lat'] as num?)?.toDouble();
+        final candidateLng = (candidate['lon'] as num?)?.toDouble();
+        if (targetLat != null &&
+            targetLng != null &&
+            candidateLat != null &&
+            candidateLng != null) {
+          final distanceMeters = _distanceKm(
+                targetLat,
+                targetLng,
+                candidateLat,
+                candidateLng,
+              ) *
+              1000;
+          if (distanceMeters < 250) {
+            score += 25;
+          } else if (distanceMeters < 1000) {
+            score += 10;
+          }
+        }
+
+        if (score > bestScore) {
+          best = candidate;
+          bestScore = score;
+        }
+      }
+
+      final eva = _stringOrNull(best?['extId']);
+      _bahnEvaCache[cacheKey] = _CacheEntry(eva, _bahnEvaCacheTtl);
+      return eva;
+    } catch (error) {
+      debugPrint('bahn.de station lookup failed for $name: $error');
+      return null;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchBahnBoardEvents(
+    String evaNumber, {
+    required DateTime expectedTime,
+    required bool arrivals,
+  }) async {
+    final queryTime = expectedTime.subtract(const Duration(minutes: 15));
+    final cacheKey =
+        '$evaNumber|${arrivals ? 'arr' : 'dep'}|${_bahnDate(queryTime)}|${_bahnTime(queryTime)}';
+    final cached = _bahnBoardCache[cacheKey];
+    if (cached != null && !cached.isExpired) return cached.data;
+
+    final endpoint = arrivals
+        ? '/web/api/reiseloesung/ankuenfte'
+        : '/web/api/reiseloesung/abfahrten';
+    final response = await _fetch(
+      _getBahnWebUri(endpoint, {
+        'datum': [_bahnDate(queryTime)],
+        'zeit': [_bahnTime(queryTime)],
+        'ortExtId': [evaNumber],
+        'verkehrsMittel[]': ['ICE', 'INTERCITY', 'REGIONAL'],
+      }),
+    );
+    final data = json.decode(response.body);
+    final entries = (data is Map ? data['entries'] : null) as List?;
+    final result = entries
+            ?.whereType<Map>()
+            .map((entry) => entry.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    _bahnBoardCache[cacheKey] = _CacheEntry(result, _bahnBoardCacheTtl);
+    return result;
+  }
+
+  static Duration? _bahnBoardTimeDistance(
+    Map<String, dynamic> entry,
+    DateTime expectedTime,
+  ) {
+    final times = <DateTime>[
+      if (_parseJourneyTimeLocal(entry['zeit']) case final time?) time,
+      if (_parseJourneyTimeLocal(entry['ezZeit']) case final time?) time,
+    ];
+    if (times.isEmpty) return null;
+    times.sort(
+      (a, b) => a
+          .difference(expectedTime)
+          .abs()
+          .compareTo(b.difference(expectedTime).abs()),
+    );
+    return times.first.difference(expectedTime).abs();
+  }
+
+  static String _bahnBoardLineKey(Map<String, dynamic> entry) {
+    final vehicle = (entry['verkehrmittel'] as Map?)?.cast<String, dynamic>();
+    return _normalizeTransitKey(
+      vehicle?['mittelText'] ?? vehicle?['name'] ?? vehicle?['linienNummer'],
+    );
+  }
+
+  static String? _matchPlatformFromBahnBoardEvents(
+    Iterable<Map<String, dynamic>> entries, {
+    required Map<String, dynamic> leg,
+    required DateTime expectedTime,
+  }) {
+    final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    Map<String, dynamic>? best;
+    Duration? bestDistance;
+
+    for (final entry in entries) {
+      final platform = _stringOrNull(entry['gleis']);
+      if (platform == null) continue;
+
+      final entryLineKey = _bahnBoardLineKey(entry);
+      if (!_transitLineKeysLikelyMatch(lineKey, entryLineKey)) continue;
+
+      final distance = _bahnBoardTimeDistance(entry, expectedTime);
+      if (distance == null || distance > const Duration(minutes: 12)) continue;
+
+      if (best == null || bestDistance == null || distance < bestDistance) {
+        best = entry;
+        bestDistance = distance;
+      }
+    }
+
+    return _stringOrNull(best?['gleis']);
+  }
+
+  @visibleForTesting
+  static String? matchPlatformFromBahnBoardEventsForTesting(
+    Iterable<Map<String, dynamic>> entries, {
+    required Map<String, dynamic> leg,
+    required DateTime expectedTime,
+  }) =>
+      _matchPlatformFromBahnBoardEvents(
+        entries,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+
+  static Future<Map<String, dynamic>> debugLookupBahnPlatform({
+    required String stationName,
+    required String lineName,
+    required DateTime expectedTime,
+    required bool arrivals,
+  }) async {
+    final place = <String, dynamic>{'name': stationName};
+    final leg = <String, dynamic>{
+      'line': <String, dynamic>{'name': lineName},
+    };
+    final evaNumber = await _resolveBahnEvaForPlace(place);
+    if (evaNumber == null) {
+      return <String, dynamic>{
+        'station': stationName,
+        'line': lineName,
+        'time': expectedTime.toIso8601String(),
+        'arrivals': arrivals,
+        'error': 'No bahn.de EVA station id found',
+      };
+    }
+
+    final events = await _fetchBahnBoardEvents(
+      evaNumber,
+      expectedTime: expectedTime,
+      arrivals: arrivals,
+    );
+    final platform = _matchPlatformFromBahnBoardEvents(
+      events,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+
+    Map<String, dynamic> simplifyEntry(Map<String, dynamic> entry) {
+      final vehicle = (entry['verkehrmittel'] as Map?)?.cast<String, dynamic>();
+      final line = vehicle?['mittelText'] ??
+          vehicle?['name'] ??
+          vehicle?['linienNummer'];
+      return <String, dynamic>{
+        'time': entry['zeit']?.toString(),
+        'realtimeTime': entry['ezZeit']?.toString(),
+        'line': line?.toString(),
+        'direction': entry['richtung']?.toString(),
+        'platform': entry['gleis']?.toString(),
+        'lineKey': _bahnBoardLineKey(entry),
+        'minutesFromExpected':
+            _bahnBoardTimeDistance(entry, expectedTime)?.inMinutes.toString(),
+      };
+    }
+
+    final lineKey = _normalizeTransitKey(lineName);
+    final relevantEntries = events
+        .where((entry) =>
+            _transitLineKeysLikelyMatch(lineKey, _bahnBoardLineKey(entry)) ||
+            (_bahnBoardTimeDistance(entry, expectedTime) != null &&
+                _bahnBoardTimeDistance(entry, expectedTime)! <=
+                    const Duration(minutes: 20)))
+        .map(simplifyEntry)
+        .take(20)
+        .toList();
+
+    return <String, dynamic>{
+      'station': stationName,
+      'eva': evaNumber,
+      'line': lineName,
+      'lineKey': lineKey,
+      'time': expectedTime.toIso8601String(),
+      'arrivals': arrivals,
+      'platform': platform,
+      'entriesReturned': events.length,
+      'entries': relevantEntries,
+    };
+  }
+
+  static Future<Map<String, dynamic>> enrichJourneyWithPlatforms(
+    Map<String, dynamic> journey, {
+    void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
+    bool preferBahnForRail = false,
+    bool fastBahnRailOnly = false,
+  }) async {
+    final journeys = <Map<String, dynamic>>[journey];
+    await _enrichJourneysWithPlatforms(
+      journeys,
+      onProgress: onProgress == null
+          ? null
+          : (enrichedSoFar) => onProgress(enrichedSoFar.first),
+      preferBahnForRail: preferBahnForRail,
+      fastBahnRailOnly: fastBahnRailOnly,
+    );
+    return journeys.first;
+  }
+
+  static void _setIfBlankMapValue(
+    Map<String, dynamic> map,
+    String key,
+    String value,
+  ) {
+    final current = map[key]?.toString().trim();
+    if (current == null || current.isEmpty) {
+      map[key] = value;
+    }
+  }
+
+  @visibleForTesting
+  static void setIfBlankMapValueForTesting(
+    Map<String, dynamic> map,
+    String key,
+    String value,
+  ) =>
+      _setIfBlankMapValue(map, key, value);
+
+  static Future<
+      ({
+        String? platform,
+        String? stopLabel,
+        String? stopId,
+        String? parentId,
+      })?> _backfillStopDetailsFromBahnBoard(
+    Map<String, dynamic> leg,
+    Map<String, dynamic> place, {
+    required DateTime? expectedTime,
+    required bool arrivals,
+  }) async {
+    if (expectedTime == null || !_journeyLegLooksRail(leg)) return null;
+
+    final evaNumber = await _resolveBahnEvaForPlace(place);
+    final placeName = _stringOrNull(place['name']) ?? 'unknown stop';
+    final lineName = _journeyLegLineDisplayName(leg);
+    if (evaNumber == null) {
+      _syntheticLog('bahn platform skipped: no EVA for $placeName');
+      return null;
+    }
+
+    try {
+      _syntheticLog(
+        'bahn platform lookup: $placeName eva=$evaNumber '
+        '${arrivals ? 'arr' : 'dep'} $lineName',
+      );
+      final events = await _fetchBahnBoardEvents(
+        evaNumber,
+        expectedTime: expectedTime,
+        arrivals: arrivals,
+      );
+      final platform = _matchPlatformFromBahnBoardEvents(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+      if (platform == null) {
+        _syntheticLog(
+          'bahn platform no match: $placeName eva=$evaNumber '
+          '${arrivals ? 'arr' : 'dep'} $lineName events=${events.length}',
+        );
+        return null;
+      }
+
+      _syntheticLog(
+        'bahn platform match: $placeName ${arrivals ? 'arr' : 'dep'} '
+        '$lineName -> Gl. $platform',
+      );
+
+      return (
+        platform: platform,
+        stopLabel: null,
+        stopId: null,
+        parentId: null,
+      );
+    } catch (error) {
+      debugPrint('bahn.de platform lookup failed for $evaNumber: $error');
+      return null;
+    }
+  }
+
+  static void _applyBackfilledStopDetails(
+    Map<String, dynamic> place, {
+    required String? platform,
+    required String? stopLabel,
+    required String? stopId,
+    required String? parentId,
+  }) {
+    if (platform != null && platform.isNotEmpty) {
+      _setIfBlankMapValue(place, 'platform', platform);
+      _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+    }
+    if (stopLabel != null && stopLabel.isNotEmpty) {
+      _setIfBlankMapValue(place, 'stopLabel', stopLabel);
+    }
+    if (stopId != null && stopId.isNotEmpty) {
+      _setIfBlankMapValue(place, 'exactStopId', stopId);
+    }
+    if (parentId != null && parentId.isNotEmpty) {
+      _setIfBlankMapValue(place, 'parentId', parentId);
+    }
+  }
+
+  static Future<void> _enrichJourneyRailPlatformsFromBahnBoardFast(
+    Map<String, dynamic> journey, {
+    void Function()? onProgress,
+  }) async {
+    final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+    if (legs == null || legs.isEmpty) return;
+
+    final tasks = <Future<void>>[];
+    for (final rawLeg in legs) {
+      final leg = rawLeg.cast<String, dynamic>();
+      if (leg['walking'] == true ||
+          leg['line'] == null ||
+          !_journeyLegLooksRail(leg)) {
+        continue;
+      }
+
+      void addLookup(
+        Map<String, dynamic>? place, {
+        required DateTime? expectedTime,
+        required bool arrivals,
+      }) {
+        if (place == null || _platformFromPlace(place) != null) return;
+        tasks.add(() async {
+          final details = await _backfillStopDetailsFromBahnBoard(
+            leg,
+            place,
+            expectedTime: expectedTime,
+            arrivals: arrivals,
+          );
+          if (details == null || details.platform == null) return;
+          _applyBackfilledStopDetails(
+            place,
+            platform: details.platform,
+            stopLabel: details.stopLabel,
+            stopId: details.stopId,
+            parentId: details.parentId,
+          );
+          onProgress?.call();
+        }());
+      }
+
+      addLookup(
+        (leg['origin'] as Map?)?.cast<String, dynamic>(),
+        expectedTime: _journeyLegTimeLocal(
+          leg,
+          'plannedDeparture',
+          'departure',
+        ),
+        arrivals: false,
+      );
+      addLookup(
+        (leg['destination'] as Map?)?.cast<String, dynamic>(),
+        expectedTime: _journeyLegTimeLocal(
+          leg,
+          'plannedArrival',
+          'arrival',
+        ),
+        arrivals: true,
+      );
+    }
+
+    await Future.wait(tasks);
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchMotisStopEvents(
+    String stationId, {
+    required DateTime timeLocal,
+    required String direction,
+    int maxResults = 80,
+  }) async {
+    final cacheKey =
+        '$stationId|$direction|${timeLocal.toIso8601String()}|$maxResults';
+    final cached = _stopEventsCache[cacheKey];
+    if (cached != null && !cached.isExpired) {
+      return cached.data;
+    }
+
+    final response = await _fetch(
+      _getMotisUri('/api/v5/stoptimes', {
+        'stopId': stationId,
+        'time': timeLocal.toUtc().toIso8601String(),
+        'direction': direction,
+        'n': maxResults.toString(),
+      }),
+    );
+    final data = json.decode(response.body);
+    final events = decodeStopDeparturesResponse(data);
+    _stopEventsCache[cacheKey] = _CacheEntry(events, _stopEventsCacheTtl);
+    return events;
+  }
+
+  static Future<
+      ({
+        String? platform,
+        String? stopLabel,
+        String? stopId,
+        String? parentId,
+      })?> _backfillStopDetailsForLegPlace(
+    Map<String, dynamic> leg,
+    Map<String, dynamic> place, {
+    required DateTime? expectedTime,
+    required bool arrivals,
+    bool preferBahnForRail = false,
+  }) async {
+    final existingPlatform = _platformFromPlace(place);
+    final existingStopLabel = _stopLabelFromPlace(place);
+    final existingStopId = _stringOrNull(place['exactStopId']);
+    final existingParentId = _stringOrNull(place['parentId']);
+    if (existingPlatform != null) {
+      return (
+        platform: existingPlatform,
+        stopLabel: existingStopLabel,
+        stopId: existingStopId,
+        parentId: existingParentId,
+      );
+    }
+
+    if (preferBahnForRail &&
+        expectedTime != null &&
+        _journeyLegLooksRail(leg)) {
+      final bahnDetails = await _backfillStopDetailsFromBahnBoard(
+        leg,
+        place,
+        expectedTime: expectedTime,
+        arrivals: arrivals,
+      );
+      if (bahnDetails != null && bahnDetails.platform != null) {
+        return (
+          platform: bahnDetails.platform,
+          stopLabel: bahnDetails.stopLabel ?? existingStopLabel,
+          stopId: bahnDetails.stopId ?? existingStopId,
+          parentId: bahnDetails.parentId ?? existingParentId,
+        );
+      }
+    }
+
+    final stopId = _stringOrNull(place['id']) ??
+        _stringOrNull(place['stopId']) ??
+        existingStopId;
+    if (stopId == null || stopId.isEmpty) {
+      final bahnDetails = await _backfillStopDetailsFromBahnBoard(
+        leg,
+        place,
+        expectedTime: expectedTime,
+        arrivals: arrivals,
+      );
+      if (bahnDetails != null) {
+        return (
+          platform: bahnDetails.platform,
+          stopLabel: bahnDetails.stopLabel ?? existingStopLabel,
+          stopId: bahnDetails.stopId,
+          parentId: bahnDetails.parentId ?? existingParentId,
+        );
+      }
+      if (existingStopLabel != null) {
+        return (
+          platform: null,
+          stopLabel: existingStopLabel,
+          stopId: null,
+          parentId: existingParentId,
+        );
+      }
+      return null;
+    }
+
+    if (expectedTime != null) {
+      final beforeTime = expectedTime.subtract(const Duration(minutes: 3));
+      final requests = <Future<List<Map<String, dynamic>>>>[
+        _fetchMotisStopEvents(
+          stopId,
+          timeLocal: beforeTime,
+          direction: 'LATER',
+        ),
+        _fetchMotisStopEvents(
+          stopId,
+          timeLocal: expectedTime,
+          direction: 'EARLIER',
+        ),
+      ];
+
+      final results = await Future.wait(requests);
+      for (final events in results) {
+        final matchedEvent = _matchStopEventForLeg(
+          events,
+          leg: leg,
+          expectedTime: expectedTime,
+        );
+        final matchedPlace =
+            (matchedEvent?['place'] as Map?)?.cast<String, dynamic>();
+        if (matchedPlace == null) continue;
+
+        final platform = _platformFromStopEvent(matchedEvent!);
+        final stopLabel = _stopLabelFromPlace(matchedPlace);
+        final exactStopId = _stringOrNull(matchedPlace['stopId']);
+        final parentId = _stringOrNull(matchedPlace['parentId']);
+        if (platform != null || stopLabel != null) {
+          return (
+            platform: platform,
+            stopLabel: stopLabel,
+            stopId: exactStopId,
+            parentId: parentId,
+          );
+        }
+      }
+    }
+
+    final tripDetails = await _backfillStopDetailsFromTripItinerary(
+      leg,
+      place,
+      expectedTime: expectedTime,
+    );
+    if (tripDetails != null &&
+        (tripDetails.platform != null || tripDetails.stopLabel != null)) {
+      return tripDetails;
+    }
+
+    final bahnDetails = await _backfillStopDetailsFromBahnBoard(
+      leg,
+      place,
+      expectedTime: expectedTime,
+      arrivals: arrivals,
+    );
+    if (bahnDetails != null) {
+      return (
+        platform: bahnDetails.platform,
+        stopLabel: bahnDetails.stopLabel ??
+            tripDetails?.stopLabel ??
+            existingStopLabel,
+        stopId: bahnDetails.stopId ?? tripDetails?.stopId ?? existingStopId,
+        parentId:
+            bahnDetails.parentId ?? tripDetails?.parentId ?? existingParentId,
+      );
+    }
+
+    if (existingStopLabel != null) {
+      return (
+        platform: null,
+        stopLabel: existingStopLabel,
+        stopId: null,
+        parentId: existingParentId,
+      );
+    }
+    return null;
+  }
+
+  static Future<List<Map<String, dynamic>>> _enrichJourneysWithPlatforms(
+    List<Map<String, dynamic>> journeys, {
+    void Function(List<Map<String, dynamic>> enrichedSoFar)? onProgress,
+    bool preferBahnForRail = false,
+    bool fastBahnRailOnly = false,
+  }) async {
+    for (var journeyIndex = 0; journeyIndex < journeys.length; journeyIndex++) {
+      final journey = journeys[journeyIndex];
+      final source = journey['source']?.toString();
+      if (source != 'motis' &&
+          source != 'motis_synthetic' &&
+          source != 'v6' &&
+          source != sourceDbV6) {
+        continue;
+      }
+
+      final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+      if (legs == null || legs.isEmpty) continue;
+
+      if (fastBahnRailOnly) {
+        await _enrichJourneyRailPlatformsFromBahnBoardFast(
+          journey,
+          onProgress: () =>
+              onProgress?.call(List<Map<String, dynamic>>.from(journeys)),
+        );
+        onProgress?.call(List<Map<String, dynamic>>.from(journeys));
+        continue;
+      }
+
+      for (final rawLeg in legs) {
+        final leg = rawLeg.cast<String, dynamic>();
+        if (leg['walking'] == true || leg['line'] == null) continue;
+
+        final origin = (leg['origin'] as Map?)?.cast<String, dynamic>();
+        final destination =
+            (leg['destination'] as Map?)?.cast<String, dynamic>();
+        final departureTime =
+            _journeyLegTimeLocal(leg, 'plannedDeparture', 'departure');
+        final arrivalTime =
+            _journeyLegTimeLocal(leg, 'plannedArrival', 'arrival');
+
+        if (origin != null) {
+          final details = await _backfillStopDetailsForLegPlace(
+            leg,
+            origin,
+            expectedTime: departureTime,
+            arrivals: false,
+            preferBahnForRail: preferBahnForRail,
+          );
+          if (details != null) {
+            _applyBackfilledStopDetails(
+              origin,
+              platform: details.platform,
+              stopLabel: details.stopLabel,
+              stopId: details.stopId,
+              parentId: details.parentId,
+            );
+            onProgress?.call(List<Map<String, dynamic>>.from(journeys));
+          }
+        }
+
+        if (destination != null) {
+          final details = await _backfillStopDetailsForLegPlace(
+            leg,
+            destination,
+            expectedTime: arrivalTime,
+            arrivals: true,
+            preferBahnForRail: preferBahnForRail,
+          );
+          if (details != null) {
+            _applyBackfilledStopDetails(
+              destination,
+              platform: details.platform,
+              stopLabel: details.stopLabel,
+              stopId: details.stopId,
+              parentId: details.parentId,
+            );
+            onProgress?.call(List<Map<String, dynamic>>.from(journeys));
+          }
+        }
+      }
+
+      onProgress?.call(List<Map<String, dynamic>>.from(journeys));
+    }
+
+    return journeys;
+  }
+
   static Future<List<Map<String, dynamic>>> _fetchMotisStopDepartures(
     String stationId, {
     required DateTime startLocal,
@@ -1354,6 +3100,44 @@ class TransportApi {
   static Uri _getMotisPlanUri(Map<String, dynamic> params) =>
       _getMotisUri('/api/v5/plan', params);
 
+  @visibleForTesting
+  static Map<String, dynamic> buildMotisJourneySearchParamsForTesting(
+    Station from,
+    Station to, {
+    bool nahverkehrOnly = false,
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
+  }) =>
+      _buildMotisJourneySearchParams(
+        from,
+        to,
+        nahverkehrOnly: nahverkehrOnly,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+        pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+        maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
+      );
+
+  @visibleForTesting
+  static Map<String, dynamic> buildMotisDirectJourneySearchParamsForTesting(
+    Station from,
+    Station to, {
+    DateTime? when,
+    bool isArrival = false,
+    int results = 3,
+  }) =>
+      _buildMotisDirectJourneySearchParams(
+        from,
+        to,
+        when: when,
+        isArrival: isArrival,
+        results: results,
+      );
+
   /// Decodes a MOTIS `/api/v5/plan` response into normalized journeys.
   ///
   /// Transitous data quality can vary by provider/country; this parser is
@@ -1377,6 +3161,32 @@ class TransportApi {
         journeys.add(journey);
       } catch (error) {
         debugPrint('Skipping malformed MOTIS itinerary: $error');
+      }
+    }
+    return journeys;
+  }
+
+  @visibleForTesting
+  static List<Map<String, dynamic>> decodeMotisDirectPlanJourneys(
+    dynamic data,
+  ) {
+    if (data is! Map<String, dynamic>) {
+      throw const FormatException('Unsupported MOTIS plan response');
+    }
+
+    final rawDirect = data['direct'];
+    if (rawDirect is! List) return const <Map<String, dynamic>>[];
+
+    final journeys = <Map<String, dynamic>>[];
+    for (final raw in rawDirect) {
+      if (raw is! Map) continue;
+      try {
+        final journey = journeyFromMotisItinerary(raw.cast<String, dynamic>());
+        journey['source'] = 'motis';
+        journey['direct'] = true;
+        journeys.add(journey);
+      } catch (error) {
+        debugPrint('Skipping malformed MOTIS direct itinerary: $error');
       }
     }
     return journeys;
@@ -1832,6 +3642,8 @@ class TransportApi {
       if (platform != null) 'platform': platform,
       if (place['scheduledTrack'] != null)
         'scheduledPlatform': place['scheduledTrack'],
+      if (place['description'] != null) 'stopLabel': place['description'],
+      if (place['parentId'] != null) 'parentId': place['parentId'],
     };
   }
 
@@ -2964,6 +4776,10 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
@@ -2993,6 +4809,7 @@ class TransportApi {
           when: when,
           isArrival: isArrival,
           results: results,
+          allowDirectFallback: false,
         ).then((res) => res).catchError((e) {
           debugPrint('Hybrid: Transitous failed: $e');
           return <Map<String, dynamic>>[];
@@ -3053,8 +4870,23 @@ class TransportApi {
         // Wait for both to formally complete the function call
         final resultsList = await Future.wait([motisFuture, v6Future]);
         final merged = mergeResults(resultsList[0], resultsList[1]);
-        final baseResults = merged.isEmpty ? resultsList[0] : merged;
+        var baseResults = merged.isEmpty ? resultsList[0] : merged;
+        if (baseResults.isEmpty && isTransitousEnabled) {
+          baseResults = await _searchDirectJourneysMotis(
+            from,
+            to,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          );
+          if (baseResults.isNotEmpty) {
+            onPartialResults(baseResults);
+          }
+        }
         var finalResults = baseResults;
+        if (baseResults.isNotEmpty) {
+          onPartialResults(baseResults);
+        }
         if (isSyntheticTransitousEnabled) {
           setPhase(loadPhaseSynthetic, true);
           finalResults = await _augmentJourneysWithSynthetic(
@@ -3071,6 +4903,10 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: hybrid(partial) motis=${resultsList[0].length} '
           'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
@@ -3090,18 +4926,29 @@ class TransportApi {
         // Merge results
         final merged = mergeResults(motisResults, v6Results);
 
-        if (merged.isEmpty) {
+        var baseResults = merged;
+        if (baseResults.isEmpty && isTransitousEnabled) {
+          baseResults = await _searchDirectJourneysMotis(
+            from,
+            to,
+            when: when,
+            isArrival: isArrival,
+            results: results,
+          );
+        }
+
+        if (baseResults.isEmpty) {
           _syntheticLog('search done: hybrid merged empty');
           throw Exception("No routes found on either API");
         }
 
-        var finalResults = merged;
+        var finalResults = baseResults;
         if (isSyntheticTransitousEnabled) {
           setPhase(loadPhaseSynthetic, true);
           finalResults = await _augmentJourneysWithSynthetic(
             from,
             to,
-            merged,
+            baseResults,
             when: when,
             nahverkehrOnly: nahverkehrOnly,
             isArrival: isArrival,
@@ -3109,9 +4956,13 @@ class TransportApi {
             shouldContinue: shouldContinue,
           );
         }
+        finalResults = await _enrichJourneysWithPlatforms(
+          finalResults,
+          onProgress: onPartialResults,
+        );
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
-          'base=${merged.length} final=${finalResults.length}',
+          'base=${baseResults.length} final=${finalResults.length}',
         );
         return finalResults;
       }
@@ -3292,6 +5143,9 @@ class TransportApi {
     _syntheticStopDeparturesCache.clear();
     _tripItineraryCache.clear();
     _tripItineraryInFlight.clear();
+    _stopEventsCache.clear();
+    _bahnBoardCache.clear();
+    _bahnEvaCache.clear();
     debugPrint('TransportApi cache cleared');
   }
 }

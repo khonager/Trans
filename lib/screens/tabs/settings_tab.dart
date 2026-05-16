@@ -82,12 +82,18 @@ class _SettingsTabState extends State<SettingsTab> {
   static const int _hiddenManualAlarmNotificationId = 9002;
   static const int _advancedUnlockHoldSeconds = 7;
   static const int _advancedUnlockCountdownStartSeconds = 3;
-  static const int _defaultAdvancedMinTransferTimeMinutes = 4;
-  static const int _defaultAdvancedAdditionalTransferTimeMinutes = 2;
-  static const double _defaultAdvancedTransferTimeFactor = 1.3;
-  static const double _defaultAdvancedPedestrianSpeedKmh = 5.0;
-  static const int _defaultAdvancedMaxWalkingTimeMinutes = 15;
-  static const double _defaultAdvancedCyclingSpeedKmh = 16.0;
+  static const int _defaultAdvancedMinTransferTimeMinutes =
+      TransportApi.defaultAdvancedMinTransferTimeMinutes;
+  static const int _defaultAdvancedAdditionalTransferTimeMinutes =
+      TransportApi.defaultAdvancedAdditionalTransferTimeMinutes;
+  static const double _defaultAdvancedTransferTimeFactor =
+      TransportApi.defaultAdvancedTransferTimeFactor;
+  static const double _defaultAdvancedPedestrianSpeedKmh =
+      TransportApi.defaultAdvancedPedestrianSpeedKmh;
+  static const int _defaultAdvancedMaxWalkingTimeMinutes =
+      TransportApi.defaultAdvancedMaxWalkingTimeMinutes;
+  static const double _defaultAdvancedCyclingSpeedKmh =
+      TransportApi.defaultAdvancedCyclingSpeedKmh;
   static const List<int> _hiddenManualTimerSecondOptions = [
     5,
     10,
@@ -254,28 +260,44 @@ class _SettingsTabState extends State<SettingsTab> {
               TransportApi.advancedSettingsEnabledPreferenceKey,
             ) ??
             false;
-        final legacyTransferComfort = (prefs.getDouble(
-                  TransportApi.advancedTransferComfortPreferenceKey,
-                ) ??
-                0.5)
-            .clamp(0.0, 1.0);
-        final legacyBikePreference = (prefs.getDouble(
-                  TransportApi.advancedBikePreferenceKey,
-                ) ??
-                0.0)
-            .clamp(0.0, 1.0);
+        final hasLegacyTransferComfort = prefs.containsKey(
+          TransportApi.advancedTransferComfortPreferenceKey,
+        );
+        final legacyTransferComfort = hasLegacyTransferComfort
+            ? (prefs.getDouble(
+                      TransportApi.advancedTransferComfortPreferenceKey,
+                    ) ??
+                    0.5)
+                .clamp(0.0, 1.0)
+            : null;
+        final hasLegacyBikePreference = prefs.containsKey(
+          TransportApi.advancedBikePreferenceKey,
+        );
+        final legacyBikePreference = hasLegacyBikePreference
+            ? (prefs.getDouble(
+                      TransportApi.advancedBikePreferenceKey,
+                    ) ??
+                    0.0)
+                .clamp(0.0, 1.0)
+            : null;
         _advancedMinTransferTimeMinutes = prefs.getInt(
                 TransportApi.advancedMinTransferTimeMinutesPreferenceKey) ??
-            (2 + (legacyTransferComfort * 5)).round();
+            (legacyTransferComfort != null
+                ? (2 + (legacyTransferComfort * 5)).round()
+                : _defaultAdvancedMinTransferTimeMinutes);
         _advancedAdditionalTransferTimeMinutes = prefs.getInt(
               TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
             ) ??
-            (legacyTransferComfort * 4).round();
+            (legacyTransferComfort != null
+                ? (legacyTransferComfort * 4).round()
+                : _defaultAdvancedAdditionalTransferTimeMinutes);
         _advancedTransferTimeFactor = ((prefs.getDouble(
                               TransportApi
                                   .advancedTransferTimeFactorPreferenceKey,
                             ) ??
-                            (0.8 + legacyTransferComfort))
+                            (legacyTransferComfort != null
+                                ? (0.8 + legacyTransferComfort)
+                                : _defaultAdvancedTransferTimeFactor))
                         .clamp(0.7, 2.5) *
                     10)
                 .round() /
@@ -287,7 +309,7 @@ class _SettingsTabState extends State<SettingsTab> {
         _advancedPreTransitBikeEnabled = prefs.getBool(
               TransportApi.advancedPreTransitBikeEnabledPreferenceKey,
             ) ??
-            (legacyBikePreference > 0.01);
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
         _advancedPostTransitWalkEnabled = prefs.getBool(
               TransportApi.advancedPostTransitWalkEnabledPreferenceKey,
             ) ??
@@ -295,7 +317,7 @@ class _SettingsTabState extends State<SettingsTab> {
         _advancedPostTransitBikeEnabled = prefs.getBool(
               TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
             ) ??
-            (legacyBikePreference > 0.01);
+            (legacyBikePreference != null && legacyBikePreference > 0.01);
         _advancedPedestrianSpeedKmh = (prefs.getDouble(
                   TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
                 ) ??
@@ -308,7 +330,9 @@ class _SettingsTabState extends State<SettingsTab> {
         _advancedCyclingSpeedKmh = ((prefs.getDouble(
                       TransportApi.advancedCyclingSpeedKmhPreferenceKey,
                     ) ??
-                    ((3.2 + (legacyBikePreference * 2.4)) * 3.6))
+                    (legacyBikePreference != null
+                        ? ((3.2 + (legacyBikePreference * 2.4)) * 3.6)
+                        : _defaultAdvancedCyclingSpeedKmh))
                 .clamp(8.0, 30.0))
             .roundToDouble();
         TransportApi.configureEnabledSources(_enabledApiSources);
@@ -679,6 +703,7 @@ class _SettingsTabState extends State<SettingsTab> {
       maxWalkingTimeMinutes: _advancedMaxWalkingTimeMinutes,
       cyclingSpeedKmh: _advancedCyclingSpeedKmh,
     );
+    SupabaseService.settingsRefreshNotifier.value++;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1853,6 +1878,7 @@ class _SettingsTabState extends State<SettingsTab> {
       _isAuthSubmitting = true;
     }
 
+    bool shouldRefreshApp = false;
     try {
       if (_isLoginMode) {
         await SupabaseService.signIn(email, password);
@@ -1884,7 +1910,10 @@ class _SettingsTabState extends State<SettingsTab> {
         }
       }
       _passwordCtrl.clear();
-      await _loadProfile();
+      shouldRefreshApp = SupabaseService.currentUser != null;
+      if (!shouldRefreshApp) {
+        await _loadProfile();
+      }
       if (mounted) setState(() {});
     } catch (e, st) {
       if (!mounted) return;
@@ -1900,6 +1929,10 @@ class _SettingsTabState extends State<SettingsTab> {
       } else {
         _isAuthSubmitting = false;
       }
+    }
+
+    if (shouldRefreshApp) {
+      SupabaseService.requestAppRefresh();
     }
   }
 

@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -12,6 +13,7 @@ import '../config/app_theme.dart';
 import '../services/favorites_manager.dart';
 import '../services/transport_api.dart';
 import '../utils/app_error.dart';
+import '../widgets/compass_icon.dart';
 import '../widgets/favorite_map_markers.dart';
 
 class TransitousLiveMapScreen extends StatefulWidget {
@@ -57,10 +59,15 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   List<_LiveBusTrip> _displayedTripsCache = const [];
   String? _displayedTripsCacheKey;
   List<Marker> _favoriteMarkers = const [];
+  Position? _liveCurrentPosition;
+  bool _isStartingLiveLocationUpdates = false;
+  bool _isCompassMode = false;
 
   Timer? _fetchDebounce;
   Timer? _refreshTimer;
   Timer? _animationTimer;
+  StreamSubscription<Position>? _positionStream;
+  StreamSubscription<CompassEvent>? _compassStream;
   bool _forceNextFetch = false;
   int _selectedTripRouteRequestToken = 0;
   bool _appIsActive = true;
@@ -69,9 +76,20 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _liveCurrentPosition = widget.currentPosition;
     _bootstrap();
     _loadFavoriteMarkers();
+    _startLiveLocationUpdates();
     _startTimers();
+  }
+
+  @override
+  void didUpdateWidget(covariant TransitousLiveMapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentPosition != null &&
+        widget.currentPosition != oldWidget.currentPosition) {
+      setState(() => _liveCurrentPosition = widget.currentPosition);
+    }
   }
 
   @override
@@ -80,6 +98,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     _fetchDebounce?.cancel();
     _refreshTimer?.cancel();
     _animationTimer?.cancel();
+    _positionStream?.cancel();
+    _compassStream?.cancel();
     _clock.dispose();
     super.dispose();
   }
@@ -118,6 +138,114 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     _refreshTimer = null;
     _animationTimer?.cancel();
     _animationTimer = null;
+  }
+
+  Future<void> _startLiveLocationUpdates() async {
+    if (_isStartingLiveLocationUpdates) return;
+    _isStartingLiveLocationUpdates = true;
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('Live buses map location unavailable: permission denied');
+        return;
+      }
+
+      const settings = LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+      );
+      await _positionStream?.cancel();
+      _positionStream = Geolocator.getPositionStream(locationSettings: settings)
+          .listen((position) {
+        if (!mounted) return;
+        setState(() => _liveCurrentPosition = position);
+        if (_isCompassMode && _isMapReady) {
+          _mapController.move(
+            LatLng(position.latitude, position.longitude),
+            _mapController.camera.zoom,
+          );
+        }
+      });
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'live buses map location',
+      );
+    } finally {
+      _isStartingLiveLocationUpdates = false;
+    }
+  }
+
+  void _toggleCompassMode() {
+    if (_isCompassMode) {
+      _disableCompassMode();
+    } else {
+      _enableCompassMode();
+    }
+  }
+
+  Future<void> _enableCompassMode() async {
+    setState(() => _isCompassMode = true);
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      try {
+        permission = await Geolocator.requestPermission();
+      } catch (error, stackTrace) {
+        AppError.log(
+          error,
+          stackTrace: stackTrace,
+          source: 'live buses map location permission',
+        );
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) setState(() => _isCompassMode = false);
+        return;
+      }
+    }
+
+    if (_positionStream == null) {
+      await _startLiveLocationUpdates();
+    }
+
+    _compassStream?.cancel();
+    try {
+      _compassStream = FlutterCompass.events?.listen((event) {
+        if (!_isCompassMode || !_isMapReady) return;
+        final heading = event.heading;
+        if (heading != null) {
+          _mapController.rotate(-heading);
+        }
+      });
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'live buses map compass',
+      );
+    }
+
+    final position = _liveCurrentPosition;
+    if (position != null && _isMapReady) {
+      _mapController.move(LatLng(position.latitude, position.longitude), 16);
+    }
+  }
+
+  void _disableCompassMode() {
+    if (mounted) {
+      setState(() => _isCompassMode = false);
+    } else {
+      _isCompassMode = false;
+    }
+    _compassStream?.cancel();
+    _compassStream = null;
   }
 
   Future<void> _loadFavoriteMarkers() async {
@@ -624,7 +752,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   }
 
   LatLng? get _userPositionLatLng {
-    final position = widget.currentPosition;
+    final position = _liveCurrentPosition;
     if (position == null) return null;
     return LatLng(position.latitude, position.longitude);
   }
@@ -1308,14 +1436,45 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _clearSelection();
-          if (!_isMapReady) return;
-          _mapController.move(_initialCenter, _initialZoom);
-          _scheduleFetch(force: true);
-        },
-        child: const Icon(Icons.center_focus_strong),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (userPosition != null)
+            FloatingActionButton(
+              heroTag: 'live-map-compass',
+              mini: true,
+              tooltip: 'Compass',
+              backgroundColor:
+                  _isCompassMode ? colors.navBarSelected : Colors.white,
+              foregroundColor: _isCompassMode ? Colors.white : Colors.black,
+              onPressed: _toggleCompassMode,
+              child: CustomPaint(
+                size: const Size(24, 24),
+                painter: CompassIconPainter(
+                  color: _isCompassMode ? Colors.white : Colors.black,
+                ),
+              ),
+            ),
+          if (userPosition != null) const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'live-map-center',
+            tooltip: 'Recenter',
+            onPressed: () {
+              _clearSelection();
+              if (!_isMapReady) return;
+              if (_isCompassMode) _disableCompassMode();
+              final target = _userPositionLatLng ?? _initialCenter;
+              final targetZoom = _userPositionLatLng == null
+                  ? _initialZoom
+                  : math.max(_mapController.camera.zoom, 15.0);
+              _mapController.move(target, targetZoom);
+              _mapController.rotate(0);
+              _scheduleFetch(force: true);
+            },
+            child: const Icon(Icons.center_focus_strong),
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -1334,6 +1493,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
               },
               onTap: (_, __) => _clearSelection(),
               onPositionChanged: (camera, hasGesture) {
+                if (hasGesture && _isCompassMode) {
+                  _disableCompassMode();
+                }
                 setState(() {
                   _latestCamera = camera;
                   _invalidateDisplayedTripsCache();

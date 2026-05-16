@@ -1,7 +1,44 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/models/station.dart';
 import 'package:trans/services/transport_api.dart';
 
 void main() {
+  final testFrom = Station(
+    id: 'de:test:from',
+    name: 'From',
+    type: 'stop',
+    latitude: 50.0,
+    longitude: 8.0,
+  );
+  final testTo = Station(
+    id: 'de:test:to',
+    name: 'To',
+    type: 'stop',
+    latitude: 50.1,
+    longitude: 8.1,
+  );
+
+  void configureDefaultAdvanced({required bool enabled}) {
+    TransportApi.configureAdvancedSearchSettings(
+      enabledForDevice: enabled,
+      minTransferTimeMinutes:
+          TransportApi.defaultAdvancedMinTransferTimeMinutes,
+      additionalTransferTimeMinutes:
+          TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+      transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+      preTransitWalkEnabled: true,
+      preTransitBikeEnabled: false,
+      postTransitWalkEnabled: true,
+      postTransitBikeEnabled: false,
+      cyclingSpeedKmh: TransportApi.defaultAdvancedCyclingSpeedKmh,
+      pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+      maxWalkingTimeMinutes: TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+    );
+    TransportApi.setBikeToggleEnabledForDevice(false);
+  }
+
+  setUp(() => configureDefaultAdvanced(enabled: false));
+
   // ---------------------------------------------------------------------------
   // buildLiveMapTripsUri – query-parameter serialisation
   // ---------------------------------------------------------------------------
@@ -180,6 +217,283 @@ void main() {
     });
   });
 
+  group('TransportApi MOTIS advanced search parameters', () {
+    test('advanced defaults build the same query as disabled advanced search',
+        () {
+      final when = DateTime.utc(2026, 5, 4, 10, 30);
+
+      configureDefaultAdvanced(enabled: false);
+      final normal = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+        when: when,
+        results: 7,
+      );
+
+      configureDefaultAdvanced(enabled: true);
+      final advancedDefault =
+          TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+        when: when,
+        results: 7,
+      );
+
+      expect(advancedDefault, normal);
+      expect(advancedDefault.containsKey('minTransferTime'), isFalse);
+      expect(advancedDefault.containsKey('additionalTransferTime'), isFalse);
+      expect(advancedDefault.containsKey('transferTimeFactor'), isFalse);
+      expect(advancedDefault.containsKey('preTransitModes'), isFalse);
+      expect(advancedDefault.containsKey('postTransitModes'), isFalse);
+      expect(advancedDefault['maxPreTransitTime'], '3600');
+      expect(advancedDefault['maxPostTransitTime'], '3600');
+    });
+
+    test('direct fallback is walking-only when bike routing is not enabled',
+        () {
+      configureDefaultAdvanced(enabled: false);
+
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(direct['directModes'], 'WALK');
+      expect(direct, isNot(contains('cyclingSpeed')));
+      expect(direct, contains('pedestrianSpeed'));
+    });
+
+    test('serialises transfer settings in Transitous minutes, not seconds', () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes: 4,
+        additionalTransferTimeMinutes: 2,
+        transferTimeFactor: 1.3,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: false,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: false,
+        cyclingSpeedKmh: TransportApi.defaultAdvancedCyclingSpeedKmh,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['minTransferTime'], '4');
+      expect(params['additionalTransferTime'], '2');
+      expect(params['transferTimeFactor'], '1.30');
+    });
+
+    test('serialises changed first and last mile walking windows in seconds',
+        () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: false,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: false,
+        cyclingSpeedKmh: TransportApi.defaultAdvancedCyclingSpeedKmh,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes: 15,
+      );
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['maxPreTransitTime'], '900');
+      expect(params['maxPostTransitTime'], '900');
+    });
+
+    test('uses Transitous BIKE mode token when bike access is active', () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: 18,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(true);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['preTransitModes'], 'WALK,BIKE');
+      expect(params['postTransitModes'], 'WALK,BIKE');
+      expect(params['preTransitModes'], isNot(contains('BICYCLE')));
+      expect(params['cyclingSpeed'], '5.00');
+    });
+
+    test('uses BIKE when bicycle is the only mode and route toggle is on', () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: false,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: false,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: 20,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(true);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['preTransitModes'], 'BIKE');
+      expect(params['postTransitModes'], 'BIKE');
+      expect(params['cyclingSpeed'], '5.56');
+      expect(params['preTransitModes'], isNot(contains('WALK')));
+      expect(params['postTransitModes'], isNot(contains('WALK')));
+      expect(direct['directModes'], 'BIKE');
+      expect(direct['cyclingSpeed'], '5.56');
+      expect(direct, isNot(contains('pedestrianSpeed')));
+    });
+
+    test(
+        'falls back to WALK when bicycle is configured but route toggle is off',
+        () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: false,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: false,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: 20,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(false);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['preTransitModes'], 'WALK');
+      expect(params['postTransitModes'], 'WALK');
+      expect(params, isNot(contains('cyclingSpeed')));
+      expect(direct['directModes'], 'WALK');
+      expect(direct, isNot(contains('cyclingSpeed')));
+      expect(direct, contains('pedestrianSpeed'));
+    });
+
+    test(
+        'keeps bike disabled when walking and bicycle are both configured but toggle is off',
+        () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: 18,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(false);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params, isNot(contains('preTransitModes')));
+      expect(params, isNot(contains('postTransitModes')));
+      expect(params, isNot(contains('cyclingSpeed')));
+      expect(direct['directModes'], 'WALK');
+      expect(direct, isNot(contains('cyclingSpeed')));
+    });
+
+    test('supports asymmetric bicycle settings for first and last mile', () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: false,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: false,
+        cyclingSpeedKmh: 16,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(false);
+
+      final params = TransportApi.buildMotisJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+      final direct = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        testFrom,
+        testTo,
+      );
+
+      expect(params['preTransitModes'], 'WALK');
+      expect(params['postTransitModes'], 'WALK');
+      expect(params, isNot(contains('cyclingSpeed')));
+      expect(direct['directModes'], 'WALK');
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // decodeJsonMap – JSON shape handling
   // ---------------------------------------------------------------------------
@@ -254,6 +568,95 @@ void main() {
 
       expect(result.length, 1);
       expect(result.every((journey) => journey['source'] == 'motis'), isTrue);
+    });
+  });
+
+  group('TransportApi direct journey fallback helpers', () {
+    test('builds direct WALK and BIKE fallback parameters when bike is enabled',
+        () {
+      TransportApi.configureAdvancedSearchSettings(
+        enabledForDevice: true,
+        minTransferTimeMinutes:
+            TransportApi.defaultAdvancedMinTransferTimeMinutes,
+        additionalTransferTimeMinutes:
+            TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+        transferTimeFactor: TransportApi.defaultAdvancedTransferTimeFactor,
+        preTransitWalkEnabled: true,
+        preTransitBikeEnabled: true,
+        postTransitWalkEnabled: true,
+        postTransitBikeEnabled: true,
+        cyclingSpeedKmh: TransportApi.defaultAdvancedCyclingSpeedKmh,
+        pedestrianSpeedKmh: TransportApi.defaultAdvancedPedestrianSpeedKmh,
+        maxWalkingTimeMinutes:
+            TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+      );
+      TransportApi.setBikeToggleEnabledForDevice(true);
+
+      final from = Station(
+        id: 'gps',
+        name: 'From',
+        type: 'location',
+        latitude: 40.007733,
+        longitude: 4.1537476,
+      );
+      final to = Station(
+        id: 'gps',
+        name: 'To',
+        type: 'location',
+        latitude: 40.0220224,
+        longitude: 4.1787784,
+      );
+
+      final params = TransportApi.buildMotisDirectJourneySearchParamsForTesting(
+        from,
+        to,
+        when: DateTime.utc(2026, 5, 5, 6, 12, 17),
+      );
+
+      expect(params['fromPlace'], '40.007733,4.1537476');
+      expect(params['toPlace'], '40.0220224,4.1787784');
+      expect(params['directModes'], 'WALK,BIKE');
+      expect(params['maxDirectTime'], '7200');
+      expect(params, isNot(contains('transitModes')));
+      expect(params, isNot(contains('preTransitModes')));
+      expect(params, isNot(contains('postTransitModes')));
+      expect(params, isNot(contains('maxPreTransitTime')));
+      expect(params, isNot(contains('maxPostTransitTime')));
+    });
+
+    test('decodes direct itineraries from the MOTIS direct array', () {
+      final result = TransportApi.decodeMotisDirectPlanJourneys({
+        'itineraries': [],
+        'direct': [
+          {
+            'duration': 600,
+            'startTime': '2026-05-05T06:12:00Z',
+            'endTime': '2026-05-05T06:22:00Z',
+            'transfers': 0,
+            'legs': [
+              {
+                'mode': 'BIKE',
+                'from': {'name': 'START', 'lat': 40.0, 'lon': 4.0},
+                'to': {'name': 'END', 'lat': 40.1, 'lon': 4.1},
+                'startTime': '2026-05-05T06:12:00Z',
+                'endTime': '2026-05-05T06:22:00Z',
+                'scheduledStartTime': '2026-05-05T06:12:00Z',
+                'scheduledEndTime': '2026-05-05T06:22:00Z',
+                'distance': 2500,
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.length, 1);
+      expect(result.first['source'], 'motis');
+      expect(result.first['direct'], isTrue);
+      final legs = result.first['legs'] as List<dynamic>;
+      expect(legs.length, 1);
+      expect((legs.first as Map<String, dynamic>)['mode'], 'BIKE');
+      expect((legs.first as Map<String, dynamic>)['walking'], isTrue);
+      expect(legs.first['distance'], 2500);
     });
   });
 }

@@ -27,6 +27,8 @@ Map<String, dynamic> _placeToLocation(Map<String, dynamic> place) {
     if (platform != null) 'platform': platform,
     if (place['scheduledTrack'] != null)
       'scheduledPlatform': place['scheduledTrack'],
+    if (place['description'] != null) 'stopLabel': place['description'],
+    if (place['parentId'] != null) 'parentId': place['parentId'],
   };
 }
 
@@ -203,6 +205,7 @@ Map<String, dynamic> legFromMotisLeg(Map<String, dynamic> leg) {
         _calculateDelay(leg['scheduledStartTime'], leg['startTime']),
     'arrivalDelay': _calculateDelay(leg['scheduledEndTime'], leg['endTime']),
     'reachable': true,
+    'mode': mode,
     if (leg['cancelled'] == true) 'cancelled': true,
 
     // Walking legs

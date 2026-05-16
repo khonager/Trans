@@ -115,6 +115,89 @@ The app supports multiple transit APIs for broad coverage:
 
 ---
 
+## Data Storage & Privacy
+
+Trans should be understandable about user data. The app does not hide what it saves: some data is stored only on the device, some is copied to your Trans account so it can appear on all signed-in devices, and some social features are stored in Supabase so friends, chat, tickets, and account features can work.
+
+If you are not signed in, account-cloud sync is skipped, but route planning and transit lookups still contact the selected transport APIs.
+
+### Saved only on this device
+
+These values stay local to the current app install/device and are not intentionally synced to your Trans account:
+
+| Data | Why it is saved |
+|------|-----------------|
+| Current tab index | Opens the app on the last selected tab. |
+| Show train numbers toggle | Remembers local display preference. |
+| Always wake me toggle | Remembers local wake-alarm behavior. |
+| Enabled transport API sources | Remembers whether this device uses Transitous, synthetic Transitous, DB v6, or a combination. |
+| Advanced settings unlocked flag | Keeps the advanced settings UI unlocked on this device only. |
+| Per-device bike toggle for advanced routing | Remembers the quick bike-routing toggle on this device. |
+| Community terms accepted flag | Avoids asking again on the same device. |
+| Custom alarm sound files | Imported audio is copied into the app's local support folder. The sound file itself is not uploaded. |
+| Custom alarm sound metadata | Stores local file path, file name, label, and custom sound id so the local file can be used. |
+| Local ticket copy | Native apps save ticket JPG files in the app documents folder; web saves the ticket image as base64 in browser/app preferences. |
+| Notification/alarm runtime state | Active timers, GPS stream state, and notification channel setup are local runtime/device behavior. |
+| Supabase sign-in session | The Supabase SDK keeps a local auth session so you stay signed in. |
+
+Clearing app data or uninstalling the app removes local-only data from that device.
+
+### Saved locally and synced to your account
+
+The app stores these locally first and also writes them to your Supabase profile when you are signed in. On another signed-in device, Trans downloads them and writes a local copy there too.
+
+| Data | What it can contain |
+|------|---------------------|
+| Recent station/address searches | Station or address id, name, type, coordinates when available, city/region/country/postal code metadata. Kept to a maximum of 10 recent entries. |
+| Frequent journeys | From/to station or address data, timestamp, and usage count. Kept to a maximum of 30 entries. |
+| Recent route searches | From/to station or address data and timestamp. Kept to a maximum of 30 entries. |
+| Saved journeys | From/to data, departure and arrival times, expiry time, connection key, selected journey details, and leave reminder settings. Saved journeys expire after arrival plus 24 hours. |
+| Favorites | Favorite label, icon, station/address data, and type. Friend favorites are intentionally filtered out; synced favorites are station/address favorites only. |
+| Theme and display settings | Dark mode, system theme sync, accent color, claimed color metadata, and language. |
+| Transit preferences | Deutschlandticket/local transport mode and advanced routing values such as transfer time, walk/bike options, walking speed, cycling speed, and maximum walking time. |
+| Alarm and haptic settings | Vibration pattern, intensity, selected wake-alarm sound id, sound/vibration toggles, and alarm stop count. The alarm trigger threshold is uploaded to account settings when changed, but the current settings download path does not restore it on other devices yet. |
+| Ghost Mode setting | Whether your account should hide live location sharing. |
+
+One important custom sound detail: the selected sound id can sync, but the imported audio file does not. A custom sound chosen on one device may not exist on another device unless it is imported there too.
+
+### Saved in the cloud for account, friends, and sharing
+
+These are stored in Supabase because they are account or social features:
+
+| Data | How it is used |
+|------|----------------|
+| Account identity | Email address, Supabase user id, auth provider data, username, password/auth credentials managed by Supabase Auth, and password reset/email confirmation state. |
+| Profile | Username, avatar emoji, avatar URL field, theme color, Ghost Mode, settings JSON, favorites JSON, ticket URL, and profile timestamps when available. |
+| Live location | Latitude, longitude, current line/status, and updated time. This is uploaded only when signed in and Ghost Mode is off. Friends can read it through Supabase access rules. |
+| Ghost Mode cleanup | When Ghost Mode is enabled, the app clears latitude, longitude, and current line from the cloud location row. |
+| Friends | Friend relationships and friend request sender/receiver/status rows. |
+| Blocked users | Blocker id and blocked user id. Blocking also removes the friendship link. |
+| Messages | Public line chat messages are stored as plaintext. Private messages are encrypted by the app before upload and stored with sender/receiver ids, but the key is derived from the two account ids, so do not treat it as high-security end-to-end encryption. |
+| Ticket upload | Ticket images are uploaded to the Supabase `tickets` storage bucket and the resulting public URL is stored on your profile. Anyone with that URL may be able to view the image. |
+| Theme color claims | Claimed color hex value, app id, owner/user ids, owner label, linked portfolio uid when present, timestamps, and sync status. |
+| Portfolio sign-in/color sync | If used, the app opens the portfolio sign-in/sync flow and exchanges bridge/color-claim data with the configured portfolio endpoints. |
+
+Deleting your account from the app calls the backend delete function, which removes your Supabase auth user plus app-owned profile, messages, friend requests, friend links, blocks, and live-location rows. Color claims are tied to the auth user and should be removed by database cascade. Uploaded ticket storage objects are not explicitly deleted by the current delete function, so contact support if a ticket upload also needs to be removed. Local data on a device may remain until you clear app data or uninstall the app.
+
+### Sent to transport and platform services
+
+Route planning, station search, nearby stops, live departures, and trip details are requested from the selected transport APIs:
+
+- **Transitous** at `https://api.transitous.org`
+- **DB v6** at `https://v6.db.transport.rest`
+
+Those requests can include search text, station ids, coordinates, dates/times, routing preferences, and a Trans app user-agent string. The app keeps short-lived in-memory caches for some transport responses to avoid duplicate requests during the same session.
+
+Device location is requested from the operating system when needed for current-location route planning, wake alarms, nearby transit features, and live sharing. Notification permissions are requested for alarms, route reminders, private messages, and friend requests.
+
+Ticket image cropping, QR detection, and custom alarm sound import happen locally before anything is uploaded. The app does not include a dedicated analytics or crash-reporting SDK.
+
+### Reports and support
+
+When you report content, the app prepares an email to the support address. The report can include your user id, email, the reported user/content ids, reason, optional details, message preview, and, if you choose it, message history. That information is handled by your email app and email provider. If no mail app is available, the report text is copied to your clipboard.
+
+---
+
 ## ⚙️ Settings Reference
 
 ### Privacy

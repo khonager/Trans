@@ -3,6 +3,57 @@ import 'package:trans/models/station.dart';
 import 'package:trans/services/transport_api.dart';
 
 void main() {
+  group('TransportApi.shouldSupplementSparseStationResults', () {
+    test('supplements sparse station-like short queries', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 10,
+          requestedLimit: 60,
+          hasLocationBias: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not supplement when station-like results already fill batch',
+        () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 20,
+          requestedLimit: 20,
+          hasLocationBias: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not supplement specific longer non-station queries', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'frankfurt airport terminal 1',
+          currentCount: 8,
+          requestedLimit: 60,
+          hasLocationBias: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not supplement when there is no location bias to remove', () {
+      expect(
+        TransportApi.shouldSupplementSparseStationResults(
+          'hbf',
+          currentCount: 6,
+          requestedLimit: 60,
+          hasLocationBias: false,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('TransportApi.rankStationsForQuery', () {
     test('prefers a main transit hub over an exact city place without location',
         () {
@@ -130,6 +181,182 @@ void main() {
       );
 
       expect(ranked.first.id, 'fra-regional');
+    });
+
+    test('prefers exact city stop over same-region hubs for hbf queries', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'neuss-hbf',
+            name: 'Neuss Hauptbahnhof',
+            type: 'stop',
+            city: 'Neuss',
+            region: 'Regierungsbezirk Dusseldorf',
+            country: 'DE',
+            searchImportance: 0.11,
+          ),
+          Station(
+            id: 'duesseldorf-hbf',
+            name: 'Dusseldorf Hbf',
+            type: 'stop',
+            city: 'Dusseldorf',
+            region: 'Nordrhein-Westfalen',
+            country: 'DE',
+            searchImportance: 0.39,
+          ),
+          Station(
+            id: 'wuppertal-hbf',
+            name: 'Wuppertal Hauptbahnhof',
+            type: 'stop',
+            city: 'Wuppertal',
+            region: 'Regierungsbezirk Dusseldorf',
+            country: 'DE',
+            searchImportance: 0.08,
+          ),
+        ],
+        'Dusseldorf Hbf',
+        lat: 51.2290,
+        lng: 6.7820,
+      );
+
+      expect(ranked.first.id, 'duesseldorf-hbf');
+    });
+
+    test('prefers main airport rail stations over terminal-specific stops', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'terminal-p36',
+            name: 'Frankfurt Airport (P36 Terminal 1)',
+            type: 'stop',
+            city: 'Frankfurt am Main',
+            country: 'DE',
+            searchImportance: 0.01,
+          ),
+          Station(
+            id: 'airport-center',
+            name: 'Frankfurt Airport Center',
+            type: 'location',
+            city: 'Frankfurt am Main',
+            country: 'DE',
+            searchImportance: 0.02,
+          ),
+          Station(
+            id: 'fra-fern',
+            name: 'Frankfurt(M) Flughafen Fernbf',
+            type: 'stop',
+            city: 'Frankfurt am Main',
+            country: 'DE',
+            searchImportance: 0.14,
+          ),
+        ],
+        'Frankfurt Airport',
+        lat: 50.1109,
+        lng: 8.6821,
+      );
+
+      expect(ranked.first.id, 'fra-fern');
+      expect(
+        ranked.indexWhere((station) => station.id == 'terminal-p36'),
+        greaterThan(ranked.indexWhere((station) => station.id == 'fra-fern')),
+      );
+    });
+
+    test(
+        'keeps farther duplicate place accessible when query names another city',
+        () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'wiesbaden-luisenplatz',
+            name: 'Luisenplatz',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+            latitude: 50.0791,
+            longitude: 8.2397,
+          ),
+          Station(
+            id: 'darmstadt-luisenplatz',
+            name: 'Darmstadt Luisenplatz',
+            type: 'stop',
+            city: 'Darmstadt',
+            country: 'DE',
+            latitude: 49.8729,
+            longitude: 8.6506,
+          ),
+          Station(
+            id: 'darmstadt-fountain',
+            name: 'Luisenplatz-Brunnen',
+            type: 'location',
+            city: 'Darmstadt',
+            country: 'DE',
+            latitude: 49.8724,
+            longitude: 8.6513,
+          ),
+        ],
+        'Luisenplatz Wiesbaden',
+        lat: 49.8729,
+        lng: 8.6506,
+      );
+
+      expect(ranked.first.id, 'wiesbaden-luisenplatz');
+    });
+
+    test('prefers actual hauptbahnhof over einkaufsbahnhof poi for hbf query',
+        () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'einkaufsbahnhof',
+            name: 'Einkaufsbahnhof Wiesbaden Hbf',
+            type: 'location',
+            city: 'Wiesbaden',
+            country: 'DE',
+            category: 'shop_other_16',
+            searchScore: -23.5,
+          ),
+          Station(
+            id: 'wiesbaden-hbf',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+        ],
+        'wiesbaden hbf',
+      );
+
+      expect(ranked.first.id, 'wiesbaden-hbf');
+    });
+
+    test('generally prefers transit stops over similarly named places', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'poi',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'location',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -26.5,
+          ),
+          Station(
+            id: 'stop',
+            name: 'Wiesbaden Hauptbahnhof',
+            type: 'stop',
+            city: 'Wiesbaden',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+        ],
+        'wiesbaden hauptbahnhof',
+      );
+
+      expect(ranked.first.id, 'stop');
     });
   });
 }

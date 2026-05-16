@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -57,9 +58,26 @@ String formatRideLineWithPlatform(String line, String? platform) {
   }
 
   final isNumericPlatform = int.tryParse(normalizedPlatform) != null;
-  final formattedPlatform =
-      isNumericPlatform ? 'Pl. $normalizedPlatform' : normalizedPlatform;
+  final formattedPlatform = isNumericPlatform
+      ? '${_lineLooksRailForPlatformLabel(normalizedLine) ? 'Gl.' : 'Pl.'} $normalizedPlatform'
+      : normalizedPlatform;
   return '$normalizedLine ($formattedPlatform)';
+}
+
+bool _lineLooksRailForPlatformLabel(String line) {
+  final normalized = line.trim().toUpperCase();
+  if (normalized.isEmpty) return false;
+  const railPrefixes = ['ICE', 'ECE', 'IC', 'EC', 'RE', 'RB', 'IR'];
+  for (final prefix in railPrefixes) {
+    if (!normalized.startsWith(prefix)) continue;
+    if (normalized.length == prefix.length) return true;
+    final next = normalized[prefix.length];
+    return next == ' ' || int.tryParse(next) != null;
+  }
+  if (!normalized.startsWith('S')) return false;
+  if (normalized.length == 1) return true;
+  final next = normalized[1];
+  return next == ' ' || int.tryParse(next) != null;
 }
 
 final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
@@ -118,6 +136,185 @@ String formatRideDisplayLine({
   return displayLine;
 }
 
+String? _normalizeStopDetailLabel(String? label, {String? stationName}) {
+  final normalized = label?.trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final station = stationName?.trim();
+  if (station != null &&
+      station.isNotEmpty &&
+      normalized.toLowerCase() == station.toLowerCase()) {
+    return null;
+  }
+  if (_looksLikeOpaqueStopCode(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+bool _looksLikeOpaqueStopCode(String label) {
+  final lower = label.toLowerCase();
+  const userFacingKeywords = <String>[
+    'gleis',
+    'bahnsteig',
+    'bussteig',
+    'bussteige',
+    'tramsteig',
+    'haltestelle',
+    'steig',
+    'bstg',
+    'pos.',
+    'position',
+    'platform',
+    'stop',
+  ];
+  if (userFacingKeywords.any(lower.contains)) return false;
+
+  final compact = label.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  if (compact.isEmpty) return true;
+
+  final hasDigit = RegExp(r'\d').hasMatch(compact);
+  final hasLower = RegExp(r'[a-z]').hasMatch(compact);
+  final hasUpper = RegExp(r'[A-Z]').hasMatch(compact);
+
+  if (!hasDigit &&
+      compact.length <= 16 &&
+      (RegExp(r'^[NSEWV][A-Z][A-Za-z]+$').hasMatch(compact) ||
+          RegExp(r'^[A-Z]{2,}[A-Za-z]{0,8}$').hasMatch(compact) ||
+          (hasUpper && !hasLower))) {
+    return true;
+  }
+
+  return false;
+}
+
+String _cleanStopDetailLabel(String label) {
+  final trimmed = label.trim();
+  final match = RegExp(
+    r'^(.*?\b(?:platz|steig|bussteig|bussteige|bahnsteig|haltestelle|bstg\.?)\s+[A-Za-z0-9]+)(?:\s+[A-Z]{2,}.*)$',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (match != null) {
+    return match.group(1)!.trim();
+  }
+  return trimmed;
+}
+
+bool _matchesSimpleStopLabel(
+  String lowerStopLabel,
+  String lowerPlatform,
+  List<String> prefixes,
+) {
+  for (final prefix in prefixes) {
+    if (lowerStopLabel == '$prefix $lowerPlatform') return true;
+  }
+  return false;
+}
+
+@visibleForTesting
+String? combinePlatformAndStopLabel(
+  String? platform,
+  String? stopLabel, {
+  String? stationName,
+}) {
+  final normalizedPlatform = platform?.trim();
+  final normalizedStopLabel = _normalizeStopDetailLabel(
+    stopLabel,
+    stationName: stationName,
+  );
+
+  if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
+    return normalizedStopLabel;
+  }
+  if (normalizedStopLabel == null || normalizedStopLabel.isEmpty) {
+    return normalizedPlatform;
+  }
+
+  final cleanedStopLabel = _cleanStopDetailLabel(normalizedStopLabel);
+
+  final lowerPlatform = normalizedPlatform.toLowerCase();
+  final lowerStopLabel = cleanedStopLabel.toLowerCase();
+
+  if (lowerStopLabel == lowerPlatform) {
+    return normalizedPlatform;
+  }
+
+  if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
+    'gleis',
+    'bahnsteig gleis',
+    's-bahnsteig gleis',
+    'u-bahnsteig gleis',
+  ])) {
+    return normalizedPlatform;
+  }
+
+  if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
+    'bussteig',
+    'bussteige',
+    'steig',
+    'platz',
+    'bstg.',
+    'bstg',
+    'haltestelle',
+  ])) {
+    return cleanedStopLabel;
+  }
+
+  return '$normalizedPlatform • $cleanedStopLabel';
+}
+
+String _formatBoardingText(
+  AppLocalizations l10n, {
+  required String stationName,
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: stationName,
+  );
+  if (combinedStopDetail != null) {
+    return '${l10n.boardAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
+  }
+
+  return l10n.boardAt(stationName);
+}
+
+String _formatAlightingText(
+  AppLocalizations l10n, {
+  required String stationName,
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: stationName,
+  );
+  if (combinedStopDetail != null) {
+    return '${l10n.getOffAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
+  }
+
+  return l10n.getOffAt(stationName);
+}
+
+String _formatIntermediateStopTitle(
+  String name, {
+  String? platform,
+  String? stopLabel,
+}) {
+  final combinedStopDetail = combinePlatformAndStopLabel(
+    platform,
+    stopLabel,
+    stationName: name,
+  );
+  if (combinedStopDetail != null) {
+    return '$name ($combinedStopDetail)';
+  }
+
+  return name;
+}
+
 @visibleForTesting
 bool savedJourneyLongPressShowsDelete({
   required bool isCompleted,
@@ -153,11 +350,170 @@ int savedRouteStatusNotificationIdForKey(String routeKey) {
       0x7fffffff;
 }
 
+@visibleForTesting
+DateTime? alternativeJourneyDisplayDepartureLocal(
+    Map<String, dynamic> journey) {
+  try {
+    final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+    if (legs == null || legs.isEmpty) return null;
+
+    final firstLeg = legs.first;
+    final firstRide = legs.firstWhere(
+      (leg) => leg['line'] != null,
+      orElse: () => firstLeg,
+    );
+    final rawTime = firstLeg['plannedDeparture'] ??
+        firstLeg['departure'] ??
+        firstRide['plannedDeparture'] ??
+        firstRide['departure'];
+    if (rawTime == null) return null;
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return null;
+  }
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> mergeAlternativeJourneys(
+  Iterable<Map<String, dynamic>> existing,
+  Iterable<Map<String, dynamic>> incoming,
+) {
+  final merged = <Map<String, dynamic>>[];
+  final seenIds = <String>{};
+
+  void addJourney(Map<String, dynamic> journey) {
+    final departure = alternativeJourneyDisplayDepartureLocal(journey);
+    if (departure == null) return;
+
+    final arrival = (() {
+      try {
+        final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+        if (legs == null || legs.isEmpty) return null;
+        final lastLeg = legs.last;
+        final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
+        if (rawTime == null) return null;
+        return DateTime.parse(rawTime.toString()).toLocal();
+      } catch (_) {
+        return null;
+      }
+    })();
+    if (arrival == null) return;
+
+    final id =
+        '${departure.millisecondsSinceEpoch}_${arrival.millisecondsSinceEpoch}';
+    if (!seenIds.add(id)) return;
+    merged.add(journey);
+  }
+
+  for (final journey in existing) {
+    addJourney(journey);
+  }
+  for (final journey in incoming) {
+    addJourney(journey);
+  }
+
+  merged.sort((a, b) {
+    final depA = alternativeJourneyDisplayDepartureLocal(a);
+    final depB = alternativeJourneyDisplayDepartureLocal(b);
+    if (depA == null && depB == null) return 0;
+    if (depA == null) return 1;
+    if (depB == null) return -1;
+    return depA.compareTo(depB);
+  });
+  return merged;
+}
+
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
   return journeys
       .map((j) =>
           "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
       .join("||");
+}
+
+String _journeyListKey(Journey journey) {
+  final departure = journey.plannedDeparture?.millisecondsSinceEpoch ??
+      journey.departure.millisecondsSinceEpoch;
+  final arrival = journey.plannedArrival?.millisecondsSinceEpoch ??
+      journey.arrival.millisecondsSinceEpoch;
+  String firstLine = '';
+  String firstTripId = '';
+  for (final step in journey.steps) {
+    if (step.type != 'ride') continue;
+    firstLine = step.line;
+    firstTripId = step.tripId ?? '';
+    break;
+  }
+  return '$departure|$arrival|$firstLine|$firstTripId';
+}
+
+int _journeyPlatformSignal(Journey journey) {
+  var score = 0;
+  for (final step in journey.steps.where((step) => step.type == 'ride')) {
+    if ((step.platform ?? '').trim().isNotEmpty) score += 2;
+    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) score += 1;
+    if ((step.departureStopLabel ?? '').trim().isNotEmpty) score += 1;
+    if ((step.arrivalStopLabel ?? '').trim().isNotEmpty) score += 1;
+  }
+  return score;
+}
+
+String _firstRideLineKey(Journey journey) {
+  for (final step in journey.steps) {
+    if (step.type != 'ride') continue;
+    return step.line
+        .toUpperCase()
+        .replaceAll(RegExp(r'\s*\(\d+\)'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+  return '';
+}
+
+bool _journeysLikelySameRoute(Journey a, Journey b) {
+  final depA = a.plannedDeparture ?? a.departure;
+  final depB = b.plannedDeparture ?? b.departure;
+  final arrA = a.plannedArrival ?? a.arrival;
+  final arrB = b.plannedArrival ?? b.arrival;
+  if (depA.difference(depB).abs() > const Duration(minutes: 2)) {
+    return false;
+  }
+  if (arrA.difference(arrB).abs() > const Duration(minutes: 2)) {
+    return false;
+  }
+  final lineA = _firstRideLineKey(a);
+  final lineB = _firstRideLineKey(b);
+  return lineA.isEmpty || lineB.isEmpty || lineA == lineB;
+}
+
+Journey _preferJourneyWithMorePlatformDetail(
+  Journey existing,
+  Journey incoming,
+) {
+  final incomingScore = _journeyPlatformSignal(incoming);
+  final existingScore = _journeyPlatformSignal(existing);
+  if (incomingScore > existingScore) return incoming;
+  return existing;
+}
+
+Journey _bestCurrentJourneyVersion(
+  Journey target,
+  Iterable<Journey> candidates,
+) {
+  var best = target;
+  for (final candidate in candidates) {
+    if (_journeyListKey(candidate) != _journeyListKey(target) &&
+        !_journeysLikelySameRoute(candidate, target)) {
+      continue;
+    }
+    best = _preferJourneyWithMorePlatformDetail(best, candidate);
+  }
+  return best;
+}
+
+bool _journeyHasDeparturePlatformsForEveryRide(Journey journey) {
+  final rideSteps = journey.steps.where((step) => step.type == 'ride').toList();
+  if (rideSteps.isEmpty) return true;
+  return rideSteps.every((step) => (step.platform ?? '').trim().isNotEmpty);
 }
 
 class _SuggestionSection {
@@ -209,6 +565,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   int _nextRouteSearchToken = 0;
   int? _activeRouteSearchToken;
   final Set<int> _cancelledRouteSearchTokens = <int>{};
+  final Set<String> _activePlatformEnrichmentKeys = <String>{};
+  final Set<String> _completedActivePlatformEnrichmentKeys = <String>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
@@ -243,6 +601,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
+  final Set<String> _savingRouteIds = <String>{};
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
@@ -661,6 +1020,177 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       content: Text('Synthetic debug logs copied'),
       duration: Duration(seconds: 2),
     ));
+  }
+
+  Future<void> _showPlatformLookupDialog() async {
+    final stationController = TextEditingController(
+      text: _fromStation?.name ?? _fromController.text.trim(),
+    );
+    final lineController = TextEditingController();
+    var expectedTime = _selectedDate != null
+        ? DateTime(
+            _selectedDate!.year,
+            _selectedDate!.month,
+            _selectedDate!.day,
+            _selectedTime?.hour ?? TimeOfDay.now().hour,
+            _selectedTime?.minute ?? TimeOfDay.now().minute,
+          )
+        : DateTime.now();
+    var arrivals = false;
+    var isLoading = false;
+    String? resultText;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> runLookup() async {
+              final station = stationController.text.trim();
+              final line = lineController.text.trim();
+              if (station.isEmpty || line.isEmpty) {
+                setDialogState(() {
+                  resultText = 'Enter both station and train/line.';
+                });
+                return;
+              }
+              setDialogState(() {
+                isLoading = true;
+                resultText = null;
+              });
+              try {
+                final result = await TransportApi.debugLookupBahnPlatform(
+                  stationName: station,
+                  lineName: line,
+                  expectedTime: expectedTime,
+                  arrivals: arrivals,
+                );
+                const encoder = JsonEncoder.withIndent('  ');
+                setDialogState(() {
+                  resultText = encoder.convert(result);
+                });
+              } catch (error) {
+                setDialogState(() {
+                  resultText = 'Lookup failed: $error';
+                });
+              } finally {
+                setDialogState(() => isLoading = false);
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Platform Check'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: stationController,
+                        decoration: const InputDecoration(
+                          labelText: 'Station',
+                          hintText: 'Erfurt Hbf',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: lineController,
+                        decoration: const InputDecoration(
+                          labelText: 'Train / line',
+                          hintText: 'ICE 697 or RE3 (3916)',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              DateFormat('yyyy-MM-dd HH:mm')
+                                  .format(expectedTime),
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              final pickedDate = await showDatePicker(
+                                context: context,
+                                initialDate: expectedTime,
+                                firstDate: DateTime.now()
+                                    .subtract(const Duration(days: 30)),
+                                lastDate: DateTime.now()
+                                    .add(const Duration(days: 90)),
+                              );
+                              if (pickedDate == null || !context.mounted) {
+                                return;
+                              }
+                              final pickedTime = await showTimePicker(
+                                context: context,
+                                initialTime:
+                                    TimeOfDay.fromDateTime(expectedTime),
+                              );
+                              if (pickedTime == null) return;
+                              setDialogState(() {
+                                expectedTime = DateTime(
+                                  pickedDate.year,
+                                  pickedDate.month,
+                                  pickedDate.day,
+                                  pickedTime.hour,
+                                  pickedTime.minute,
+                                );
+                              });
+                            },
+                            icon: const Icon(Icons.schedule, size: 18),
+                            label: const Text('Time'),
+                          ),
+                        ],
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                            arrivals ? 'Arrival board' : 'Departure board'),
+                        value: arrivals,
+                        onChanged: (value) =>
+                            setDialogState(() => arrivals = value),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: isLoading ? null : runLookup,
+                        icon: isLoading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.search),
+                        label: Text(isLoading ? 'Checking...' : 'Check'),
+                      ),
+                      if (resultText != null) ...[
+                        const SizedBox(height: 12),
+                        SelectableText(
+                          resultText!,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _cancelRouteSearch() {
@@ -1230,32 +1760,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return "${distInKm.toStringAsFixed(1)} km";
   }
 
-  double? _distanceFromReference(Station station) {
-    final ref = _suggestionReferencePoint();
-    if (ref.lat == null ||
-        ref.lng == null ||
-        station.latitude == null ||
-        station.longitude == null) {
-      return null;
-    }
-
-    return Geolocator.distanceBetween(
-        ref.lat!, ref.lng!, station.latitude!, station.longitude!);
-  }
-
   List<_SuggestionSection> _buildSuggestionSections() {
     final favorites = <Favorite>[];
     final stations = <Station>[];
-    final stationOrder = <String, int>{};
-    final cityOrderIndex = <String, int>{};
 
-    for (final (index, item) in _suggestions.indexed) {
+    for (final item in _suggestions) {
       if (item is Favorite) {
         favorites.add(item);
       } else if (item is Station) {
         stations.add(item);
-        stationOrder[_stationOrderKey(item)] = index;
-        cityOrderIndex.putIfAbsent(item.cityGroupLabel, () => index);
       }
     }
 
@@ -1264,64 +1777,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       sections.add(_SuggestionSection(items: favorites));
     }
 
-    final groupedStations = <String, List<Station>>{};
-    final cityOrder = <String>[];
     for (final station in stations) {
       final city = station.cityGroupLabel;
-      if (!groupedStations.containsKey(city)) {
-        groupedStations[city] = <Station>[];
-        cityOrder.add(city);
+      final existingSectionIndex = sections.indexWhere(
+        (section) => section.title == city,
+      );
+      if (existingSectionIndex >= 0) {
+        sections[existingSectionIndex].items.add(station);
+      } else {
+        sections
+            .add(_SuggestionSection(title: city, items: <dynamic>[station]));
       }
-      groupedStations[city]!.add(station);
-    }
-
-    cityOrder.sort((a, b) {
-      final aBest = groupedStations[a]!
-          .map(_distanceFromReference)
-          .whereType<double>()
-          .fold<double?>(null,
-              (best, value) => best == null || value < best ? value : best);
-      final bBest = groupedStations[b]!
-          .map(_distanceFromReference)
-          .whereType<double>()
-          .fold<double?>(null,
-              (best, value) => best == null || value < best ? value : best);
-
-      if (aBest != null && bBest != null) {
-        return aBest.compareTo(bBest);
-      }
-      if (aBest != null) return -1;
-      if (bBest != null) return 1;
-      return (cityOrderIndex[a] ?? 1 << 20)
-          .compareTo(cityOrderIndex[b] ?? 1 << 20);
-    });
-
-    for (final city in cityOrder) {
-      final cityStations = groupedStations[city]!;
-      cityStations.sort((a, b) {
-        final distA = _distanceFromReference(a);
-        final distB = _distanceFromReference(b);
-
-        if (distA != null && distB != null) {
-          final distanceComparison = distA.compareTo(distB);
-          if (distanceComparison != 0) return distanceComparison;
-        } else if (distA != null) {
-          return -1;
-        } else if (distB != null) {
-          return 1;
-        }
-
-        return (stationOrder[_stationOrderKey(a)] ?? 1 << 20)
-            .compareTo(stationOrder[_stationOrderKey(b)] ?? 1 << 20);
-      });
-      sections.add(_SuggestionSection(title: city, items: cityStations));
     }
 
     return sections;
   }
-
-  String _stationOrderKey(Station station) =>
-      '${station.id}|${station.name}|${station.latitude}|${station.longitude}';
 
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
@@ -1390,8 +1860,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       try {
-        final apiResults = await TransportApi.searchStations(sanitizedQuery,
-            lat: refLat, lng: refLng);
+        final apiResults = await TransportApi.searchStations(
+          sanitizedQuery,
+          lat: refLat,
+          lng: refLng,
+          limit: 60,
+        );
         if (!mounted || requestToken != _suggestionRequestToken) return;
         final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
         if (mounted) {
@@ -1555,21 +2029,37 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _toggleSavedRoute(RouteTab route) async {
     final from = route.origin;
     final activeJourney = route.activeJourney;
-    if (from == null || activeJourney == null) return;
+    if (from == null ||
+        activeJourney == null ||
+        _savingRouteIds.contains(route.id)) {
+      return;
+    }
 
-    final saved = await SearchHistoryManager.toggleSavedJourney(
-      from: from,
-      to: route.destination,
-      journeyData: activeJourney.rawSource,
-      departure: activeJourney.plannedDeparture ?? activeJourney.departure,
-      arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
-    );
-    await _loadHistoryData();
+    setState(() {
+      _savingRouteIds.add(route.id);
+    });
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            saved ? 'Connection saved' : 'Connection removed from saved')));
+    try {
+      final saved = await SearchHistoryManager.toggleSavedJourney(
+        from: from,
+        to: route.destination,
+        journeyData: activeJourney.rawSource,
+        departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+        arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+      );
+      await _loadHistoryData();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              saved ? 'Connection saved' : 'Connection removed from saved')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingRouteIds.remove(route.id);
+        });
+      }
+    }
   }
 
   Future<void> _openSavedJourney(Map<String, dynamic> item) async {
@@ -2099,7 +2589,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final to = Station.fromJson(Map<String, dynamic>.from(toJson));
     Journey savedJourney;
     try {
-      savedJourney = _createJourney(Map<String, dynamic>.from(rawJourney));
+      savedJourney = _createJourney(
+        Map<String, dynamic>.from(rawJourney),
+        destinationNameOverride: to.name,
+      );
     } catch (_) {
       return (
         stillPossible: false,
@@ -2121,7 +2614,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final freshJourneys = <Journey>[];
     for (final data in freshData) {
       try {
-        freshJourneys.add(_createJourney(data));
+        freshJourneys.add(
+          _createJourney(data, destinationNameOverride: to.name),
+        );
       } catch (_) {
         // Skip invalid candidate
       }
@@ -2217,8 +2712,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
             Journey savedJourney;
             try {
-              savedJourney =
-                  _createJourney(Map<String, dynamic>.from(rawJourney));
+              savedJourney = _createJourney(
+                Map<String, dynamic>.from(rawJourney),
+                destinationNameOverride: item['toName']?.toString(),
+              );
             } catch (_) {
               continue;
             }
@@ -2624,7 +3121,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nahverkehrOnly: widget.onlyNahverkehr,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
-            final j = _createJourney(journey);
+            final j = _createJourney(
+              journey,
+              destinationNameOverride: toDummy.name,
+            );
             setState(() {
               if (_activeTabId != null) {
                 final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
@@ -2658,7 +3158,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
-  List<JourneyStep> _processLegs(List legs) {
+  List<JourneyStep> _processLegs(
+    List legs, {
+    String? destinationNameOverride,
+  }) {
     final List<JourneyStep> steps = [];
     final random = Random();
     List<dynamic> transferBuffer = [];
@@ -2675,6 +3178,35 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         : (loc != null ? loc['longitude'] : null);
     String? stationId(dynamic loc) => loc?['id']?.toString();
     String? stationName(dynamic loc) => loc?['name']?.toString();
+    bool isBikeTransferLeg(dynamic leg) =>
+        leg is Map && leg['mode']?.toString().toUpperCase() == 'BIKE';
+    bool isGenericEndpointName(String? name) {
+      final normalized = name?.trim().toUpperCase();
+      return normalized == 'END' || normalized == 'DESTINATION';
+    }
+
+    String? displayDestinationName(String? name) {
+      if (isGenericEndpointName(name) &&
+          destinationNameOverride != null &&
+          destinationNameOverride.trim().isNotEmpty) {
+        return destinationNameOverride;
+      }
+      return name;
+    }
+
+    String bikeInstruction(String? destinationName, {bool isFinal = false}) {
+      final isGerman = Localizations.localeOf(context).languageCode == 'de';
+      if (isFinal) {
+        return isGerman ? 'Mit dem Fahrrad zum Ziel' : 'Bike to destination';
+      }
+      if (destinationName != null && destinationName.trim().isNotEmpty) {
+        return isGerman
+            ? 'Mit dem Fahrrad zu $destinationName'
+            : 'Bike to $destinationName';
+      }
+      return isGerman ? 'Fahrrad fahren' : 'Bike';
+    }
+
     bool sameStationByIdOrName(
         String? leftId, String? leftName, String? rightId, String? rightName) {
       final aId = leftId?.trim();
@@ -2736,6 +3268,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       int waitMinutes = totalGapMinutes - walkMinutes;
       if (waitMinutes < 0) waitMinutes = 0;
+      final isBikeTransfer = transferBuffer.isNotEmpty &&
+          transferBuffer.every((leg) => isBikeTransferLeg(leg));
 
       double? startLat = getLat(
           transferBuffer.isNotEmpty ? transferBuffer.first['origin'] : null);
@@ -2758,6 +3292,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (destName == null && transferBuffer.isNotEmpty) {
         destName = transferBuffer.last['destination']?['name'];
       }
+      destName = displayDestinationName(destName);
 
       // Determine instruction text based on context
       String instruction;
@@ -2851,6 +3386,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 " ${AppLocalizations.of(context)!.atPlatform(fmtPlat(nextPlat))}";
           }
         }
+      } else if (isBikeTransfer) {
+        if (isFirstStep && destName != null) {
+          instruction = bikeInstruction(destName);
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
+        } else if (isFinalWalk) {
+          instruction = bikeInstruction(destName, isFinal: true);
+        } else {
+          instruction = bikeInstruction(destName);
+          if (nextPlat != null) instruction += ", ${fmtPlat(nextPlat)}";
+        }
       } else {
         // It is a walk
         if (isFirstStep && destName != null) {
@@ -2874,15 +3419,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       steps.add(JourneyStep(
-        type: isWaitInstruction ? 'wait' : 'walk',
-        line: 'Transfer',
+        type: isWaitInstruction ? 'wait' : (isBikeTransfer ? 'bike' : 'walk'),
+        line: isBikeTransfer ? 'Bike' : 'Transfer',
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime:
             "${blockStart.hour.toString().padLeft(2, '0')}:${blockStart.minute.toString().padLeft(2, '0')}",
         arrivalTime:
             "${blockEnd.hour.toString().padLeft(2, '0')}:${blockEnd.minute.toString().padLeft(2, '0')}",
-        isWalking: walkMinutes > 0 || isSignificantWalk,
+        isWalking: !isBikeTransfer && (walkMinutes > 0 || isSignificantWalk),
         startLat: startLat,
         startLng: startLng,
         endLat: endLat,
@@ -2891,7 +3436,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             ? transferBuffer.first['decodedPath']
             : null,
         dateTime: blockStart,
-        walkDuration: Duration(minutes: walkMinutes),
+        walkDuration:
+            isBikeTransfer ? Duration.zero : Duration(minutes: walkMinutes),
+        bikeDuration:
+            isBikeTransfer ? Duration(minutes: walkMinutes) : Duration.zero,
         waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
@@ -2971,9 +3519,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           departureTime: DateFormat('HH:mm').format(dep),
           arrivalTime: DateFormat('HH:mm').format(arr),
           chatCount: random.nextInt(15),
-          startStationId: leg['origin']?['id']?.toString(),
+          startStationId: leg['origin']?['exactStopId']?.toString() ??
+              leg['origin']?['id']?.toString(),
+          destinationStationId:
+              leg['destination']?['exactStopId']?.toString() ??
+                  leg['destination']?['id']?.toString(),
           platform: leg['origin']?['platform']?.toString(),
           arrivalPlatform: leg['destination']?['platform']?.toString(),
+          departureStopLabel: leg['origin']?['stopLabel']?.toString(),
+          arrivalStopLabel: leg['destination']?['stopLabel']?.toString(),
           stopovers: leg['stopovers'],
           startLat: getLat(leg['origin']),
           startLng: getLng(leg['origin']),
@@ -3006,10 +3560,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return steps;
   }
 
-  Journey _createJourney(Map<String, dynamic> journeyData) {
+  Journey _createJourney(
+    Map<String, dynamic> journeyData, {
+    String? destinationNameOverride,
+  }) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
-    final List<JourneyStep> steps = _processLegs(legs);
+    final List<JourneyStep> steps = _processLegs(
+      legs,
+      destinationNameOverride: destinationNameOverride,
+    );
 
     DateTime? dep, arr;
     DateTime? pDep, pArr;
@@ -3089,6 +3649,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     }
 
+    int bikeMinutes = 0;
+    for (var step in steps) {
+      if (step.type == 'bike') {
+        if (step.bikeDuration != null) {
+          bikeMinutes += step.bikeDuration!.inMinutes;
+          continue;
+        }
+        try {
+          final parts = step.duration.split(' ');
+          if (parts.isNotEmpty) bikeMinutes += int.tryParse(parts[0]) ?? 0;
+        } catch (e) {/* ignore */}
+      }
+    }
+
     return Journey(
       steps: steps,
       departure: dep ?? DateTime.now(),
@@ -3102,6 +3676,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       rawSource: journeyData,
       source: journeyData['source'] ?? 'unknown',
       totalWalkingDuration: Duration(minutes: walkMinutes),
+      totalBikingDuration: Duration(minutes: bikeMinutes),
     );
   }
 
@@ -3120,7 +3695,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (candidatesData != null) {
       for (var d in candidatesData) {
         try {
-          candidates.add(_createJourney(d));
+          candidates
+              .add(_createJourney(d, destinationNameOverride: dest?.name));
         } catch (e) {/* ignore */}
       }
       if (candidates.isNotEmpty && dest == null) {
@@ -3138,7 +3714,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     } else if (singleJourneyData != null) {
       try {
-        activeJourney = _createJourney(singleJourneyData);
+        activeJourney = _createJourney(
+          singleJourneyData,
+          destinationNameOverride: dest?.name,
+        );
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
         if (dest == null) {
@@ -3196,7 +3775,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in rawData) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(
+                d,
+                destinationNameOverride: currentTab.destination.name,
+              ),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -3204,21 +3788,59 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final Map<String, Journey> uniqueMap = {};
         if (currentTab.candidates != null) {
           for (var j in currentTab.candidates!) {
-            final key =
-                "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
+            final key = _journeyListKey(j);
             uniqueMap[key] = j;
           }
         }
         for (var j in newJourneys) {
-          final key =
-              "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}";
-          if (!uniqueMap.containsKey(key)) uniqueMap[key] = j;
+          final key = _journeyListKey(j);
+          final existing = uniqueMap[key];
+          uniqueMap[key] = existing == null
+              ? j
+              : _preferJourneyWithMorePlatformDetail(existing, j);
         }
 
         final updatedCandidates = uniqueMap.values.toList();
         updatedCandidates.sort((a, b) => a.departure.compareTo(b.departure));
+        final platformSignal = updatedCandidates.fold<int>(
+          0,
+          (sum, journey) => sum + _journeyPlatformSignal(journey),
+        );
 
-        _tabs[idx] = currentTab.copyWith(candidates: updatedCandidates);
+        var updatedActiveJourney = currentTab.activeJourney;
+        var updatedSteps = currentTab.steps;
+        var updatedStack = currentTab.stack;
+        if (updatedActiveJourney != null) {
+          final previousActiveJourney = updatedActiveJourney;
+          final preferredActiveJourney = _bestCurrentJourneyVersion(
+            updatedActiveJourney,
+            updatedCandidates,
+          );
+          if (!identical(preferredActiveJourney, previousActiveJourney)) {
+            updatedActiveJourney = preferredActiveJourney;
+            updatedSteps = preferredActiveJourney.steps;
+            updatedStack = currentTab.stack
+                .map(
+                  (journey) => _journeysLikelySameRoute(
+                    journey,
+                    previousActiveJourney,
+                  )
+                      ? preferredActiveJourney
+                      : journey,
+                )
+                .toList();
+          }
+        }
+
+        _tabs[idx] = currentTab.copyWith(
+          candidates: updatedCandidates,
+          activeJourney: updatedActiveJourney,
+          steps: updatedSteps,
+          stack: updatedStack,
+        );
+        TransportApi.addSyntheticDebugLog(
+          'ui: candidates updated tab=$tabId count=${updatedCandidates.length} platformSignal=$platformSignal activeSignal=${updatedActiveJourney == null ? 0 : _journeyPlatformSignal(updatedActiveJourney)}',
+        );
       }
     });
   }
@@ -3319,8 +3941,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         return;
       }
     }
+    final Station resolvedFrom = from;
+
     String? currentTabId;
     var hasDisplayedResults = false;
+    var disposeSearchOnExit = true;
+    var timedOutWaitingForFinal = false;
     try {
       DateTime when;
       if (_selectedDate != null) {
@@ -3336,78 +3962,124 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       // If "Arrive By" is set but no date selected, "Now" usually implies "Depart Now", so we use departure=Now effectively.
       // But searchJourneys handles 'when'.
       TransportApi.addSyntheticDebugLog(
-        'ui: search request from=${from.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
+        'ui: search request from=${resolvedFrom.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
       );
-      final res = await TransportApi.searchJourneys(from, _toStation!,
+      void handlePartialResults(List<Map<String, dynamic>> partial) {
+        if (!mounted || _isRouteSearchCancelled(searchToken)) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
+          );
+          return;
+        }
+        if (partial.isEmpty) {
+          TransportApi.addSyntheticDebugLog(
+            'ui: partial ignored empty (no tab creation)',
+          );
+          return;
+        }
+        hasDisplayedResults = true;
+        if (currentTabId == null) {
+          currentTabId = _addJourneyTab(
+              candidatesData: partial,
+              origin: resolvedFrom,
+              destination: _toStation);
+          TransportApi.addSyntheticDebugLog(
+            'ui: created tab id=$currentTabId token=$searchToken partial=${partial.length}',
+          );
+        } else {
+          TransportApi.addSyntheticDebugLog(
+            'ui: update tab id=$currentTabId token=$searchToken partial=${partial.length}',
+          );
+          _updateTabCandidates(currentTabId!, partial);
+        }
+        _releaseBlockingRouteLoad(searchToken);
+      }
+
+      Future<void> handleFinalResults(
+        List<Map<String, dynamic>> res, {
+        bool late = false,
+      }) async {
+        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+
+        if (res.isNotEmpty) {
+          hasDisplayedResults = true;
+          if (currentTabId != null) {
+            TransportApi.addSyntheticDebugLog(
+              'ui: ${late ? 'late ' : ''}final update tab id=$currentTabId token=$searchToken results=${res.length}',
+            );
+            _updateTabCandidates(currentTabId!, res);
+          } else {
+            currentTabId = _addJourneyTab(
+                candidatesData: res,
+                origin: resolvedFrom,
+                destination: _toStation);
+            TransportApi.addSyntheticDebugLog(
+              'ui: created tab from ${late ? 'late ' : ''}final id=$currentTabId token=$searchToken results=${res.length}',
+            );
+            _releaseBlockingRouteLoad(searchToken);
+          }
+          if (_isRouteSearchCancelled(searchToken)) return;
+          await SearchHistoryManager.saveJourney(resolvedFrom, _toStation!);
+          if (_isRouteSearchCancelled(searchToken)) return;
+          await SearchHistoryManager.saveRecentJourney(
+              resolvedFrom, _toStation!);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+          await _loadHistoryData(); // Refresh UI
+        } else if (currentTabId == null && mounted && !late) {
+          TransportApi.addSyntheticDebugLog('ui: no routes found');
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
+        }
+      }
+
+      late final Future<List<Map<String, dynamic>>> searchFuture;
+      searchFuture = TransportApi.searchJourneys(resolvedFrom, _toStation!,
           nahverkehrOnly: widget.onlyNahverkehr,
           when: when,
           isArrival: _isArrival,
           onLoadStateChanged: (phases) =>
               _setRouteLoadPhasesForToken(searchToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(searchToken),
-          onPartialResults: (partial) {
-            if (!mounted || _isRouteSearchCancelled(searchToken)) {
-              TransportApi.addSyntheticDebugLog(
-                'ui: partial ignored mounted=$mounted cancelled=${_isRouteSearchCancelled(searchToken)}',
-              );
-              return;
-            }
-            if (partial.isEmpty) {
-              TransportApi.addSyntheticDebugLog(
-                'ui: partial ignored empty (no tab creation)',
-              );
-              return;
-            }
-            hasDisplayedResults = true;
-            if (currentTabId == null) {
-              currentTabId = _addJourneyTab(
-                  candidatesData: partial,
-                  origin: from,
-                  destination: _toStation);
-              TransportApi.addSyntheticDebugLog(
-                'ui: created tab id=$currentTabId partial=${partial.length}',
-              );
-            } else {
-              TransportApi.addSyntheticDebugLog(
-                'ui: update tab id=$currentTabId partial=${partial.length}',
-              );
-              _updateTabCandidates(currentTabId!, partial);
-            }
-            _releaseBlockingRouteLoad(searchToken);
-          }).timeout(const Duration(seconds: 20));
+          onPartialResults: handlePartialResults);
 
-      if (_isRouteSearchCancelled(searchToken) || !mounted) return;
-
-      if (res.isNotEmpty) {
-        hasDisplayedResults = true;
-        if (currentTabId != null) {
+      final res = await searchFuture.timeout(
+        const Duration(seconds: 20),
+        onTimeout: () {
+          timedOutWaitingForFinal = true;
+          disposeSearchOnExit = false;
           TransportApi.addSyntheticDebugLog(
-            'ui: final update tab id=$currentTabId results=${res.length}',
-          );
-          _updateTabCandidates(currentTabId!, res);
-        } else {
-          currentTabId = _addJourneyTab(
-              candidatesData: res, origin: from, destination: _toStation);
-          TransportApi.addSyntheticDebugLog(
-            'ui: created tab from final id=$currentTabId results=${res.length}',
+            'ui: search timed out token=$searchToken visibleResults=$hasDisplayedResults; waiting for late final',
           );
           _releaseBlockingRouteLoad(searchToken);
-        }
-        if (_isRouteSearchCancelled(searchToken)) return;
-        await SearchHistoryManager.saveJourney(from, _toStation!);
-        if (_isRouteSearchCancelled(searchToken)) return;
-        await SearchHistoryManager.saveRecentJourney(from, _toStation!);
-        if (_isRouteSearchCancelled(searchToken) || !mounted) return;
-        await _loadHistoryData(); // Refresh UI
-      } else if (currentTabId == null && mounted) {
-        TransportApi.addSyntheticDebugLog('ui: no routes found');
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context)!.noRoutesFoundBusy)));
-      }
+          if (mounted && !hasDisplayedResults) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
+          }
+          searchFuture
+              .then((lateResults) => handleFinalResults(
+                    lateResults,
+                    late: true,
+                  ))
+              .catchError((error) {
+            TransportApi.addSyntheticDebugLog(
+              'ui: late search error token=$searchToken error=$error',
+            );
+          }).whenComplete(() {
+            TransportApi.addSyntheticDebugLog(
+              'ui: late search finished token=$searchToken',
+            );
+            _disposeRouteSearch(searchToken);
+          });
+          return const <Map<String, dynamic>>[];
+        },
+      );
+
+      if (timedOutWaitingForFinal) return;
+      await handleFinalResults(res);
     } on TimeoutException catch (_) {
       _cancelledRouteSearchTokens.add(searchToken);
       TransportApi.addSyntheticDebugLog(
-        'ui: search timed out visibleResults=$hasDisplayedResults',
+        'ui: search timed out token=$searchToken visibleResults=$hasDisplayedResults',
       );
       if (!_isRouteSearchCancelled(searchToken) &&
           mounted &&
@@ -3416,14 +4088,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             .showSnackBar(SnackBar(content: Text(l10n.requestTimedOut)));
       }
     } catch (e) {
-      TransportApi.addSyntheticDebugLog('ui: search error=$e');
+      TransportApi.addSyntheticDebugLog(
+          'ui: search error token=$searchToken $e');
       if (!_isRouteSearchCancelled(searchToken) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!.serviceBusyMoment)));
       }
     } finally {
-      TransportApi.addSyntheticDebugLog('ui: search finished');
-      _disposeRouteSearch(searchToken);
+      TransportApi.addSyntheticDebugLog(
+          'ui: search finished token=$searchToken');
+      if (disposeSearchOnExit) {
+        _disposeRouteSearch(searchToken);
+      }
     }
   }
 
@@ -4005,10 +4681,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: _copySyntheticDebugLogs,
-                          icon: const Icon(Icons.bug_report_outlined, size: 18),
-                          label: const Text('Copy Debug Logs'),
+                        child: Wrap(
+                          spacing: 8,
+                          alignment: WrapAlignment.end,
+                          children: [
+                            TextButton.icon(
+                              onPressed: _showPlatformLookupDialog,
+                              icon: const Icon(Icons.train_outlined, size: 18),
+                              label: const Text('Platform Check'),
+                            ),
+                            TextButton.icon(
+                              onPressed: _copySyntheticDebugLogs,
+                              icon: const Icon(Icons.bug_report_outlined,
+                                  size: 18),
+                              label: const Text('Copy Debug Logs'),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -4570,108 +5258,107 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (_isSuggestionsLoading) const SizedBox.shrink(),
               Flexible(
-                  child: ListView.builder(
-                      controller: _suggestionsScrollController,
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      itemCount: sections.length,
-                      itemBuilder: (ctx, idx) {
-                        final section = sections[idx];
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (section.title != null)
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(14, 12, 14, 6),
-                                child: Text(
-                                  section.title!,
-                                  style: TextStyle(
-                                    color: colors.searchHintText,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.4,
-                                  ),
-                                ),
+                child: ListView.builder(
+                  controller: _suggestionsScrollController,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: sections.length,
+                  itemBuilder: (ctx, idx) {
+                    final section = sections[idx];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (section.title != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+                            child: Text(
+                              section.title!,
+                              style: TextStyle(
+                                color: colors.searchHintText,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
                               ),
-                            ...section.items.asMap().entries.map((entry) {
-                              final item = entry.value;
-                              final isLastItem = idx == sections.length - 1 &&
-                                  entry.key == section.items.length - 1;
+                            ),
+                          ),
+                        ...section.items.asMap().entries.map((entry) {
+                          final item = entry.value;
+                          final isLastItem = idx == sections.length - 1 &&
+                              entry.key == section.items.length - 1;
 
-                              Widget tile;
-                              if (item is Favorite) {
-                                tile = ListTile(
-                                  leading: Icon(_favoriteIcon(item),
-                                      size: 16, color: Colors.orange),
-                                  title: Text(item.label,
+                          Widget tile;
+                          if (item is Favorite) {
+                            tile = ListTile(
+                              leading: Icon(_favoriteIcon(item),
+                                  size: 16, color: Colors.orange),
+                              title: Text(item.label,
+                                  style: TextStyle(
+                                      color: colors.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold)),
+                              onTap: () => _selectItem(item),
+                              hoverColor: Colors.white10,
+                            );
+                          } else {
+                            final station = item as Station;
+                            IconData leadingIcon = Icons.place;
+                            if (station.type == 'address') {
+                              leadingIcon = Icons.home_work;
+                            } else if (station.type == 'stop') {
+                              leadingIcon = Icons.train;
+                            }
+
+                            final distanceText =
+                                _distanceTextForStation(station);
+
+                            tile = ListTile(
+                              leading: Icon(leadingIcon,
+                                  size: 16, color: Colors.grey),
+                              title: Text(station.name,
+                                  style: TextStyle(
+                                      color: colors.textPrimary, fontSize: 14)),
+                              subtitle: station.locationSummary != null
+                                  ? Text(station.locationSummary!,
                                       style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold)),
-                                  onTap: () => _selectItem(item),
-                                  hoverColor: Colors.white10,
-                                );
-                              } else {
-                                final station = item as Station;
-                                IconData leadingIcon = Icons.place;
-                                if (station.type == 'address') {
-                                  leadingIcon = Icons.home_work;
-                                } else if (station.type == 'stop') {
-                                  leadingIcon = Icons.train;
-                                }
-
-                                final distanceText =
-                                    _distanceTextForStation(station);
-
-                                tile = ListTile(
-                                  leading: Icon(leadingIcon,
-                                      size: 16, color: Colors.grey),
-                                  title: Text(station.name,
+                                          color: colors.searchHintText,
+                                          fontSize: 11))
+                                  : null,
+                              trailing: distanceText != null
+                                  ? Text(distanceText,
                                       style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 14)),
-                                  subtitle: station.locationSummary != null
-                                      ? Text(station.locationSummary!,
-                                          style: TextStyle(
-                                              color: colors.searchHintText,
-                                              fontSize: 11))
-                                      : null,
-                                  trailing: distanceText != null
-                                      ? Text(distanceText,
-                                          style: TextStyle(
-                                              color: colors.searchHintText,
-                                              fontSize: 12))
-                                      : null,
-                                  onTap: () => _selectItem(station),
-                                  hoverColor: Colors.white10,
-                                  onLongPress: () {
-                                    final newFav = Favorite(
-                                        id: DateTime.now()
-                                            .millisecondsSinceEpoch
-                                            .toString(),
-                                        label: station.name,
-                                        type: 'station',
-                                        station: station);
-                                    _showEditFavoriteDialog(newFav);
-                                  },
-                                );
-                              }
+                                          color: colors.searchHintText,
+                                          fontSize: 12))
+                                  : null,
+                              onTap: () => _selectItem(station),
+                              hoverColor: Colors.white10,
+                              onLongPress: () {
+                                final newFav = Favorite(
+                                    id: DateTime.now()
+                                        .millisecondsSinceEpoch
+                                        .toString(),
+                                    label: station.name,
+                                    type: 'station',
+                                    station: station);
+                                _showEditFavoriteDialog(newFav);
+                              },
+                            );
+                          }
 
-                              if (isLastItem) return tile;
+                          if (isLastItem) return tile;
 
-                              return Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  tile,
-                                  const Divider(
-                                      height: 1, color: Colors.white10),
-                                ],
-                              );
-                            }),
-                          ],
-                        );
-                      }))
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              tile,
+                              const Divider(height: 1, color: Colors.white10),
+                            ],
+                          );
+                        }),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ]),
           )),
     );
@@ -4789,17 +5476,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     // Determine reference time
     DateTime refDate;
     bool isArrival;
+    DateTime? earlierBoundary;
+    DateTime? earlierWindowStart;
 
     if (earlier) {
       if (route.candidates == null || route.candidates!.isEmpty) return;
-      refDate = route.candidates!.first.departure
-          .subtract(const Duration(minutes: 1));
-      isArrival =
-          true; // Find connections arriving before the first one's departure
+      earlierBoundary = route.candidates!
+          .map((journey) => journey.plannedDeparture ?? journey.departure)
+          .reduce((a, b) => a.isBefore(b) ? a : b);
+      earlierWindowStart = earlierBoundary.subtract(const Duration(hours: 2));
+      refDate = earlierWindowStart;
+      isArrival = false;
     } else {
       if (route.candidates == null || route.candidates!.isEmpty) return;
-      refDate =
-          route.candidates!.last.departure.add(const Duration(minutes: 1));
+      refDate = route.candidates!
+          .map((journey) => journey.plannedDeparture ?? journey.departure)
+          .reduce((a, b) => a.isAfter(b) ? a : b)
+          .add(const Duration(minutes: 1));
       isArrival = false; // Find connections departing after the last one
     }
 
@@ -4821,31 +5514,46 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(d,
+                  destinationNameOverride: route.destination.name),
+            );
           } catch (e) {/* ignore */}
+        }
+        if (earlier && earlierBoundary != null && earlierWindowStart != null) {
+          newJourneys.removeWhere((journey) {
+            final departure = journey.plannedDeparture ?? journey.departure;
+            return !departure.isBefore(earlierBoundary!) ||
+                departure.isBefore(earlierWindowStart!);
+          });
+        }
+        if (newJourneys.isEmpty) {
+          _releaseBlockingRouteLoad(loadToken);
+          if (!visibleResults.isCompleted) {
+            visibleResults.complete();
+          }
+          return;
         }
 
         setState(() {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
-            final currentIds = currentRoute.candidates!
-                .map((j) =>
-                    "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}")
-                .toSet();
-            final uniqueNew = newJourneys
-                .where((j) => !currentIds.contains(
-                    "${j.departure.millisecondsSinceEpoch}_${j.arrival.millisecondsSinceEpoch}"))
-                .toList();
-
-            if (uniqueNew.isNotEmpty) {
-              final updatedCandidates =
-                  List<Journey>.from(currentRoute.candidates!);
-              updatedCandidates.addAll(uniqueNew);
-              updatedCandidates
-                  .sort((a, b) => a.departure.compareTo(b.departure));
-              _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            final byKey = <String, Journey>{};
+            for (final journey in currentRoute.candidates!) {
+              byKey[_journeyListKey(journey)] = journey;
             }
+            for (final journey in newJourneys) {
+              final key = _journeyListKey(journey);
+              final existing = byKey[key];
+              byKey[key] = existing == null
+                  ? journey
+                  : _preferJourneyWithMorePlatformDetail(existing, journey);
+            }
+
+            final updatedCandidates = byKey.values.toList()
+              ..sort((a, b) => a.departure.compareTo(b.departure));
+            _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
           }
         });
         _releaseBlockingRouteLoad(loadToken);
@@ -4933,7 +5641,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(d,
+                  destinationNameOverride: route.destination.name),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -5029,8 +5740,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         departureTime: match.departureTime,
         arrivalTime: match.arrivalTime,
         dateTime: match.dateTime,
+        startStationId: match.startStationId ?? step.startStationId,
+        destinationStationId:
+            match.destinationStationId ?? step.destinationStationId,
         platform: match.platform ?? step.platform,
         arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
+        departureStopLabel: match.departureStopLabel ?? step.departureStopLabel,
+        arrivalStopLabel: match.arrivalStopLabel ?? step.arrivalStopLabel,
         departureDelay: match.departureDelay,
         arrivalDelay: match.arrivalDelay,
         isCancelled: match.isCancelled,
@@ -5116,6 +5832,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
+    _activePlatformEnrichmentKeys
+        .removeWhere((key) => key.startsWith('${route.id}|'));
+    _completedActivePlatformEnrichmentKeys
+        .removeWhere((key) => key.startsWith('${route.id}|'));
     setState(() {
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
@@ -5148,7 +5868,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
-            newJourneys.add(_createJourney(d));
+            newJourneys.add(
+              _createJourney(
+                d,
+                destinationNameOverride: currentRoute.destination.name,
+              ),
+            );
           } catch (e) {/* ignore */}
         }
 
@@ -5159,6 +5884,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (matched != null) {
           final upd =
               _mergeRealtimeIntoJourney(currentRoute.activeJourney!, matched);
+          _activePlatformEnrichmentKeys
+              .removeWhere((key) => key.startsWith('${route.id}|'));
+          _completedActivePlatformEnrichmentKeys
+              .removeWhere((key) => key.startsWith('${route.id}|'));
           final updatedSignature = _savedJourneyRealtimeSignature(upd);
           final hasChanged = updatedSignature != previousSignature;
           setState(() {
@@ -5184,6 +5913,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
           });
           hasMatchedUpdate = true;
+          unawaited(_enrichActiveJourneyPlatforms(route.id, upd));
           completionMessage = hasChanged
               ? "Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: matched)}."
               : "Route refresh finished: no changes.";
@@ -5225,6 +5955,122 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _enrichActiveJourneyPlatforms(
+    String tabId,
+    Journey selectedJourney,
+  ) async {
+    if (_journeyHasDeparturePlatformsForEveryRide(selectedJourney)) return;
+    final enrichmentKey = '$tabId|${_journeyListKey(selectedJourney)}';
+    if (_completedActivePlatformEnrichmentKeys.contains(enrichmentKey)) return;
+    if (!_activePlatformEnrichmentKeys.add(enrichmentKey)) return;
+
+    try {
+      var appliedAnyUpdate = false;
+      bool applyEnrichedRaw(
+        Map<String, dynamic> enrichedRaw, {
+        required bool logNoImprovement,
+      }) {
+        if (!mounted) return false;
+
+        final idx = _tabs.indexWhere((t) => t.id == tabId);
+        if (idx == -1) return false;
+        final currentRoute = _tabs[idx];
+        final currentActive = currentRoute.activeJourney;
+        if (currentActive == null ||
+            !_journeysLikelySameRoute(currentActive, selectedJourney)) {
+          return false;
+        }
+
+        final enrichedJourney = _createJourney(
+          enrichedRaw,
+          destinationNameOverride: currentRoute.destination.name,
+        );
+        final preferredActive = _preferJourneyWithMorePlatformDetail(
+          currentActive,
+          enrichedJourney,
+        );
+        if (identical(preferredActive, currentActive)) {
+          if (logNoImprovement) {
+            TransportApi.addSyntheticDebugLog(
+              'ui: active platform enrich no improvement tab=$tabId activeSignal=${_journeyPlatformSignal(currentActive)} enrichedSignal=${_journeyPlatformSignal(enrichedJourney)}',
+            );
+          }
+          return false;
+        }
+
+        setState(() {
+          final latestIdx = _tabs.indexWhere((t) => t.id == tabId);
+          if (latestIdx == -1) return;
+          final latest = _tabs[latestIdx];
+          final latestActive = latest.activeJourney;
+          if (latestActive == null ||
+              !_journeysLikelySameRoute(latestActive, selectedJourney)) {
+            return;
+          }
+
+          final updatedCandidates = latest.candidates
+              ?.map(
+                (candidate) => _journeysLikelySameRoute(
+                  candidate,
+                  preferredActive,
+                )
+                    ? _preferJourneyWithMorePlatformDetail(
+                        candidate,
+                        preferredActive,
+                      )
+                    : candidate,
+              )
+              .toList();
+          final updatedStack = latest.stack
+              .map(
+                (journey) => _journeysLikelySameRoute(journey, preferredActive)
+                    ? _preferJourneyWithMorePlatformDetail(
+                        journey,
+                        preferredActive,
+                      )
+                    : journey,
+              )
+              .toList();
+
+          TransportApi.addSyntheticDebugLog(
+            'ui: active platform enrich applied tab=$tabId activeSignal=${_journeyPlatformSignal(preferredActive)}',
+          );
+          _tabs[latestIdx] = latest.copyWith(
+            activeJourney: preferredActive,
+            steps: preferredActive.steps,
+            candidates: updatedCandidates,
+            stack: updatedStack,
+          );
+        });
+        appliedAnyUpdate = true;
+        return true;
+      }
+
+      final enrichedRaw = await TransportApi.enrichJourneyWithPlatforms(
+        Map<String, dynamic>.from(selectedJourney.rawSource),
+        preferBahnForRail: true,
+        fastBahnRailOnly: true,
+        onProgress: (enrichedSoFar) {
+          applyEnrichedRaw(
+            enrichedSoFar,
+            logNoImprovement: false,
+          );
+        },
+      );
+      applyEnrichedRaw(
+        enrichedRaw,
+        logNoImprovement: !appliedAnyUpdate,
+      );
+      _completedActivePlatformEnrichmentKeys.add(enrichmentKey);
+    } catch (error) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: active platform enrich failed tab=$tabId error=$error',
+      );
+    } finally {
+      _activePlatformEnrichmentKeys.remove(enrichmentKey);
+    }
+  }
+
   Widget _buildActiveRouteView(RouteTab route) {
     if (route.activeJourney == null &&
         route.candidates != null &&
@@ -5232,21 +6078,45 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return RouteResultsView(
         candidates: route.candidates!,
         onSelect: (journey) {
+          Journey? selectedJourneyForEnrichment;
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
             if (idx != -1) {
-              final currentStack = List<Journey>.from(route.stack);
-              if (!currentStack.contains(journey)) currentStack.add(journey);
+              final currentRoute = _tabs[idx];
+              final selectedJourney = _bestCurrentJourneyVersion(
+                journey,
+                currentRoute.candidates ?? route.candidates!,
+              );
+              selectedJourneyForEnrichment = selectedJourney;
+              final currentStack = List<Journey>.from(currentRoute.stack);
+              if (!currentStack.any(
+                (existing) => _journeysLikelySameRoute(
+                  existing,
+                  selectedJourney,
+                ),
+              )) {
+                currentStack.add(selectedJourney);
+              }
 
-              _tabs[idx] = route.copyWith(
-                activeJourney: journey,
+              TransportApi.addSyntheticDebugLog(
+                'ui: selected journey tab=${route.id} platformSignal=${_journeyPlatformSignal(selectedJourney)}',
+              );
+              _tabs[idx] = currentRoute.copyWith(
+                activeJourney: selectedJourney,
                 stack: currentStack,
-                steps: journey.steps,
-                totalDuration:
-                    FormatUtils.formatDuration(journey.duration.inMinutes),
+                steps: selectedJourney.steps,
+                totalDuration: FormatUtils.formatDuration(
+                  selectedJourney.duration.inMinutes,
+                ),
               );
             }
           });
+          if (selectedJourneyForEnrichment != null) {
+            unawaited(_enrichActiveJourneyPlatforms(
+              route.id,
+              selectedJourneyForEnrichment!,
+            ));
+          }
         },
         onBack: () => _closeTab(route.id),
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
@@ -5261,9 +6131,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final colors = TransColors.of(context);
     final totalWalkingMinutes =
         route.activeJourney?.totalWalkingDuration.inMinutes ?? 0;
+    final totalBikingMinutes =
+        route.activeJourney?.totalBikingDuration.inMinutes ?? 0;
     final hasWalkingSummary = totalWalkingMinutes > 0;
+    final hasBikingSummary = totalBikingMinutes > 0;
     final totalWalkingDurationLabel =
         FormatUtils.formatDuration(totalWalkingMinutes);
+    final totalBikingDurationLabel =
+        FormatUtils.formatDuration(totalBikingMinutes);
+    final activeJourney = route.activeJourney;
+    if (activeJourney != null &&
+        !_journeyHasDeparturePlatformsForEveryRide(activeJourney)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_enrichActiveJourneyPlatforms(route.id, activeJourney));
+      });
+    }
     return RefreshIndicator(
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
@@ -5279,6 +6162,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   final timeLabel = route.activeJourney != null
                       ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
                       : route.subtitle;
+                  final isSavingRoute = _savingRouteIds.contains(route.id);
 
                   Widget timeText({double fontSize = 24}) => FittedBox(
                       fit: BoxFit.scaleDown,
@@ -5308,15 +6192,26 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               })),
                     if (showBackButton) const SizedBox(width: 8),
                     IconButton(
-                        icon: Icon(
-                            _isRouteSaved(route)
-                                ? Icons.bookmark
-                                : Icons.bookmark_border,
-                            color: colors.navBarSelected),
-                        onPressed:
-                            route.origin == null || route.activeJourney == null
-                                ? null
-                                : () => _toggleSavedRoute(route)),
+                        icon: isSavingRoute
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      colors.navBarSelected),
+                                ),
+                              )
+                            : Icon(
+                                _isRouteSaved(route)
+                                    ? Icons.bookmark
+                                    : Icons.bookmark_border,
+                                color: colors.navBarSelected),
+                        onPressed: route.origin == null ||
+                                route.activeJourney == null ||
+                                isSavingRoute
+                            ? null
+                            : () => _toggleSavedRoute(route)),
                     IconButton(
                         icon: const Icon(Icons.map, color: Colors.blue),
                         onPressed: () => _openMap(route)),
@@ -5345,6 +6240,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               size: 16, color: colors.stepTransferText),
                           const SizedBox(width: 4),
                           Text(totalWalkingDurationLabel,
+                              style: TextStyle(
+                                  color: colors.stepTransferText,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                        if (hasBikingSummary) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                              width: 1, height: 14, color: Colors.white24),
+                          const SizedBox(width: 10),
+                          Icon(Icons.pedal_bike,
+                              size: 16, color: colors.stepTransferText),
+                          const SizedBox(width: 4),
+                          Text(totalBikingDurationLabel,
                               style: TextStyle(
                                   color: colors.stepTransferText,
                                   fontWeight: FontWeight.bold)),
@@ -5525,12 +6433,17 @@ class _StepCardState extends State<_StepCard> {
     final colors = TransColors.of(context);
     final step = widget.step;
     final bool isWait = step.type == 'wait';
-    final isTransfer = step.type == 'transfer' || isWait || step.type == 'walk';
+    final bool isBike = step.type == 'bike';
+    final isTransfer =
+        step.type == 'transfer' || isWait || step.type == 'walk' || isBike;
 
     if (isTransfer) {
       Widget iconWidget =
           Icon(Icons.directions_walk, color: colors.stepTransferText);
       if (isWait) iconWidget = Icon(Icons.man, color: colors.stepTransferText);
+      if (isBike) {
+        iconWidget = Icon(Icons.pedal_bike, color: colors.stepTransferText);
+      }
 
       final bool hasWalking =
           step.walkDuration != null && step.walkDuration!.inMinutes > 0;
@@ -5558,7 +6471,12 @@ class _StepCardState extends State<_StepCard> {
                               color: colors.textPrimary)),
 
                       // Show Breakdown if available
-                      if (step.walkDuration != null &&
+                      if (isBike && step.bikeDuration != null)
+                        Text(
+                            "Bike ${FormatUtils.formatDuration(step.bikeDuration!.inMinutes)}",
+                            style: TextStyle(
+                                color: colors.stepTransferText, fontSize: 12))
+                      else if (step.walkDuration != null &&
                           step.waitDuration != null &&
                           !isWait)
                         RichText(
@@ -5776,13 +6694,12 @@ class _StepCardState extends State<_StepCard> {
                                 leading: const Icon(Icons.login,
                                     size: 14, color: Colors.green),
                                 title: Text(
-                                    step.platform != null
-                                        ? AppLocalizations.of(context)!
-                                            .boardAtPlatform(
-                                                step.startStationName ?? '',
-                                                step.platform!)
-                                        : AppLocalizations.of(context)!.boardAt(
-                                            step.startStationName ?? ''),
+                                    _formatBoardingText(
+                                      AppLocalizations.of(context)!,
+                                      stationName: step.startStationName ?? '',
+                                      platform: step.platform,
+                                      stopLabel: step.departureStopLabel,
+                                    ),
                                     style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 14,
@@ -5812,9 +6729,14 @@ class _StepCardState extends State<_StepCard> {
                               final stopId = stop['stop']['id'];
                               final platform =
                                   stop['platform'] ?? stop['stop']?['platform'];
-                              final String displayName = platform != null
-                                  ? "$name (Pl. $platform)"
-                                  : name;
+                              final stopLabel =
+                                  stop['stop']?['stopLabel']?.toString();
+                              final String displayName =
+                                  _formatIntermediateStopTitle(
+                                (name ?? '').toString(),
+                                platform: platform?.toString(),
+                                stopLabel: stopLabel,
+                              );
                               final plannedDep = stop['plannedDeparture'] ??
                                   stop['scheduledDeparture'] ??
                                   stop['plannedArrival'] ??
@@ -5963,8 +6885,9 @@ class _StepCardState extends State<_StepCard> {
                                     lastStopoverId = step.stopovers!
                                         .last['stop']?['id'] as String?;
                                   }
-                                  final destId =
-                                      lastStopoverId ?? step.startStationId!;
+                                  final destId = lastStopoverId ??
+                                      step.destinationStationId ??
+                                      step.startStationId!;
                                   final destDate = step.plannedArrival ??
                                       step.dateTime ??
                                       DateTime.now();
@@ -5984,14 +6907,13 @@ class _StepCardState extends State<_StepCard> {
                             leading: const Icon(Icons.flag,
                                 size: 14, color: Colors.red),
                             title: Text(
-                                step.arrivalPlatform != null
-                                    ? AppLocalizations.of(context)!
-                                        .getOffAtPlatform(
-                                            step.destinationName ??
-                                                'Destination',
-                                            step.arrivalPlatform!)
-                                    : AppLocalizations.of(context)!.getOffAt(
-                                        step.destinationName ?? 'Destination'),
+                                _formatAlightingText(
+                                  AppLocalizations.of(context)!,
+                                  stationName:
+                                      step.destinationName ?? 'Destination',
+                                  platform: step.arrivalPlatform,
+                                  stopLabel: step.arrivalStopLabel,
+                                ),
                                 style: TextStyle(
                                     color: colors.textPrimary,
                                     fontSize: 14,
@@ -6302,28 +7224,10 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          _results.clear();
-          final existingIds = <String>{};
-          for (final j in res) {
-            final id = _getJId(j);
-            if (!existingIds.contains(id)) {
-              _results.add(j);
-              existingIds.add(id);
-            }
-          }
-          _results.sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
-
-          // Find the "split point": the first connection at or after initialTime
-          final splitIdx = _results.indexWhere((j) => _getDepTime(j).isAfter(
-              widget.initialTime.subtract(const Duration(minutes: 1))));
-          if (splitIdx != -1) {
-            // Include one connection BEFORE the split point for context
-            final int startIdx = splitIdx > 0 ? splitIdx - 1 : 0;
-            final itemsToShow = _results.sublist(startIdx);
-            _results.clear();
-            _results.addAll(itemsToShow);
-          }
-
+          final merged = mergeAlternativeJourneys(const [], res);
+          _results
+            ..clear()
+            ..addAll(merged);
           _isLoading = false;
           _error = null;
         });
@@ -6373,22 +7277,16 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         .isBefore(widget.initialTime.subtract(const Duration(seconds: 15))));
   }
 
-  Future<void> _fetch(DateTime time, bool isArrival,
-      {bool prepend = false}) async {
+  Future<void> _fetch(DateTime time, bool isArrival) async {
     if (mounted) setState(() => _isMoreLoading = true);
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          final existingIds = _results.map(_getJId).toSet();
-          final unique =
-              res.where((r) => !existingIds.contains(_getJId(r))).toList();
-          if (prepend) {
-            _results.insertAll(0, unique);
-          } else {
-            _results.addAll(unique);
-          }
-          _results.sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
+          final merged = mergeAlternativeJourneys(_results, res);
+          _results
+            ..clear()
+            ..addAll(merged);
           _isLoading = false;
           _isMoreLoading = false;
           _error = null;
@@ -6418,45 +7316,14 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
     }
   }
 
-  String _getJId(Map<String, dynamic> j) {
-    final dep = _getDepTime(j);
-    final arr = _getArrTime(j);
-    return "${dep.millisecondsSinceEpoch}_${arr.millisecondsSinceEpoch}";
-  }
-
   DateTime _getDepTime(Map<String, dynamic> j) {
-    try {
-      final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final firstLeg = legs.first;
-      final firstRide =
-          legs.firstWhere((l) => l['line'] != null, orElse: () => firstLeg);
-      return DateTime.parse(
-        firstLeg['departure'] ??
-            firstLeg['plannedDeparture'] ??
-            firstRide['departure'] ??
-            firstRide['plannedDeparture'],
-      ).toLocal();
-    } catch (e) {
-      return DateTime.now();
-    }
-  }
-
-  DateTime _getArrTime(Map<String, dynamic> j) {
-    try {
-      final legs = (j['legs'] as List).cast<Map<String, dynamic>>();
-      final last = legs.last;
-      return DateTime.parse(last['arrival'] ?? last['plannedArrival'])
-          .toLocal();
-    } catch (e) {
-      return DateTime.now();
-    }
+    return alternativeJourneyDisplayDepartureLocal(j) ?? DateTime.now();
   }
 
   void _loadEarlier() {
     if (_results.isEmpty) return;
     _fetch(
-        _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true,
-        prepend: true);
+        _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true);
   }
 
   void _loadLater() {
