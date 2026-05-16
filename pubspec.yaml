@@ -2,7 +2,7 @@ name: trans
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.5.7+35
+version: 2.5.8+36
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
