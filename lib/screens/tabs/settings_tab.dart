@@ -2388,8 +2388,9 @@ class _SettingsTabState extends State<SettingsTab> {
                           TextStyle(fontSize: 12, color: colors.textSecondary)),
                   value: widget.showTrainNumbers,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: widget.onShowTrainNumbersChanged,
@@ -2511,8 +2512,9 @@ class _SettingsTabState extends State<SettingsTab> {
                         ),
                       );
 
-                      if (kIsWeb || !_showPreviewTooltip)
+                      if (kIsWeb || !_showPreviewTooltip) {
                         return alarmSoundTitle;
+                      }
 
                       return Tooltip(
                         message: AppLocalizations.of(context)!.previewSound,
@@ -2690,8 +2692,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _wakeAlarmSoundEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2705,8 +2708,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _wakeAlarmVibrationEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2724,8 +2728,9 @@ class _SettingsTabState extends State<SettingsTab> {
                           TextStyle(fontSize: 12, color: colors.textSecondary)),
                   value: widget.alwaysWakeMe,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: widget.onAlwaysWakeMeChanged,
@@ -2742,8 +2747,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _leaveAlarmSoundEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2757,8 +2763,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _leaveAlarmVibrationEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -3131,8 +3138,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPreTransitWalkEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3148,8 +3156,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPreTransitBikeEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3178,8 +3187,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPostTransitWalkEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3195,8 +3205,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPostTransitBikeEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {

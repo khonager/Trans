@@ -185,7 +185,7 @@ class CommunitySafetyService {
                             : 'Why do you want to report this?'),
                         const SizedBox(height: 12),
                         DropdownButtonFormField<String>(
-                          value: selectedReason,
+                          initialValue: selectedReason,
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(
@@ -261,7 +261,10 @@ class CommunitySafetyService {
                             isGerman
                                 ? 'Hinweis: Bei Auswahl können Nachrichteninhalte in deiner E-Mail-App und bei deinem Mail-Anbieter sichtbar sein.'
                                 : 'Note: If selected, message content may be visible in your email app and email provider.',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
                                   color: Theme.of(context).colorScheme.error,
                                 ),
                           ),
@@ -310,13 +313,13 @@ class CommunitySafetyService {
         messageHistory: messageHistory,
       );
 
-      final messenger = ScaffoldMessenger.of(context);
       final opened = await _openMailDraft(
         subject: isGerman ? 'Trans Inhaltsmeldung' : 'Trans content report',
         body: report,
       );
 
       if (!context.mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       if (!opened) {
         await Clipboard.setData(ClipboardData(text: report));
       }
@@ -410,8 +413,7 @@ class CommunitySafetyService {
             .from('messages')
             .select('created_at, user_id, receiver_id, content, is_encrypted')
             .eq('is_encrypted', true)
-            .or(
-                'and(user_id.eq.$myId,receiver_id.eq.$reportedUserId),and(user_id.eq.$reportedUserId,receiver_id.eq.$myId)')
+            .or('and(user_id.eq.$myId,receiver_id.eq.$reportedUserId),and(user_id.eq.$reportedUserId,receiver_id.eq.$myId)')
             .order('created_at', ascending: true)
             .limit(200);
       } else {

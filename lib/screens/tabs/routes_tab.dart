@@ -847,7 +847,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     const linux = LinuxInitializationSettings(defaultActionName: 'Open');
     const initSettings =
         InitializationSettings(android: android, iOS: ios, linux: linux);
-    await _notificationsPlugin.initialize(settings: initSettings);
+    try {
+      await _notificationsPlugin.initialize(settings: initSettings);
+    } catch (e, st) {
+      if (e.runtimeType.toString() == 'LateError') {
+        debugPrint('Notifications unavailable in this runtime: $e');
+      } else {
+        AppError.log(e, stackTrace: st, source: 'RoutesTab._initNotifications');
+      }
+    }
   }
 
   @override

@@ -18,6 +18,29 @@ class _CacheEntry<T> {
   bool get isExpired => DateTime.now().isAfter(expiry);
 }
 
+T? _readCache<T>(Map<String, _CacheEntry<T>> cache, String key) {
+  final cached = cache[key];
+  if (cached == null) return null;
+  if (cached.isExpired) {
+    cache.remove(key);
+    return null;
+  }
+  return cached.data;
+}
+
+void _writeCache<T>(
+  Map<String, _CacheEntry<T>> cache,
+  String key,
+  T data,
+  Duration ttl,
+) {
+  cache[key] = _CacheEntry<T>(data, ttl);
+}
+
+void _pruneExpiredCache<T>(Map<String, _CacheEntry<T>> cache) {
+  cache.removeWhere((_, entry) => entry.isExpired);
+}
+
 class _SyntheticSeed {
   final Map<String, dynamic> journey;
   final Map<String, dynamic> firstRide;
@@ -319,6 +342,16 @@ class TransportApi {
     _advancedSettingsLoaded = true;
   }
 
+  static void _pruneExpiredCaches() {
+    _pruneExpiredCache(_stationCache);
+    _pruneExpiredCache(_nearbyCache);
+    _pruneExpiredCache(_syntheticStopDeparturesCache);
+    _pruneExpiredCache(_tripItineraryCache);
+    _pruneExpiredCache(_stopEventsCache);
+    _pruneExpiredCache(_bahnBoardCache);
+    _pruneExpiredCache(_bahnEvaCache);
+  }
+
   // ============================================================
   // CORE FETCH HELPERS
   // ============================================================
@@ -382,16 +415,15 @@ class TransportApi {
   // ============================================================
 
   static Uri _getV6Uri(String endpoint, [Map<String, dynamic>? params]) {
-    String url = "$_v6Url$endpoint";
-    if (params != null && params.isNotEmpty) {
-      url += "?";
-      params.forEach((key, value) {
-        if (value != null) {
-          url += "$key=${Uri.encodeComponent(value.toString())}&";
-        }
-      });
-    }
-    return Uri.parse(url);
+    final uri = Uri.parse('$_v6Url$endpoint');
+    if (params == null || params.isEmpty) return uri;
+
+    return uri.replace(
+      queryParameters: {
+        for (final entry in params.entries)
+          if (entry.value != null) entry.key: entry.value.toString(),
+      },
+    );
   }
 
   static Future<List<Station>> _searchStationsV6(
@@ -1025,15 +1057,16 @@ class TransportApi {
     double? lng,
     int limit = _defaultStationSearchLimit,
   }) async {
+    _pruneExpiredCaches();
     final sanitizedQuery = _sanitizeStationQuery(query);
     if (sanitizedQuery.isEmpty) return [];
 
     // Check cache first
     final cacheKey = 'stations:$sanitizedQuery:$lat:$lng:$limit';
-    final cached = _stationCache[cacheKey];
-    if (cached != null && !cached.isExpired) {
+    final cached = _readCache(_stationCache, cacheKey);
+    if (cached != null) {
       debugPrint('Cache hit for stations: $sanitizedQuery');
-      return cached.data;
+      return cached;
     }
 
     final inFlight = _stationSearchInFlight[cacheKey];
@@ -1066,7 +1099,7 @@ class TransportApi {
         limit: limit,
       );
       final ranked = rankStationsForQuery(result, query, lat: lat, lng: lng);
-      _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
+      _writeCache(_stationCache, cacheKey, ranked, const Duration(hours: 1));
       return ranked;
     }
 
@@ -1090,7 +1123,9 @@ class TransportApi {
     );
 
     if (!isDbV6Enabled) {
-      _stationCache[cacheKey] = _CacheEntry(
+      _writeCache(
+        _stationCache,
+        cacheKey,
         rankedMotis,
         const Duration(hours: 1),
       );
@@ -1100,7 +1135,9 @@ class TransportApi {
     // Keep v6 as an empty-result fallback only. Synthetic expansion stays on
     // Transitous by combining biased and unbiased result pools.
     if (rankedMotis.isNotEmpty) {
-      _stationCache[cacheKey] = _CacheEntry(
+      _writeCache(
+        _stationCache,
+        cacheKey,
         rankedMotis,
         const Duration(hours: 1),
       );
@@ -1114,7 +1151,7 @@ class TransportApi {
       limit: limit,
     );
     final ranked = rankStationsForQuery(v6Results, query, lat: lat, lng: lng);
-    _stationCache[cacheKey] = _CacheEntry(ranked, const Duration(hours: 1));
+    _writeCache(_stationCache, cacheKey, ranked, const Duration(hours: 1));
     return ranked;
   }
 
@@ -3280,13 +3317,12 @@ class TransportApi {
   static Future<Map<String, dynamic>?> _fetchTripItineraryCached(
     String tripId,
   ) async {
+    _pruneExpiredCaches();
     final normalizedTripId = tripId.trim();
     if (normalizedTripId.isEmpty) return null;
 
-    final cached = _tripItineraryCache[normalizedTripId];
-    if (cached != null && !cached.isExpired) {
-      return cached.data;
-    }
+    final cached = _readCache(_tripItineraryCache, normalizedTripId);
+    if (cached != null) return cached;
 
     final inFlight = _tripItineraryInFlight[normalizedTripId];
     if (inFlight != null) return inFlight;
@@ -3300,7 +3336,9 @@ class TransportApi {
 
     try {
       final itinerary = await future;
-      _tripItineraryCache[normalizedTripId] = _CacheEntry(
+      _writeCache(
+        _tripItineraryCache,
+        normalizedTripId,
         itinerary,
         _tripItineraryCacheTtl,
       );
@@ -4659,28 +4697,31 @@ class TransportApi {
   /// Get nearby stops by coordinates
   /// Uses in-memory cache, tries Transitous first, falls back to v6.db
   static Future<List<Station>> getNearbyStops(double lat, double lng) async {
+    _pruneExpiredCaches();
     // Check cache (with rounded coords for better hit rate)
     final roundedLat = (lat * 1000).round() / 1000;
     final roundedLng = (lng * 1000).round() / 1000;
     final cacheKey = 'nearby:$roundedLat:$roundedLng';
 
-    final cached = _nearbyCache[cacheKey];
-    if (cached != null && !cached.isExpired) {
+    final cached = _readCache(_nearbyCache, cacheKey);
+    if (cached != null) {
       debugPrint('Cache hit for nearby stops');
-      return cached.data;
+      return cached;
     }
 
     try {
       // Try MOTIS/Transitous first
       final result = await _getNearbyStopsMotis(lat, lng);
-      _nearbyCache[cacheKey] = _CacheEntry(result, const Duration(minutes: 30));
+      _writeCache(_nearbyCache, cacheKey, result, const Duration(minutes: 30));
       return result;
     } catch (e) {
       debugPrint('Transitous getNearbyStops failed: $e, trying v6.db...');
       try {
         // Fallback to v6.db
         final result = await _getNearbyStopsV6(lat, lng);
-        _nearbyCache[cacheKey] = _CacheEntry(
+        _writeCache(
+          _nearbyCache,
+          cacheKey,
           result,
           const Duration(minutes: 30),
         );

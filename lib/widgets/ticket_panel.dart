@@ -49,6 +49,26 @@ class _TicketPanelState extends State<TicketPanel> {
     _initTicket();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _maybeRefreshStyledQrForTheme(
+      themeColor: TransColors.of(context).effectiveSeed,
+      hasSourceImage: _hasTicketImage,
+    );
+  }
+
+  bool get _hasTicketImage =>
+      (kIsWeb && _webBytes != null) || (!kIsWeb && _mobileFile != null);
+
+  void _resetStyledQrState({Rect? detectedQrBox}) {
+    _styledQrBytes = null;
+    _styledQrColorArgb = null;
+    _isGeneratingStyledQr = false;
+    _pendingThemeSyncArgb = null;
+    _detectedQrBox = detectedQrBox;
+  }
+
   void _toggleSheet() {
     if (_sheetController.size < 0.2) {
       _sheetController.animateTo(0.85,
@@ -71,10 +91,7 @@ class _TicketPanelState extends State<TicketPanel> {
       if (savedData != null) {
         setState(() {
           _webBytes = base64Decode(savedData);
-          _styledQrBytes = null;
-          _styledQrColorArgb = null;
-          _isGeneratingStyledQr = false;
-          _detectedQrBox = null;
+          _resetStyledQrState();
         });
       }
     } else {
@@ -93,10 +110,7 @@ class _TicketPanelState extends State<TicketPanel> {
           setState(() {
             _history = files;
             if (files.isNotEmpty) _mobileFile = files.first;
-            _styledQrBytes = null;
-            _styledQrColorArgb = null;
-            _isGeneratingStyledQr = false;
-            _detectedQrBox = null;
+            _resetStyledQrState();
           });
         }
       } catch (e) {
@@ -117,10 +131,7 @@ class _TicketPanelState extends State<TicketPanel> {
                 'saved_ticket_base64', base64Encode(response.bodyBytes));
             setState(() {
               _webBytes = response.bodyBytes;
-              _styledQrBytes = null;
-              _styledQrColorArgb = null;
-              _isGeneratingStyledQr = false;
-              _detectedQrBox = null;
+              _resetStyledQrState();
             });
           } else {
             final directory = await getApplicationDocumentsDirectory();
@@ -395,10 +406,7 @@ class _TicketPanelState extends State<TicketPanel> {
         await prefs.setString('saved_ticket_base64', base64Encode(bytes));
         setState(() {
           _webBytes = bytes;
-          _styledQrBytes = null;
-          _styledQrColorArgb = null;
-          _isGeneratingStyledQr = false;
-          _detectedQrBox = detectedQrBox;
+          _resetStyledQrState(detectedQrBox: detectedQrBox);
         });
       } else {
         final directory = await getApplicationDocumentsDirectory();
@@ -410,10 +418,7 @@ class _TicketPanelState extends State<TicketPanel> {
         await _refreshHistory();
         setState(() {
           _mobileFile = localFile;
-          _styledQrBytes = null;
-          _styledQrColorArgb = null;
-          _isGeneratingStyledQr = false;
-          _detectedQrBox = detectedQrBox;
+          _resetStyledQrState(detectedQrBox: detectedQrBox);
         });
       }
 
@@ -587,11 +592,6 @@ class _TicketPanelState extends State<TicketPanel> {
 
     final bool showGeneratedQr =
         imageToShow != null && _showGeneratedQr && _styledQrBytes != null;
-
-    _maybeRefreshStyledQrForTheme(
-      themeColor: colors.effectiveSeed,
-      hasSourceImage: imageToShow != null,
-    );
 
     return DraggableScrollableSheet(
       controller: _sheetController,
