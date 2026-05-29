@@ -1742,6 +1742,18 @@ abstract class AppLocalizations {
   /// **'Loading departures...'**
   String get loadingDepartures;
 
+  /// No description provided for @stopDeparturesJumpToTop.
+  ///
+  /// In en, this message translates to:
+  /// **'Go to top'**
+  String get stopDeparturesJumpToTop;
+
+  /// No description provided for @stopDeparturesJumpToBottom.
+  ///
+  /// In en, this message translates to:
+  /// **'Go to bottom'**
+  String get stopDeparturesJumpToBottom;
+
   /// No description provided for @longPressForDepartures.
   ///
   /// In en, this message translates to:

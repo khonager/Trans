@@ -76,4 +76,95 @@ void main() {
 
     expect(pendingWeekendLoads, isEmpty);
   });
+
+  testWidgets('uses the requested weekday date for the initial load',
+      (tester) async {
+    final requestedDates = <DateTime>[];
+    final requestedMaxResults = <int>[];
+
+    Future<List<Map<String, dynamic>>> fakeLoader(
+      String stationId, {
+      DateTime? date,
+      int maxResults = 250,
+    }) async {
+      requestedDates.add(date!);
+      requestedMaxResults.add(maxResults);
+      return const <Map<String, dynamic>>[];
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: StopDeparturesSheet(
+            stopId: 'test-stop',
+            stopName: 'Test Stop',
+            date: DateTime(2026, 4, 24),
+            departuresLoader: fakeLoader,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(requestedDates, [DateTime(2026, 4, 24)]);
+    expect(requestedMaxResults, [6000]);
+  });
+
+  testWidgets('disambiguates duplicate stop area filter chips', (tester) async {
+    Future<List<Map<String, dynamic>>> fakeLoader(
+      String stationId, {
+      DateTime? date,
+      int maxResults = 250,
+    }) async {
+      final base = date ?? DateTime(2026, 4, 24);
+      return <Map<String, dynamic>>[
+        for (final entry in const [
+          ('stop-a', 'Biebrich Rheinufer', '4'),
+          ('stop-b', 'Suedfriedhof', '14'),
+          ('stop-c', 'Dotzheim', '27'),
+        ])
+          <String, dynamic>{
+            'routeShortName': entry.$3,
+            'headsign': entry.$2,
+            'place': <String, dynamic>{
+              'stopId': entry.$1,
+              'description': 'Wiesbaden Hauptbahnhof',
+              'scheduledDeparture': base.toUtc().toIso8601String(),
+              'departure': base.toUtc().toIso8601String(),
+            },
+          },
+      ];
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: StopDeparturesSheet(
+            stopId: 'stop-a',
+            stopName: 'Wiesbaden Hauptbahnhof',
+            date: DateTime(2026, 4, 24),
+            departuresLoader: fakeLoader,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(
+      find.text('Biebrich Rheinufer · Wiesbaden Hauptbahnhof'),
+      findsOneWidget,
+    );
+    expect(find.text('Suedfriedhof · Wiesbaden Hauptbahnhof'), findsOneWidget);
+    expect(find.text('Dotzheim · Wiesbaden Hauptbahnhof'), findsOneWidget);
+  });
 }

@@ -931,6 +931,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loadingDepartures => 'Loading departures...';
 
   @override
+  String get stopDeparturesJumpToTop => 'Go to top';
+
+  @override
+  String get stopDeparturesJumpToBottom => 'Go to bottom';
+
+  @override
   String get longPressForDepartures =>
       'Long-press any stop to see all departures for that day.';
 }

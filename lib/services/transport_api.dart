@@ -3065,21 +3065,26 @@ class TransportApi {
     required DateTime endLocal,
     required int maxResults,
   }) async {
+    final pageSize = math.min(math.max(maxResults, 1), 100);
     final baseParams = <String, dynamic>{
       'stopId': stationId,
-      'time': startLocal.toUtc().toIso8601String(),
       'direction': 'LATER',
-      'n': math.min(maxResults, 100).toString(),
+      'n': pageSize.toString(),
     };
 
     final departures = <Map<String, dynamic>>[];
     final seenKeys = <String>{};
+    var requestTime = startLocal;
     String? pageCursor;
+    final maxPages = math.max(1, (maxResults / pageSize).ceil() + 4);
 
-    for (var page = 0; page < 8 && departures.length < maxResults; page++) {
+    for (var page = 0;
+        page < maxPages && departures.length < maxResults;
+        page++) {
       final response = await _fetch(
         _getMotisUri('/api/v5/stoptimes', {
           ...baseParams,
+          'time': requestTime.toUtc().toIso8601String(),
           if (pageCursor != null) 'pageCursor': pageCursor,
         }),
       );
@@ -3088,9 +3093,14 @@ class TransportApi {
       if (pageDepartures.isEmpty) break;
 
       var reachedNextDay = false;
+      DateTime? lastDepartureTime;
       for (final dep in pageDepartures) {
         final departureTime = _stopDepartureDateTimeLocal(dep);
         if (departureTime == null) continue;
+        if (lastDepartureTime == null ||
+            departureTime.isAfter(lastDepartureTime)) {
+          lastDepartureTime = departureTime;
+        }
         if (departureTime.isAfter(endLocal)) {
           reachedNextDay = true;
           break;
@@ -3112,8 +3122,17 @@ class TransportApi {
       if (departures.length >= maxResults || reachedNextDay) break;
 
       final nextPageCursor = _nextStopTimesPageCursor(data);
-      if (nextPageCursor == null || nextPageCursor == pageCursor) break;
-      pageCursor = nextPageCursor;
+      if (nextPageCursor != null && nextPageCursor != pageCursor) {
+        pageCursor = nextPageCursor;
+        continue;
+      }
+
+      if (lastDepartureTime == null ||
+          !lastDepartureTime.isAfter(requestTime)) {
+        break;
+      }
+      requestTime = lastDepartureTime.add(const Duration(seconds: 1));
+      pageCursor = null;
     }
 
     return departures;
