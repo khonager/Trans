@@ -6130,6 +6130,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
         onLoadLater: () => _loadMoreRoutes(route, earlier: false),
         onRefresh: () => _refreshRoutes(route),
+        origin: route.origin,
+        destination: route.destination,
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
