@@ -24,6 +24,18 @@ enum RouteSortOption {
 
 const double _routeResultsBottomInset = 320;
 
+final RegExp _summaryEmbeddedPlatformParenthesesPattern = RegExp(
+  r'\s*\((?:pl\.|gl\.|gleis|gleise|steig|bahnsteig|bussteig|bussteige|bstg\.?|platz)\s+[^)]+\)',
+  caseSensitive: false,
+);
+
+String _stripSummaryPlatformText(String value) {
+  return value
+      .replaceAll(_summaryEmbeddedPlatformParenthesesPattern, '')
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
+}
+
 bool _shouldDisplaySummaryTripId(String? tripId) {
   final normalizedTripId = tripId?.trim();
   if (normalizedTripId == null || normalizedTripId.isEmpty) return false;
@@ -40,23 +52,6 @@ bool _shouldDisplaySummaryTripId(String? tripId) {
   return RegExp(r'\d').hasMatch(normalizedTripId);
 }
 
-String _summaryLineWithPlatform(String line, String? platform) {
-  final normalizedLine = line.trim();
-  final normalizedPlatform = platform?.trim();
-  if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
-    return normalizedLine;
-  }
-
-  final lowerLine = normalizedLine.toLowerCase();
-  final lowerPlatform = normalizedPlatform.toLowerCase();
-  if (lowerLine.contains('(pl. $lowerPlatform)') ||
-      lowerLine.contains('(gl. $lowerPlatform)')) {
-    return normalizedLine;
-  }
-  final platformPrefix = _summaryLineLooksRail(normalizedLine) ? 'Gl.' : 'Pl.';
-  return '$normalizedLine ($platformPrefix $normalizedPlatform)';
-}
-
 bool _summaryLineLooksRail(String line) {
   final normalized = line.trim().toUpperCase();
   if (normalized.isEmpty) return false;
@@ -71,6 +66,12 @@ bool _summaryLineLooksRail(String line) {
   if (normalized.length == 1) return true;
   final next = normalized[1];
   return next == ' ' || int.tryParse(next) != null;
+}
+
+IconData _summaryRideModeIcon(String line) {
+  return _summaryLineLooksRail(line)
+      ? Icons.train_outlined
+      : Icons.directions_bus_filled_rounded;
 }
 
 class RouteResultsView extends StatefulWidget {
@@ -776,6 +777,36 @@ class _JourneyCard extends StatelessWidget {
     this.showTrainNumbers = false,
   });
 
+  Widget _buildRideChip(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+  }) {
+    final colors = TransColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white10,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: colors.textSecondary),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
@@ -999,52 +1030,45 @@ class _JourneyCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             // Line Summary (first 3 lines)
-            Row(
-              children: journey.steps
-                  .where((s) => s.type == 'ride')
-                  .take(4)
-                  .map((step) {
-                String displayLine = step.line.trim();
-                final displayableTripId =
-                    _shouldDisplaySummaryTripId(step.tripId)
-                        ? step.tripId!.trim()
-                        : null;
-                // Clean train numbers if disabled
-                if (!showTrainNumbers) {
-                  final regexParens = RegExp(r'\s*\(\d+\)$');
-                  displayLine = displayLine.replaceAll(regexParens, '').trim();
-                  if (step.tripId != null) {
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                alignment: WrapAlignment.start,
+                spacing: 6,
+                runSpacing: 6,
+                children: journey.steps
+                    .where((s) => s.type == 'ride')
+                    .take(4)
+                    .map((step) {
+                  String displayLine = step.line.trim();
+                  final displayableTripId =
+                      _shouldDisplaySummaryTripId(step.tripId)
+                          ? step.tripId!.trim()
+                          : null;
+                  // Clean train numbers if disabled
+                  if (!showTrainNumbers) {
+                    final regexParens = RegExp(r'\s*\(\d+\)$');
                     displayLine =
-                        displayLine.replaceAll(step.tripId!, "").trim();
+                        displayLine.replaceAll(regexParens, '').trim();
+                    if (step.tripId != null) {
+                      displayLine =
+                          displayLine.replaceAll(step.tripId!, "").trim();
+                    }
+                  } else {
+                    // Ensure it's there if enabled
+                    if (displayableTripId != null &&
+                        !displayLine.contains(displayableTripId)) {
+                      displayLine += " ($displayableTripId)";
+                    }
                   }
-                } else {
-                  // Ensure it's there if enabled
-                  if (displayableTripId != null &&
-                      !displayLine.contains(displayableTripId)) {
-                    displayLine += " ($displayableTripId)";
-                  }
-                }
-                displayLine =
-                    _summaryLineWithPlatform(displayLine, step.platform);
-
-                return Container(
-                  margin: const EdgeInsets.only(right: 6),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    displayLine,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                );
-              }).toList(),
+                  displayLine = _stripSummaryPlatformText(displayLine);
+                  return _buildRideChip(
+                    context,
+                    icon: _summaryRideModeIcon(step.line),
+                    label: displayLine,
+                  );
+                }).toList(),
+              ),
             ),
           ],
         ),
