@@ -45,7 +45,8 @@ class WakeAlarmCustomSoundService {
     if (!await sourceFile.exists()) {
       throw StateError('Selected file no longer exists.');
     }
-    if (!await _isSupportedAudioFile(sourceFile, originalFileName ?? sourcePath)) {
+    if (!await _isSupportedAudioFile(
+        sourceFile, originalFileName ?? sourcePath)) {
       throw StateError(
         'Please choose an audio file such as MP3, WAV, M4A, OGG, FLAC, AIFF, AAC, or CAF.',
       );

@@ -55,7 +55,7 @@ class StopDeparturesSheet extends StatefulWidget {
 }
 
 class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
-  static const int _fullDayMaxResults = 2000;
+  static const int _fullDayMaxResults = 6000;
 
   late final Map<_ServiceDayType, DateTime> _sampleDates;
   late final Map<_ServiceDayType, _DayLoadState> _dayStates;
@@ -372,6 +372,7 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                             '${selectedDayTab.id}|${selectedPlatformKey ?? 'all'}|${departures.length}',
                                           ),
                                           departures: departures,
+                                          initialAnchorTime: widget.date,
                                           scrollController: scrollCtrl,
                                           colors: colors,
                                           l10n: l10n,
@@ -477,10 +478,16 @@ _ServiceDayType? _serviceDayTypeFromId(String id) {
 Map<_ServiceDayType, DateTime> _serviceDaySampleDates(DateTime anchor) {
   final normalizedAnchor = DateTime(anchor.year, anchor.month, anchor.day);
   final monday = normalizedAnchor.subtract(Duration(days: anchor.weekday - 1));
+  final anchorType = _serviceDayTypeForDate(anchor);
   return <_ServiceDayType, DateTime>{
-    _ServiceDayType.weekday: monday,
-    _ServiceDayType.saturday: monday.add(const Duration(days: 5)),
-    _ServiceDayType.sundayHoliday: monday.add(const Duration(days: 6)),
+    _ServiceDayType.weekday:
+        anchorType == _ServiceDayType.weekday ? normalizedAnchor : monday,
+    _ServiceDayType.saturday: anchorType == _ServiceDayType.saturday
+        ? normalizedAnchor
+        : monday.add(const Duration(days: 5)),
+    _ServiceDayType.sundayHoliday: anchorType == _ServiceDayType.sundayHoliday
+        ? normalizedAnchor
+        : monday.add(const Duration(days: 6)),
   };
 }
 
@@ -548,23 +555,28 @@ class _FilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? colors.chipActiveBg : colors.chipBg,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? colors.chipActiveFg : colors.chipFg,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? colors.chipActiveBg : colors.chipBg,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? colors.chipActiveFg : colors.chipFg,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -696,6 +708,7 @@ class _DepartureRow extends StatelessWidget {
 
 class _LazyLoopDeparturesList extends StatefulWidget {
   final List<Map<String, dynamic>> departures;
+  final DateTime initialAnchorTime;
   final ScrollController scrollController;
   final TransColors colors;
   final AppLocalizations l10n;
@@ -703,6 +716,7 @@ class _LazyLoopDeparturesList extends StatefulWidget {
   const _LazyLoopDeparturesList({
     super.key,
     required this.departures,
+    required this.initialAnchorTime,
     required this.scrollController,
     required this.colors,
     required this.l10n,
@@ -717,6 +731,7 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
   static const int _windowChunk = 60;
   static const int _loadMarginPx = 320;
   static const double _rowExtentEstimate = 76;
+  static const double _scrollDirectionThreshold = 3;
   static const Duration _loadIndicatorFrame = Duration(milliseconds: 16);
 
   int _anchorIndex = 0;
@@ -725,11 +740,23 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
   bool _didInitialJump = false;
   bool _isLoadingPrevious = false;
   bool _isLoadingNext = false;
+  bool _showJumpToTop = false;
+  bool _showJumpToBottom = false;
+  double? _lastScrollPixels;
+  int _jumpSuggestionDirection = 0;
+  final GlobalKey _anchorRowKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _resetWindow();
+    widget.scrollController.addListener(_updateJumpButtonVisibility);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_updateJumpButtonVisibility);
+    super.dispose();
   }
 
   void _resetWindow() {
@@ -741,18 +768,37 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
       _didInitialJump = true;
       _isLoadingPrevious = false;
       _isLoadingNext = false;
+      _showJumpToTop = false;
+      _showJumpToBottom = false;
+      _lastScrollPixels = null;
+      _jumpSuggestionDirection = 0;
       return;
     }
 
-    _anchorIndex = _indexForCurrentTime(widget.departures);
+    final referenceTime = _resolveAnchorReferenceTime(widget.initialAnchorTime);
+    _anchorIndex = _indexForCurrentTime(
+      widget.departures,
+      referenceTime: referenceTime,
+    );
     _visibleStart = (_anchorIndex - _windowChunk).clamp(0, total - 1);
     _visibleEnd = (_anchorIndex + _windowChunk).clamp(0, total - 1);
     _didInitialJump = false;
     _isLoadingPrevious = false;
     _isLoadingNext = false;
+    _showJumpToTop = false;
+    _showJumpToBottom = false;
+    _lastScrollPixels = null;
+    _jumpSuggestionDirection = 0;
+
+    _StopDeparturesProfiler.log(
+      'stop_departures.anchor',
+      'reference=${referenceTime.toIso8601String()} index=$_anchorIndex '
+          'visible=$_visibleStart-$_visibleEnd total=$total',
+    );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _jumpToAnchor();
+      _updateJumpButtonVisibility();
     });
   }
 
@@ -760,10 +806,31 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
     if (!mounted || _didInitialJump || !widget.scrollController.hasClients) {
       return;
     }
+    final anchorContext = _anchorRowKey.currentContext;
+    if (anchorContext != null) {
+      _didInitialJump = true;
+      Scrollable.ensureVisible(
+        anchorContext,
+        alignment: 0.28,
+        duration: Duration.zero,
+      );
+      return;
+    }
+
     final index = (_anchorIndex - _visibleStart).clamp(0, _visibleCount - 1);
-    final target = (index * _rowExtentEstimate).toDouble();
+    final fallbackTarget = (index * _rowExtentEstimate).toDouble();
     _didInitialJump = true;
-    widget.scrollController.jumpTo(target);
+    widget.scrollController.jumpTo(fallbackTarget);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final retryContext = _anchorRowKey.currentContext;
+      if (retryContext == null) return;
+      Scrollable.ensureVisible(
+        retryContext,
+        alignment: 0.28,
+        duration: Duration.zero,
+      );
+    });
   }
 
   int get _visibleCount {
@@ -773,6 +840,11 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
 
   bool _handleScroll(ScrollNotification notification) {
     if (widget.departures.isEmpty) return false;
+    if (notification is! ScrollUpdateNotification &&
+        notification is! OverscrollNotification &&
+        notification is! ScrollEndNotification) {
+      return false;
+    }
 
     final metrics = notification.metrics;
     final nearTop = metrics.pixels <= _loadMarginPx;
@@ -783,6 +855,46 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
     if (nearTop) _scheduleLoadPreviousChunk();
 
     return false;
+  }
+
+  void _updateJumpButtonVisibility() {
+    if (!mounted || !widget.scrollController.hasClients) return;
+    final position = widget.scrollController.position;
+    final pixels = position.pixels;
+    final previousPixels = _lastScrollPixels;
+    _lastScrollPixels = pixels;
+
+    final isScrollingDown = previousPixels != null &&
+        pixels > previousPixels + _scrollDirectionThreshold;
+    final isScrollingUp = previousPixels != null &&
+        pixels < previousPixels - _scrollDirectionThreshold;
+    if (isScrollingDown) {
+      _jumpSuggestionDirection = 1;
+    } else if (isScrollingUp) {
+      _jumpSuggestionDirection = -1;
+    }
+
+    final atTop = pixels <= 1;
+    final atBottom =
+        position.maxScrollExtent > 0 && pixels >= position.maxScrollExtent - 1;
+    final hasMoreAbove = _visibleStart > 0 || !atTop;
+    final hasMoreBelow =
+        _visibleEnd < widget.departures.length - 1 || !atBottom;
+    final canJumpToBottom = _jumpSuggestionDirection > 0 && hasMoreBelow;
+    final canJumpToTop = _jumpSuggestionDirection < 0 && hasMoreAbove;
+
+    if (!canJumpToTop && !canJumpToBottom) {
+      _jumpSuggestionDirection = 0;
+    }
+
+    if (_showJumpToTop == canJumpToTop &&
+        _showJumpToBottom == canJumpToBottom) {
+      return;
+    }
+    setState(() {
+      _showJumpToTop = canJumpToTop;
+      _showJumpToBottom = canJumpToBottom;
+    });
   }
 
   Future<void> _scheduleLoadNextChunk() async {
@@ -803,6 +915,7 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
       _visibleEnd = (_visibleEnd + _windowChunk).clamp(0, total - 1);
       _isLoadingNext = false;
     });
+    _updateJumpButtonVisibility();
     _StopDeparturesProfiler.log(
       'stop_departures.load_next_chunk.done',
       'visible=$_visibleStart-$_visibleEnd total=$total',
@@ -840,6 +953,7 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.scrollController.hasClients) return;
       widget.scrollController.jumpTo(oldPixels + added * _rowExtentEstimate);
+      _updateJumpButtonVisibility();
     });
     _maybeEnableLoopMode();
   }
@@ -849,51 +963,126 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
     // range caused UI stalls on busy web runs right after lazy loading completed.
   }
 
+  Future<void> _scrollToBoundary({required bool toEnd}) async {
+    final total = widget.departures.length;
+    if (total == 0 || !mounted) return;
+
+    if (!_didInitialJump) {
+      _jumpToAnchor();
+    }
+
+    final targetStart = toEnd ? (total - _windowChunk).clamp(0, total - 1) : 0;
+    final targetEnd = toEnd ? total - 1 : _windowChunk.clamp(0, total - 1);
+
+    setState(() {
+      _visibleStart = targetStart;
+      _visibleEnd = targetEnd;
+      _isLoadingPrevious = false;
+      _isLoadingNext = false;
+      _jumpSuggestionDirection = 0;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.scrollController.hasClients) return;
+      widget.scrollController.jumpTo(
+        toEnd ? widget.scrollController.position.maxScrollExtent : 0.0,
+      );
+      _updateJumpButtonVisibility();
+      _StopDeparturesProfiler.log(
+        toEnd
+            ? 'stop_departures.jump_to_bottom'
+            : 'stop_departures.jump_to_top',
+        'visible=$_visibleStart-$_visibleEnd total=$total',
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final departures = widget.departures;
     if (departures.isEmpty) return const SizedBox.shrink();
 
-    return NotificationListener<ScrollNotification>(
-      onNotification: _handleScroll,
-      child: ListView.builder(
-        controller: widget.scrollController,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        itemCount: _boundedItemCount,
-        itemBuilder: (ctx, idx) {
-          if (_isLoadingPrevious && idx == 0) {
-            return _ChunkLoadingRow(
-              key: const ValueKey('stop_departures_loader_top'),
-              colors: widget.colors,
-              l10n: widget.l10n,
-            );
-          }
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: _handleScroll,
+          child: ListView.builder(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+            itemCount: _boundedItemCount,
+            itemBuilder: (ctx, idx) {
+              if (_isLoadingPrevious && idx == 0) {
+                return _ChunkLoadingRow(
+                  key: const ValueKey('stop_departures_loader_top'),
+                  colors: widget.colors,
+                  l10n: widget.l10n,
+                );
+              }
 
-          final bottomLoaderIndex =
-              _boundedItemCount - (_isLoadingNext ? 1 : 0);
-          if (_isLoadingNext && idx == bottomLoaderIndex) {
-            return _ChunkLoadingRow(
-              key: const ValueKey('stop_departures_loader_bottom'),
-              colors: widget.colors,
-              l10n: widget.l10n,
-            );
-          }
+              final bottomLoaderIndex =
+                  _boundedItemCount - (_isLoadingNext ? 1 : 0);
+              if (_isLoadingNext && idx == bottomLoaderIndex) {
+                return _ChunkLoadingRow(
+                  key: const ValueKey('stop_departures_loader_bottom'),
+                  colors: widget.colors,
+                  l10n: widget.l10n,
+                );
+              }
 
-          final effectiveIndex = idx - (_isLoadingPrevious ? 1 : 0);
-          final realIdx = _visibleStart + effectiveIndex;
-          final dep = departures[realIdx];
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _DepartureRow(dep: dep, colors: widget.colors, l10n: widget.l10n),
-              Divider(
-                height: 1,
-                color: widget.colors.divider.withValues(alpha: 0.45),
+              final effectiveIndex = idx - (_isLoadingPrevious ? 1 : 0);
+              final realIdx = _visibleStart + effectiveIndex;
+              final dep = departures[realIdx];
+              return KeyedSubtree(
+                key: realIdx == _anchorIndex ? _anchorRowKey : null,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _DepartureRow(
+                      dep: dep,
+                      colors: widget.colors,
+                      l10n: widget.l10n,
+                    ),
+                    Divider(
+                      height: 1,
+                      color: widget.colors.divider.withValues(alpha: 0.45),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        if (_showJumpToBottom)
+          Positioned(
+            bottom: 18,
+            left: 0,
+            right: 0,
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: _ScrollJumpTextButton(
+                icon: Icons.keyboard_double_arrow_down,
+                label: widget.l10n.stopDeparturesJumpToBottom,
+                colors: widget.colors,
+                onTap: () => _scrollToBoundary(toEnd: true),
               ),
-            ],
-          );
-        },
-      ),
+            ),
+          ),
+        if (_showJumpToTop)
+          Positioned(
+            top: 12,
+            left: 0,
+            right: 0,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: _ScrollJumpTextButton(
+                icon: Icons.keyboard_double_arrow_up,
+                label: widget.l10n.stopDeparturesJumpToTop,
+                colors: widget.colors,
+                onTap: () => _scrollToBoundary(toEnd: false),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -941,6 +1130,51 @@ class _ChunkLoadingRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ScrollJumpTextButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final TransColors colors;
+  final VoidCallback onTap;
+
+  const _ScrollJumpTextButton({
+    required this.icon,
+    required this.label,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: colors.cardBg.withValues(alpha: 0.96),
+      elevation: 4,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: colors.textPrimary),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1105,21 +1339,26 @@ List<_PlatformTab> _buildPlatformTabsForDay(_DayTab dayTab) {
     grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(dep);
   }
 
+  final groupedEntries = grouped.entries.toList();
   final duplicateCounts = <String, int>{};
-  for (final dep in dayTab.departures) {
-    final label = _platformLabel(dep);
-    if (label != null) {
-      duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
-    }
+  for (final entry in groupedEntries) {
+    final label = _platformTabBaseLabel(entry.value.first);
+    duplicateCounts[label] = (duplicateCounts[label] ?? 0) + 1;
   }
+  final duplicateOrdinals = <String, int>{};
 
-  final tabs = grouped.entries.map((entry) {
+  final tabs = groupedEntries.map((entry) {
     final dep = entry.value.first;
-    final platformLabel = _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
-    final hasDuplicateLabel = (duplicateCounts[platformLabel] ?? 0) > 1;
-    final label = hasDuplicateLabel
-        ? '$platformLabel ${_shortDirection(dep)}'
-        : platformLabel;
+    final baseLabel = _platformTabBaseLabel(dep);
+    final duplicateCount = duplicateCounts[baseLabel] ?? 0;
+    duplicateOrdinals[baseLabel] = (duplicateOrdinals[baseLabel] ?? 0) + 1;
+    final label = duplicateCount > 1
+        ? _platformTabDuplicateLabel(
+            baseLabel,
+            entry.value,
+            ordinal: duplicateOrdinals[baseLabel]!,
+          )
+        : baseLabel;
 
     return _PlatformTab(
       key: entry.key,
@@ -1136,6 +1375,47 @@ List<_PlatformTab> _buildPlatformTabsForDay(_DayTab dayTab) {
     'day=${dayTab.id} departures=${dayTab.departures.length} tabs=${tabs.length}',
   );
   return tabs;
+}
+
+String _platformTabBaseLabel(Map<String, dynamic> dep) {
+  return _platformLabel(dep) ?? _stopAreaName(dep) ?? 'Stop';
+}
+
+String _platformTabDuplicateLabel(
+  String baseLabel,
+  List<Map<String, dynamic>> departures, {
+  required int ordinal,
+}) {
+  final disambiguator = _platformTabDisambiguator(departures, ordinal: ordinal);
+  return '$disambiguator · $baseLabel';
+}
+
+String _platformTabDisambiguator(
+  List<Map<String, dynamic>> departures, {
+  required int ordinal,
+}) {
+  final first = departures.first;
+  final direction = _compactLabelPart(_shortDirection(first), maxLength: 18);
+  if (direction.isNotEmpty) return direction;
+
+  final lines = <String>[];
+  for (final dep in departures) {
+    final line = _lineName(dep);
+    if (line == null || lines.contains(line)) continue;
+    lines.add(line);
+    if (lines.length == 2) break;
+  }
+  if (lines.isNotEmpty) {
+    final suffix = departures.length > lines.length ? '+' : '';
+    return _compactLabelPart('${lines.join(', ')}$suffix', maxLength: 18);
+  }
+
+  final stopId = _stopAreaId(first);
+  if (stopId != null && stopId.isNotEmpty) {
+    return '#${stopId.length > 5 ? stopId.substring(stopId.length - 5) : stopId}';
+  }
+
+  return ordinal.toString();
 }
 
 class _DayTab {
@@ -1203,11 +1483,25 @@ String _direction(Map<String, dynamic> dep) {
       .toString();
 }
 
+String? _lineName(Map<String, dynamic> dep) {
+  final lineObj = dep['line'] as Map<String, dynamic>?;
+  final text = (dep['routeShortName'] ?? dep['displayName'] ?? lineObj?['name'])
+      ?.toString()
+      .trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
 String _shortDirection(Map<String, dynamic> dep) {
   final direction = _direction(dep).trim();
   if (direction.isEmpty) return '';
   final words = direction.split(' ').where((part) => part.isNotEmpty).toList();
   return words.take(2).join(' ');
+}
+
+String _compactLabelPart(String label, {required int maxLength}) {
+  final text = label.trim();
+  if (text.length <= maxLength) return text;
+  return '${text.substring(0, maxLength - 1).trimRight()}...';
 }
 
 int? _calculateDelayMinutes(String? scheduled, String? actual) {
@@ -1263,18 +1557,31 @@ int _departureSortCompare(Map<String, dynamic> a, Map<String, dynamic> b) {
   return ta.compareTo(tb);
 }
 
-int _indexForCurrentTime(List<Map<String, dynamic>> departures) {
+DateTime _resolveAnchorReferenceTime(DateTime initialAnchorTime) {
+  final now = DateTime.now();
+  final localAnchor = initialAnchorTime.toLocal();
+  final isToday = localAnchor.year == now.year &&
+      localAnchor.month == now.month &&
+      localAnchor.day == now.day;
+  return isToday ? now : localAnchor;
+}
+
+int _indexForCurrentTime(
+  List<Map<String, dynamic>> departures, {
+  required DateTime referenceTime,
+}) {
   if (departures.isEmpty) return 0;
 
-  final now = DateTime.now();
-  final nowMinutes = now.hour * 60 + now.minute;
+  final referenceMinutes = referenceTime.hour * 60 + referenceTime.minute;
+  int? lastTimedIndex;
   for (var i = 0; i < departures.length; i++) {
     final time = _departureDateTimeLocal(departures[i]);
     if (time == null) continue;
+    lastTimedIndex = i;
     final minutes = time.hour * 60 + time.minute;
-    if (minutes >= nowMinutes) return i;
+    if (minutes >= referenceMinutes) return i;
   }
-  return 0;
+  return lastTimedIndex ?? 0;
 }
 
 class _StopDeparturesProfiler {

@@ -361,5 +361,7 @@
   "noDeparturesFound": "Keine Abfahrten f\u00fcr diese Haltestelle gefunden.",
   "noDeparturesForPlatform": "Keine Abfahrten f\u00fcr diesen Steig gefunden.",
   "loadingDepartures": "Abfahrten werden geladen...",
+  "stopDeparturesJumpToTop": "Nach oben",
+  "stopDeparturesJumpToBottom": "Nach unten",
   "longPressForDepartures": "Haltestelle lang dr\u00fccken, um alle Abfahrten des Tages zu sehen."
 }

@@ -2358,21 +2358,28 @@ class _SettingsTabState extends State<SettingsTab> {
                         height: 40,
                         child: ListView(
                           scrollDirection: Axis.horizontal,
-                          children: [
-                            ...appThemeColors.map((c) => _colorCircle(c)),
-                            _colorSeparator(),
-                            if (_isBuiltInColor(widget.currentColor))
-                              _customColorButton()
-                            else
-                              _customColorCircle(),
-                          ],
+                          children: (() {
+                            final portfolioColor = _portfolioReservedColor();
+                            final transCustomColor =
+                                _transCustomSlotColor(portfolioColor);
+                            return [
+                              ...appThemeColors.map((c) => _colorCircle(c)),
+                              _colorSeparator(),
+                              if (portfolioColor != null)
+                                _portfolioColorCircle(portfolioColor),
+                              if (transCustomColor != null)
+                                _customColorCircle(transCustomColor)
+                              else
+                                _customColorButton(),
+                            ];
+                          })(),
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         Localizations.localeOf(context).languageCode == 'de'
-                            ? 'Tippe auf eine Farbe${!_isBuiltInColor(widget.currentColor) ? ' oder tippe die eigene Farbe erneut an' : ''}, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
-                            : 'Tap a color${!_isBuiltInColor(widget.currentColor) ? ' or tap the custom color again' : ''} to change. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
+                            ? 'Tippe auf eine Farbe, den Portfolio-Slot oder auf +, um sie zu ändern. Aktuell: ${ColorClaimService.normalizeColor(widget.currentColor)}'
+                            : 'Tap a color, the portfolio slot, or + to change it. Current: ${ColorClaimService.normalizeColor(widget.currentColor)}',
                         style: TextStyle(
                             fontSize: 12, color: colors.textSecondary),
                       ),
@@ -2388,8 +2395,9 @@ class _SettingsTabState extends State<SettingsTab> {
                           TextStyle(fontSize: 12, color: colors.textSecondary)),
                   value: widget.showTrainNumbers,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: widget.onShowTrainNumbersChanged,
@@ -2511,8 +2519,9 @@ class _SettingsTabState extends State<SettingsTab> {
                         ),
                       );
 
-                      if (kIsWeb || !_showPreviewTooltip)
+                      if (kIsWeb || !_showPreviewTooltip) {
                         return alarmSoundTitle;
+                      }
 
                       return Tooltip(
                         message: AppLocalizations.of(context)!.previewSound,
@@ -2690,8 +2699,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _wakeAlarmSoundEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2705,8 +2715,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _wakeAlarmVibrationEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2724,8 +2735,9 @@ class _SettingsTabState extends State<SettingsTab> {
                           TextStyle(fontSize: 12, color: colors.textSecondary)),
                   value: widget.alwaysWakeMe,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: widget.onAlwaysWakeMeChanged,
@@ -2742,8 +2754,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _leaveAlarmSoundEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -2757,8 +2770,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       style: TextStyle(color: colors.textPrimary)),
                   value: _leaveAlarmVibrationEnabled,
                   thumbColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.selected))
+                    if (states.contains(WidgetState.selected)) {
                       return primaryColor;
+                    }
                     return null;
                   }),
                   onChanged: (val) async {
@@ -3131,8 +3145,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPreTransitWalkEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3148,8 +3163,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPreTransitBikeEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3178,8 +3194,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPostTransitWalkEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3195,8 +3212,9 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     value: _advancedPostTransitBikeEnabled,
                     thumbColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.selected))
+                      if (states.contains(WidgetState.selected)) {
                         return primaryColor;
+                      }
                       return null;
                     }),
                     onChanged: (value) async {
@@ -3446,6 +3464,42 @@ class _SettingsTabState extends State<SettingsTab> {
   bool _isBuiltInColor(Color color) {
     final argb = color.toARGB32();
     return appThemeColors.any((c) => c.toARGB32() == argb);
+  }
+
+  Color? _portfolioReservedColor() {
+    final settings = _profile?['settings'];
+    if (settings is! Map) return null;
+
+    final claim = settings['theme_color_claim'];
+    if (claim is! Map) return null;
+
+    final rawHex = claim['hex']?.toString();
+    if (rawHex == null || rawHex.trim().isEmpty) return null;
+
+    final syncState = claim['sync_state']?.toString();
+    final linkedPortfolioUid = claim['linked_portfolio_uid']?.toString();
+    final hasPortfolioReservation = syncState == 'synced' ||
+        (linkedPortfolioUid != null && linkedPortfolioUid.trim().isNotEmpty);
+    if (!hasPortfolioReservation) return null;
+
+    try {
+      final hex = ColorClaimService.normalizeHex(rawHex);
+      final value = int.parse(hex.substring(1), radix: 16);
+      return Color(0xFF000000 | value);
+    } on ColorClaimException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Color? _transCustomSlotColor(Color? portfolioColor) {
+    if (_isBuiltInColor(widget.currentColor)) return null;
+    if (portfolioColor != null &&
+        portfolioColor.toARGB32() == widget.currentColor.toARGB32()) {
+      return null;
+    }
+    return widget.currentColor;
   }
 
   Future<void> _handleThemeColorTap(Color color) async {
@@ -3701,18 +3755,18 @@ class _SettingsTabState extends State<SettingsTab> {
     );
   }
 
-  Widget _customColorCircle() {
-    final isSelected = !_isBuiltInColor(widget.currentColor);
-    final isPending = _pendingThemeColorArgb == widget.currentColor.toARGB32();
+  Widget _customColorCircle(Color color) {
+    final isSelected = widget.currentColor.toARGB32() == color.toARGB32();
+    final isPending = _pendingThemeColorArgb == color.toARGB32();
 
     return GestureDetector(
-      onTap: _openCustomColorDialog,
+      onTap: () => _handleThemeColorTap(color),
       child: Container(
         width: 30,
         height: 30,
         margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
         decoration: BoxDecoration(
-          color: widget.currentColor,
+          color: color,
           shape: BoxShape.circle,
           border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
           boxShadow: isSelected
@@ -3731,6 +3785,43 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                   )
                 : null,
+      ),
+    );
+  }
+
+  Widget _portfolioColorCircle(Color color) {
+    final isSelected = widget.currentColor.toARGB32() == color.toARGB32();
+    final isPending = _pendingThemeColorArgb == color.toARGB32();
+
+    return GestureDetector(
+      onTap: () => _handleThemeColorTap(color),
+      child: Container(
+        width: 30,
+        height: 30,
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isSelected ? Colors.white : Colors.white70,
+            width: isSelected ? 3 : 1.5,
+          ),
+          boxShadow: isSelected
+              ? [const BoxShadow(color: Colors.black26, blurRadius: 4)]
+              : null,
+        ),
+        child: isSelected
+            ? const Icon(Icons.check, size: 16, color: Colors.white)
+            : isPending
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.lock_outline, size: 14, color: Colors.white),
       ),
     );
   }

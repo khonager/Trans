@@ -939,6 +939,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get loadingDepartures => 'Abfahrten werden geladen...';
 
   @override
+  String get stopDeparturesJumpToTop => 'Nach oben';
+
+  @override
+  String get stopDeparturesJumpToBottom => 'Nach unten';
+
+  @override
   String get longPressForDepartures =>
       'Haltestelle lang drücken, um alle Abfahrten des Tages zu sehen.';
 }

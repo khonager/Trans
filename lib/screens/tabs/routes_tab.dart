@@ -45,7 +45,7 @@ enum RouteHistoryView { frequent, recent }
 
 @visibleForTesting
 String formatRideLineWithPlatform(String line, String? platform) {
-  final normalizedLine = line.trim();
+  final normalizedLine = _stripInlineRidePlatformText(line.trim());
   final normalizedPlatform = platform?.trim();
   if (normalizedLine.isEmpty ||
       normalizedPlatform == null ||
@@ -81,6 +81,23 @@ bool _lineLooksRailForPlatformLabel(String line) {
 }
 
 final RegExp _embeddedNumericParenthesesPattern = RegExp(r'\s*\(\d+\)');
+final RegExp _embeddedPlatformParenthesesPattern = RegExp(
+  r'\s*\((?:pl\.|gl\.|gleis|gleise|steig|bahnsteig|bussteig|bussteige|bstg\.?|platz)\s+[^)]+\)',
+  caseSensitive: false,
+);
+
+String _stripInlineRidePlatformText(String value) {
+  return value
+      .replaceAll(_embeddedPlatformParenthesesPattern, '')
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
+}
+
+IconData _rideModeIconForLine(String line) {
+  return _lineLooksRailForPlatformLabel(line)
+      ? Icons.train_outlined
+      : Icons.directions_bus_filled_rounded;
+}
 
 bool _shouldDisplayTripId(String? tripId) {
   final normalizedTripId = tripId?.trim();
@@ -106,7 +123,7 @@ String formatRideDisplayLine({
   String? tripId,
   required bool showTrainNumbers,
 }) {
-  String baseLine = line.trim();
+  String baseLine = _stripInlineRidePlatformText(line.trim());
   final normalizedTripId = tripId?.trim();
   final displayableTripId =
       _shouldDisplayTripId(normalizedTripId) ? normalizedTripId : null;
@@ -124,6 +141,7 @@ String formatRideDisplayLine({
     }
   }
 
+  baseLine = _stripInlineRidePlatformText(baseLine);
   final effectivePlatform = platform?.trim();
   final displayLine = formatRideLineWithPlatform(baseLine, effectivePlatform);
 
@@ -210,23 +228,63 @@ bool _matchesSimpleStopLabel(
   return false;
 }
 
+String? _extractStopDetailCode(String label, {required bool isRail}) {
+  final normalized = label.trim();
+  if (normalized.isEmpty) return null;
+
+  final typeKeywords = isRail
+      ? '(?:gleis|schiene|platform|track)'
+      : '(?:bussteig|bussteige|steig|platz|haltestelle|bstg\\.?)';
+
+  final afterType = RegExp(
+    '\\b$typeKeywords\\s*([A-Za-z0-9]+)\\b',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (afterType != null) return afterType.group(1);
+
+  final beforeType = RegExp(
+    '\\b([A-Za-z0-9]+)\\s*[•/-]?\\s*$typeKeywords\\b',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (beforeType != null) return beforeType.group(1);
+
+  return null;
+}
+
 @visibleForTesting
 String? combinePlatformAndStopLabel(
   String? platform,
   String? stopLabel, {
   String? stationName,
+  required bool isRail,
 }) {
   final normalizedPlatform = platform?.trim();
   final normalizedStopLabel = _normalizeStopDetailLabel(
     stopLabel,
     stationName: stationName,
   );
+  final prefix = isRail ? 'Gl.' : 'Steig';
+
+  String? formatWithPrefix(String? value) {
+    final normalized = value?.trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return '$prefix $normalized';
+  }
+
+  final extractedCode = normalizedStopLabel == null
+      ? null
+      : _extractStopDetailCode(normalizedStopLabel, isRail: isRail);
+  if (extractedCode != null) {
+    return formatWithPrefix(extractedCode);
+  }
 
   if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
-    return normalizedStopLabel;
+    return normalizedStopLabel == null
+        ? null
+        : formatWithPrefix(normalizedStopLabel);
   }
   if (normalizedStopLabel == null || normalizedStopLabel.isEmpty) {
-    return normalizedPlatform;
+    return formatWithPrefix(normalizedPlatform);
   }
 
   final cleanedStopLabel = _cleanStopDetailLabel(normalizedStopLabel);
@@ -235,7 +293,7 @@ String? combinePlatformAndStopLabel(
   final lowerStopLabel = cleanedStopLabel.toLowerCase();
 
   if (lowerStopLabel == lowerPlatform) {
-    return normalizedPlatform;
+    return formatWithPrefix(normalizedPlatform);
   }
 
   if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
@@ -244,7 +302,7 @@ String? combinePlatformAndStopLabel(
     's-bahnsteig gleis',
     'u-bahnsteig gleis',
   ])) {
-    return normalizedPlatform;
+    return formatWithPrefix(normalizedPlatform);
   }
 
   if (_matchesSimpleStopLabel(lowerStopLabel, lowerPlatform, const [
@@ -256,10 +314,10 @@ String? combinePlatformAndStopLabel(
     'bstg',
     'haltestelle',
   ])) {
-    return cleanedStopLabel;
+    return formatWithPrefix(normalizedPlatform);
   }
 
-  return '$normalizedPlatform • $cleanedStopLabel';
+  return formatWithPrefix(normalizedPlatform);
 }
 
 String _formatBoardingText(
@@ -268,15 +326,6 @@ String _formatBoardingText(
   String? platform,
   String? stopLabel,
 }) {
-  final combinedStopDetail = combinePlatformAndStopLabel(
-    platform,
-    stopLabel,
-    stationName: stationName,
-  );
-  if (combinedStopDetail != null) {
-    return '${l10n.boardAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
-  }
-
   return l10n.boardAt(stationName);
 }
 
@@ -286,15 +335,6 @@ String _formatAlightingText(
   String? platform,
   String? stopLabel,
 }) {
-  final combinedStopDetail = combinePlatformAndStopLabel(
-    platform,
-    stopLabel,
-    stationName: stationName,
-  );
-  if (combinedStopDetail != null) {
-    return '${l10n.getOffAt(stationName)} ${l10n.atPlatform(combinedStopDetail)}';
-  }
-
   return l10n.getOffAt(stationName);
 }
 
@@ -303,15 +343,6 @@ String _formatIntermediateStopTitle(
   String? platform,
   String? stopLabel,
 }) {
-  final combinedStopDetail = combinePlatformAndStopLabel(
-    platform,
-    stopLabel,
-    stationName: name,
-  );
-  if (combinedStopDetail != null) {
-    return '$name ($combinedStopDetail)';
-  }
-
   return name;
 }
 
@@ -847,7 +878,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     const linux = LinuxInitializationSettings(defaultActionName: 'Open');
     const initSettings =
         InitializationSettings(android: android, iOS: ios, linux: linux);
-    await _notificationsPlugin.initialize(settings: initSettings);
+    try {
+      await _notificationsPlugin.initialize(settings: initSettings);
+    } catch (e, st) {
+      if (e.runtimeType.toString() == 'LateError') {
+        debugPrint('Notifications unavailable in this runtime: $e');
+      } else {
+        AppError.log(e, stackTrace: st, source: 'RoutesTab._initNotifications');
+      }
+    }
   }
 
   @override
@@ -6122,6 +6161,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         onLoadEarlier: () => _loadMoreRoutes(route, earlier: true),
         onLoadLater: () => _loadMoreRoutes(route, earlier: false),
         onRefresh: () => _refreshRoutes(route),
+        origin: route.origin,
+        destination: route.destination,
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
@@ -6428,10 +6469,88 @@ class _StepCardState extends State<_StepCard> {
     return stopIndex == targetIndex;
   }
 
+  Widget _buildStopDetailChip(
+    BuildContext context, {
+    required String detail,
+  }) {
+    final colors = TransColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.chipBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: Colors.white10,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            detail,
+            maxLines: 1,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrailingTimeAndStopDetail(
+    BuildContext context, {
+    required String timeText,
+    required TextStyle timeStyle,
+    String? stopDetail,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (stopDetail != null) ...[
+          _buildStopDetailChip(
+            context,
+            detail: stopDetail,
+          ),
+          const SizedBox(width: 8),
+        ],
+        Text(
+          timeText,
+          textAlign: TextAlign.right,
+          style: timeStyle,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCollapsedStopDetailChip(
+    BuildContext context, {
+    required String detail,
+  }) {
+    return Flexible(
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          reverse: true,
+          child: _buildStopDetailChip(
+            context,
+            detail: detail,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final step = widget.step;
+    final stepHeadsign = (step.headsign ?? '').trim();
+    final directionPrefix =
+        Localizations.localeOf(context).languageCode == 'de' ? 'nach' : 'to';
     final bool isWait = step.type == 'wait';
     final bool isBike = step.type == 'bike';
     final isTransfer =
@@ -6518,15 +6637,25 @@ class _StepCardState extends State<_StepCard> {
                 title: Builder(builder: (context) {
                   final dest = (step.destinationName ??
                       step.instruction.split('→').last.trim());
-                  final head = (step.headsign ?? '').trim();
                   // Check if destination is practically the headsign (End of Line)
                   // Use simple string containment or equality check
                   final isEnd = dest.isNotEmpty &&
-                      head.isNotEmpty &&
-                      (head.toLowerCase().contains(dest.toLowerCase()) ||
-                          dest.toLowerCase().contains(head.toLowerCase()));
+                      stepHeadsign.isNotEmpty &&
+                      (stepHeadsign
+                              .toLowerCase()
+                              .contains(dest.toLowerCase()) ||
+                          dest
+                              .toLowerCase()
+                              .contains(stepHeadsign.toLowerCase()));
                   final displayDest =
                       isEnd ? AppLocalizations.of(context)!.endOfLine : dest;
+                  final displayLine = formatRideDisplayLine(
+                    line: step.line,
+                    platform: null,
+                    arrivalPlatform: step.arrivalPlatform,
+                    tripId: step.tripId,
+                    showTrainNumbers: widget.showTrainNumbers,
+                  );
 
                   // Title: Bus Number -> Destination (Expanded) + Arrow (Right)
                   return Row(
@@ -6535,20 +6664,16 @@ class _StepCardState extends State<_StepCard> {
                       Expanded(
                           child: Row(
                         children: [
-                          Builder(builder: (context) {
-                            final displayLine = formatRideDisplayLine(
-                              line: step.line,
-                              platform: step.platform,
-                              arrivalPlatform: step.arrivalPlatform,
-                              tripId: step.tripId,
-                              showTrainNumbers: widget.showTrainNumbers,
-                            );
-
-                            return Text(displayLine,
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: colors.textPrimary));
-                          }),
+                          Icon(
+                            _rideModeIconForLine(step.line),
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(displayLine,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.textPrimary)),
                           const SizedBox(width: 8),
                           Icon(Icons.arrow_right_alt,
                               size: 24, color: colors.textPrimary),
@@ -6583,7 +6708,10 @@ class _StepCardState extends State<_StepCard> {
                     children: [
                       const SizedBox(height: 4),
                       // Info Line: Headsign • Duration
-                      Text("${step.headsign ?? ''}  •  ${step.duration}",
+                      Text(
+                          stepHeadsign.isEmpty
+                              ? step.duration
+                              : "$directionPrefix $stepHeadsign  •  ${step.duration}",
                           style: TextStyle(color: colors.textSecondary)),
 
                       const SizedBox(height: 12), // Spacer before actions
@@ -6639,13 +6767,28 @@ class _StepCardState extends State<_StepCard> {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (combinePlatformAndStopLabel(
+                                step.platform,
+                                step.departureStopLabel,
+                                stationName: step.startStationName,
+                                isRail: _lineLooksRailForPlatformLabel(
+                                  step.line,
+                                ),
+                              )
+                                  case final collapsedStopDetail?) ...[
+                                _buildCollapsedStopDetailChip(
+                                  context,
+                                  detail: collapsedStopDetail,
+                                ),
+                                const SizedBox(width: 10),
+                              ],
                               Text(
                                   "${step.departureTime} - ${step.arrivalTime}",
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: step.isCancelled
                                           ? colors.textSecondary
-                                          : colors.stepTimeText,
+                                          : colors.textPrimary,
                                       decoration: step.isCancelled
                                           ? TextDecoration.lineThrough
                                           : null)),
@@ -6691,6 +6834,7 @@ class _StepCardState extends State<_StepCard> {
                                 dense: true,
                                 contentPadding:
                                     const EdgeInsets.symmetric(horizontal: 20),
+                                minLeadingWidth: 18,
                                 leading: const Icon(Icons.login,
                                     size: 14, color: Colors.green),
                                 title: Text(
@@ -6704,11 +6848,23 @@ class _StepCardState extends State<_StepCard> {
                                         color: colors.textPrimary,
                                         fontSize: 14,
                                         fontWeight: FontWeight.bold)),
-                                trailing: Text(step.departureTime,
-                                    style: TextStyle(
-                                        color: colors.stepTimeText,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13))))),
+                                trailing: _buildTrailingTimeAndStopDetail(
+                                  context,
+                                  timeText: step.departureTime,
+                                  timeStyle: TextStyle(
+                                    color: colors.delayOnTime,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                  stopDetail: combinePlatformAndStopLabel(
+                                    step.platform,
+                                    step.departureStopLabel,
+                                    stationName: step.startStationName,
+                                    isRail: _lineLooksRailForPlatformLabel(
+                                      step.line,
+                                    ),
+                                  ),
+                                )))),
                   if (step.stopovers != null && step.stopovers!.isNotEmpty)
                     Container(
                         decoration:
@@ -6802,6 +6958,7 @@ class _StepCardState extends State<_StepCard> {
                                       contentPadding:
                                           const EdgeInsets.symmetric(
                                               horizontal: 20),
+                                      minLeadingWidth: 12,
                                       leading: const Icon(Icons.circle,
                                           size: 8, color: Colors.grey),
                                       title: Text(displayName,
@@ -6811,11 +6968,25 @@ class _StepCardState extends State<_StepCard> {
                                       trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Text(timeStr,
-                                                style: TextStyle(
-                                                    color: timeColor,
-                                                    fontSize: 12)),
-                                            const SizedBox(width: 8),
+                                            _buildTrailingTimeAndStopDetail(
+                                              context,
+                                              timeText: timeStr,
+                                              timeStyle: TextStyle(
+                                                color: timeColor,
+                                                fontSize: 12,
+                                              ),
+                                              stopDetail:
+                                                  combinePlatformAndStopLabel(
+                                                platform?.toString(),
+                                                stopLabel,
+                                                stationName: name?.toString() ??
+                                                    displayName,
+                                                isRail:
+                                                    _lineLooksRailForPlatformLabel(
+                                                  step.line,
+                                                ),
+                                              ),
+                                            ),
                                             if (exactStopDate != null)
                                               GestureDetector(
                                                 onLongPress: () => widget
@@ -6904,6 +7075,7 @@ class _StepCardState extends State<_StepCard> {
                             dense: true,
                             contentPadding:
                                 const EdgeInsets.symmetric(horizontal: 20),
+                            minLeadingWidth: 18,
                             leading: const Icon(Icons.flag,
                                 size: 14, color: Colors.red),
                             title: Text(
@@ -6926,11 +7098,23 @@ class _StepCardState extends State<_StepCard> {
                                 timeColor = colors.delayLate;
                                 timeStr += " (+${step.arrivalDelay})";
                               }
-                              return Text(timeStr,
-                                  style: TextStyle(
-                                      color: timeColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13));
+                              return _buildTrailingTimeAndStopDetail(
+                                context,
+                                timeText: timeStr,
+                                timeStyle: TextStyle(
+                                  color: timeColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                                stopDetail: combinePlatformAndStopLabel(
+                                  step.arrivalPlatform,
+                                  step.arrivalStopLabel,
+                                  stationName: step.destinationName,
+                                  isRail: _lineLooksRailForPlatformLabel(
+                                    step.line,
+                                  ),
+                                ),
+                              );
                             }),
                           )))
                 ])));

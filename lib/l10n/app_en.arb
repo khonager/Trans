@@ -565,5 +565,7 @@
   "noDeparturesFound": "No departures found for this stop.",
   "noDeparturesForPlatform": "No departures found for this platform.",
   "loadingDepartures": "Loading departures...",
+  "stopDeparturesJumpToTop": "Go to top",
+  "stopDeparturesJumpToBottom": "Go to bottom",
   "longPressForDepartures": "Long-press any stop to see all departures for that day."
 }

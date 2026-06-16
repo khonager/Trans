@@ -5,10 +5,12 @@ import 'package:intl/intl.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/models/station.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
 
 enum RouteSortOption {
@@ -18,6 +20,20 @@ enum RouteSortOption {
   leastTransfers,
   shortestWait,
   leastWalking,
+}
+
+const double _routeResultsBottomInset = 320;
+
+final RegExp _summaryEmbeddedPlatformParenthesesPattern = RegExp(
+  r'\s*\((?:pl\.|gl\.|gleis|gleise|steig|bahnsteig|bussteig|bussteige|bstg\.?|platz)\s+[^)]+\)',
+  caseSensitive: false,
+);
+
+String _stripSummaryPlatformText(String value) {
+  return value
+      .replaceAll(_summaryEmbeddedPlatformParenthesesPattern, '')
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
 }
 
 bool _shouldDisplaySummaryTripId(String? tripId) {
@@ -36,23 +52,6 @@ bool _shouldDisplaySummaryTripId(String? tripId) {
   return RegExp(r'\d').hasMatch(normalizedTripId);
 }
 
-String _summaryLineWithPlatform(String line, String? platform) {
-  final normalizedLine = line.trim();
-  final normalizedPlatform = platform?.trim();
-  if (normalizedPlatform == null || normalizedPlatform.isEmpty) {
-    return normalizedLine;
-  }
-
-  final lowerLine = normalizedLine.toLowerCase();
-  final lowerPlatform = normalizedPlatform.toLowerCase();
-  if (lowerLine.contains('(pl. $lowerPlatform)') ||
-      lowerLine.contains('(gl. $lowerPlatform)')) {
-    return normalizedLine;
-  }
-  final platformPrefix = _summaryLineLooksRail(normalizedLine) ? 'Gl.' : 'Pl.';
-  return '$normalizedLine ($platformPrefix $normalizedPlatform)';
-}
-
 bool _summaryLineLooksRail(String line) {
   final normalized = line.trim().toUpperCase();
   if (normalized.isEmpty) return false;
@@ -69,6 +68,12 @@ bool _summaryLineLooksRail(String line) {
   return next == ' ' || int.tryParse(next) != null;
 }
 
+IconData _summaryRideModeIcon(String line) {
+  return _summaryLineLooksRail(line)
+      ? Icons.train_outlined
+      : Icons.directions_bus_filled_rounded;
+}
+
 class RouteResultsView extends StatefulWidget {
   final List<Journey> candidates;
   final Function(Journey) onSelect;
@@ -76,6 +81,8 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onLoadEarlier;
   final Future<void> Function()? onLoadLater;
   final Future<void> Function()? onRefresh;
+  final Station? origin;
+  final Station destination;
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
@@ -88,6 +95,8 @@ class RouteResultsView extends StatefulWidget {
     this.onLoadEarlier,
     this.onLoadLater,
     this.onRefresh,
+    this.origin,
+    required this.destination,
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
@@ -188,6 +197,25 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     setState(() => _isLoadingMoreLater = true);
     await widget.onLoadLater?.call();
     if (mounted) setState(() => _isLoadingMoreLater = false);
+  }
+
+  DateTime get _externalSearchTime {
+    if (_sortedCandidates.isEmpty) return DateTime.now();
+    return _sortedCandidates
+        .map((journey) => journey.plannedDeparture ?? journey.departure)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+  }
+
+  Future<void> _openExternalPlanner(Uri uri, String label) async {
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open $label.')),
+      );
+    }
   }
 
   Future<void> _handleCopyJourney(Journey journey) async {
@@ -352,10 +380,15 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 color: widget.loadingIndicatorColor,
                 onRefresh: widget.onRefresh ?? () async {},
                 child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(
-                      16, 16, 16, 100), // Extra bottom padding
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    _routeResultsBottomInset +
+                        MediaQuery.paddingOf(context).bottom,
+                  ),
                   // Items: "Load Earlier" button + routes + "Load Later" button
-                  itemCount: _sortedCandidates.length + 2,
+                  itemCount: _sortedCandidates.length + 3,
                   itemBuilder: (ctx, idx) {
                     if (idx == 0) {
                       // Load Earlier Button
@@ -403,6 +436,17 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       );
                     }
 
+                    if (idx == _sortedCandidates.length + 2) {
+                      final origin = widget.origin;
+                      if (origin == null) return const SizedBox.shrink();
+                      return _ExternalPlannerActions(
+                        origin: origin,
+                        destination: widget.destination,
+                        when: _externalSearchTime,
+                        onOpen: _openExternalPlanner,
+                      );
+                    }
+
                     final journey = _sortedCandidates[idx - 1];
                     return _JourneyCard(
                       journey: journey,
@@ -440,6 +484,187 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ExternalPlannerActions extends StatelessWidget {
+  final Station origin;
+  final Station destination;
+  final DateTime when;
+  final Future<void> Function(Uri uri, String label) onOpen;
+
+  const _ExternalPlannerActions({
+    required this.origin,
+    required this.destination,
+    required this.when,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        children: [
+          Text(
+            'Search this connection in',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _PlannerButton(
+                label: 'DB',
+                icon: Icons.train,
+                onTap: () => onOpen(_buildDbUri(), 'DB'),
+              ),
+              _PlannerButton(
+                label: 'RMV',
+                icon: Icons.directions_bus,
+                onTap: () => onOpen(_buildRmvUri(), 'RMV'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Uri _buildDbUri() {
+    final hashParameters = {
+      'sts': 'true',
+      'so': _placeName(origin),
+      'zo': _placeName(destination),
+      'kl': '2',
+      'r': '13:16:KLASSENLOS:1',
+      if (_dbLocationId(origin) case final originId?) 'soid': originId,
+      if (_dbLocationId(destination) case final destinationId?)
+        'zoid': destinationId,
+      'sot': origin.type == 'address' ? 'ADR' : 'ST',
+      'zot': destination.type == 'address' ? 'ADR' : 'ST',
+      if (_numericStationId(origin) case final originEva?) 'soei': originEva,
+      if (_numericStationId(destination) case final destinationEva?)
+        'zoei': destinationEva,
+      'hd': when.toIso8601String(),
+      'hza': 'D',
+      'ar': 'false',
+      's': 'true',
+      'd': 'false',
+      'hz': '[]',
+      'fm': 'false',
+      'bp': 'false',
+    };
+    return Uri.https('www.bahn.de', '/buchung/fahrplan/suche')
+        .replace(fragment: Uri(queryParameters: hashParameters).query);
+  }
+
+  Uri _buildRmvUri() {
+    return Uri.https(
+      'www.rmv.de',
+      '/c/en/timetables/search-for-route-tips/trip-planner',
+      {
+        'REQ0JourneyStopsS0A': _hafasLocationType(origin),
+        'REQ0JourneyStopsSID': _hafasLocationId(origin),
+        'REQ0JourneyStopsS0G': _placeName(origin),
+        'REQ0JourneyStopsZ0A': _hafasLocationType(destination),
+        'REQ0JourneyStopsZID': _hafasLocationId(destination),
+        'REQ0JourneyStopsZ0G': _placeName(destination),
+        'REQ0JourneyDate': DateFormat('dd.MM.yy').format(when),
+        'REQ0JourneyTime': DateFormat('HH:mm').format(when),
+        'REQ0HafasSearchForw': '1',
+        'context': 'TP',
+        'date': DateFormat('dd.MM.yy').format(when),
+        'language': 'de_DE',
+        'start': '1',
+        'time': DateFormat('HH:mm').format(when),
+        'timeSel': '1',
+      },
+    );
+  }
+
+  String _placeName(Station station) {
+    final city = station.city?.trim();
+    final name = station.name.trim();
+    if (city == null || city.isEmpty || name.contains(city)) return name;
+    return '$city, $name';
+  }
+
+  String _hafasLocationType(Station station) {
+    if (station.type == 'address') return '2';
+    if (station.type == 'location') return '4';
+    return '1';
+  }
+
+  String _hafasLocationId(Station station) {
+    final parts = <String>[
+      'A=${_hafasLocationType(station)}',
+      'O=${_placeName(station)}',
+    ];
+    final lng = station.longitude;
+    final lat = station.latitude;
+    if (lng != null && lat != null) {
+      parts.add('X=${(lng * 1000000).round()}');
+      parts.add('Y=${(lat * 1000000).round()}');
+    }
+    return '${parts.join('@')}@';
+  }
+
+  String? _dbLocationId(Station station) {
+    final lat = station.latitude;
+    final lng = station.longitude;
+    if (lat == null || lng == null) return null;
+
+    final parts = <String>[
+      'A=${_hafasLocationType(station)}',
+      'O=${_placeName(station)}',
+      'X=${(lng * 1000000).round()}',
+      'Y=${(lat * 1000000).round()}',
+      'U=80',
+      if (_numericStationId(station) case final eva?) 'L=$eva',
+      'B=1',
+    ];
+    return '${parts.join('@')}@';
+  }
+
+  String? _numericStationId(Station station) {
+    final trimmed = station.id.trim();
+    return RegExp(r'^\d+$').hasMatch(trimmed) ? trimmed : null;
+  }
+}
+
+class _PlannerButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _PlannerButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: colors.textPrimary,
+        side: BorderSide(color: colors.textSecondary.withValues(alpha: 0.35)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
     );
   }
 }
@@ -551,6 +776,36 @@ class _JourneyCard extends StatelessWidget {
     required this.onCopy,
     this.showTrainNumbers = false,
   });
+
+  Widget _buildRideChip(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+  }) {
+    final colors = TransColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white10,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: colors.textSecondary),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -775,52 +1030,45 @@ class _JourneyCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             // Line Summary (first 3 lines)
-            Row(
-              children: journey.steps
-                  .where((s) => s.type == 'ride')
-                  .take(4)
-                  .map((step) {
-                String displayLine = step.line.trim();
-                final displayableTripId =
-                    _shouldDisplaySummaryTripId(step.tripId)
-                        ? step.tripId!.trim()
-                        : null;
-                // Clean train numbers if disabled
-                if (!showTrainNumbers) {
-                  final regexParens = RegExp(r'\s*\(\d+\)$');
-                  displayLine = displayLine.replaceAll(regexParens, '').trim();
-                  if (step.tripId != null) {
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                alignment: WrapAlignment.start,
+                spacing: 6,
+                runSpacing: 6,
+                children: journey.steps
+                    .where((s) => s.type == 'ride')
+                    .take(4)
+                    .map((step) {
+                  String displayLine = step.line.trim();
+                  final displayableTripId =
+                      _shouldDisplaySummaryTripId(step.tripId)
+                          ? step.tripId!.trim()
+                          : null;
+                  // Clean train numbers if disabled
+                  if (!showTrainNumbers) {
+                    final regexParens = RegExp(r'\s*\(\d+\)$');
                     displayLine =
-                        displayLine.replaceAll(step.tripId!, "").trim();
+                        displayLine.replaceAll(regexParens, '').trim();
+                    if (step.tripId != null) {
+                      displayLine =
+                          displayLine.replaceAll(step.tripId!, "").trim();
+                    }
+                  } else {
+                    // Ensure it's there if enabled
+                    if (displayableTripId != null &&
+                        !displayLine.contains(displayableTripId)) {
+                      displayLine += " ($displayableTripId)";
+                    }
                   }
-                } else {
-                  // Ensure it's there if enabled
-                  if (displayableTripId != null &&
-                      !displayLine.contains(displayableTripId)) {
-                    displayLine += " ($displayableTripId)";
-                  }
-                }
-                displayLine =
-                    _summaryLineWithPlatform(displayLine, step.platform);
-
-                return Container(
-                  margin: const EdgeInsets.only(right: 6),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    displayLine,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                );
-              }).toList(),
+                  displayLine = _stripSummaryPlatformText(displayLine);
+                  return _buildRideChip(
+                    context,
+                    icon: _summaryRideModeIcon(step.line),
+                    label: displayLine,
+                  );
+                }).toList(),
+              ),
             ),
           ],
         ),

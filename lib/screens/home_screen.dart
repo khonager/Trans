@@ -119,8 +119,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _setupAuthListener() {
-    _authSubscription =
-        SupabaseService.client.auth.onAuthStateChange.listen((data) {
+    final client = SupabaseService.maybeClient;
+    if (client == null) return;
+
+    _authSubscription = client.auth.onAuthStateChange.listen((data) {
       final AuthChangeEvent event = data.event;
       if (event == AuthChangeEvent.passwordRecovery) {
         _handlePasswordRecovery();
