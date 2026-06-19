@@ -86,6 +86,10 @@ class RouteResultsView extends StatefulWidget {
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
+  final RouteSortOption initialSort;
+  final ValueChanged<RouteSortOption>? onSortChanged;
+  final ScrollController? scrollController;
+  final double? restoreScrollOffset;
 
   const RouteResultsView({
     super.key,
@@ -100,6 +104,10 @@ class RouteResultsView extends StatefulWidget {
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
+    this.initialSort = RouteSortOption.earliestDeparture,
+    this.onSortChanged,
+    this.scrollController,
+    this.restoreScrollOffset,
   });
 
   @override
@@ -107,7 +115,7 @@ class RouteResultsView extends StatefulWidget {
 }
 
 class _RouteResultsViewState extends State<RouteResultsView> {
-  RouteSortOption _currentSort = RouteSortOption.earliestDeparture;
+  late RouteSortOption _currentSort;
   late List<Journey> _sortedCandidates;
   bool _isLoadingMoreEarlier = false;
   bool _isLoadingMoreLater = false;
@@ -120,8 +128,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   void initState() {
     super.initState();
+    _currentSort = widget.initialSort;
     _sortCandidates();
     _loadUserName();
+    _restoreScrollOffsetAfterBuild();
   }
 
   Future<void> _loadUserName() async {
@@ -148,6 +158,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   void didUpdateWidget(RouteResultsView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialSort != widget.initialSort) {
+      _currentSort = widget.initialSort;
+    }
     _sortCandidates();
   }
 
@@ -182,6 +195,25 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     setState(() {
       _currentSort = option;
       _sortCandidates();
+    });
+    widget.onSortChanged?.call(option);
+  }
+
+  void _restoreScrollOffsetAfterBuild() {
+    final controller = widget.scrollController;
+    final restoreOffset = widget.restoreScrollOffset;
+    if (controller == null || restoreOffset == null || restoreOffset <= 0) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !controller.hasClients) return;
+      final targetOffset = restoreOffset.clamp(
+        0.0,
+        controller.position.maxScrollExtent,
+      );
+      if ((controller.offset - targetOffset).abs() < 1.0) return;
+      controller.jumpTo(targetOffset);
     });
   }
 
@@ -380,6 +412,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 color: widget.loadingIndicatorColor,
                 onRefresh: widget.onRefresh ?? () async {},
                 child: ListView.builder(
+                  controller: widget.scrollController,
                   padding: EdgeInsets.fromLTRB(
                     16,
                     16,

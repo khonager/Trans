@@ -633,6 +633,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
   final Set<String> _savingRouteIds = <String>{};
+  final Map<String, ScrollController> _routeResultsScrollControllers =
+      <String, ScrollController>{};
+  final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
+  final Map<String, RouteSortOption> _routeResultsSortSelections =
+      <String, RouteSortOption>{};
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
@@ -897,6 +902,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _toFocusNode.dispose();
     _scrollController.dispose();
     _suggestionsScrollController.dispose();
+    for (final controller in _routeResultsScrollControllers.values) {
+      controller.dispose();
+    }
     _debounce?.cancel();
     _focusDebounce?.cancel();
     _gpsStream?.cancel();
@@ -2027,6 +2035,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _closeTab(String id) {
+    final controller = _routeResultsScrollControllers.remove(id);
+    controller?.dispose();
+    _routeResultsScrollOffsets.remove(id);
+    _routeResultsSortSelections.remove(id);
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -2038,6 +2050,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  ScrollController _routeResultsScrollControllerFor(String routeId) {
+    return _routeResultsScrollControllers.putIfAbsent(
+      routeId,
+      () {
+        final controller = ScrollController(
+          initialScrollOffset: _routeResultsScrollOffsets[routeId] ?? 0,
+        );
+        controller.addListener(() {
+          if (!controller.hasClients) return;
+          _routeResultsScrollOffsets[routeId] = controller.offset;
+        });
+        return controller;
+      },
+    );
   }
 
   String? _savedConnectionKeyForRoute(RouteTab route) {
@@ -6115,6 +6143,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         route.candidates != null &&
         route.candidates!.isNotEmpty) {
       return RouteResultsView(
+        key: ValueKey<String>('route-results-${route.id}'),
         candidates: route.candidates!,
         onSelect: (journey) {
           Journey? selectedJourneyForEnrichment;
@@ -6166,6 +6195,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
+        initialSort: _routeResultsSortSelections[route.id] ??
+            RouteSortOption.earliestDeparture,
+        onSortChanged: (sort) => _routeResultsSortSelections[route.id] = sort,
+        scrollController: _routeResultsScrollControllerFor(route.id),
+        restoreScrollOffset: _routeResultsScrollOffsets[route.id],
       );
     }
 
