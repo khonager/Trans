@@ -6199,7 +6199,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             RouteSortOption.earliestDeparture,
         onSortChanged: (sort) => _routeResultsSortSelections[route.id] = sort,
         scrollController: _routeResultsScrollControllerFor(route.id),
-        restoreScrollOffset: _routeResultsScrollOffsets[route.id],
       );
     }
 

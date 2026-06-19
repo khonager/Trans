@@ -89,7 +89,6 @@ class RouteResultsView extends StatefulWidget {
   final RouteSortOption initialSort;
   final ValueChanged<RouteSortOption>? onSortChanged;
   final ScrollController? scrollController;
-  final double? restoreScrollOffset;
 
   const RouteResultsView({
     super.key,
@@ -107,7 +106,6 @@ class RouteResultsView extends StatefulWidget {
     this.initialSort = RouteSortOption.earliestDeparture,
     this.onSortChanged,
     this.scrollController,
-    this.restoreScrollOffset,
   });
 
   @override
@@ -131,7 +129,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     _currentSort = widget.initialSort;
     _sortCandidates();
     _loadUserName();
-    _restoreScrollOffsetAfterBuild();
   }
 
   Future<void> _loadUserName() async {
@@ -197,24 +194,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _sortCandidates();
     });
     widget.onSortChanged?.call(option);
-  }
-
-  void _restoreScrollOffsetAfterBuild() {
-    final controller = widget.scrollController;
-    final restoreOffset = widget.restoreScrollOffset;
-    if (controller == null || restoreOffset == null || restoreOffset <= 0) {
-      return;
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !controller.hasClients) return;
-      final targetOffset = restoreOffset.clamp(
-        0.0,
-        controller.position.maxScrollExtent,
-      );
-      if ((controller.offset - targetOffset).abs() < 1.0) return;
-      controller.jumpTo(targetOffset);
-    });
   }
 
   Future<void> _handleLoadEarlier() async {
@@ -412,6 +391,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 color: widget.loadingIndicatorColor,
                 onRefresh: widget.onRefresh ?? () async {},
                 child: ListView.builder(
+                  key: PageStorageKey<String>(
+                    'route-results-list-${widget.destination.id}',
+                  ),
                   controller: widget.scrollController,
                   padding: EdgeInsets.fromLTRB(
                     16,
