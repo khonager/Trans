@@ -88,6 +88,7 @@ class RouteResultsView extends StatefulWidget {
   final bool isBackgroundLoading;
   final RouteSortOption initialSort;
   final ValueChanged<RouteSortOption>? onSortChanged;
+  final ValueChanged<RouteSortOption>? onSortLongPressed;
   final ScrollController? scrollController;
 
   const RouteResultsView({
@@ -105,6 +106,7 @@ class RouteResultsView extends StatefulWidget {
     this.isBackgroundLoading = false,
     this.initialSort = RouteSortOption.earliestDeparture,
     this.onSortChanged,
+    this.onSortLongPressed,
     this.scrollController,
   });
 
@@ -328,6 +330,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         _currentSort == RouteSortOption.earliestDeparture,
                     onTap: () =>
                         _onSortChanged(RouteSortOption.earliestDeparture),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.earliestDeparture,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   _SortChip(
@@ -336,6 +341,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     isSelected: _currentSort == RouteSortOption.earliestArrival,
                     onTap: () =>
                         _onSortChanged(RouteSortOption.earliestArrival),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.earliestArrival,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   _SortChip(
@@ -345,6 +353,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         _currentSort == RouteSortOption.shortestDuration,
                     onTap: () =>
                         _onSortChanged(RouteSortOption.shortestDuration),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.shortestDuration,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   _SortChip(
@@ -352,6 +363,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     icon: Icons.directions_walk,
                     isSelected: _currentSort == RouteSortOption.leastTransfers,
                     onTap: () => _onSortChanged(RouteSortOption.leastTransfers),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.leastTransfers,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   _SortChip(
@@ -359,6 +373,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     icon: Icons.hourglass_empty,
                     isSelected: _currentSort == RouteSortOption.shortestWait,
                     onTap: () => _onSortChanged(RouteSortOption.shortestWait),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.shortestWait,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   _SortChip(
@@ -366,6 +383,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     icon: Icons.directions_walk,
                     isSelected: _currentSort == RouteSortOption.leastWalking,
                     onTap: () => _onSortChanged(RouteSortOption.leastWalking),
+                    onLongPress: () => widget.onSortLongPressed?.call(
+                      RouteSortOption.leastWalking,
+                    ),
                   ),
                 ],
               ),
@@ -734,12 +754,14 @@ class _SortChip extends StatelessWidget {
   final IconData icon;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _SortChip({
     required this.label,
     required this.icon,
     required this.isSelected,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -747,6 +769,7 @@ class _SortChip extends StatelessWidget {
     final colors = TransColors.of(context);
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(

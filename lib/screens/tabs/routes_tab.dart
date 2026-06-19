@@ -36,6 +36,22 @@ const int _activeJourneyRefreshWindowSize = 8;
 
 enum RouteHistoryView { frequent, recent }
 
+class _RouteSearchDefaults {
+  final int minTransferTimeMinutes;
+  final int additionalTransferTimeMinutes;
+  final double transferTimeFactor;
+  final double pedestrianSpeedKmh;
+  final int maxWalkingTimeMinutes;
+
+  const _RouteSearchDefaults({
+    required this.minTransferTimeMinutes,
+    required this.additionalTransferTimeMinutes,
+    required this.transferTimeFactor,
+    required this.pedestrianSpeedKmh,
+    required this.maxWalkingTimeMinutes,
+  });
+}
+
 @visibleForTesting
 ({int leadMinutes, int waitMinutes}) savedJourneyReminderOptionFromWait(
   int reminderMinutes,
@@ -694,6 +710,98 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
       _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
     });
+  }
+
+  RouteSearchSettings _routeSearchSettingsForRequest(
+    DateTime when, {
+    required bool isArrival,
+  }) {
+    return RouteSearchSettings(
+      when: when,
+      isArrival: isArrival,
+    );
+  }
+
+  RouteSearchSettings _fallbackRouteSearchSettingsForSavedJourney(
+    Map<String, dynamic> journey,
+  ) {
+    DateTime when = DateTime.now();
+    bool isArrival = false;
+    final rawDeparture = journey['departure'] ?? journey['plannedDeparture'];
+    final parsedDeparture = rawDeparture is String
+        ? DateTime.tryParse(rawDeparture)?.toLocal()
+        : null;
+    if (parsedDeparture != null) {
+      when = parsedDeparture;
+    } else {
+      final rawArrival = journey['arrival'] ?? journey['plannedArrival'];
+      final parsedArrival = rawArrival is String
+          ? DateTime.tryParse(rawArrival)?.toLocal()
+          : null;
+      if (parsedArrival != null) {
+        when = parsedArrival;
+        isArrival = true;
+      }
+    }
+    return _routeSearchSettingsForRequest(when, isArrival: isArrival);
+  }
+
+  Future<_RouteSearchDefaults> _loadRouteSearchDefaults() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _RouteSearchDefaults(
+      minTransferTimeMinutes: prefs.getInt(
+            TransportApi.advancedMinTransferTimeMinutesPreferenceKey,
+          ) ??
+          TransportApi.defaultAdvancedMinTransferTimeMinutes,
+      additionalTransferTimeMinutes: prefs.getInt(
+            TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey,
+          ) ??
+          TransportApi.defaultAdvancedAdditionalTransferTimeMinutes,
+      transferTimeFactor: ((prefs.getDouble(
+                        TransportApi.advancedTransferTimeFactorPreferenceKey,
+                      ) ??
+                      TransportApi.defaultAdvancedTransferTimeFactor) *
+                  10)
+              .round() /
+          10,
+      pedestrianSpeedKmh: (prefs.getDouble(
+                TransportApi.advancedPedestrianSpeedKmhPreferenceKey,
+              ) ??
+              TransportApi.defaultAdvancedPedestrianSpeedKmh)
+          .clamp(2.0, 10.0),
+      maxWalkingTimeMinutes: prefs.getInt(
+            TransportApi.advancedMaxWalkingTimeMinutesPreferenceKey,
+          ) ??
+          TransportApi.defaultAdvancedMaxWalkingTimeMinutes,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _searchJourneysForSettings(
+    Station from,
+    Station to, {
+    required RouteSearchSettings settings,
+    int results = 7,
+    Function(List<Map<String, dynamic>>)? onPartialResults,
+    void Function(Set<String> activePhases)? onLoadStateChanged,
+    bool Function()? shouldContinue,
+  }) {
+    return TransportApi.searchJourneys(
+      from,
+      to,
+      nahverkehrOnly: widget.onlyNahverkehr,
+      when: settings.when,
+      isArrival: settings.isArrival,
+      results: results,
+      minTransferTimeMinutesOverride: settings.minTransferTimeMinutes,
+      additionalTransferTimeMinutesOverride:
+          settings.additionalTransferTimeMinutes,
+      transferTimeFactorOverride: settings.transferTimeFactor,
+      pedestrianSpeedKmhOverride: settings.pedestrianSpeedKmh,
+      maxWalkingTimeMinutesOverride: settings.maxWalkingTimeMinutes,
+      onPartialResults: onPartialResults,
+      onLoadStateChanged: onLoadStateChanged,
+      shouldContinue: shouldContinue,
+    );
   }
 
   void _handleDeviceRouteSettingsRefresh() {
@@ -3753,7 +3861,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       String title = "",
       String? subtitle,
       Station? origin,
-      Station? destination}) {
+      Station? destination,
+      RouteSearchSettings? searchSettings}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
     Journey? activeJourney;
@@ -3827,6 +3936,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         candidates: candidates,
         activeJourney: activeJourney,
         stack: activeJourney != null ? [activeJourney] : [], // Init stack
+        searchSettings: searchSettings ??
+            _fallbackRouteSearchSettingsForSavedJourney(
+              singleJourneyData ??
+                  (candidatesData?.isNotEmpty == true
+                      ? candidatesData!.first
+                      : const <String, dynamic>{}),
+            ),
       ));
       _activeTabId = id;
     });
@@ -3910,6 +4026,113 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
       }
     });
+  }
+
+  void _replaceTabCandidates(
+    String tabId,
+    List<Map<String, dynamic>> rawData, {
+    RouteSearchSettings? searchSettings,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == tabId);
+      if (idx == -1) return;
+      final currentTab = _tabs[idx];
+      final nextJourneys = <Journey>[];
+      for (final data in rawData) {
+        try {
+          nextJourneys.add(
+            _createJourney(
+              data,
+              destinationNameOverride: currentTab.destination.name,
+            ),
+          );
+        } catch (_) {}
+      }
+      if (nextJourneys.isEmpty) return;
+      _tabs[idx] = currentTab.copyWith(
+        candidates: nextJourneys,
+        searchSettings: searchSettings,
+      );
+    });
+  }
+
+  Future<void> _rerunRouteTabSearch(
+    RouteTab route,
+    RouteSearchSettings searchSettings, {
+    RouteSortOption? preferredSort,
+  }) async {
+    if (_isLoadingRoute) return;
+    final originStation = route.origin ?? _fromStation;
+    if (originStation == null) return;
+
+    final rerunToken = ++_nextRouteSearchToken;
+    setState(() {
+      _activeRouteSearchToken = rerunToken;
+      _isLoadingRoute = true;
+      _activeRouteLoadPhases = <String>{};
+      if (preferredSort != null) {
+        _routeResultsSortSelections[route.id] = preferredSort;
+      }
+    });
+
+    var hasVisibleResults = false;
+    try {
+      void handlePartialResults(List<Map<String, dynamic>> partial) {
+        if (partial.isEmpty ||
+            !mounted ||
+            _isRouteSearchCancelled(rerunToken)) {
+          return;
+        }
+        hasVisibleResults = true;
+        _replaceTabCandidates(
+          route.id,
+          partial,
+          searchSettings: searchSettings,
+        );
+      }
+
+      final results = await _searchJourneysForSettings(
+        originStation,
+        route.destination,
+        settings: searchSettings,
+        onPartialResults: handlePartialResults,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(rerunToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(rerunToken),
+      );
+
+      if (_isRouteSearchCancelled(rerunToken) || !mounted) return;
+      if (results.isNotEmpty) {
+        hasVisibleResults = true;
+        _replaceTabCandidates(
+          route.id,
+          results,
+          searchSettings: searchSettings,
+        );
+      } else {
+        final message = searchSettings.isArrival
+            ? 'No routes found for that arrival time.'
+            : 'No routes found for that departure time.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } catch (error) {
+      if (mounted && !_isRouteSearchCancelled(rerunToken)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              hasVisibleResults
+                  ? 'Could not finish updating these routes.'
+                  : 'Could not update these routes right now.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      _disposeRouteSearch(rerunToken);
+    }
   }
 
   Future<void> _findRoutes() async {
@@ -4031,6 +4254,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       TransportApi.addSyntheticDebugLog(
         'ui: search request from=${resolvedFrom.name} to=${_toStation!.name} when=${when.toIso8601String()} arriveBy=$_isArrival',
       );
+      final searchSettings =
+          _routeSearchSettingsForRequest(when, isArrival: _isArrival);
       void handlePartialResults(List<Map<String, dynamic>> partial) {
         if (!mounted || _isRouteSearchCancelled(searchToken)) {
           TransportApi.addSyntheticDebugLog(
@@ -4049,7 +4274,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           currentTabId = _addJourneyTab(
               candidatesData: partial,
               origin: resolvedFrom,
-              destination: _toStation);
+              destination: _toStation,
+              searchSettings: searchSettings);
           TransportApi.addSyntheticDebugLog(
             'ui: created tab id=$currentTabId token=$searchToken partial=${partial.length}',
           );
@@ -4079,7 +4305,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             currentTabId = _addJourneyTab(
                 candidatesData: res,
                 origin: resolvedFrom,
-                destination: _toStation);
+                destination: _toStation,
+                searchSettings: searchSettings);
             TransportApi.addSyntheticDebugLog(
               'ui: created tab from ${late ? 'late ' : ''}final id=$currentTabId token=$searchToken results=${res.length}',
             );
@@ -4100,14 +4327,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       late final Future<List<Map<String, dynamic>>> searchFuture;
-      searchFuture = TransportApi.searchJourneys(resolvedFrom, _toStation!,
-          nahverkehrOnly: widget.onlyNahverkehr,
-          when: when,
-          isArrival: _isArrival,
-          onLoadStateChanged: (phases) =>
-              _setRouteLoadPhasesForToken(searchToken, phases),
-          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
-          onPartialResults: handlePartialResults);
+      searchFuture = _searchJourneysForSettings(
+        resolvedFrom,
+        _toStation!,
+        settings: searchSettings,
+        onLoadStateChanged: (phases) =>
+            _setRouteLoadPhasesForToken(searchToken, phases),
+        shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+        onPartialResults: handlePartialResults,
+      );
 
       final res = await searchFuture.timeout(
         const Duration(seconds: 20),
@@ -5630,12 +5858,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
 
       unawaited(
-        TransportApi.searchJourneys(
+        _searchJourneysForSettings(
           originStation,
           route.destination,
-          nahverkehrOnly: widget.onlyNahverkehr,
-          when: refDate,
-          isArrival: isArrival,
+          settings: route.searchSettings.copyWith(
+            when: refDate,
+            isArrival: isArrival,
+          ),
           results: 5,
           onLoadStateChanged: (phases) =>
               _setRouteLoadPhasesForToken(loadToken, phases),
@@ -5687,18 +5916,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       bool hasRefreshResults = false;
       bool hasChanged = false;
 
-      // Keep a small buffer in the past so recently due/late services are still refreshable.
-      DateTime refDate = DateTime.now().subtract(const Duration(minutes: 10));
-      if (route.candidates != null && route.candidates!.isNotEmpty) {
-        final firstCandidateTime = route.candidates!.first.plannedDeparture ??
-            route.candidates!.first.departure;
-        final candidateRef =
-            firstCandidateTime.subtract(const Duration(minutes: 3));
-        if (candidateRef.isBefore(refDate)) {
-          refDate = candidateRef;
-        }
-      }
-
       void handleResults(List<Map<String, dynamic>> partial) {
         if (partial.isEmpty ||
             !mounted ||
@@ -5731,12 +5948,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         });
       }
 
-      final newResults = await TransportApi.searchJourneys(
+      final newResults = await _searchJourneysForSettings(
         originStation,
         route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate,
-        isArrival: false,
+        settings: route.searchSettings,
         results: 5,
         onLoadStateChanged: (phases) =>
             _setRouteLoadPhasesForToken(refreshToken, phases),
@@ -5987,12 +6202,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       }
 
-      final newResults = await TransportApi.searchJourneys(
+      final newResults = await _searchJourneysForSettings(
         originStation,
         route.destination,
-        nahverkehrOnly: widget.onlyNahverkehr,
-        when: refDate.subtract(const Duration(minutes: 20)),
-        isArrival: false,
+        settings: route.searchSettings.copyWith(
+          when: refDate.subtract(const Duration(minutes: 20)),
+          isArrival: false,
+        ),
         // We only need a compact window around the active trip to merge live updates.
         results: _activeJourneyRefreshWindowSize,
         onLoadStateChanged: (phases) =>
@@ -6020,6 +6236,284 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     } finally {
       _disposeRouteSearch(refreshToken);
     }
+  }
+
+  Future<void> _showRouteSortAdjustSheet(
+    RouteTab route,
+    RouteSortOption sort,
+  ) async {
+    final defaults = await _loadRouteSearchDefaults();
+    if (!mounted) return;
+
+    var draft = route.searchSettings;
+    final l10n = AppLocalizations.of(context)!;
+    final colors = TransColors.of(context);
+
+    String title;
+    String subtitle;
+    switch (sort) {
+      case RouteSortOption.earliestDeparture:
+        title = l10n.earliestDep;
+        subtitle = 'Change the departure time for this route tab only.';
+        break;
+      case RouteSortOption.earliestArrival:
+        title = l10n.earliestArr;
+        subtitle = 'Change the arrival time for this route tab only.';
+        break;
+      case RouteSortOption.shortestDuration:
+        title = l10n.fastest;
+        subtitle =
+            'Tune walking speed to favor faster overall connections in this tab.';
+        break;
+      case RouteSortOption.leastTransfers:
+        title = l10n.leastTransfers;
+        subtitle =
+            'Add transfer buffer so this tab favors routes with easier changes.';
+        break;
+      case RouteSortOption.shortestWait:
+        title = l10n.leastWait;
+        subtitle =
+            'Adjust transfer padding so this tab can favor tighter or looser waits.';
+        break;
+      case RouteSortOption.leastWalking:
+        title = l10n.leastWalking;
+        subtitle =
+            'Limit maximum walking time for this tab without changing app settings.';
+        break;
+    }
+
+    final updatedSettings = await showModalBottomSheet<RouteSearchSettings>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).cardColor,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            Future<void> pickDateTime({required bool isArrival}) async {
+              final pickedDate = await showDatePicker(
+                context: sheetContext,
+                initialDate: draft.when,
+                firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+              );
+              if (pickedDate == null || !sheetContext.mounted) return;
+              final pickedTime = await showTimePicker(
+                context: sheetContext,
+                initialTime: TimeOfDay.fromDateTime(draft.when),
+              );
+              if (pickedTime == null) return;
+              setSheetState(() {
+                draft = draft.copyWith(
+                  when: DateTime(
+                    pickedDate.year,
+                    pickedDate.month,
+                    pickedDate.day,
+                    pickedTime.hour,
+                    pickedTime.minute,
+                  ),
+                  isArrival: isArrival,
+                );
+              });
+            }
+
+            Widget buildSliderTile({
+              required String label,
+              required String valueText,
+              required double value,
+              required double min,
+              required double max,
+              required int divisions,
+              required ValueChanged<double> onChanged,
+              required VoidCallback onReset,
+            }) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$label: $valueText',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Slider(
+                    value: value,
+                    min: min,
+                    max: max,
+                    divisions: divisions,
+                    activeColor: colors.effectiveSeed,
+                    thumbColor: colors.effectiveSeed,
+                    onChanged: onChanged,
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: onReset,
+                      child: const Text('Use app default'),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            Widget editor;
+            switch (sort) {
+              case RouteSortOption.earliestDeparture:
+                editor = ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Departure time'),
+                  subtitle: Text(
+                    DateFormat('EEE, MMM d • HH:mm').format(draft.when),
+                  ),
+                  trailing: const Icon(Icons.schedule),
+                  onTap: () => pickDateTime(isArrival: false),
+                );
+                break;
+              case RouteSortOption.earliestArrival:
+                editor = ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Arrival time'),
+                  subtitle: Text(
+                    DateFormat('EEE, MMM d • HH:mm').format(draft.when),
+                  ),
+                  trailing: const Icon(Icons.schedule),
+                  onTap: () => pickDateTime(isArrival: true),
+                );
+                break;
+              case RouteSortOption.shortestDuration:
+                final effectiveSpeed =
+                    draft.pedestrianSpeedKmh ?? defaults.pedestrianSpeedKmh;
+                editor = buildSliderTile(
+                  label: 'Walking speed',
+                  valueText: '${effectiveSpeed.toStringAsFixed(1)} km/h',
+                  value: effectiveSpeed,
+                  min: 2,
+                  max: 10,
+                  divisions: 80,
+                  onChanged: (value) => setSheetState(() {
+                    draft = draft.copyWith(
+                      pedestrianSpeedKmh: (value * 10).round() / 10,
+                    );
+                  }),
+                  onReset: () => setSheetState(() {
+                    draft = draft.copyWith(clearPedestrianSpeedKmh: true);
+                  }),
+                );
+                break;
+              case RouteSortOption.leastTransfers:
+                final effectiveMinTransfer = draft.minTransferTimeMinutes ??
+                    defaults.minTransferTimeMinutes;
+                editor = buildSliderTile(
+                  label: 'Minimum transfer time',
+                  valueText: '$effectiveMinTransfer min',
+                  value: effectiveMinTransfer.toDouble(),
+                  min: 0,
+                  max: 30,
+                  divisions: 30,
+                  onChanged: (value) => setSheetState(() {
+                    draft = draft.copyWith(
+                      minTransferTimeMinutes: value.round(),
+                    );
+                  }),
+                  onReset: () => setSheetState(() {
+                    draft = draft.copyWith(clearMinTransferTimeMinutes: true);
+                  }),
+                );
+                break;
+              case RouteSortOption.shortestWait:
+                final effectivePadding = draft.additionalTransferTimeMinutes ??
+                    defaults.additionalTransferTimeMinutes;
+                editor = buildSliderTile(
+                  label: 'Transfer padding',
+                  valueText: '$effectivePadding min',
+                  value: effectivePadding.toDouble(),
+                  min: 0,
+                  max: 30,
+                  divisions: 30,
+                  onChanged: (value) => setSheetState(() {
+                    draft = draft.copyWith(
+                      additionalTransferTimeMinutes: value.round(),
+                    );
+                  }),
+                  onReset: () => setSheetState(() {
+                    draft = draft.copyWith(
+                      clearAdditionalTransferTimeMinutes: true,
+                    );
+                  }),
+                );
+                break;
+              case RouteSortOption.leastWalking:
+                final effectiveMaxWalking = draft.maxWalkingTimeMinutes ??
+                    defaults.maxWalkingTimeMinutes;
+                editor = buildSliderTile(
+                  label: 'Maximum walking time',
+                  valueText: '$effectiveMaxWalking min',
+                  value: effectiveMaxWalking.toDouble(),
+                  min: 5,
+                  max: 120,
+                  divisions: 23,
+                  onChanged: (value) => setSheetState(() {
+                    draft = draft.copyWith(
+                      maxWalkingTimeMinutes: value.round(),
+                    );
+                  }),
+                  onReset: () => setSheetState(() {
+                    draft = draft.copyWith(clearMaxWalkingTimeMinutes: true);
+                  }),
+                );
+                break;
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  20,
+                  20,
+                  20 + MediaQuery.of(sheetContext).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      subtitle,
+                      style: TextStyle(color: colors.textSecondary),
+                    ),
+                    const SizedBox(height: 16),
+                    editor,
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(draft),
+                        child: const Text('Apply to this routes view'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (updatedSettings == null || !mounted) return;
+    await _rerunRouteTabSearch(
+      route,
+      updatedSettings,
+      preferredSort: sort,
+    );
   }
 
   Future<void> _enrichActiveJourneyPlatforms(
@@ -6198,6 +6692,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         initialSort: _routeResultsSortSelections[route.id] ??
             RouteSortOption.earliestDeparture,
         onSortChanged: (sort) => _routeResultsSortSelections[route.id] = sort,
+        onSortLongPressed: (sort) => _showRouteSortAdjustSheet(route, sort),
         scrollController: _routeResultsScrollControllerFor(route.id),
       );
     }

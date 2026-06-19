@@ -260,6 +260,62 @@ class Journey {
       0;
 }
 
+class RouteSearchSettings {
+  final DateTime when;
+  final bool isArrival;
+  final int? minTransferTimeMinutes;
+  final int? additionalTransferTimeMinutes;
+  final double? transferTimeFactor;
+  final double? pedestrianSpeedKmh;
+  final int? maxWalkingTimeMinutes;
+
+  const RouteSearchSettings({
+    required this.when,
+    required this.isArrival,
+    this.minTransferTimeMinutes,
+    this.additionalTransferTimeMinutes,
+    this.transferTimeFactor,
+    this.pedestrianSpeedKmh,
+    this.maxWalkingTimeMinutes,
+  });
+
+  RouteSearchSettings copyWith({
+    DateTime? when,
+    bool? isArrival,
+    int? minTransferTimeMinutes,
+    bool clearMinTransferTimeMinutes = false,
+    int? additionalTransferTimeMinutes,
+    bool clearAdditionalTransferTimeMinutes = false,
+    double? transferTimeFactor,
+    bool clearTransferTimeFactor = false,
+    double? pedestrianSpeedKmh,
+    bool clearPedestrianSpeedKmh = false,
+    int? maxWalkingTimeMinutes,
+    bool clearMaxWalkingTimeMinutes = false,
+  }) {
+    return RouteSearchSettings(
+      when: when ?? this.when,
+      isArrival: isArrival ?? this.isArrival,
+      minTransferTimeMinutes: clearMinTransferTimeMinutes
+          ? null
+          : (minTransferTimeMinutes ?? this.minTransferTimeMinutes),
+      additionalTransferTimeMinutes: clearAdditionalTransferTimeMinutes
+          ? null
+          : (additionalTransferTimeMinutes ??
+              this.additionalTransferTimeMinutes),
+      transferTimeFactor: clearTransferTimeFactor
+          ? null
+          : (transferTimeFactor ?? this.transferTimeFactor),
+      pedestrianSpeedKmh: clearPedestrianSpeedKmh
+          ? null
+          : (pedestrianSpeedKmh ?? this.pedestrianSpeedKmh),
+      maxWalkingTimeMinutes: clearMaxWalkingTimeMinutes
+          ? null
+          : (maxWalkingTimeMinutes ?? this.maxWalkingTimeMinutes),
+    );
+  }
+}
+
 class RouteTab {
   final String id;
   final String title;
@@ -279,6 +335,7 @@ class RouteTab {
   final Journey? activeJourney;
   // NEW: State for expanding/collapsing the secondary row
   final bool isStackExpanded;
+  final RouteSearchSettings searchSettings;
 
   RouteTab({
     required this.id,
@@ -294,6 +351,7 @@ class RouteTab {
     this.stack = const [],
     this.activeJourney,
     this.isStackExpanded = true, // Default open
+    required this.searchSettings,
   });
 
   RouteTab copyWith({
@@ -311,6 +369,7 @@ class RouteTab {
     Journey? activeJourney,
     bool clearActiveJourney = false,
     bool? isStackExpanded,
+    RouteSearchSettings? searchSettings,
   }) {
     return RouteTab(
       id: id ?? this.id,
@@ -327,6 +386,7 @@ class RouteTab {
       activeJourney:
           clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
       isStackExpanded: isStackExpanded ?? this.isStackExpanded,
+      searchSettings: searchSettings ?? this.searchSettings,
     );
   }
 }

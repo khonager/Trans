@@ -709,6 +709,9 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 3,
+    int? minTransferTimeMinutesOverride,
+    int? additionalTransferTimeMinutesOverride,
+    double? transferTimeFactorOverride,
     double? pedestrianSpeedKmhOverride,
     int? maxWalkingTimeMinutesOverride,
   }) {
@@ -760,20 +763,24 @@ class TransportApi {
     }
 
     if (_advancedSettingsEnabledForDevice) {
-      if (_advancedMinTransferTimeMinutes !=
-          defaultAdvancedMinTransferTimeMinutes) {
-        params['minTransferTime'] = _advancedMinTransferTimeMinutes.toString();
+      final minTransferTimeMinutes =
+          minTransferTimeMinutesOverride ?? _advancedMinTransferTimeMinutes;
+      if (minTransferTimeMinutes != defaultAdvancedMinTransferTimeMinutes) {
+        params['minTransferTime'] = minTransferTimeMinutes.toString();
       }
-      if (_advancedAdditionalTransferTimeMinutes !=
+      final additionalTransferTimeMinutes =
+          additionalTransferTimeMinutesOverride ??
+              _advancedAdditionalTransferTimeMinutes;
+      if (additionalTransferTimeMinutes !=
           defaultAdvancedAdditionalTransferTimeMinutes) {
         params['additionalTransferTime'] =
-            _advancedAdditionalTransferTimeMinutes.toString();
+            additionalTransferTimeMinutes.toString();
       }
-      if ((_advancedTransferTimeFactor - defaultAdvancedTransferTimeFactor)
-              .abs() >
+      final transferTimeFactor =
+          transferTimeFactorOverride ?? _advancedTransferTimeFactor;
+      if ((transferTimeFactor - defaultAdvancedTransferTimeFactor).abs() >
           0.0001) {
-        params['transferTimeFactor'] =
-            _advancedTransferTimeFactor.toStringAsFixed(2);
+        params['transferTimeFactor'] = transferTimeFactor.toStringAsFixed(2);
       }
 
       final pedestrianSpeedKmh =
@@ -924,6 +931,9 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 3,
+    int? minTransferTimeMinutesOverride,
+    int? additionalTransferTimeMinutesOverride,
+    double? transferTimeFactorOverride,
     double? pedestrianSpeedKmhOverride,
     int? maxWalkingTimeMinutesOverride,
   }) async {
@@ -935,6 +945,10 @@ class TransportApi {
       when: when,
       isArrival: isArrival,
       results: results,
+      minTransferTimeMinutesOverride: minTransferTimeMinutesOverride,
+      additionalTransferTimeMinutesOverride:
+          additionalTransferTimeMinutesOverride,
+      transferTimeFactorOverride: transferTimeFactorOverride,
       pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
       maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
     );
@@ -978,6 +992,11 @@ class TransportApi {
     required DateTime? when,
     required bool isArrival,
     required int results,
+    int? minTransferTimeMinutesOverride,
+    int? additionalTransferTimeMinutesOverride,
+    double? transferTimeFactorOverride,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
     bool allowDirectFallback = true,
   }) async {
     final primary = await _searchJourneysMotis(
@@ -987,6 +1006,12 @@ class TransportApi {
       when: when,
       isArrival: isArrival,
       results: results,
+      minTransferTimeMinutesOverride: minTransferTimeMinutesOverride,
+      additionalTransferTimeMinutesOverride:
+          additionalTransferTimeMinutesOverride,
+      transferTimeFactorOverride: transferTimeFactorOverride,
+      pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+      maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
     );
     if (primary.isNotEmpty) return primary;
 
@@ -1019,6 +1044,10 @@ class TransportApi {
           when: when,
           isArrival: isArrival,
           results: results,
+          minTransferTimeMinutesOverride: minTransferTimeMinutesOverride,
+          additionalTransferTimeMinutesOverride:
+              additionalTransferTimeMinutesOverride,
+          transferTimeFactorOverride: transferTimeFactorOverride,
           pedestrianSpeedKmhOverride: retry.$1,
           maxWalkingTimeMinutesOverride: retry.$2,
         );
@@ -4762,6 +4791,11 @@ class TransportApi {
     DateTime? when,
     bool isArrival = false,
     int results = 7,
+    int? minTransferTimeMinutesOverride,
+    int? additionalTransferTimeMinutesOverride,
+    double? transferTimeFactorOverride,
+    double? pedestrianSpeedKmhOverride,
+    int? maxWalkingTimeMinutesOverride,
     Function(List<Map<String, dynamic>>)? onPartialResults,
     void Function(Set<String> activePhases)? onLoadStateChanged,
     bool Function()? shouldContinue,
@@ -4816,6 +4850,12 @@ class TransportApi {
           when: when,
           isArrival: isArrival,
           results: results,
+          minTransferTimeMinutesOverride: minTransferTimeMinutesOverride,
+          additionalTransferTimeMinutesOverride:
+              additionalTransferTimeMinutesOverride,
+          transferTimeFactorOverride: transferTimeFactorOverride,
+          pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+          maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
         );
         if (onPartialResults != null) onPartialResults(res);
         List<Map<String, dynamic>> finalResults = res;
@@ -4869,6 +4909,12 @@ class TransportApi {
           when: when,
           isArrival: isArrival,
           results: results,
+          minTransferTimeMinutesOverride: minTransferTimeMinutesOverride,
+          additionalTransferTimeMinutesOverride:
+              additionalTransferTimeMinutesOverride,
+          transferTimeFactorOverride: transferTimeFactorOverride,
+          pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
+          maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
           allowDirectFallback: false,
         ).then((res) => res).catchError((e) {
           debugPrint('Hybrid: Transitous failed: $e');
