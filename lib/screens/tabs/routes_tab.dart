@@ -6249,22 +6249,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               fontWeight: FontWeight.bold,
                               color: colors.textPrimary)));
 
+                  void handleBack() => setState(() {
+                        final idx = _tabs.indexWhere((t) => t.id == route.id);
+                        if (idx != -1) {
+                          _tabs[idx] = route.copyWith(clearActiveJourney: true);
+                        }
+                      });
+
                   final actions =
                       Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (showBackButton)
-                      IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          icon: const Icon(Icons.arrow_back),
-                          onPressed: () => setState(() {
-                                final idx =
-                                    _tabs.indexWhere((t) => t.id == route.id);
-                                if (idx != -1) {
-                                  _tabs[idx] =
-                                      route.copyWith(clearActiveJourney: true);
-                                }
-                              })),
-                    if (showBackButton) const SizedBox(width: 8),
                     IconButton(
                         icon: isSavingRoute
                             ? SizedBox(
@@ -6337,7 +6330,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SizedBox(width: double.infinity, child: timeText()),
+                          Row(children: [
+                            if (showBackButton)
+                              IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  icon: const Icon(Icons.arrow_back),
+                                  onPressed: handleBack),
+                            if (showBackButton) const SizedBox(width: 8),
+                            Expanded(child: timeText()),
+                          ]),
                           const SizedBox(height: 8),
                           Row(children: [
                             Expanded(
@@ -6354,15 +6356,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         ]);
                   }
 
-                  return Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(child: timeText()),
-                        const SizedBox(width: 8),
-                        actions,
-                        const SizedBox(width: 8),
-                        durationChip
-                      ]);
+                  return Row(children: [
+                    if (showBackButton)
+                      IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: handleBack),
+                    if (showBackButton) const SizedBox(width: 8),
+                    Expanded(child: timeText()),
+                    const SizedBox(width: 8),
+                    actions,
+                    const SizedBox(width: 8),
+                    durationChip
+                  ]);
                 })),
             for (int i = 0; i < route.steps.length; i++)
               _StepCard(
