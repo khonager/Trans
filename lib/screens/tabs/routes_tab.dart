@@ -33,6 +33,7 @@ import '../map_screen.dart';
 import 'route_results_view.dart';
 
 const int _activeJourneyRefreshWindowSize = 8;
+const int _routeLoadMoreResultCount = 30;
 
 enum RouteHistoryView { frequent, recent }
 
@@ -5772,22 +5773,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime refDate;
     bool isArrival;
     DateTime? earlierBoundary;
-    DateTime? earlierWindowStart;
 
     if (earlier) {
       if (route.candidates == null || route.candidates!.isEmpty) return;
       earlierBoundary = route.candidates!
           .map((journey) => journey.plannedDeparture ?? journey.departure)
           .reduce((a, b) => a.isBefore(b) ? a : b);
-      earlierWindowStart = earlierBoundary.subtract(const Duration(hours: 2));
-      refDate = earlierWindowStart;
+      refDate = earlierBoundary.subtract(const Duration(hours: 2));
       isArrival = false;
     } else {
       if (route.candidates == null || route.candidates!.isEmpty) return;
       refDate = route.candidates!
           .map((journey) => journey.plannedDeparture ?? journey.departure)
           .reduce((a, b) => a.isAfter(b) ? a : b)
-          .add(const Duration(minutes: 1));
+          .add(const Duration(seconds: 1));
       isArrival = false; // Find connections departing after the last one
     }
 
@@ -5815,11 +5814,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             );
           } catch (e) {/* ignore */}
         }
-        if (earlier && earlierBoundary != null && earlierWindowStart != null) {
+        if (earlier && earlierBoundary != null) {
           newJourneys.removeWhere((journey) {
             final departure = journey.plannedDeparture ?? journey.departure;
-            return !departure.isBefore(earlierBoundary!) ||
-                departure.isBefore(earlierWindowStart!);
+            return !departure.isBefore(earlierBoundary!);
+          });
+        } else if (!earlier) {
+          newJourneys.removeWhere((journey) {
+            final departure = journey.plannedDeparture ?? journey.departure;
+            return departure.isBefore(refDate);
           });
         }
         if (newJourneys.isEmpty) {
@@ -5865,7 +5868,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             when: refDate,
             isArrival: isArrival,
           ),
-          results: 5,
+          results: _routeLoadMoreResultCount,
           onLoadStateChanged: (phases) =>
               _setRouteLoadPhasesForToken(loadToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(loadToken),
