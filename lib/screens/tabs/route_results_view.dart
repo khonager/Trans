@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -24,10 +23,6 @@ enum RouteSortOption {
 }
 
 const double _routeResultsBottomInset = 320;
-const int _routeCardInsertDurationMs = 420;
-const int _routeCardInsertStaggerMs = 80;
-const double _routeCardInsertSlideDistance = 1.05;
-const double _routeCardRevealTopSlop = 2;
 
 final RegExp _summaryEmbeddedPlatformParenthesesPattern = RegExp(
   r'\s*\((?:pl\.|gl\.|gleis|gleise|steig|bahnsteig|bussteig|bussteige|bstg\.?|platz)\s+[^)]+\)',
@@ -127,13 +122,11 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   // Ticket Generation
   final GlobalKey _ticketKey = GlobalKey();
+  final GlobalKey _listKey = GlobalKey();
   final Map<String, GlobalKey> _journeyCardKeys = <String, GlobalKey>{};
-  final Set<String> _preloadedEarlierJourneyIdentities = <String>{};
-  final List<String> _preloadedEarlierJourneyQueue = <String>[];
-  final Set<String> _recentlyInsertedJourneyIdentities = <String>{};
-  final Map<String, int> _recentlyInsertedJourneyOrders = <String, int>{};
-  final List<Timer> _insertedJourneyAnimationCleanups = <Timer>[];
-  DateTime? _lastEarlierJourneyRevealAt;
+  String? _pendingScrollAnchorIdentity;
+  double? _pendingScrollAnchorTop;
+  bool _pendingScrollAnchorRestoreScheduled = false;
   Journey? _ticketJourney;
   String _userName = "Anon";
 
@@ -168,30 +161,12 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   @override
   void didUpdateWidget(RouteResultsView oldWidget) {
-    final previousIdentities =
-        _sortedCandidates.map(_scrollIdentityFor).toSet();
-    final previousFirstVisibleIdentity = _visibleSortedCandidates.isEmpty
-        ? null
-        : _scrollIdentityFor(_visibleSortedCandidates.first);
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
     _sortCandidates();
-    if (widget.candidates.length > oldWidget.candidates.length) {
-      _trackInsertedJourneys(
-        previousIdentities,
-        previousFirstVisibleIdentity,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final timer in _insertedJourneyAnimationCleanups) {
-      timer.cancel();
-    }
-    super.dispose();
+    _scheduleScrollAnchorRestore();
   }
 
   void _sortCandidates() {
@@ -221,17 +196,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     }
   }
 
-  List<Journey> get _visibleSortedCandidates => _sortedCandidates
-      .where(
-        (journey) => !_preloadedEarlierJourneyIdentities.contains(
-          _scrollIdentityFor(journey),
-        ),
-      )
-      .toList();
-
-  bool get _hasPreloadedEarlierJourneys =>
-      _preloadedEarlierJourneyQueue.isNotEmpty;
-
   void _onSortChanged(RouteSortOption option) {
     setState(() {
       _currentSort = option;
@@ -244,14 +208,17 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     final departure = journey.plannedDeparture ?? journey.departure;
     final arrival = journey.plannedArrival ?? journey.arrival;
     var firstRideLine = '';
+    var firstRideTripId = '';
     for (final step in journey.steps) {
       if (step.type != 'ride') continue;
       firstRideLine = step.line;
+      firstRideTripId = step.tripId ?? '';
       break;
     }
     return '${departure.millisecondsSinceEpoch}|'
         '${arrival.millisecondsSinceEpoch}|'
-        '${firstRideLine.trim().toUpperCase()}';
+        '${firstRideLine.trim().toUpperCase()}|'
+        '$firstRideTripId';
   }
 
   GlobalKey _journeyCardKeyFor(Journey journey) {
@@ -259,120 +226,110 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     return _journeyCardKeys.putIfAbsent(key, GlobalKey.new);
   }
 
-  void _trackInsertedJourneys(
-    Set<String> previousIdentities,
-    String? previousFirstVisibleIdentity,
-  ) {
-    final insertedIdentities = <String>[];
+  Rect? _globalBoundsFor(GlobalKey key) {
+    final context = key.currentContext;
+    if (context == null) return null;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    return topLeft & renderObject.size;
+  }
+
+  void _captureScrollAnchor() {
+    final controller = widget.scrollController;
+    final listBounds = _globalBoundsFor(_listKey);
+    if (controller == null ||
+        !controller.hasClients ||
+        listBounds == null ||
+        _sortedCandidates.isEmpty) {
+      return;
+    }
+
+    Journey? anchorJourney;
+    double? anchorTop;
+    var bestDistance = double.infinity;
+
     for (final journey in _sortedCandidates) {
-      final identity = _scrollIdentityFor(journey);
-      if (!previousIdentities.contains(identity)) {
-        insertedIdentities.add(identity);
+      final bounds = _globalBoundsFor(_journeyCardKeyFor(journey));
+      if (bounds == null ||
+          bounds.bottom <= listBounds.top ||
+          bounds.top >= listBounds.bottom) {
+        continue;
       }
-    }
-    if (insertedIdentities.isEmpty) return;
 
-    final previousFirstIndex = previousFirstVisibleIdentity == null
-        ? -1
-        : _sortedCandidates.indexWhere(
-            (journey) =>
-                _scrollIdentityFor(journey) == previousFirstVisibleIdentity,
-          );
-    final preloadedEarlierIdentities = previousFirstIndex <= 0
-        ? <String>[]
-        : _sortedCandidates
-            .take(previousFirstIndex)
-            .map(_scrollIdentityFor)
-            .where(insertedIdentities.contains)
-            .toList();
-
-    if (preloadedEarlierIdentities.isNotEmpty) {
-      for (final identity in preloadedEarlierIdentities) {
-        if (_preloadedEarlierJourneyIdentities.add(identity)) {
-          _preloadedEarlierJourneyQueue.add(identity);
-        }
+      final distance =
+          bounds.top <= listBounds.top ? 0.0 : bounds.top - listBounds.top;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        anchorJourney = journey;
+        anchorTop = bounds.top;
       }
     }
 
-    final immediatelyVisibleIdentities = insertedIdentities
-        .where((identity) => !preloadedEarlierIdentities.contains(identity))
-        .toList();
-    if (immediatelyVisibleIdentities.isNotEmpty) {
-      _markJourneyIdentitiesForAnimation(immediatelyVisibleIdentities);
-    }
+    if (anchorJourney == null || anchorTop == null) return;
+    _pendingScrollAnchorIdentity = _scrollIdentityFor(anchorJourney);
+    _pendingScrollAnchorTop = anchorTop;
+    _pendingScrollAnchorRestoreScheduled = false;
   }
 
-  void _markJourneyIdentitiesForAnimation(List<String> identities) {
-    if (identities.isEmpty) return;
-    final animationOrders = <String, int>{};
-
-    for (var i = 0; i < identities.length; i += 1) {
-      final identity = identities[i];
-      _recentlyInsertedJourneyIdentities.add(identity);
-      _recentlyInsertedJourneyOrders[identity] = i;
-      animationOrders[identity] = i;
+  void _scheduleScrollAnchorRestore() {
+    if (_pendingScrollAnchorIdentity == null ||
+        _pendingScrollAnchorTop == null ||
+        _pendingScrollAnchorRestoreScheduled) {
+      return;
     }
 
-    final cleanupTimer = Timer(
-      Duration(
-        milliseconds: _routeCardInsertDurationMs +
-            (_routeCardInsertStaggerMs * animationOrders.length) +
-            120,
-      ),
-      () {
-        if (!mounted) return;
-        setState(() {
-          for (final identity in animationOrders.keys) {
-            _recentlyInsertedJourneyIdentities.remove(identity);
-            _recentlyInsertedJourneyOrders.remove(identity);
-          }
-        });
-      },
-    );
-    _insertedJourneyAnimationCleanups.add(cleanupTimer);
-  }
-
-  bool _handleScrollNotification(ScrollNotification notification) {
-    if (_preloadedEarlierJourneyQueue.isEmpty) return false;
-    final metrics = notification.metrics;
-    final isAtTop =
-        metrics.pixels <= metrics.minScrollExtent + _routeCardRevealTopSlop;
-    if (!isAtTop) return false;
-
-    final isPullingPastTop =
-        notification is OverscrollNotification && notification.overscroll < 0;
-    final isScrollingTowardEarlier = notification is UserScrollNotification &&
-        notification.direction == ScrollDirection.forward;
-    if (!isPullingPastTop && !isScrollingTowardEarlier) return false;
-
-    final now = DateTime.now();
-    final lastRevealAt = _lastEarlierJourneyRevealAt;
-    if (lastRevealAt != null &&
-        now.difference(lastRevealAt).inMilliseconds <
-            _routeCardInsertStaggerMs + 80) {
-      return false;
-    }
-    _lastEarlierJourneyRevealAt = now;
-    _revealNextPreloadedEarlierJourney();
-    return true;
-  }
-
-  void _revealNextPreloadedEarlierJourney() {
-    if (_preloadedEarlierJourneyQueue.isEmpty) return;
-    final identity = _preloadedEarlierJourneyQueue.removeLast();
-    setState(() {
-      _preloadedEarlierJourneyIdentities.remove(identity);
-      _markJourneyIdentitiesForAnimation(<String>[identity]);
+    _pendingScrollAnchorRestoreScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreScrollAnchor();
     });
+  }
+
+  void _clearScrollAnchor() {
+    _pendingScrollAnchorIdentity = null;
+    _pendingScrollAnchorTop = null;
+    _pendingScrollAnchorRestoreScheduled = false;
+  }
+
+  void _restoreScrollAnchor() {
+    if (!mounted) return;
+    final identity = _pendingScrollAnchorIdentity;
+    final previousTop = _pendingScrollAnchorTop;
+    final controller = widget.scrollController;
+    _clearScrollAnchor();
+
+    if (identity == null ||
+        previousTop == null ||
+        controller == null ||
+        !controller.hasClients) {
+      return;
+    }
+
+    final key = _journeyCardKeys[identity];
+    final currentBounds = key == null ? null : _globalBoundsFor(key);
+    if (currentBounds == null) return;
+
+    final delta = currentBounds.top - previousTop;
+    if (delta.abs() <= 0.5) return;
+
+    final targetOffset = (controller.offset + delta).clamp(
+      controller.position.minScrollExtent,
+      controller.position.maxScrollExtent,
+    );
+    controller.jumpTo(targetOffset.toDouble());
   }
 
   Future<void> _handleLoadEarlier() async {
     if (_isLoadingMoreEarlier) return;
+    _captureScrollAnchor();
     setState(() => _isLoadingMoreEarlier = true);
     try {
       await widget.onLoadEarlier?.call();
     } finally {
       if (mounted) setState(() => _isLoadingMoreEarlier = false);
+      if (!_pendingScrollAnchorRestoreScheduled) {
+        _clearScrollAnchor();
+      }
     }
   }
 
@@ -384,8 +341,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   }
 
   Future<void> _handleRefresh() async {
-    if (_hasPreloadedEarlierJourneys) return;
-    await widget.onRefresh?.call();
+    await (widget.onRefresh?.call() ?? Future<void>.value());
   }
 
   DateTime get _externalSearchTime {
@@ -464,7 +420,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    final visibleCandidates = _visibleSortedCandidates;
     return Stack(
       children: [
         Column(
@@ -586,109 +541,91 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             Expanded(
               child: RefreshIndicator(
                 color: widget.loadingIndicatorColor,
-                notificationPredicate: (notification) =>
-                    !_hasPreloadedEarlierJourneys &&
-                    defaultScrollNotificationPredicate(notification),
                 onRefresh: _handleRefresh,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleScrollNotification,
-                  child: ListView.builder(
-                    key: PageStorageKey<String>(
-                      'route-results-list-${widget.destination.id}',
-                    ),
-                    controller: widget.scrollController,
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      16,
-                      16,
-                      _routeResultsBottomInset +
-                          MediaQuery.paddingOf(context).bottom,
-                    ),
-                    // Items: "Load Earlier" button + routes + "Load Later" button
-                    itemCount: visibleCandidates.length + 3,
-                    itemBuilder: (ctx, idx) {
-                      if (idx == 0) {
-                        if (_hasPreloadedEarlierJourneys) {
-                          return const SizedBox.shrink();
-                        }
-
-                        // Load Earlier Button
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: SizedBox(
-                              height: 36,
-                              child: Center(
-                                child: _isLoadingMoreEarlier
-                                    ? SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: widget.loadingIndicatorColor,
-                                        ))
-                                    : _LoadTrigger(
-                                        label: AppLocalizations.of(context)!
-                                            .loadEarlier,
-                                        icon: Icons.keyboard_arrow_up,
-                                        onTap: _handleLoadEarlier,
-                                      ),
-                              ),
+                child: ListView.builder(
+                  key: _listKey,
+                  controller: widget.scrollController,
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    _routeResultsBottomInset +
+                        MediaQuery.paddingOf(context).bottom,
+                  ),
+                  // Items: "Load Earlier" button + routes + "Load Later" button
+                  itemCount: _sortedCandidates.length + 3,
+                  itemBuilder: (ctx, idx) {
+                    if (idx == 0) {
+                      // Load Earlier Button
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: SizedBox(
+                            height: 36,
+                            child: Center(
+                              child: _isLoadingMoreEarlier
+                                  ? SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: widget.loadingIndicatorColor,
+                                      ))
+                                  : _LoadTrigger(
+                                      label: AppLocalizations.of(context)!
+                                          .loadEarlier,
+                                      icon: Icons.keyboard_arrow_up,
+                                      onTap: _handleLoadEarlier,
+                                    ),
                             ),
                           ),
-                        );
-                      }
-
-                      if (idx == visibleCandidates.length + 1) {
-                        // Load Later Button
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: _isLoadingMoreLater
-                                ? SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: widget.loadingIndicatorColor,
-                                    ))
-                                : _LoadTrigger(
-                                    label:
-                                        AppLocalizations.of(context)!.loadLater,
-                                    icon: Icons.keyboard_arrow_down,
-                                    onTap: _handleLoadLater,
-                                  ),
-                          ),
-                        );
-                      }
-
-                      if (idx == visibleCandidates.length + 2) {
-                        final origin = widget.origin;
-                        if (origin == null) return const SizedBox.shrink();
-                        return _ExternalPlannerActions(
-                          origin: origin,
-                          destination: widget.destination,
-                          when: _externalSearchTime,
-                          onOpen: _openExternalPlanner,
-                        );
-                      }
-
-                      final journey = visibleCandidates[idx - 1];
-                      final identity = _scrollIdentityFor(journey);
-                      return _InsertedJourneyCardMotion(
-                        key: _journeyCardKeyFor(journey),
-                        animate: _recentlyInsertedJourneyIdentities
-                            .contains(identity),
-                        order: _recentlyInsertedJourneyOrders[identity] ?? 0,
-                        child: _JourneyCard(
-                          journey: journey,
-                          onTap: () => widget.onSelect(journey),
-                          onCopy: () => _handleCopyJourney(journey),
-                          showTrainNumbers: widget.showTrainNumbers,
                         ),
                       );
-                    },
-                  ),
+                    }
+
+                    if (idx == _sortedCandidates.length + 1) {
+                      // Load Later Button
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: _isLoadingMoreLater
+                              ? SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: widget.loadingIndicatorColor,
+                                  ))
+                              : _LoadTrigger(
+                                  label:
+                                      AppLocalizations.of(context)!.loadLater,
+                                  icon: Icons.keyboard_arrow_down,
+                                  onTap: _handleLoadLater,
+                                ),
+                        ),
+                      );
+                    }
+
+                    if (idx == _sortedCandidates.length + 2) {
+                      final origin = widget.origin;
+                      if (origin == null) return const SizedBox.shrink();
+                      return _ExternalPlannerActions(
+                        origin: origin,
+                        destination: widget.destination,
+                        when: _externalSearchTime,
+                        onOpen: _openExternalPlanner,
+                      );
+                    }
+
+                    final journey = _sortedCandidates[idx - 1];
+                    return _JourneyCard(
+                      key: _journeyCardKeyFor(journey),
+                      journey: journey,
+                      onTap: () => widget.onSelect(journey),
+                      onCopy: () => _handleCopyJourney(journey),
+                      showTrainNumbers: widget.showTrainNumbers,
+                    );
+                  },
                 ),
               ),
             ),
@@ -1001,80 +938,6 @@ class _SortChip extends StatelessWidget {
   }
 }
 
-class _InsertedJourneyCardMotion extends StatefulWidget {
-  final Widget child;
-  final bool animate;
-  final int order;
-
-  const _InsertedJourneyCardMotion({
-    super.key,
-    required this.child,
-    required this.animate,
-    required this.order,
-  });
-
-  @override
-  State<_InsertedJourneyCardMotion> createState() =>
-      _InsertedJourneyCardMotionState();
-}
-
-class _InsertedJourneyCardMotionState extends State<_InsertedJourneyCardMotion>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<Offset> _slideAnimation;
-  late final Animation<double> _fadeAnimation;
-  Timer? _startTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: _routeCardInsertDurationMs),
-      value: widget.animate ? 0 : 1,
-    );
-    final curvedAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(-_routeCardInsertSlideDistance, 0),
-      end: Offset.zero,
-    ).animate(curvedAnimation);
-    _fadeAnimation = Tween<double>(
-      begin: 0.01,
-      end: 1,
-    ).animate(curvedAnimation);
-
-    if (widget.animate) {
-      _startTimer = Timer(
-        Duration(milliseconds: _routeCardInsertStaggerMs * widget.order),
-        () {
-          if (mounted) _controller.forward();
-        },
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _startTimer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: widget.child,
-      ),
-    );
-  }
-}
-
 class _JourneyCard extends StatelessWidget {
   final Journey journey;
   final VoidCallback onTap;
@@ -1082,6 +945,7 @@ class _JourneyCard extends StatelessWidget {
   final bool showTrainNumbers;
 
   const _JourneyCard({
+    super.key,
     required this.journey,
     required this.onTap,
     required this.onCopy,
