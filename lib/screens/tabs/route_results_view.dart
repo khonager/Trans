@@ -229,6 +229,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       )
       .toList();
 
+  bool get _hasPreloadedEarlierJourneys =>
+      _preloadedEarlierJourneyQueue.isNotEmpty;
+
   void _onSortChanged(RouteSortOption option) {
     setState(() {
       _currentSort = option;
@@ -378,6 +381,11 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     setState(() => _isLoadingMoreLater = true);
     await widget.onLoadLater?.call();
     if (mounted) setState(() => _isLoadingMoreLater = false);
+  }
+
+  Future<void> _handleRefresh() async {
+    if (_hasPreloadedEarlierJourneys) return;
+    await widget.onRefresh?.call();
   }
 
   DateTime get _externalSearchTime {
@@ -578,7 +586,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             Expanded(
               child: RefreshIndicator(
                 color: widget.loadingIndicatorColor,
-                onRefresh: widget.onRefresh ?? () async {},
+                notificationPredicate: (notification) =>
+                    !_hasPreloadedEarlierJourneys &&
+                    defaultScrollNotificationPredicate(notification),
+                onRefresh: _handleRefresh,
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _handleScrollNotification,
                   child: ListView.builder(
@@ -597,6 +608,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     itemCount: visibleCandidates.length + 3,
                     itemBuilder: (ctx, idx) {
                       if (idx == 0) {
+                        if (_hasPreloadedEarlierJourneys) {
+                          return const SizedBox.shrink();
+                        }
+
                         // Load Earlier Button
                         return Center(
                           child: Padding(
