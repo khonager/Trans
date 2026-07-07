@@ -156,11 +156,16 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   @override
   void didUpdateWidget(RouteResultsView oldWidget) {
+    final previousSortedCandidates = List<Journey>.from(_sortedCandidates);
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
     _sortCandidates();
+    _preserveScrollAfterPrepend(
+      previousSortedCandidates,
+      _sortedCandidates,
+    );
   }
 
   void _sortCandidates() {
@@ -196,6 +201,56 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _sortCandidates();
     });
     widget.onSortChanged?.call(option);
+  }
+
+  String _scrollIdentityFor(Journey journey) {
+    final departure = journey.plannedDeparture ?? journey.departure;
+    final arrival = journey.plannedArrival ?? journey.arrival;
+    var firstRideLine = '';
+    var firstRideTripId = '';
+    for (final step in journey.steps) {
+      if (step.type != 'ride') continue;
+      firstRideLine = step.line;
+      firstRideTripId = step.tripId ?? '';
+      break;
+    }
+    return '${departure.millisecondsSinceEpoch}|'
+        '${arrival.millisecondsSinceEpoch}|'
+        '$firstRideLine|'
+        '$firstRideTripId';
+  }
+
+  void _preserveScrollAfterPrepend(
+    List<Journey> oldCandidates,
+    List<Journey> newCandidates,
+  ) {
+    final controller = widget.scrollController;
+    if (controller == null ||
+        !controller.hasClients ||
+        oldCandidates.isEmpty ||
+        newCandidates.length <= oldCandidates.length) {
+      return;
+    }
+
+    final oldFirstKey = _scrollIdentityFor(oldCandidates.first);
+    final oldFirstNewIndex = newCandidates.indexWhere(
+      (journey) => _scrollIdentityFor(journey) == oldFirstKey,
+    );
+    if (oldFirstNewIndex <= 0) return;
+
+    final offsetBefore = controller.offset;
+    final maxScrollExtentBefore = controller.position.maxScrollExtent;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !controller.hasClients) return;
+      final addedExtent =
+          controller.position.maxScrollExtent - maxScrollExtentBefore;
+      if (addedExtent <= 0.5) return;
+      final targetOffset = (offsetBefore + addedExtent).clamp(
+        controller.position.minScrollExtent,
+        controller.position.maxScrollExtent,
+      );
+      controller.jumpTo(targetOffset.toDouble());
+    });
   }
 
   Future<void> _handleLoadEarlier() async {
