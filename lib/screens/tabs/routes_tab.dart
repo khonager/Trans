@@ -543,6 +543,26 @@ Journey _preferJourneyWithMorePlatformDetail(
   return existing;
 }
 
+List<Journey> _mergeJourneyCandidates(
+  Iterable<Journey> existing,
+  Iterable<Journey> incoming,
+) {
+  final byKey = <String, Journey>{};
+  for (final journey in existing) {
+    byKey[_journeyListKey(journey)] = journey;
+  }
+  for (final journey in incoming) {
+    final key = _journeyListKey(journey);
+    final previous = byKey[key];
+    byKey[key] = previous == null
+        ? journey
+        : _preferJourneyWithMorePlatformDetail(previous, journey);
+  }
+
+  return byKey.values.toList()
+    ..sort((a, b) => a.departure.compareTo(b.departure));
+}
+
 Journey _bestCurrentJourneyVersion(
   Journey target,
   Iterable<Journey> candidates,
@@ -5837,20 +5857,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
-            final byKey = <String, Journey>{};
-            for (final journey in currentRoute.candidates!) {
-              byKey[_journeyListKey(journey)] = journey;
-            }
-            for (final journey in newJourneys) {
-              final key = _journeyListKey(journey);
-              final existing = byKey[key];
-              byKey[key] = existing == null
-                  ? journey
-                  : _preferJourneyWithMorePlatformDetail(existing, journey);
-            }
-
-            final updatedCandidates = byKey.values.toList()
-              ..sort((a, b) => a.departure.compareTo(b.departure));
+            final updatedCandidates = _mergeJourneyCandidates(
+              currentRoute.candidates ?? const <Journey>[],
+              newJourneys,
+            );
             _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
           }
         });
@@ -5938,7 +5948,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // handleResults may run multiple times (partial + final). We keep the
         // latest comparison so the completion toast reflects the final visible
         // candidate list after refresh settles.
-        final newSignature = _journeyRefreshSignature(newJourneys);
+        final newSignature = _journeyRefreshSignature(
+          _mergeJourneyCandidates(previousCandidates, newJourneys),
+        );
         hasChanged = previousSignature != newSignature;
         hasRefreshResults = true;
 
@@ -5946,7 +5958,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
-            _tabs[idx] = currentRoute.copyWith(candidates: newJourneys);
+            final updatedCandidates = _mergeJourneyCandidates(
+              currentRoute.candidates ?? const <Journey>[],
+              newJourneys,
+            );
+            final activeJourney = currentRoute.activeJourney == null
+                ? null
+                : _bestCurrentJourneyVersion(
+                    currentRoute.activeJourney!,
+                    updatedCandidates,
+                  );
+            _tabs[idx] = currentRoute.copyWith(
+              candidates: updatedCandidates,
+              activeJourney: activeJourney,
+              steps: activeJourney?.steps ?? currentRoute.steps,
+            );
           }
         });
       }

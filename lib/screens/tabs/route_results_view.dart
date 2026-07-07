@@ -162,6 +162,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   void didUpdateWidget(RouteResultsView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final shouldPreserveScroll = _updatePrependsVisibleContent(oldWidget);
+    if (shouldPreserveScroll && _pendingScrollAnchorIdentity == null) {
+      _captureScrollAnchor();
+    }
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
@@ -170,30 +174,36 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   }
 
   void _sortCandidates() {
-    _sortedCandidates = List.from(widget.candidates);
-    switch (_currentSort) {
+    _sortedCandidates = _sortedJourneys(widget.candidates, _currentSort);
+  }
+
+  List<Journey> _sortedJourneys(
+    Iterable<Journey> journeys,
+    RouteSortOption sort,
+  ) {
+    final sorted = List<Journey>.from(journeys);
+    switch (sort) {
       case RouteSortOption.earliestDeparture:
-        _sortedCandidates.sort((a, b) => a.departure.compareTo(b.departure));
+        sorted.sort((a, b) => a.departure.compareTo(b.departure));
         break;
       case RouteSortOption.earliestArrival:
-        _sortedCandidates.sort((a, b) => a.arrival.compareTo(b.arrival));
+        sorted.sort((a, b) => a.arrival.compareTo(b.arrival));
         break;
       case RouteSortOption.shortestDuration:
-        _sortedCandidates.sort((a, b) => a.duration.compareTo(b.duration));
+        sorted.sort((a, b) => a.duration.compareTo(b.duration));
         break;
       case RouteSortOption.leastTransfers:
-        _sortedCandidates
-            .sort((a, b) => a.transferCount.compareTo(b.transferCount));
+        sorted.sort((a, b) => a.transferCount.compareTo(b.transferCount));
         break;
       case RouteSortOption.shortestWait:
-        _sortedCandidates
-            .sort((a, b) => a.totalWaitTime.compareTo(b.totalWaitTime));
+        sorted.sort((a, b) => a.totalWaitTime.compareTo(b.totalWaitTime));
         break;
       case RouteSortOption.leastWalking:
-        _sortedCandidates.sort(
+        sorted.sort(
             (a, b) => a.totalWalkingDuration.compareTo(b.totalWalkingDuration));
         break;
     }
+    return sorted;
   }
 
   void _onSortChanged(RouteSortOption option) {
@@ -226,6 +236,31 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     return _journeyCardKeys.putIfAbsent(key, GlobalKey.new);
   }
 
+  bool _updatePrependsVisibleContent(RouteResultsView oldWidget) {
+    if (oldWidget.initialSort != widget.initialSort ||
+        widget.candidates.length <= oldWidget.candidates.length ||
+        _sortedCandidates.isEmpty) {
+      return false;
+    }
+
+    final anchorJourney = _visibleScrollAnchor()?.journey ??
+        (_sortedCandidates.isEmpty ? null : _sortedCandidates.first);
+    if (anchorJourney == null) return false;
+
+    final anchorIdentity = _scrollIdentityFor(anchorJourney);
+    final oldIndex = _sortedCandidates.indexWhere(
+      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+    );
+    if (oldIndex < 0) return false;
+
+    final nextSortedCandidates =
+        _sortedJourneys(widget.candidates, _currentSort);
+    final newIndex = nextSortedCandidates.indexWhere(
+      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+    );
+    return newIndex > oldIndex;
+  }
+
   Rect? _globalBoundsFor(GlobalKey key) {
     final context = key.currentContext;
     if (context == null) return null;
@@ -235,14 +270,14 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     return topLeft & renderObject.size;
   }
 
-  void _captureScrollAnchor() {
+  ({Journey journey, double top})? _visibleScrollAnchor() {
     final controller = widget.scrollController;
     final listBounds = _globalBoundsFor(_listKey);
     if (controller == null ||
         !controller.hasClients ||
         listBounds == null ||
         _sortedCandidates.isEmpty) {
-      return;
+      return null;
     }
 
     Journey? anchorJourney;
@@ -266,9 +301,15 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       }
     }
 
-    if (anchorJourney == null || anchorTop == null) return;
-    _pendingScrollAnchorIdentity = _scrollIdentityFor(anchorJourney);
-    _pendingScrollAnchorTop = anchorTop;
+    if (anchorJourney == null || anchorTop == null) return null;
+    return (journey: anchorJourney, top: anchorTop);
+  }
+
+  void _captureScrollAnchor() {
+    final anchor = _visibleScrollAnchor();
+    if (anchor == null) return;
+    _pendingScrollAnchorIdentity = _scrollIdentityFor(anchor.journey);
+    _pendingScrollAnchorTop = anchor.top;
     _pendingScrollAnchorRestoreScheduled = false;
   }
 
