@@ -5855,10 +5855,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             return departure.isBefore(refDate);
           });
         }
-        TransportApi.addSyntheticDebugLog(
-          'route-load-more: partial tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
-          'raw=$rawCount usable=${newJourneys.length}',
-        );
         if (newJourneys.isEmpty) {
           _releaseBlockingRouteLoad(loadToken);
           if (!visibleResults.isCompleted) {
@@ -5892,6 +5888,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             setState(() {
               _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
             });
+            TransportApi.addSyntheticDebugLog(
+              'route-load-more: partial tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+              'raw=$rawCount usable=${newJourneys.length}',
+            );
             TransportApi.addSyntheticDebugLog(
               'route-load-more: candidates tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
               'old=$oldCount new=${updatedCandidates.length} delta=${updatedCandidates.length - oldCount}',

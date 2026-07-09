@@ -502,6 +502,38 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     _debugLogScroll(
       'prepend-compensation-after seq=$seq $afterJump',
     );
+    if (anchorIdentity != null && anchorTop != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _debugActiveLoadEarlierSequence != seq) return;
+        final key = _journeyCardKeys[anchorIdentity];
+        final currentBounds = key == null ? null : _globalBoundsFor(key);
+        if (currentBounds == null) {
+          _debugLogScroll(
+            'prepend-anchor-second-pass-skipped seq=$seq reason=missing-anchor-bounds',
+          );
+          _clearLoadEarlierProbe(seq);
+          return;
+        }
+        final delta = currentBounds.top - anchorTop;
+        if (delta.abs() > 0.5) {
+          final target = (controller.offset + delta).clamp(
+            controller.position.minScrollExtent,
+            controller.position.maxScrollExtent,
+          );
+          _debugLogScroll(
+            'prepend-anchor-second-pass seq=$seq delta=${delta.toStringAsFixed(1)} '
+            'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
+          );
+          controller.jumpTo(target.toDouble());
+        } else {
+          _debugLogScroll(
+            'prepend-anchor-second-pass-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
+          );
+        }
+        _clearLoadEarlierProbe(seq);
+      });
+      return;
+    }
     _clearLoadEarlierProbe(seq);
   }
 
