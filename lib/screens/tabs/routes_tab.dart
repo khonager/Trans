@@ -34,6 +34,7 @@ import 'route_results_view.dart';
 
 const int _activeJourneyRefreshWindowSize = 8;
 const int _routeLoadMoreResultCount = 30;
+const int _routeLoadEarlierResultCount = 16;
 
 enum RouteHistoryView { frequent, recent }
 
@@ -5793,6 +5794,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime refDate;
     bool isArrival;
     DateTime? earlierBoundary;
+    final requestedResults =
+        earlier ? _routeLoadEarlierResultCount : _routeLoadMoreResultCount;
 
     if (earlier) {
       if (route.candidates == null || route.candidates!.isEmpty) return;
@@ -5810,6 +5813,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       isArrival = false; // Find connections departing after the last one
     }
 
+    TransportApi.addSyntheticDebugLog(
+      'route-load-more: start tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+      'currentCount=${route.candidates?.length ?? 0} ref=${refDate.toIso8601String()} '
+      'earlierBoundary=${earlierBoundary?.toIso8601String() ?? 'n/a'} results=$requestedResults',
+    );
+
     setState(() {
       _activeRouteSearchToken = loadToken;
       _isLoadingRoute = true;
@@ -5825,6 +5834,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (partial.isEmpty || !mounted || _isRouteSearchCancelled(loadToken)) {
           return;
         }
+        final rawCount = partial.length;
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -5845,6 +5855,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             return departure.isBefore(refDate);
           });
         }
+        TransportApi.addSyntheticDebugLog(
+          'route-load-more: partial tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+          'raw=$rawCount usable=${newJourneys.length}',
+        );
         if (newJourneys.isEmpty) {
           _releaseBlockingRouteLoad(loadToken);
           if (!visibleResults.isCompleted) {
@@ -5857,11 +5871,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
+            final oldCount = currentRoute.candidates?.length ?? 0;
             final updatedCandidates = _mergeJourneyCandidates(
               currentRoute.candidates ?? const <Journey>[],
               newJourneys,
             );
             _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            TransportApi.addSyntheticDebugLog(
+              'route-load-more: candidates tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+              'old=$oldCount new=${updatedCandidates.length} delta=${updatedCandidates.length - oldCount}',
+            );
           }
         });
         _releaseBlockingRouteLoad(loadToken);
@@ -5878,11 +5897,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             when: refDate,
             isArrival: isArrival,
           ),
-          results: _routeLoadMoreResultCount,
           onLoadStateChanged: (phases) =>
               _setRouteLoadPhasesForToken(loadToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(loadToken),
           onPartialResults: appendResults,
+          results: requestedResults,
         ).then((newResults) {
           if (_isRouteSearchCancelled(loadToken) || !mounted) return;
           appendResults(newResults);
@@ -5900,12 +5919,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       await visibleResults.future;
     } catch (e) {
+      TransportApi.addSyntheticDebugLog(
+        'route-load-more: error tab=${route.id} direction=${earlier ? 'earlier' : 'later'} error=$e',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotLoadMoreRoutes(e.toString()))));
       }
     } finally {
+      TransportApi.addSyntheticDebugLog(
+        'route-load-more: finish tab=${route.id} direction=${earlier ? 'earlier' : 'later'}',
+      );
       _releaseBlockingRouteLoad(loadToken);
     }
   }
