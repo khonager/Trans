@@ -26,6 +26,7 @@ enum RouteSortOption {
 }
 
 const double _routeResultsBottomInset = 320;
+const double _routeResultsPrependCacheExtent = 6000;
 
 class _RouteScrollDebugSnapshot {
   final String label;
@@ -179,6 +180,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   int? _debugLoadEarlierStartCandidateCount;
   String? _prependAnchorIdentity;
   double? _prependAnchorTop;
+  bool _didPreCompensatePrepend = false;
 
   @override
   void initState() {
@@ -218,6 +220,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
         seq != null && widget.candidates.length > oldCount;
     if (shouldPreservePrependAnchor) {
       _capturePrependAnchor();
+      _preCompensateEarlierPrependScroll(widget.candidates);
     }
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
@@ -344,6 +347,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     _debugLoadEarlierStartCandidateCount = null;
     _prependAnchorIdentity = null;
     _prependAnchorTop = null;
+    _didPreCompensatePrepend = false;
   }
 
   String _scrollIdentityFor(Journey journey) {
@@ -426,6 +430,53 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     );
   }
 
+  double? _averageMeasuredJourneyExtent() {
+    var total = 0.0;
+    var count = 0;
+    for (final journey in _sortedCandidates) {
+      final bounds = _globalBoundsFor(_journeyCardKeyFor(journey));
+      if (bounds == null) continue;
+      total += bounds.height;
+      count++;
+    }
+    if (count == 0) return null;
+    return total / count;
+  }
+
+  void _preCompensateEarlierPrependScroll(List<Journey> nextCandidates) {
+    final anchorIdentity = _prependAnchorIdentity;
+    final controller = widget.scrollController;
+    if (anchorIdentity == null ||
+        controller == null ||
+        !controller.hasClients ||
+        _sortedCandidates.isEmpty) {
+      return;
+    }
+
+    final oldIndex = _sortedCandidates.indexWhere(
+      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+    );
+    if (oldIndex < 0) return;
+
+    final nextSortedCandidates = _sortedJourneys(nextCandidates, _currentSort);
+    final newIndex = nextSortedCandidates.indexWhere(
+      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+    );
+    final insertedBefore = newIndex - oldIndex;
+    if (insertedBefore <= 0) return;
+
+    final averageExtent = _averageMeasuredJourneyExtent();
+    if (averageExtent == null || averageExtent <= 0) return;
+
+    final target = controller.offset + insertedBefore * averageExtent;
+    _debugLogScroll(
+      'prepend-precompensation insertedBefore=$insertedBefore averageExtent=${averageExtent.toStringAsFixed(1)} '
+      'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
+    );
+    controller.jumpTo(target);
+    _didPreCompensatePrepend = true;
+  }
+
   void _compensateEarlierPrependScroll(
     int seq,
     _RouteScrollDebugSnapshot afterFrame,
@@ -478,6 +529,38 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _debugLogScroll(
         'prepend-anchor-compensation-fallback seq=$seq reason=missing-anchor-bounds',
       );
+      if (_didPreCompensatePrepend) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _debugActiveLoadEarlierSequence != seq) return;
+          final key = _journeyCardKeys[anchorIdentity];
+          final currentBounds = key == null ? null : _globalBoundsFor(key);
+          if (currentBounds == null) {
+            _debugLogScroll(
+              'prepend-anchor-second-pass-skipped seq=$seq reason=missing-anchor-bounds',
+            );
+            _clearLoadEarlierProbe(seq);
+            return;
+          }
+          final delta = currentBounds.top - anchorTop;
+          if (delta.abs() > 0.5) {
+            final target = (controller.offset + delta).clamp(
+              controller.position.minScrollExtent,
+              controller.position.maxScrollExtent,
+            );
+            _debugLogScroll(
+              'prepend-anchor-second-pass seq=$seq delta=${delta.toStringAsFixed(1)} '
+              'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
+            );
+            controller.jumpTo(target.toDouble());
+          } else {
+            _debugLogScroll(
+              'prepend-anchor-second-pass-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
+            );
+          }
+          _clearLoadEarlierProbe(seq);
+        });
+        return;
+      }
     }
 
     final addedExtent = afterFrame.max! - start.max!;
@@ -803,6 +886,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                   child: ListView.builder(
                     key: _listKey,
                     controller: widget.scrollController,
+                    cacheExtent: _routeResultsPrependCacheExtent,
                     padding: EdgeInsets.fromLTRB(
                       16,
                       16,
