@@ -169,12 +169,16 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   // Ticket Generation
   final GlobalKey _ticketKey = GlobalKey();
+  final GlobalKey _listKey = GlobalKey();
+  final Map<String, GlobalKey> _journeyCardKeys = <String, GlobalKey>{};
   Journey? _ticketJourney;
   String _userName = "Anon";
   int _debugLoadEarlierSequence = 0;
   int? _debugActiveLoadEarlierSequence;
   _RouteScrollDebugSnapshot? _debugLoadEarlierStartSnapshot;
   int? _debugLoadEarlierStartCandidateCount;
+  String? _prependAnchorIdentity;
+  double? _prependAnchorTop;
 
   @override
   void initState() {
@@ -209,12 +213,17 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   void didUpdateWidget(RouteResultsView oldWidget) {
     super.didUpdateWidget(oldWidget);
     final oldCount = oldWidget.candidates.length;
+    final seq = _debugActiveLoadEarlierSequence;
+    final shouldPreservePrependAnchor =
+        seq != null && widget.candidates.length > oldCount;
+    if (shouldPreservePrependAnchor) {
+      _capturePrependAnchor();
+    }
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
     _sortCandidates();
     if (oldCount != widget.candidates.length) {
-      final seq = _debugActiveLoadEarlierSequence;
       final snapshot = _debugCaptureScrollSnapshot('didUpdateWidget');
       if (kDebugMode) {
         _debugLogScroll(
@@ -226,7 +235,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final afterFrame = _debugCaptureScrollSnapshot('post-candidate-frame');
-        if (seq != null && widget.candidates.length > oldCount) {
+        if (shouldPreservePrependAnchor) {
           _compensateEarlierPrependScroll(seq, afterFrame);
         }
         if (kDebugMode) {
@@ -333,6 +342,88 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     _debugActiveLoadEarlierSequence = null;
     _debugLoadEarlierStartSnapshot = null;
     _debugLoadEarlierStartCandidateCount = null;
+    _prependAnchorIdentity = null;
+    _prependAnchorTop = null;
+  }
+
+  String _scrollIdentityFor(Journey journey) {
+    final departure = journey.plannedDeparture ?? journey.departure;
+    final arrival = journey.plannedArrival ?? journey.arrival;
+    var firstRideLine = '';
+    var firstRideTripId = '';
+    for (final step in journey.steps) {
+      if (step.type != 'ride') continue;
+      firstRideLine = step.line;
+      firstRideTripId = step.tripId ?? '';
+      break;
+    }
+    return '${departure.millisecondsSinceEpoch}|'
+        '${arrival.millisecondsSinceEpoch}|'
+        '${firstRideLine.trim().toUpperCase()}|'
+        '$firstRideTripId';
+  }
+
+  GlobalKey _journeyCardKeyFor(Journey journey) {
+    final key = _scrollIdentityFor(journey);
+    return _journeyCardKeys.putIfAbsent(key, GlobalKey.new);
+  }
+
+  Rect? _globalBoundsFor(GlobalKey key) {
+    final context = key.currentContext;
+    if (context == null) return null;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    return topLeft & renderObject.size;
+  }
+
+  ({Journey journey, double top})? _visibleScrollAnchor() {
+    final controller = widget.scrollController;
+    final listBounds = _globalBoundsFor(_listKey);
+    if (controller == null ||
+        !controller.hasClients ||
+        listBounds == null ||
+        _sortedCandidates.isEmpty) {
+      return null;
+    }
+
+    Journey? anchorJourney;
+    double? anchorTop;
+    var bestDistance = double.infinity;
+
+    for (final journey in _sortedCandidates) {
+      final bounds = _globalBoundsFor(_journeyCardKeyFor(journey));
+      if (bounds == null ||
+          bounds.bottom <= listBounds.top ||
+          bounds.top >= listBounds.bottom) {
+        continue;
+      }
+
+      final distance =
+          bounds.top <= listBounds.top ? 0.0 : bounds.top - listBounds.top;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        anchorJourney = journey;
+        anchorTop = bounds.top;
+      }
+    }
+
+    if (anchorJourney == null || anchorTop == null) return null;
+    return (journey: anchorJourney, top: anchorTop);
+  }
+
+  void _capturePrependAnchor() {
+    final anchor = _visibleScrollAnchor();
+    if (anchor == null) {
+      _prependAnchorIdentity = null;
+      _prependAnchorTop = null;
+      return;
+    }
+    _prependAnchorIdentity = _scrollIdentityFor(anchor.journey);
+    _prependAnchorTop = anchor.top;
+    _debugLogScroll(
+      'prepend-anchor-captured identity=$_prependAnchorIdentity top=${anchor.top.toStringAsFixed(1)}',
+    );
   }
 
   void _compensateEarlierPrependScroll(
@@ -352,6 +443,41 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       );
       _clearLoadEarlierProbe(seq);
       return;
+    }
+
+    final anchorIdentity = _prependAnchorIdentity;
+    final anchorTop = _prependAnchorTop;
+    if (anchorIdentity != null && anchorTop != null) {
+      final key = _journeyCardKeys[anchorIdentity];
+      final currentBounds = key == null ? null : _globalBoundsFor(key);
+      if (currentBounds != null) {
+        final delta = currentBounds.top - anchorTop;
+        if (delta.abs() > 0.5) {
+          final target = (controller.offset + delta).clamp(
+            controller.position.minScrollExtent,
+            controller.position.maxScrollExtent,
+          );
+          _debugLogScroll(
+            'prepend-anchor-compensation seq=$seq delta=${delta.toStringAsFixed(1)} '
+            'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
+          );
+          controller.jumpTo(target.toDouble());
+        } else {
+          _debugLogScroll(
+            'prepend-anchor-compensation-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
+          );
+        }
+        final afterJump =
+            _debugCaptureScrollSnapshot('after-prepend-anchor-compensation');
+        _debugLogScroll(
+          'prepend-anchor-compensation-after seq=$seq $afterJump',
+        );
+        _clearLoadEarlierProbe(seq);
+        return;
+      }
+      _debugLogScroll(
+        'prepend-anchor-compensation-fallback seq=$seq reason=missing-anchor-bounds',
+      );
     }
 
     final addedExtent = afterFrame.max! - start.max!;
@@ -643,6 +769,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _debugHandleScrollNotification,
                   child: ListView.builder(
+                    key: _listKey,
                     controller: widget.scrollController,
                     padding: EdgeInsets.fromLTRB(
                       16,
@@ -721,6 +848,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
                       final journey = _sortedCandidates[idx - 1];
                       return _JourneyCard(
+                        key: _journeyCardKeyFor(journey),
                         journey: journey,
                         onTap: () => widget.onSelect(journey),
                         onCopy: () => _handleCopyJourney(journey),
@@ -1061,6 +1189,7 @@ class _JourneyCard extends StatelessWidget {
   final bool showTrainNumbers;
 
   const _JourneyCard({
+    super.key,
     required this.journey,
     required this.onTap,
     required this.onCopy,

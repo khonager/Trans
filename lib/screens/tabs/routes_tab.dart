@@ -5867,22 +5867,37 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           return;
         }
 
-        setState(() {
-          final idx = _tabs.indexWhere((t) => t.id == route.id);
-          if (idx != -1) {
-            final currentRoute = _tabs[idx];
-            final oldCount = currentRoute.candidates?.length ?? 0;
-            final updatedCandidates = _mergeJourneyCandidates(
-              currentRoute.candidates ?? const <Journey>[],
-              newJourneys,
-            );
-            _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+        final idx = _tabs.indexWhere((t) => t.id == route.id);
+        if (idx != -1) {
+          final currentRoute = _tabs[idx];
+          final currentCandidates =
+              currentRoute.candidates ?? const <Journey>[];
+          final oldCount = currentCandidates.length;
+          final updatedCandidates = _mergeJourneyCandidates(
+            currentCandidates,
+            newJourneys,
+          );
+          final oldSignature = _journeyRefreshSignature(currentCandidates);
+          final newSignature = _journeyRefreshSignature(updatedCandidates);
+          final oldPlatformSignal = currentCandidates.fold<int>(
+            0,
+            (sum, journey) => sum + _journeyPlatformSignal(journey),
+          );
+          final newPlatformSignal = updatedCandidates.fold<int>(
+            0,
+            (sum, journey) => sum + _journeyPlatformSignal(journey),
+          );
+          if (oldSignature != newSignature ||
+              oldPlatformSignal != newPlatformSignal) {
+            setState(() {
+              _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            });
             TransportApi.addSyntheticDebugLog(
               'route-load-more: candidates tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
               'old=$oldCount new=${updatedCandidates.length} delta=${updatedCandidates.length - oldCount}',
             );
           }
-        });
+        }
         _releaseBlockingRouteLoad(loadToken);
         if (!visibleResults.isCompleted) {
           visibleResults.complete();
