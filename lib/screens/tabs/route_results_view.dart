@@ -167,6 +167,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   late List<Journey> _sortedCandidates;
   bool _isLoadingMoreEarlier = false;
   bool _isLoadingMoreLater = false;
+  bool _reserveBackgroundLoadingSpaceDuringLoadMore = false;
 
   // Ticket Generation
   final GlobalKey _ticketKey = GlobalKey();
@@ -616,7 +617,10 @@ class _RouteResultsViewState extends State<RouteResultsView> {
         'load-earlier-start seq=$seq $_debugLoadEarlierStartSnapshot',
       );
     }
-    setState(() => _isLoadingMoreEarlier = true);
+    setState(() {
+      _isLoadingMoreEarlier = true;
+      _reserveBackgroundLoadingSpaceDuringLoadMore = widget.isBackgroundLoading;
+    });
     try {
       await widget.onLoadEarlier?.call();
     } finally {
@@ -645,15 +649,31 @@ class _RouteResultsViewState extends State<RouteResultsView> {
           _debugLoadEarlierStartCandidateCount) {
         _clearLoadEarlierProbe(_debugActiveLoadEarlierSequence);
       }
-      if (mounted) setState(() => _isLoadingMoreEarlier = false);
+      if (mounted) {
+        setState(() {
+          _isLoadingMoreEarlier = false;
+          _reserveBackgroundLoadingSpaceDuringLoadMore = false;
+        });
+      }
     }
   }
 
   Future<void> _handleLoadLater() async {
     if (_isLoadingMoreLater) return;
-    setState(() => _isLoadingMoreLater = true);
-    await widget.onLoadLater?.call();
-    if (mounted) setState(() => _isLoadingMoreLater = false);
+    setState(() {
+      _isLoadingMoreLater = true;
+      _reserveBackgroundLoadingSpaceDuringLoadMore = widget.isBackgroundLoading;
+    });
+    try {
+      await widget.onLoadLater?.call();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMoreLater = false;
+          _reserveBackgroundLoadingSpaceDuringLoadMore = false;
+        });
+      }
+    }
   }
 
   Future<void> _handleRefresh() async {
@@ -736,6 +756,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final isLoadingMore = _isLoadingMoreEarlier || _isLoadingMoreLater;
+    final showBackgroundLoadingSpace = widget.isBackgroundLoading &&
+        (!isLoadingMore || _reserveBackgroundLoadingSpaceDuringLoadMore);
     return Stack(
       children: [
         Column(
@@ -845,17 +868,18 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 ],
               ),
             ),
-            if (widget.isBackgroundLoading &&
-                !_isLoadingMoreEarlier &&
-                !_isLoadingMoreLater)
+            if (showBackgroundLoadingSpace)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: widget.loadingIndicatorColor,
+                  child: Opacity(
+                    opacity: isLoadingMore ? 0 : 1,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: widget.loadingIndicatorColor,
+                    ),
                   ),
                 ),
               ),
