@@ -180,7 +180,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   int? _debugLoadEarlierStartCandidateCount;
   String? _prependAnchorIdentity;
   double? _prependAnchorTop;
-  bool _didPreCompensatePrepend = false;
 
   @override
   void initState() {
@@ -347,7 +346,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     _debugLoadEarlierStartCandidateCount = null;
     _prependAnchorIdentity = null;
     _prependAnchorTop = null;
-    _didPreCompensatePrepend = false;
   }
 
   String _scrollIdentityFor(Journey journey) {
@@ -370,6 +368,25 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   GlobalKey _journeyCardKeyFor(Journey journey) {
     final key = _scrollIdentityFor(journey);
     return _journeyCardKeys.putIfAbsent(key, GlobalKey.new);
+  }
+
+  int? _findJourneyChildIndex(Key key) {
+    if (key == const ValueKey<String>('route-results-load-earlier')) {
+      return 0;
+    }
+    if (key == const ValueKey<String>('route-results-load-later')) {
+      return _sortedCandidates.length + 1;
+    }
+    if (key == const ValueKey<String>('route-results-external-planners')) {
+      return _sortedCandidates.length + 2;
+    }
+
+    for (var i = 0; i < _sortedCandidates.length; i++) {
+      if (identical(_journeyCardKeyFor(_sortedCandidates[i]), key)) {
+        return i + 1;
+      }
+    }
+    return null;
   }
 
   Rect? _globalBoundsFor(GlobalKey key) {
@@ -473,8 +490,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       'prepend-precompensation insertedBefore=$insertedBefore averageExtent=${averageExtent.toStringAsFixed(1)} '
       'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
     );
-    controller.jumpTo(target);
-    _didPreCompensatePrepend = true;
+    controller.position.correctPixels(target);
   }
 
   void _compensateEarlierPrependScroll(
@@ -529,38 +545,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _debugLogScroll(
         'prepend-anchor-compensation-fallback seq=$seq reason=missing-anchor-bounds',
       );
-      if (_didPreCompensatePrepend) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || _debugActiveLoadEarlierSequence != seq) return;
-          final key = _journeyCardKeys[anchorIdentity];
-          final currentBounds = key == null ? null : _globalBoundsFor(key);
-          if (currentBounds == null) {
-            _debugLogScroll(
-              'prepend-anchor-second-pass-skipped seq=$seq reason=missing-anchor-bounds',
-            );
-            _clearLoadEarlierProbe(seq);
-            return;
-          }
-          final delta = currentBounds.top - anchorTop;
-          if (delta.abs() > 0.5) {
-            final target = (controller.offset + delta).clamp(
-              controller.position.minScrollExtent,
-              controller.position.maxScrollExtent,
-            );
-            _debugLogScroll(
-              'prepend-anchor-second-pass seq=$seq delta=${delta.toStringAsFixed(1)} '
-              'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
-            );
-            controller.jumpTo(target.toDouble());
-          } else {
-            _debugLogScroll(
-              'prepend-anchor-second-pass-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
-            );
-          }
-          _clearLoadEarlierProbe(seq);
-        });
-        return;
-      }
     }
 
     final addedExtent = afterFrame.max! - start.max!;
@@ -887,6 +871,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     key: _listKey,
                     controller: widget.scrollController,
                     cacheExtent: _routeResultsPrependCacheExtent,
+                    findChildIndexCallback: _findJourneyChildIndex,
                     padding: EdgeInsets.fromLTRB(
                       16,
                       16,
@@ -900,6 +885,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       if (idx == 0) {
                         // Load Earlier Button
                         return Center(
+                          key: const ValueKey<String>(
+                            'route-results-load-earlier',
+                          ),
                           child: Padding(
                             padding: const EdgeInsets.only(bottom: 8.0),
                             child: SizedBox(
@@ -930,6 +918,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                       if (idx == _sortedCandidates.length + 1) {
                         // Load Later Button
                         return Center(
+                          key: const ValueKey<String>(
+                            'route-results-load-later',
+                          ),
                           child: Padding(
                             padding: const EdgeInsets.only(top: 8.0),
                             child: _isLoadingMoreLater
@@ -955,6 +946,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                         final origin = widget.origin;
                         if (origin == null) return const SizedBox.shrink();
                         return _ExternalPlannerActions(
+                          key: const ValueKey<String>(
+                            'route-results-external-planners',
+                          ),
                           origin: origin,
                           destination: widget.destination,
                           when: _externalSearchTime,
@@ -1012,6 +1006,7 @@ class _ExternalPlannerActions extends StatelessWidget {
   final Future<void> Function(Uri uri, String label) onOpen;
 
   const _ExternalPlannerActions({
+    super.key,
     required this.origin,
     required this.destination,
     required this.when,
