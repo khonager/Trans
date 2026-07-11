@@ -39,6 +39,8 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Trans needs access to your camera so you can scan and upload ticket QR codes in the app.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>We need your location to track your journey and wake you up even when the app is in the background.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
