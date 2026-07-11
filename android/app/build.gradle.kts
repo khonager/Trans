@@ -14,38 +14,8 @@ if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
 
-fun readFlutterVersionFromPubspec(rootDir: File): Pair<String, String>? {
-    val pubspecFile = rootDir.resolve("../pubspec.yaml")
-    if (!pubspecFile.exists()) {
-        return null
-    }
-
-    val versionLine = pubspecFile.readLines()
-        .firstOrNull { it.trim().startsWith("version:") }
-        ?.substringAfter("version:")
-        ?.trim()
-        ?: return null
-
-    val parts = versionLine.split("+", limit = 2)
-    val versionName = parts.firstOrNull()?.trim().orEmpty()
-    val versionCode = parts.getOrNull(1)?.trim().orEmpty()
-
-    if (versionName.isEmpty() || versionCode.isEmpty()) {
-        return null
-    }
-
-    return versionCode to versionName
-}
-
-val pubspecVersion = readFlutterVersionFromPubspec(rootProject.projectDir)
-val flutterVersionCode = providers.gradleProperty("versionCode").orNull
-    ?: pubspecVersion?.first
-    ?: localProperties.getProperty("flutter.versionCode")
-    ?: "1"
-val flutterVersionName = providers.gradleProperty("versionName").orNull
-    ?: pubspecVersion?.second
-    ?: localProperties.getProperty("flutter.versionName")
-    ?: "1.0"
+val flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
+val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
