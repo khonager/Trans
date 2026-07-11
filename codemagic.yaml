@@ -2,7 +2,7 @@ workflows:
   ios-testflight:
     name: iOS TestFlight Release
     max_build_duration: 120
-    instance_type: mac_mini_m1
+    instance_type: mac_mini_m2
 
     environment:
       ios_signing:
@@ -46,6 +46,29 @@ workflows:
           keychain add-certificates
           xcode-project use-profiles --project ios/Runner.xcodeproj
 
+      - name: Validate App Store Connect app and align build number
+        script: |
+          set -e
+
+          # Fail early with a clearer message if the API key cannot see this app record.
+          app-store-connect get-latest-app-store-build-number "$APP_STORE_APP_ID" \
+            --platform=IOS >/dev/null
+
+          PUBSPEC_VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //')
+          PUBSPEC_BUILD_NAME="${PUBSPEC_VERSION%%+*}"
+          PUBSPEC_BUILD_NUMBER="${PUBSPEC_VERSION##*+}"
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number \
+            "$APP_STORE_APP_ID" \
+            --platform=IOS \
+            --app-store-version="$PUBSPEC_BUILD_NAME" 2>/dev/null || true)
+
+          if [ -n "$LATEST_BUILD_NUMBER" ] && [ "$LATEST_BUILD_NUMBER" -ge "$PUBSPEC_BUILD_NUMBER" ]; then
+            NEXT_BUILD_NUMBER=$((LATEST_BUILD_NUMBER + 1))
+            sed -i.bak "s/^version: .*/version: ${PUBSPEC_BUILD_NAME}+${NEXT_BUILD_NUMBER}/" pubspec.yaml
+            rm -f pubspec.yaml.bak
+            echo "Raised iOS build number to ${NEXT_BUILD_NUMBER} to avoid App Store Connect conflicts."
+          fi
+
       - name: Flutter build ipa
         script: |
           # iOS project only has the default Runner scheme.
@@ -85,7 +108,7 @@ workflows:
   ios-development:
     name: iOS Development Build
     max_build_duration: 120
-    instance_type: mac_mini_m1
+    instance_type: mac_mini_m2
 
     triggering:
       events:
