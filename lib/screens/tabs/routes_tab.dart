@@ -624,6 +624,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Station? _fromStation;
   Station? _toStation;
+  bool _toIsCapturedCurrentLocation = false;
 
   List<dynamic> _suggestions = [];
   String _activeSearchField = '';
@@ -1972,6 +1973,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
+    if (field == 'to') _toIsCapturedCurrentLocation = false;
     setState(() => _activeSearchField = field);
     _scrollToTop();
     _scrollSuggestionsToTop();
@@ -2098,12 +2100,50 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       } else {
         _toStation = station;
+        _toIsCapturedCurrentLocation = false;
         _toController.text = station.name;
       }
       _suggestions = [];
       _activeSearchField = '';
     });
     FocusScope.of(context).unfocus();
+  }
+
+  void _swapRouteEndpoints() {
+    final fromText = _fromController.text;
+    final fromStation = _fromStation;
+    final fromUsesCurrentLocation = _fromUsesCurrentLocation;
+    final currentPosition = _effectiveCurrentPosition;
+    final currentLocationText = fromText.trim().isNotEmpty
+        ? fromText
+        : (_currentAddress ?? AppLocalizations.of(context)!.currentLocation);
+    final capturedCurrentLocation =
+        fromUsesCurrentLocation && currentPosition != null
+            ? Station(
+                id: 'gps-snapshot-${currentPosition.latitude},${currentPosition.longitude}',
+                name: currentLocationText,
+                type: 'location',
+                latitude: currentPosition.latitude,
+                longitude: currentPosition.longitude,
+              )
+            : null;
+
+    _suggestionRequestToken++;
+    _debounce?.cancel();
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _fromController.text = _toController.text;
+      _toController.text =
+          fromUsesCurrentLocation ? currentLocationText : fromText;
+      _fromStation = _toStation;
+      _toStation = capturedCurrentLocation ?? fromStation;
+      _fromUsesCurrentLocation = false;
+      _toIsCapturedCurrentLocation = fromUsesCurrentLocation;
+      _suggestions = [];
+      _activeSearchField = '';
+      _isSuggestionsLoading = false;
+    });
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
@@ -2142,6 +2182,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           }
         } else if (currentField == 'to') {
           _toStation = target;
+          _toIsCapturedCurrentLocation = false;
           _toController.text = target.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
           if (_fromStation == null && _effectiveCurrentPosition == null) {
@@ -2151,6 +2192,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else {
           if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
+            _toIsCapturedCurrentLocation = false;
             _toController.text = target.name;
           } else {
             _fromStation = target;
@@ -3260,6 +3302,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _fromUsesCurrentLocation = false;
       _fromController.text = from.name;
       _toStation = to;
+      _toIsCapturedCurrentLocation = false;
       _toController.text = to.name;
     });
     _findRoutes();
@@ -4510,9 +4553,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   @override
   Widget build(BuildContext context) {
-    final bool canSearch =
-        (_fromStation != null || _effectiveCurrentPosition != null) &&
-            _toStation != null;
+    final bool canSearch = (_fromStation != null ||
+            _fromUsesCurrentLocation ||
+            _fromController.text.trim().isNotEmpty) &&
+        (_toStation != null || _toController.text.trim().isNotEmpty);
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -4818,10 +4862,66 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             : AppLocalizations.of(context)!
                                 .fromStationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
-                    const SizedBox(height: 12),
-                    _buildTextField(AppLocalizations.of(context)!.toLabel,
-                        _toController, _toFocusNode, _toStation != null, 'to',
-                        hint: AppLocalizations.of(context)!.toStationOrAddress),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 12),
+                            _buildTextField(
+                                AppLocalizations.of(context)!.toLabel,
+                                _toController,
+                                _toFocusNode,
+                                _toStation != null,
+                                'to',
+                                hint: AppLocalizations.of(context)!
+                                    .toStationOrAddress),
+                          ],
+                        ),
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: 32,
+                          child: Center(
+                            child: Tooltip(
+                              message: 'Swap from and to',
+                              child: Semantics(
+                                button: true,
+                                label: 'Swap from and to',
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _swapRouteEndpoints,
+                                  child: SizedBox(
+                                    width: 48,
+                                    height: 32,
+                                    child: Align(
+                                      alignment: Alignment.topCenter,
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 12,
+                                        child: Transform.translate(
+                                          offset: const Offset(0, 8),
+                                          child: Transform.scale(
+                                            scale: 1.5,
+                                            child: Icon(
+                                              Icons.swap_vert_rounded,
+                                              color: colors.effectiveSeed,
+                                              size: 12,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -5698,13 +5798,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       isLocationHint = true;
     }
 
-    if (isSelected) {
+    final isCapturedCurrentLocation =
+        fieldKey == 'to' && _toIsCapturedCurrentLocation;
+
+    if (isCapturedCurrentLocation) {
+      iconColor = Colors.blue;
+    } else if (isSelected) {
       iconColor = Colors.greenAccent;
-    } else if (fieldKey == 'from' &&
-        ((_fromStation?.id == 'gps') ||
-            (isLocationHint &&
-                effectiveHint !=
-                    AppLocalizations.of(context)!.fromStationOrAddress))) {
+    } else if ((fieldKey == 'from' &&
+            ((_fromStation?.id == 'gps') ||
+                (isLocationHint &&
+                    effectiveHint !=
+                        AppLocalizations.of(context)!.fromStationOrAddress))) ||
+        isCapturedCurrentLocation) {
       iconColor = Colors.blue;
     }
 
@@ -5763,7 +5869,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             )
                           : Icon(Icons.my_location, color: iconColor, size: 20),
                     )
-                  : Icon(Icons.location_on, color: iconColor, size: 20),
+                  : Icon(
+                      isCapturedCurrentLocation
+                          ? Icons.my_location
+                          : Icons.location_on,
+                      color: iconColor,
+                      size: 20,
+                    ),
               suffixIcon: (controller.text.isNotEmpty || isSelected)
                   ? IconButton(
                       icon: Icon(Icons.close,
