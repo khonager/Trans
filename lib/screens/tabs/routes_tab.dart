@@ -7090,13 +7090,17 @@ class _StepCardState extends State<_StepCard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            detail,
-            maxLines: 1,
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 110),
+            child: Text(
+              detail,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -7133,16 +7137,14 @@ class _StepCardState extends State<_StepCard> {
     BuildContext context, {
     required String detail,
   }) {
-    return Flexible(
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          reverse: true,
-          child: _buildStopDetailChip(
-            context,
-            detail: detail,
-          ),
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        child: _buildStopDetailChip(
+          context,
+          detail: detail,
         ),
       ),
     );
@@ -7261,38 +7263,41 @@ class _StepCardState extends State<_StepCard> {
                     showTrainNumbers: widget.showTrainNumbers,
                   );
 
-                  // Title: Bus Number -> Destination (Expanded) + Arrow (Right)
+                  // Keep the line compact and give the destination the
+                  // remaining width. An unconstrained destination can shrink
+                  // to one character per line on narrow screens.
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Icon(_rideModeIconForLine(step.line),
+                          size: 18, color: colors.textSecondary),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Text(
+                          displayLine,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: colors.textPrimary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.arrow_right_alt,
+                          size: 24, color: colors.textPrimary),
+                      const SizedBox(width: 8),
                       Expanded(
-                          child: Row(
-                        children: [
-                          Icon(
-                            _rideModeIconForLine(step.line),
-                            size: 18,
-                            color: colors.textSecondary,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(displayLine,
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: colors.textPrimary)),
-                          const SizedBox(width: 8),
-                          Icon(Icons.arrow_right_alt,
-                              size: 24, color: colors.textPrimary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: Text(
-                            displayDest,
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: colors.textPrimary),
-                            overflow: TextOverflow.visible,
-                          )),
-                        ],
-                      )),
+                        child: Text(
+                          displayDest,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: colors.textPrimary),
+                        ),
+                      ),
                       const SizedBox(width: 8),
                       // Manual Arrow on Top Line with Rotation
                       AnimatedRotation(
@@ -7368,51 +7373,58 @@ class _StepCardState extends State<_StepCard> {
                           const SizedBox(width: 8),
 
                           // Time (Right)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (combinePlatformAndStopLabel(
-                                step.platform,
-                                step.departureStopLabel,
-                                stationName: step.startStationName,
-                                isRail: _lineLooksRailForPlatformLabel(
-                                  step.line,
-                                ),
-                              )
-                                  case final collapsedStopDetail?) ...[
-                                _buildCollapsedStopDetailChip(
-                                  context,
-                                  detail: collapsedStopDetail,
-                                ),
-                                const SizedBox(width: 10),
-                              ],
-                              Text(
-                                  "${step.departureTime} - ${step.arrivalTime}",
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: step.isCancelled
-                                          ? colors.textSecondary
-                                          : colors.textPrimary,
-                                      decoration: step.isCancelled
-                                          ? TextDecoration.lineThrough
-                                          : null)),
-                              if (step.isCancelled)
-                                Text(
-                                    AppLocalizations.of(context)!.cancelledL10n,
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.red,
-                                        fontSize: 12))
-                              else if (step.departureDelay != null &&
-                                  step.departureDelay != 0)
-                                Text(
-                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: step.departureDelay! > 0
-                                            ? colors.delayLate
-                                            : colors.delayOnTime))
-                            ],
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (combinePlatformAndStopLabel(
+                                    step.platform,
+                                    step.departureStopLabel,
+                                    stationName: step.startStationName,
+                                    isRail: _lineLooksRailForPlatformLabel(
+                                      step.line,
+                                    ),
+                                  )
+                                      case final collapsedStopDetail?) ...[
+                                    _buildCollapsedStopDetailChip(
+                                      context,
+                                      detail: collapsedStopDetail,
+                                    ),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  Text(
+                                      "${step.departureTime} - ${step.arrivalTime}",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: step.isCancelled
+                                              ? colors.textSecondary
+                                              : colors.textPrimary,
+                                          decoration: step.isCancelled
+                                              ? TextDecoration.lineThrough
+                                              : null)),
+                                  if (step.isCancelled)
+                                    Text(
+                                        AppLocalizations.of(context)!
+                                            .cancelledL10n,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.red,
+                                            fontSize: 12))
+                                  else if (step.departureDelay != null &&
+                                      step.departureDelay != 0)
+                                    Text(
+                                        " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: step.departureDelay! > 0
+                                                ? colors.delayLate
+                                                : colors.delayOnTime))
+                                ],
+                              ),
+                            ),
                           )
                         ],
                       )
@@ -7448,6 +7460,8 @@ class _StepCardState extends State<_StepCard> {
                                       platform: step.platform,
                                       stopLabel: step.departureStopLabel,
                                     ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 14,
@@ -7566,6 +7580,8 @@ class _StepCardState extends State<_StepCard> {
                                       leading: const Icon(Icons.circle,
                                           size: 8, color: Colors.grey),
                                       title: Text(displayName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
                                               color: colors.textPrimary,
                                               fontSize: 13)),
@@ -7690,6 +7706,8 @@ class _StepCardState extends State<_StepCard> {
                                   platform: step.arrivalPlatform,
                                   stopLabel: step.arrivalStopLabel,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                     color: colors.textPrimary,
                                     fontSize: 14,
