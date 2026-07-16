@@ -284,6 +284,11 @@ flutter run
 
 This automatically provides Flutter, Dart, Android SDK, and all other required tools without manual installation.
 
+The development shell also provides the project-pinned Supabase CLI. Use
+`supabase login` and `supabase db push` from inside `nix develop`; do not prefix
+these commands with `npx`, because that downloads a separate CLI version with a
+separate credential-store entry.
+
 ---
 
 ## 🏗 Building
