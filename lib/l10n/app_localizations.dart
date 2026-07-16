@@ -1220,6 +1220,42 @@ abstract class AppLocalizations {
   /// **'Hide location from everyone'**
   String get hideLocation;
 
+  /// No description provided for @journeySignal.
+  ///
+  /// In en, this message translates to:
+  /// **'Journey Signal'**
+  String get journeySignal;
+
+  /// No description provided for @signalLevel.
+  ///
+  /// In en, this message translates to:
+  /// **'Level {level}'**
+  String signalLevel(int level);
+
+  /// No description provided for @signalSharingWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Journey Signal for {username}'**
+  String signalSharingWith(String username);
+
+  /// No description provided for @signalOverrideExplanation.
+  ///
+  /// In en, this message translates to:
+  /// **'This overrides your global level only for this friend.'**
+  String get signalOverrideExplanation;
+
+  /// No description provided for @useGlobalSignal.
+  ///
+  /// In en, this message translates to:
+  /// **'Use global level'**
+  String get useGlobalSignal;
+
+  /// No description provided for @friendLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Location'**
+  String get friendLocation;
+
   /// No description provided for @darkMode.
   ///
   /// In en, this message translates to:

@@ -12,6 +12,7 @@ import 'package:encrypt/encrypt.dart' as enc;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
+import '../models/journey_sharing.dart';
 import 'favorites_policy.dart';
 import 'notification_manager.dart';
 import 'transport_api.dart';
@@ -19,6 +20,7 @@ import 'wake_alarm_settings.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
+  static const String signalLevelPreferenceKey = 'journey_signal_level';
   static SupabaseClient get client => Supabase.instance.client;
 
   static SupabaseClient? get maybeClient {
@@ -39,6 +41,8 @@ class SupabaseService {
   static Future<void>? _pendingSignInPreparation;
   static String? _preparedUserId;
   static String? _pendingPortfolioBridgeState;
+  static JourneySharingSettings? _sharingSettingsCache;
+  static DateTime? _sharingSettingsCachedAt;
 
   // --- INITIALIZATION ---
   static Future<void> init() async {
@@ -163,6 +167,8 @@ class SupabaseService {
 
   @visibleForTesting
   static void triggerFriendsListRefresh() {
+    _sharingSettingsCache = null;
+    _sharingSettingsCachedAt = null;
     friendsListRefresh.value++;
   }
 
@@ -631,9 +637,19 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return;
     final sanitizedFavorites = sanitizeFavoritePayloads(favorites);
-    await client
-        .from('profiles')
-        .update({'favorites': sanitizedFavorites}).eq('id', user.id);
+    try {
+      await client.from('private_profile_favorites').upsert({
+        'owner_id': user.id,
+        'favorites': sanitizedFavorites,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (_) {
+      // Compatibility with a backend that has not received the Signal
+      // migration yet.
+      await client
+          .from('profiles')
+          .update({'favorites': sanitizedFavorites}).eq('id', user.id);
+    }
   }
 
   static Future<void> updatePreviousSearches(List<dynamic> searches) async {
@@ -728,6 +744,7 @@ class SupabaseService {
       TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
     ];
     const intKeys = <String>[
+      signalLevelPreferenceKey,
       'theme_color_value',
       'vibration_intensity',
       'alarm_stops_before',
@@ -799,18 +816,41 @@ class SupabaseService {
     try {
       final data = await client
           .from('profiles')
-          .select('settings, favorites')
+          .select('settings, signal_level, ghost_mode')
           .eq('id', user.id)
           .single();
       final settings = data['settings'] as Map<String, dynamic>? ?? {};
-      final favorites =
-          sanitizeFavoritePayloads(data['favorites'] as List<dynamic>? ?? []);
+      List<dynamic> favoritePayloads;
+      try {
+        final privateFavorites = await client
+            .from('private_profile_favorites')
+            .select('favorites')
+            .eq('owner_id', user.id)
+            .maybeSingle();
+        favoritePayloads =
+            privateFavorites?['favorites'] as List<dynamic>? ?? const [];
+      } catch (_) {
+        final legacy = await client
+            .from('profiles')
+            .select('favorites')
+            .eq('id', user.id)
+            .single();
+        favoritePayloads = legacy['favorites'] as List<dynamic>? ?? const [];
+      }
+      final favorites = sanitizeFavoritePayloads(favoritePayloads);
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
 
       await _syncPrimitiveSettingsToPrefs(prefs, settings);
       await _syncHistorySettingsToPrefs(prefs, settings);
+
+      final cloudSignalLevel = JourneySignalLevel.clamp(
+        data['signal_level'],
+        fallback: data['ghost_mode'] == true ? 0 : 1,
+      );
+      await prefs.setInt(signalLevelPreferenceKey, cloudSignalLevel);
+      await prefs.setBool('ghost_mode', cloudSignalLevel == 0);
 
       final List<String> favs =
           favorites.map((f) => json.encode(f)).toList().cast<String>();
@@ -843,6 +883,211 @@ class SupabaseService {
     }
 
     triggerFriendsListRefresh();
+  }
+
+  // --- JOURNEY SIGNAL SHARING ---
+  static Future<int> getMySignalLevel() async {
+    final prefs = await SharedPreferences.getInstance();
+    final local = prefs.getInt(signalLevelPreferenceKey);
+    final user = currentUser;
+    if (user == null) {
+      return local ?? JourneySignalLevel.defaultForNewUsers;
+    }
+    try {
+      final profile = await client
+          .from('profiles')
+          .select('signal_level, ghost_mode')
+          .eq('id', user.id)
+          .single();
+      final level = JourneySignalLevel.clamp(
+        profile['signal_level'],
+        fallback: profile['ghost_mode'] == true ? 0 : 1,
+      );
+      await prefs.setInt(signalLevelPreferenceKey, level);
+      await prefs.setBool('ghost_mode', level == 0);
+      return level;
+    } catch (_) {
+      return local ?? JourneySignalLevel.defaultForNewUsers;
+    }
+  }
+
+  static Future<void> setMySignalLevel(int requestedLevel) async {
+    final level = JourneySignalLevel.clamp(requestedLevel);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(signalLevelPreferenceKey, level);
+    await prefs.setBool('ghost_mode', level == 0);
+    final user = currentUser;
+    if (user != null) {
+      await client.rpc('set_my_signal_level', params: {
+        'requested_level': level,
+      });
+      await updateSettings({
+        signalLevelPreferenceKey: level,
+        'ghost_mode': level == 0,
+      });
+    }
+    _sharingSettingsCache = null;
+    _sharingSettingsCachedAt = null;
+    settingsRefreshNotifier.value++;
+    triggerFriendsListRefresh();
+  }
+
+  static Future<Map<String, int>> getMyFriendSignalOverrides() async {
+    final user = currentUser;
+    if (user == null) return const {};
+    try {
+      final rows = await client
+          .from('friend_sharing_overrides')
+          .select('friend_id, signal_level')
+          .eq('owner_id', user.id);
+      return {
+        for (final row in rows)
+          row['friend_id'].toString():
+              JourneySignalLevel.clamp(row['signal_level']),
+      };
+    } catch (e) {
+      debugPrint('Could not load friend Signal overrides: $e');
+      return const {};
+    }
+  }
+
+  static Future<void> setFriendSignalOverride(
+    String friendId,
+    int? requestedLevel,
+  ) async {
+    final user = currentUser;
+    if (user == null) return;
+    if (requestedLevel == null) {
+      await client
+          .from('friend_sharing_overrides')
+          .delete()
+          .match({'owner_id': user.id, 'friend_id': friendId});
+    } else {
+      await client.from('friend_sharing_overrides').upsert({
+        'owner_id': user.id,
+        'friend_id': friendId,
+        'signal_level': JourneySignalLevel.clamp(requestedLevel),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    }
+    _sharingSettingsCache = null;
+    _sharingSettingsCachedAt = null;
+    settingsRefreshNotifier.value++;
+    triggerFriendsListRefresh();
+  }
+
+  static Future<JourneySharingSettings> getJourneySharingSettings({
+    bool forceRefresh = false,
+  }) async {
+    final cached = _sharingSettingsCache;
+    final cachedAt = _sharingSettingsCachedAt;
+    if (!forceRefresh &&
+        cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < const Duration(minutes: 2)) {
+      return cached;
+    }
+    final results = await Future.wait<dynamic>([
+      getMySignalLevel(),
+      getMyFriendSignalOverrides(),
+      hasAnyFriend(),
+    ]);
+    final settings = JourneySharingSettings(
+      globalLevel: results[0] as int,
+      friendOverrides: results[1] as Map<String, int>,
+      hasFriends: results[2] as bool,
+    );
+    _sharingSettingsCache = settings;
+    _sharingSettingsCachedAt = DateTime.now();
+    return settings;
+  }
+
+  static Future<bool> hasAnyFriend() async {
+    final user = currentUser;
+    if (user == null) return false;
+    try {
+      final outgoing = await client
+          .from('friends')
+          .select('friend_id')
+          .eq('user_id', user.id)
+          .limit(1);
+      if (outgoing.isNotEmpty) return true;
+      final incoming = await client
+          .from('friends')
+          .select('user_id')
+          .eq('friend_id', user.id)
+          .limit(1);
+      return incoming.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> publishJourneyPresence(
+    Map<String, dynamic> presence,
+  ) async {
+    final user = currentUser;
+    if (user == null) return;
+    await client.from('journey_presence').upsert({
+      'owner_id': user.id,
+      ...presence,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  static Future<void> publishLocationSnapshot(
+    Position position, {
+    required bool isJourneyLocation,
+  }) async {
+    final settings = await getJourneySharingSettings();
+    final needsLocation = isJourneyLocation
+        ? settings.globalLevel >= 6 ||
+            settings.friendOverrides.values.any((level) => level >= 6)
+        : settings.needsAlwaysLocation;
+    if (!needsLocation) return;
+    await publishJourneyPresence({
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+      'accuracy_m': position.accuracy,
+      if (isJourneyLocation) 'location_is_journey': true,
+    });
+  }
+
+  static Future<void> clearPublishedJourney({bool keepLastLine = true}) async {
+    final user = currentUser;
+    if (user == null) return;
+    final update = <String, dynamic>{
+      'is_active': false,
+      'journey_id': null,
+      'departure_at': null,
+      'arrival_at': null,
+      'destination_name': null,
+      'itinerary': const <dynamic>[],
+      'progress': null,
+      'progress_label': null,
+      'journey_expires_at': null,
+      'location_is_journey': false,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      if (!keepLastLine) 'current_line': null,
+      if (!keepLastLine) 'line_expires_at': null,
+    };
+    await client
+        .from('journey_presence')
+        .update(update)
+        .eq('owner_id', user.id);
+    triggerFriendsListRefresh();
+  }
+
+  static Future<Map<String, Map<String, dynamic>>>
+      _getVisibleFriendPresence() async {
+    try {
+      final response = await client.rpc('get_friend_journey_presence');
+      final rows = List<Map<String, dynamic>>.from(response as List);
+      return {for (final row in rows) row['friend_id'].toString(): row};
+    } catch (e) {
+      debugPrint('Could not load tiered friend presence: $e');
+      return const {};
+    }
   }
 
   // --- PROFILES ---
@@ -910,18 +1155,6 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return [];
 
-    bool amIGhost = false;
-    try {
-      final myProfile = await client
-          .from('profiles')
-          .select('ghost_mode')
-          .eq('id', user.id)
-          .single();
-      amIGhost = myProfile['ghost_mode'] == true;
-    } catch (e) {
-      debugPrint('profiles.ghost_mode unavailable, defaulting to visible: $e');
-    }
-
     // Fetch friend relations bidirectionally.  Try with specific columns first;
     // fall back to a full select if the optional auto-added fields are missing.
     List<Map<String, dynamic>> friendRelations = [];
@@ -971,7 +1204,7 @@ class SupabaseService {
       profileRows = await client
           .from('profiles')
           .select(
-              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, created_at')
+              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, signal_level, created_at')
           .filter('id', 'in', friendIds);
     } catch (e) {
       debugPrint(
@@ -988,38 +1221,19 @@ class SupabaseService {
     }
     final profileMap = {for (var p in profileRows) p['id']: p};
 
-    // Fetch friend locations.  Missing or inaccessible table just means no
-    // real-time position is shown – friends are still listed.
-    List locationRows = [];
-    try {
-      locationRows = await client
-          .from('user_locations')
-          .select()
-          .filter('user_id', 'in', friendIds);
-    } catch (e) {
-      debugPrint(
-          'user_locations unavailable, friends will show without location: $e');
-    }
-    final locationMap = {for (var l in locationRows) l['user_id']: l};
+    final presenceMap = await _getVisibleFriendPresence();
+    final myOverrides = await getMyFriendSignalOverrides();
 
     List<Map<String, dynamic>> result = [];
     for (var id in friendIds) {
       final profile = profileMap[id];
       if (profile == null) continue;
 
-      final loc = locationMap[id];
-      final bool isFriendGhost = profile['ghost_mode'] ?? false;
-
-      final bool showDetails = !amIGhost && !isFriendGhost;
-
-      dynamic updatedAt = (loc != null) ? loc['updated_at'] : null;
-      dynamic lat, lng, currentLine;
-
-      if (showDetails && loc != null) {
-        lat = loc['latitude'];
-        lng = loc['longitude'];
-        currentLine = loc['current_line'];
-      }
+      final presence = presenceMap[id];
+      final visibleLevel = JourneySignalLevel.clamp(
+        presence?['signal_level'],
+        fallback: 0,
+      );
 
       result.add({
         'id': id,
@@ -1027,13 +1241,24 @@ class SupabaseService {
         'avatar_url': profile['avatar_url'],
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
-        'ghost_mode': isFriendGhost,
+        'ghost_mode': visibleLevel == 0,
+        'visible_signal_level': visibleLevel,
+        'my_signal_override': myOverrides[id],
         'created_at': profile['created_at'],
         'is_auto_added': autoAddedMap[id] == true,
-        'updated_at': updatedAt,
-        'latitude': lat,
-        'longitude': lng,
-        'current_line': currentLine,
+        'updated_at': presence?['updated_at'],
+        'latitude': presence?['latitude'],
+        'longitude': presence?['longitude'],
+        'accuracy_m': presence?['accuracy_m'],
+        'current_line': presence?['current_line'],
+        'journey_departure': presence?['departure_at'],
+        'journey_arrival': presence?['arrival_at'],
+        'journey_destination': presence?['destination_name'],
+        'journey_itinerary': presence?['itinerary'] ?? const <dynamic>[],
+        'journey_progress': presence?['progress'],
+        'journey_progress_label': presence?['progress_label'],
+        'journey_active': presence?['is_active'] == true,
+        'shared_favorites': presence?['favorites'] ?? const <dynamic>[],
       });
     }
     return result;
@@ -1128,9 +1353,9 @@ class SupabaseService {
     if (user == null) return const Stream.empty();
 
     late StreamController<List<Map<String, dynamic>>> controller;
-    StreamSubscription? sub1;
     StreamSubscription? sub2;
     StreamSubscription? sub3;
+    Timer? presencePoll;
 
     controller = StreamController<List<Map<String, dynamic>>>(
       onListen: () {
@@ -1150,13 +1375,12 @@ class SupabaseService {
           return inFlightRefresh;
         }
 
-        // 1. Listen for location updates
-        sub1 = client
-            .from('user_locations')
-            .stream(primaryKey: ['user_id']).listen(
+        // Masked presence is exposed through an RPC rather than a directly
+        // readable table, so refresh it at a modest interval. This only runs
+        // while the friends stream has a listener.
+        presencePoll = Timer.periodic(
+          const Duration(seconds: 45),
           update,
-          onError: (e) =>
-              debugPrint('user_locations stream error (non-fatal): $e'),
         );
 
         // 2. Listen for friend list changes (add/remove)
@@ -1184,7 +1408,7 @@ class SupabaseService {
         update();
       },
       onCancel: () async {
-        await sub1?.cancel();
+        presencePoll?.cancel();
         await sub2?.cancel();
         await sub3?.cancel();
       },
@@ -1301,20 +1525,28 @@ class SupabaseService {
   static Future<Map<String, dynamic>?> getMyLocation() async {
     final user = currentUser;
     if (user == null) return null;
-    return await client
-        .from('user_locations')
-        .select()
-        .eq('user_id', user.id)
-        .maybeSingle();
+    try {
+      return await client
+          .from('journey_presence')
+          .select()
+          .eq('owner_id', user.id)
+          .maybeSingle();
+    } catch (_) {
+      return await client
+          .from('user_locations')
+          .select()
+          .eq('user_id', user.id)
+          .maybeSingle();
+    }
   }
 
   static Stream<Map<String, dynamic>?> streamMyLocation() {
     final user = currentUser;
     if (user == null) return const Stream.empty();
     return client
-        .from('user_locations')
-        .stream(primaryKey: ['user_id'])
-        .eq('user_id', user.id)
+        .from('journey_presence')
+        .stream(primaryKey: ['owner_id'])
+        .eq('owner_id', user.id)
         .map((data) => data.isNotEmpty ? data.first : null);
   }
 

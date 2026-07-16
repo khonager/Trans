@@ -654,6 +654,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hideLocation => 'Hide location from everyone';
 
   @override
+  String get journeySignal => 'Journey Signal';
+
+  @override
+  String signalLevel(int level) {
+    return 'Level $level';
+  }
+
+  @override
+  String signalSharingWith(String username) {
+    return 'Journey Signal for $username';
+  }
+
+  @override
+  String get signalOverrideExplanation =>
+      'This overrides your global level only for this friend.';
+
+  @override
+  String get useGlobalSignal => 'Use global level';
+
+  @override
+  String get friendLocation => 'Location';
+
+  @override
   String get darkMode => 'Dark Mode';
 
   @override

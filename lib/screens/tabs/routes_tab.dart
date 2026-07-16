@@ -18,6 +18,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/history_manager.dart';
 import 'package:trans/services/favorites_manager.dart';
 import 'package:trans/services/favorites_policy.dart';
+import 'package:trans/services/journey_detection_service.dart';
 import 'package:trans/services/notification_manager.dart';
 import 'package:trans/services/foreground_haptics.dart';
 import 'package:trans/services/wake_alarm_preview_player.dart';
@@ -597,6 +598,8 @@ class RoutesTab extends StatefulWidget {
   final bool onlyNahverkehr;
   final bool showTrainNumbers;
   final bool alwaysWakeMe;
+  final int signalLevel;
+  final void Function(bool active) onHighAccuracyTrackingChanged;
 
   const RoutesTab({
     super.key,
@@ -604,6 +607,8 @@ class RoutesTab extends StatefulWidget {
     required this.onlyNahverkehr,
     this.showTrainNumbers = false,
     required this.alwaysWakeMe,
+    required this.signalLevel,
+    required this.onHighAccuracyTrackingChanged,
   });
 
   @override
@@ -649,8 +654,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isWakeAlarmSet = false;
   int _alarmStopsBefore = 1;
   StreamSubscription<Position>? _gpsStream;
+  StreamSubscription<Position>? _sharingGpsStream;
+  Timer? _journeyDetectionTimer;
+  JourneyDetectionMatch? _detectedJourney;
+  String? _detectedJourneyTabId;
+  String? _detectedDestinationName;
+  String? _pendingDetectionKey;
+  int _pendingDetectionSamples = 0;
+  int _detectedMismatchSamples = 0;
+  final Set<String> _suppressedDetectionKeys = <String>{};
+  int _maximumEffectiveSignalLevel = 0;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
+  List<Station> _sharedFriendPlaces = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
   bool _wasKeyboardVisible = false;
@@ -684,6 +700,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
 
+  void routeToSharedPlace(Station station) {
+    setState(() {
+      _toStation = station;
+      _toIsCapturedCurrentLocation = false;
+      _toController.text = station.name;
+      _activeSearchField = '';
+      _suggestions = [];
+    });
+    FocusScope.of(context).unfocus();
+    unawaited(_findRoutes());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -698,6 +726,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _toFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
     _loadHistoryData();
+    _refreshJourneySharingConfiguration();
+    _journeyDetectionTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _updateJourneyDetectionMonitoring(),
+    );
   }
 
   Future<void> _loadDeviceRoutePreferences() async {
@@ -829,6 +862,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void _handleDeviceRouteSettingsRefresh() {
     unawaited(_loadDeviceRoutePreferences());
+    unawaited(_refreshJourneySharingConfiguration());
+  }
+
+  Future<void> _refreshJourneySharingConfiguration() async {
+    final settings = await SupabaseService.getJourneySharingSettings();
+    final overrideMaximum = settings.friendOverrides.values.fold<int>(
+      0,
+      (maximum, level) => level > maximum ? level : maximum,
+    );
+    _maximumEffectiveSignalLevel = settings.hasFriends
+        ? (settings.globalLevel > overrideMaximum
+            ? settings.globalLevel
+            : overrideMaximum)
+        : 0;
+    if (_maximumEffectiveSignalLevel == 0) {
+      await _sharingGpsStream?.cancel();
+      _sharingGpsStream = null;
+      _detectedJourney = null;
+      _detectedJourneyTabId = null;
+      _detectedDestinationName = null;
+      await SupabaseService.clearPublishedJourney(keepLastLine: false);
+      return;
+    }
+    await _updateJourneyDetectionMonitoring();
   }
 
   Future<void> _setBikeSearchToggleEnabledForDevice(bool enabled) async {
@@ -869,6 +926,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromUsesCurrentLocation = true;
       }
       _resolveCurrentAddress();
+      final position = widget.currentPosition;
+      if (position != null) {
+        unawaited(_handleJourneyDetectionPosition(position));
+      }
+    }
+    if (widget.signalLevel != oldWidget.signalLevel) {
+      unawaited(_refreshJourneySharingConfiguration());
     }
   }
 
@@ -1039,6 +1103,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _debounce?.cancel();
     _focusDebounce?.cancel();
     _gpsStream?.cancel();
+    _sharingGpsStream?.cancel();
+    _journeyDetectionTimer?.cancel();
     for (final timer in _savedJourneyReminderTimers.values) {
       timer.cancel();
     }
@@ -1051,6 +1117,199 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .removeListener(_handleDeviceRouteSettingsRefresh);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  Iterable<MapEntry<String, Journey>> _journeyDetectionCandidates() sync* {
+    for (final tab in _tabs) {
+      for (final journey in tab.candidates ?? const <Journey>[]) {
+        final key = '${tab.id}:${_journeyListKey(journey)}';
+        if (!_suppressedDetectionKeys.contains(key)) {
+          yield MapEntry(key, journey);
+        }
+      }
+    }
+  }
+
+  Future<void> _updateJourneyDetectionMonitoring() async {
+    if (!mounted || _maximumEffectiveSignalLevel <= 0) return;
+    final now = DateTime.now();
+    final detected = _detectedJourney;
+    if (detected != null &&
+        now.isAfter(detected.journey.arrival
+            .add(JourneyDetectionService.arrivalGrace))) {
+      _detectedJourney = null;
+      _detectedJourneyTabId = null;
+      _detectedDestinationName = null;
+      await SupabaseService.clearPublishedJourney();
+    }
+
+    final shouldMonitor = _detectedJourney != null ||
+        _journeyDetectionCandidates().any(
+          (entry) =>
+              JourneyDetectionService.isInMonitoringWindow(entry.value, now),
+        );
+    if (!shouldMonitor) {
+      await _sharingGpsStream?.cancel();
+      _sharingGpsStream = null;
+      return;
+    }
+    if (_gpsStream != null) return;
+    // Level 7/8 already has the low-power app-wide location stream. Its
+    // positions arrive through didUpdateWidget, so starting another stream
+    // here would only waste battery.
+    if (_maximumEffectiveSignalLevel >= 7) return;
+    if (_sharingGpsStream != null) return;
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    LocationSettings settings = const LocationSettings(
+      accuracy: LocationAccuracy.medium,
+      distanceFilter: 120,
+    );
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      settings = AndroidSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 120,
+        intervalDuration: const Duration(seconds: 45),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Journey Signal',
+          notificationText: 'Checking for your current journey',
+          notificationIcon: AndroidResource(name: 'ic_launcher'),
+          enableWakeLock: false,
+        ),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      settings = AppleSettings(
+        accuracy: LocationAccuracy.medium,
+        activityType: ActivityType.otherNavigation,
+        distanceFilter: 120,
+        pauseLocationUpdatesAutomatically: true,
+        showBackgroundLocationIndicator: _maximumEffectiveSignalLevel >= 6,
+      );
+    }
+    _sharingGpsStream =
+        Geolocator.getPositionStream(locationSettings: settings).listen(
+      (position) => unawaited(_handleJourneyDetectionPosition(position)),
+      onError: (Object error, StackTrace stackTrace) {
+        AppError.log(error,
+            stackTrace: stackTrace, source: 'Journey Signal GPS');
+        _sharingGpsStream?.cancel();
+        _sharingGpsStream = null;
+      },
+    );
+  }
+
+  Future<void> _handleJourneyDetectionPosition(Position position) async {
+    if (!mounted || _maximumEffectiveSignalLevel <= 0) return;
+    final now = DateTime.now();
+    var match = _detectedJourney;
+    if (match == null) {
+      final ranked = JourneyDetectionService.rankCandidates(
+        candidates: _journeyDetectionCandidates(),
+        now: now,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      if (!JourneyDetectionService.isConfident(ranked)) {
+        _pendingDetectionKey = null;
+        _pendingDetectionSamples = 0;
+        return;
+      }
+      final best = ranked.first;
+      if (_pendingDetectionKey == best.key) {
+        _pendingDetectionSamples++;
+      } else {
+        _pendingDetectionKey = best.key;
+        _pendingDetectionSamples = 1;
+      }
+      if (_pendingDetectionSamples < 2) return;
+      match = best;
+      _detectedJourney = best;
+      _detectedJourneyTabId = best.key.split(':').first;
+      _pendingDetectionKey = null;
+      _pendingDetectionSamples = 0;
+      _detectedMismatchSamples = 0;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Journey detected and shared automatically.'),
+          action: SnackBarAction(
+            label: 'Not this journey',
+            onPressed: () {
+              _suppressedDetectionKeys.add(best.key);
+              _detectedJourney = null;
+              _detectedJourneyTabId = null;
+              _detectedDestinationName = null;
+              unawaited(SupabaseService.clearPublishedJourney());
+              unawaited(_updateJourneyDetectionMonitoring());
+            },
+          ),
+        ));
+      }
+    } else {
+      final reranked = JourneyDetectionService.rankCandidates(
+        candidates: [MapEntry(match.key, match.journey)],
+        now: now,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      if (reranked.isNotEmpty) {
+        if (reranked.first.score < 0.25) {
+          _detectedMismatchSamples++;
+        } else {
+          _detectedMismatchSamples = 0;
+          match = reranked.first;
+          _detectedJourney = match;
+        }
+      } else {
+        _detectedMismatchSamples++;
+      }
+      if (_detectedMismatchSamples >= 3) {
+        _suppressedDetectionKeys.add(match.key);
+        _detectedJourney = null;
+        _detectedJourneyTabId = null;
+        _detectedDestinationName = null;
+        _detectedMismatchSamples = 0;
+        await SupabaseService.clearPublishedJourney();
+        await _updateJourneyDetectionMonitoring();
+        return;
+      }
+    }
+
+    final tab = _tabs.cast<RouteTab?>().firstWhere(
+          (candidate) => candidate?.id == _detectedJourneyTabId,
+          orElse: () => null,
+        );
+    if (tab != null) {
+      _detectedDestinationName = tab.destination.name;
+    }
+    final destinationName = _detectedDestinationName;
+    if (destinationName == null) return;
+    final currentLine = match.currentRide?.line;
+    await SupabaseService.publishJourneyPresence({
+      'journey_id': match.key,
+      'is_active': true,
+      if (currentLine != null && currentLine.trim().isNotEmpty)
+        'current_line': currentLine,
+      'departure_at': match.journey.departure.toUtc().toIso8601String(),
+      'arrival_at': match.journey.arrival.toUtc().toIso8601String(),
+      'destination_name': destinationName,
+      'itinerary': JourneyDetectionService.sanitizedItinerary(match.journey),
+      'progress': match.progress,
+      'progress_label': JourneyDetectionService.progressLabel(match),
+      'line_expires_at':
+          now.toUtc().add(const Duration(minutes: 30)).toIso8601String(),
+      'journey_expires_at': match.journey.arrival
+          .toUtc()
+          .add(JourneyDetectionService.arrivalGrace)
+          .toIso8601String(),
+      if (_maximumEffectiveSignalLevel >= 6) 'latitude': position.latitude,
+      if (_maximumEffectiveSignalLevel >= 6) 'longitude': position.longitude,
+      if (_maximumEffectiveSignalLevel >= 6) 'accuracy_m': position.accuracy,
+      if (_maximumEffectiveSignalLevel >= 6) 'location_is_journey': true,
+    });
   }
 
   /// Handles the back button press.
@@ -1132,7 +1391,46 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _loadFavorites() async {
     final favs = await FavoritesManager.getFavorites();
-    if (mounted) setState(() => _favorites = favs);
+    final sharedPlaces = <Station>[];
+    if (SupabaseService.currentUser != null) {
+      final friends = await SupabaseService.getFriends();
+      for (final friend in friends) {
+        final username = friend['username']?.toString() ?? 'Friend';
+        final latitude = friend['latitude'];
+        final longitude = friend['longitude'];
+        if (latitude is num && longitude is num) {
+          sharedPlaces.add(Station(
+            id: 'friend:${friend['id']}',
+            name: username,
+            type: 'location',
+            latitude: latitude.toDouble(),
+            longitude: longitude.toDouble(),
+          ));
+        }
+        final favorites = friend['shared_favorites'];
+        if (favorites is! List) continue;
+        for (final raw in favorites) {
+          if (raw is! Map || raw['station'] is! Map) continue;
+          try {
+            final station = Station.fromJson(
+              Map<String, dynamic>.from(raw['station'] as Map),
+            );
+            sharedPlaces.add(Station(
+              id: 'friend-favorite:${friend['id']}:${raw['id']}',
+              name: '$username · ${raw['label'] ?? station.name}',
+              type: station.type,
+              latitude: station.latitude,
+              longitude: station.longitude,
+            ));
+          } catch (_) {}
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _favorites = favs;
+      _sharedFriendPlaces = sharedPlaces;
+    });
   }
 
   bool _isRouteSearchCancelled(int token) =>
@@ -1573,7 +1871,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _stopWakeAlarm() {
     _gpsStream?.cancel();
     _gpsStream = null;
+    widget.onHighAccuracyTrackingChanged(false);
     SupabaseService.clearJourneyStatus();
+    unawaited(_updateJourneyDetectionMonitoring());
     if (mounted) setState(() => _isWakeAlarmSet = false);
   }
 
@@ -1619,6 +1919,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (mounted) {
       setState(() => _isWakeAlarmSet = true);
     }
+    widget.onHighAccuracyTrackingChanged(true);
+    await _sharingGpsStream?.cancel();
+    _sharingGpsStream = null;
 
     // 2a. Recreate the wake alarm notification channel with the user's
     //     custom vibration pattern. On Android 8.0+ the vibration pattern
@@ -1690,6 +1993,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .listen((Position pos) async {
       if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
       SupabaseService.updateLocation(pos);
+      unawaited(_handleJourneyDetectionPosition(pos));
 
       // Get the currently active route and its enabled alarm steps
       final idx = _tabs.indexWhere((t) => t.id == route.id);
@@ -1863,6 +2167,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (query.isNotEmpty) {
       final matchingFavs = _matchingFavoritesForQuery(query);
       results.addAll(matchingFavs);
+      results.addAll(_matchingSharedFriendPlaces(query));
     }
     final history = await SearchHistoryManager.getHistory();
     if (history.isNotEmpty) {
@@ -1891,6 +2196,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final queryLower = query.toLowerCase();
     return _favorites
         .where((favorite) => _favoriteMatchesQuery(favorite, queryLower))
+        .toList();
+  }
+
+  List<Station> _matchingSharedFriendPlaces(String query) {
+    final queryLower = query.toLowerCase();
+    return _sharedFriendPlaces
+        .where((place) => place.name.toLowerCase().contains(queryLower))
         .toList();
   }
 
@@ -2003,8 +2315,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       });
     }
     final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+    final matchingSharedPlaces = _matchingSharedFriendPlaces(sanitizedQuery);
     setState(() {
-      _suggestions = matchingFavs;
+      _suggestions = <dynamic>[
+        ...matchingFavs,
+        ...matchingSharedPlaces,
+      ];
       _isSuggestionsLoading = sanitizedQuery.length > 2;
     });
     if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -2047,9 +2363,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
         if (!mounted || requestToken != _suggestionRequestToken) return;
         final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
+        final matchingSharedPlaces =
+            _matchingSharedFriendPlaces(sanitizedQuery);
         if (mounted) {
           setState(() {
-            if (apiResults.isEmpty && matchingFavs.isEmpty) {
+            if (apiResults.isEmpty &&
+                matchingFavs.isEmpty &&
+                matchingSharedPlaces.isEmpty) {
               // Show message if no results at all
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content:
@@ -2058,6 +2378,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             }
             _suggestions = <dynamic>[
               ...matchingFavs,
+              ...matchingSharedPlaces,
               ...apiResults,
             ];
             _isSuggestionsLoading = false;
@@ -4011,6 +4332,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       ));
       _activeTabId = id;
     });
+    unawaited(_updateJourneyDetectionMonitoring());
+    final position = _effectiveCurrentPosition;
+    if (position != null) {
+      unawaited(_handleJourneyDetectionPosition(position));
+    }
     return id;
   }
 
@@ -4091,6 +4417,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
       }
     });
+    unawaited(_updateJourneyDetectionMonitoring());
   }
 
   void _replaceTabCandidates(
