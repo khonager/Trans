@@ -21,6 +21,7 @@ import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
 import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
+import '../../widgets/journey_signal_tutorial.dart';
 
 @visibleForTesting
 String deleteAccountErrorMessage(
@@ -2304,6 +2305,41 @@ class _SettingsTabState extends State<SettingsTab> {
                         },
                       ),
                     ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: Icon(
+                      Icons.help_outline_rounded,
+                      color: colors.settingsHeader,
+                    ),
+                    title: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Stufen erklärt'
+                          : 'Explain the levels',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Sieh dir an, was Freunde bei jeder Stufe sehen.'
+                          : 'See what friends can see at every level.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      color: colors.textSecondary,
+                    ),
+                    onTap: () async {
+                      final level = await showJourneySignalTutorial(
+                        context,
+                        initialLevel: widget.signalLevel,
+                      );
+                      if (level == null || !mounted) return;
+                      await widget.onSignalLevelChanged(level);
+                      await _loadProfile();
+                    },
                   ),
                 ]),
                 const SizedBox(height: 20),
