@@ -2,7 +2,7 @@ name: trans
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 2.5.10+38
+version: 2.5.11+40
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
@@ -108,6 +108,7 @@ flutter_launcher_icons:
   adaptive_icon_foreground: "assets/icon.png"
 
 flutter:
+  default-flavor: stable
   generate: true
   uses-material-design: true
 

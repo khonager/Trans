@@ -33,6 +33,8 @@ import '../map_screen.dart';
 import 'route_results_view.dart';
 
 const int _activeJourneyRefreshWindowSize = 8;
+const int _routeLoadMoreResultCount = 30;
+const int _routeLoadEarlierResultCount = 16;
 
 enum RouteHistoryView { frequent, recent }
 
@@ -542,6 +544,26 @@ Journey _preferJourneyWithMorePlatformDetail(
   return existing;
 }
 
+List<Journey> _mergeJourneyCandidates(
+  Iterable<Journey> existing,
+  Iterable<Journey> incoming,
+) {
+  final byKey = <String, Journey>{};
+  for (final journey in existing) {
+    byKey[_journeyListKey(journey)] = journey;
+  }
+  for (final journey in incoming) {
+    final key = _journeyListKey(journey);
+    final previous = byKey[key];
+    byKey[key] = previous == null
+        ? journey
+        : _preferJourneyWithMorePlatformDetail(previous, journey);
+  }
+
+  return byKey.values.toList()
+    ..sort((a, b) => a.departure.compareTo(b.departure));
+}
+
 Journey _bestCurrentJourneyVersion(
   Journey target,
   Iterable<Journey> candidates,
@@ -602,6 +624,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Station? _fromStation;
   Station? _toStation;
+  bool _toIsCapturedCurrentLocation = false;
 
   List<dynamic> _suggestions = [];
   String _activeSearchField = '';
@@ -1950,6 +1973,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void _onSearchChanged(String query, String field) {
     final sanitizedQuery = query.trim();
+    if (field == 'to') _toIsCapturedCurrentLocation = false;
     setState(() => _activeSearchField = field);
     _scrollToTop();
     _scrollSuggestionsToTop();
@@ -2076,12 +2100,50 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       } else {
         _toStation = station;
+        _toIsCapturedCurrentLocation = false;
         _toController.text = station.name;
       }
       _suggestions = [];
       _activeSearchField = '';
     });
     FocusScope.of(context).unfocus();
+  }
+
+  void _swapRouteEndpoints() {
+    final fromText = _fromController.text;
+    final fromStation = _fromStation;
+    final fromUsesCurrentLocation = _fromUsesCurrentLocation;
+    final currentPosition = _effectiveCurrentPosition;
+    final currentLocationText = fromText.trim().isNotEmpty
+        ? fromText
+        : (_currentAddress ?? AppLocalizations.of(context)!.currentLocation);
+    final capturedCurrentLocation =
+        fromUsesCurrentLocation && currentPosition != null
+            ? Station(
+                id: 'gps-snapshot-${currentPosition.latitude},${currentPosition.longitude}',
+                name: currentLocationText,
+                type: 'location',
+                latitude: currentPosition.latitude,
+                longitude: currentPosition.longitude,
+              )
+            : null;
+
+    _suggestionRequestToken++;
+    _debounce?.cancel();
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _fromController.text = _toController.text;
+      _toController.text =
+          fromUsesCurrentLocation ? currentLocationText : fromText;
+      _fromStation = _toStation;
+      _toStation = capturedCurrentLocation ?? fromStation;
+      _fromUsesCurrentLocation = false;
+      _toIsCapturedCurrentLocation = fromUsesCurrentLocation;
+      _suggestions = [];
+      _activeSearchField = '';
+      _isSuggestionsLoading = false;
+    });
   }
 
   Future<void> _onFavoriteTap(Favorite fav) async {
@@ -2120,6 +2182,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           }
         } else if (currentField == 'to') {
           _toStation = target;
+          _toIsCapturedCurrentLocation = false;
           _toController.text = target.name;
           // If from is empty, maybe jump there? But usually 'to' is second.
           if (_fromStation == null && _effectiveCurrentPosition == null) {
@@ -2129,6 +2192,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         } else {
           if (_fromStation != null || _effectiveCurrentPosition != null) {
             _toStation = target;
+            _toIsCapturedCurrentLocation = false;
             _toController.text = target.name;
           } else {
             _fromStation = target;
@@ -3238,6 +3302,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _fromUsesCurrentLocation = false;
       _fromController.text = from.name;
       _toStation = to;
+      _toIsCapturedCurrentLocation = false;
       _toController.text = to.name;
     });
     _findRoutes();
@@ -4488,9 +4553,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   @override
   Widget build(BuildContext context) {
-    final bool canSearch =
-        (_fromStation != null || _effectiveCurrentPosition != null) &&
-            _toStation != null;
+    final bool canSearch = (_fromStation != null ||
+            _fromUsesCurrentLocation ||
+            _fromController.text.trim().isNotEmpty) &&
+        (_toStation != null || _toController.text.trim().isNotEmpty);
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -4796,10 +4862,66 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             : AppLocalizations.of(context)!
                                 .fromStationOrAddress),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
-                    const SizedBox(height: 12),
-                    _buildTextField(AppLocalizations.of(context)!.toLabel,
-                        _toController, _toFocusNode, _toStation != null, 'to',
-                        hint: AppLocalizations.of(context)!.toStationOrAddress),
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 12),
+                            _buildTextField(
+                                AppLocalizations.of(context)!.toLabel,
+                                _toController,
+                                _toFocusNode,
+                                _toStation != null,
+                                'to',
+                                hint: AppLocalizations.of(context)!
+                                    .toStationOrAddress),
+                          ],
+                        ),
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: 32,
+                          child: Center(
+                            child: Tooltip(
+                              message: 'Swap from and to',
+                              child: Semantics(
+                                button: true,
+                                label: 'Swap from and to',
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _swapRouteEndpoints,
+                                  child: SizedBox(
+                                    width: 48,
+                                    height: 32,
+                                    child: Align(
+                                      alignment: Alignment.topCenter,
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 12,
+                                        child: Transform.translate(
+                                          offset: const Offset(0, 8),
+                                          child: Transform.scale(
+                                            scale: 1.5,
+                                            child: Icon(
+                                              Icons.swap_vert_rounded,
+                                              color: colors.effectiveSeed,
+                                              size: 12,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
@@ -5676,13 +5798,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       isLocationHint = true;
     }
 
-    if (isSelected) {
+    final isCapturedCurrentLocation =
+        fieldKey == 'to' && _toIsCapturedCurrentLocation;
+
+    if (isCapturedCurrentLocation) {
+      iconColor = Colors.blue;
+    } else if (isSelected) {
       iconColor = Colors.greenAccent;
-    } else if (fieldKey == 'from' &&
-        ((_fromStation?.id == 'gps') ||
-            (isLocationHint &&
-                effectiveHint !=
-                    AppLocalizations.of(context)!.fromStationOrAddress))) {
+    } else if ((fieldKey == 'from' &&
+            ((_fromStation?.id == 'gps') ||
+                (isLocationHint &&
+                    effectiveHint !=
+                        AppLocalizations.of(context)!.fromStationOrAddress))) ||
+        isCapturedCurrentLocation) {
       iconColor = Colors.blue;
     }
 
@@ -5741,7 +5869,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             )
                           : Icon(Icons.my_location, color: iconColor, size: 20),
                     )
-                  : Icon(Icons.location_on, color: iconColor, size: 20),
+                  : Icon(
+                      isCapturedCurrentLocation
+                          ? Icons.my_location
+                          : Icons.location_on,
+                      color: iconColor,
+                      size: 20,
+                    ),
               suffixIcon: (controller.text.isNotEmpty || isSelected)
                   ? IconButton(
                       icon: Icon(Icons.close,
@@ -5772,24 +5906,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     DateTime refDate;
     bool isArrival;
     DateTime? earlierBoundary;
-    DateTime? earlierWindowStart;
+    final requestedResults =
+        earlier ? _routeLoadEarlierResultCount : _routeLoadMoreResultCount;
 
     if (earlier) {
       if (route.candidates == null || route.candidates!.isEmpty) return;
       earlierBoundary = route.candidates!
           .map((journey) => journey.plannedDeparture ?? journey.departure)
           .reduce((a, b) => a.isBefore(b) ? a : b);
-      earlierWindowStart = earlierBoundary.subtract(const Duration(hours: 2));
-      refDate = earlierWindowStart;
+      refDate = earlierBoundary.subtract(const Duration(hours: 2));
       isArrival = false;
     } else {
       if (route.candidates == null || route.candidates!.isEmpty) return;
       refDate = route.candidates!
           .map((journey) => journey.plannedDeparture ?? journey.departure)
           .reduce((a, b) => a.isAfter(b) ? a : b)
-          .add(const Duration(minutes: 1));
+          .add(const Duration(seconds: 1));
       isArrival = false; // Find connections departing after the last one
     }
+
+    TransportApi.addSyntheticDebugLog(
+      'route-load-more: start tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+      'currentCount=${route.candidates?.length ?? 0} ref=${refDate.toIso8601String()} '
+      'earlierBoundary=${earlierBoundary?.toIso8601String() ?? 'n/a'} results=$requestedResults',
+    );
 
     setState(() {
       _activeRouteSearchToken = loadToken;
@@ -5806,6 +5946,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (partial.isEmpty || !mounted || _isRouteSearchCancelled(loadToken)) {
           return;
         }
+        final rawCount = partial.length;
         final List<Journey> newJourneys = [];
         for (var d in partial) {
           try {
@@ -5815,11 +5956,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             );
           } catch (e) {/* ignore */}
         }
-        if (earlier && earlierBoundary != null && earlierWindowStart != null) {
+        if (earlier && earlierBoundary != null) {
           newJourneys.removeWhere((journey) {
             final departure = journey.plannedDeparture ?? journey.departure;
-            return !departure.isBefore(earlierBoundary!) ||
-                departure.isBefore(earlierWindowStart!);
+            return !departure.isBefore(earlierBoundary!);
+          });
+        } else if (!earlier) {
+          newJourneys.removeWhere((journey) {
+            final departure = journey.plannedDeparture ?? journey.departure;
+            return departure.isBefore(refDate);
           });
         }
         if (newJourneys.isEmpty) {
@@ -5830,27 +5975,41 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           return;
         }
 
-        setState(() {
-          final idx = _tabs.indexWhere((t) => t.id == route.id);
-          if (idx != -1) {
-            final currentRoute = _tabs[idx];
-            final byKey = <String, Journey>{};
-            for (final journey in currentRoute.candidates!) {
-              byKey[_journeyListKey(journey)] = journey;
-            }
-            for (final journey in newJourneys) {
-              final key = _journeyListKey(journey);
-              final existing = byKey[key];
-              byKey[key] = existing == null
-                  ? journey
-                  : _preferJourneyWithMorePlatformDetail(existing, journey);
-            }
-
-            final updatedCandidates = byKey.values.toList()
-              ..sort((a, b) => a.departure.compareTo(b.departure));
-            _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+        final idx = _tabs.indexWhere((t) => t.id == route.id);
+        if (idx != -1) {
+          final currentRoute = _tabs[idx];
+          final currentCandidates =
+              currentRoute.candidates ?? const <Journey>[];
+          final oldCount = currentCandidates.length;
+          final updatedCandidates = _mergeJourneyCandidates(
+            currentCandidates,
+            newJourneys,
+          );
+          final oldSignature = _journeyRefreshSignature(currentCandidates);
+          final newSignature = _journeyRefreshSignature(updatedCandidates);
+          final oldPlatformSignal = currentCandidates.fold<int>(
+            0,
+            (sum, journey) => sum + _journeyPlatformSignal(journey),
+          );
+          final newPlatformSignal = updatedCandidates.fold<int>(
+            0,
+            (sum, journey) => sum + _journeyPlatformSignal(journey),
+          );
+          if (oldSignature != newSignature ||
+              oldPlatformSignal != newPlatformSignal) {
+            setState(() {
+              _tabs[idx] = currentRoute.copyWith(candidates: updatedCandidates);
+            });
+            TransportApi.addSyntheticDebugLog(
+              'route-load-more: partial tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+              'raw=$rawCount usable=${newJourneys.length}',
+            );
+            TransportApi.addSyntheticDebugLog(
+              'route-load-more: candidates tab=${route.id} direction=${earlier ? 'earlier' : 'later'} '
+              'old=$oldCount new=${updatedCandidates.length} delta=${updatedCandidates.length - oldCount}',
+            );
           }
-        });
+        }
         _releaseBlockingRouteLoad(loadToken);
         if (!visibleResults.isCompleted) {
           visibleResults.complete();
@@ -5865,11 +6024,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             when: refDate,
             isArrival: isArrival,
           ),
-          results: 5,
           onLoadStateChanged: (phases) =>
               _setRouteLoadPhasesForToken(loadToken, phases),
           shouldContinue: () => !_isRouteSearchCancelled(loadToken),
           onPartialResults: appendResults,
+          results: requestedResults,
         ).then((newResults) {
           if (_isRouteSearchCancelled(loadToken) || !mounted) return;
           appendResults(newResults);
@@ -5887,12 +6046,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       await visibleResults.future;
     } catch (e) {
+      TransportApi.addSyntheticDebugLog(
+        'route-load-more: error tab=${route.id} direction=${earlier ? 'earlier' : 'later'} error=$e',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context)!
                 .couldNotLoadMoreRoutes(e.toString()))));
       }
     } finally {
+      TransportApi.addSyntheticDebugLog(
+        'route-load-more: finish tab=${route.id} direction=${earlier ? 'earlier' : 'later'}',
+      );
       _releaseBlockingRouteLoad(loadToken);
     }
   }
@@ -5935,7 +6100,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         // handleResults may run multiple times (partial + final). We keep the
         // latest comparison so the completion toast reflects the final visible
         // candidate list after refresh settles.
-        final newSignature = _journeyRefreshSignature(newJourneys);
+        final newSignature = _journeyRefreshSignature(
+          _mergeJourneyCandidates(previousCandidates, newJourneys),
+        );
         hasChanged = previousSignature != newSignature;
         hasRefreshResults = true;
 
@@ -5943,7 +6110,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           final idx = _tabs.indexWhere((t) => t.id == route.id);
           if (idx != -1) {
             final currentRoute = _tabs[idx];
-            _tabs[idx] = currentRoute.copyWith(candidates: newJourneys);
+            final updatedCandidates = _mergeJourneyCandidates(
+              currentRoute.candidates ?? const <Journey>[],
+              newJourneys,
+            );
+            final activeJourney = currentRoute.activeJourney == null
+                ? null
+                : _bestCurrentJourneyVersion(
+                    currentRoute.activeJourney!,
+                    updatedCandidates,
+                  );
+            _tabs[idx] = currentRoute.copyWith(
+              candidates: updatedCandidates,
+              activeJourney: activeJourney,
+              steps: activeJourney?.steps ?? currentRoute.steps,
+            );
           }
         });
       }
@@ -7021,13 +7202,17 @@ class _StepCardState extends State<_StepCard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            detail,
-            maxLines: 1,
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 110),
+            child: Text(
+              detail,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -7064,16 +7249,14 @@ class _StepCardState extends State<_StepCard> {
     BuildContext context, {
     required String detail,
   }) {
-    return Flexible(
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          reverse: true,
-          child: _buildStopDetailChip(
-            context,
-            detail: detail,
-          ),
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        child: _buildStopDetailChip(
+          context,
+          detail: detail,
         ),
       ),
     );
@@ -7192,38 +7375,41 @@ class _StepCardState extends State<_StepCard> {
                     showTrainNumbers: widget.showTrainNumbers,
                   );
 
-                  // Title: Bus Number -> Destination (Expanded) + Arrow (Right)
+                  // Keep the line compact and give the destination the
+                  // remaining width. An unconstrained destination can shrink
+                  // to one character per line on narrow screens.
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Icon(_rideModeIconForLine(step.line),
+                          size: 18, color: colors.textSecondary),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Text(
+                          displayLine,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: colors.textPrimary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.arrow_right_alt,
+                          size: 24, color: colors.textPrimary),
+                      const SizedBox(width: 8),
                       Expanded(
-                          child: Row(
-                        children: [
-                          Icon(
-                            _rideModeIconForLine(step.line),
-                            size: 18,
-                            color: colors.textSecondary,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(displayLine,
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: colors.textPrimary)),
-                          const SizedBox(width: 8),
-                          Icon(Icons.arrow_right_alt,
-                              size: 24, color: colors.textPrimary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: Text(
-                            displayDest,
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: colors.textPrimary),
-                            overflow: TextOverflow.visible,
-                          )),
-                        ],
-                      )),
+                        child: Text(
+                          displayDest,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: colors.textPrimary),
+                        ),
+                      ),
                       const SizedBox(width: 8),
                       // Manual Arrow on Top Line with Rotation
                       AnimatedRotation(
@@ -7299,51 +7485,58 @@ class _StepCardState extends State<_StepCard> {
                           const SizedBox(width: 8),
 
                           // Time (Right)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (combinePlatformAndStopLabel(
-                                step.platform,
-                                step.departureStopLabel,
-                                stationName: step.startStationName,
-                                isRail: _lineLooksRailForPlatformLabel(
-                                  step.line,
-                                ),
-                              )
-                                  case final collapsedStopDetail?) ...[
-                                _buildCollapsedStopDetailChip(
-                                  context,
-                                  detail: collapsedStopDetail,
-                                ),
-                                const SizedBox(width: 10),
-                              ],
-                              Text(
-                                  "${step.departureTime} - ${step.arrivalTime}",
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: step.isCancelled
-                                          ? colors.textSecondary
-                                          : colors.textPrimary,
-                                      decoration: step.isCancelled
-                                          ? TextDecoration.lineThrough
-                                          : null)),
-                              if (step.isCancelled)
-                                Text(
-                                    AppLocalizations.of(context)!.cancelledL10n,
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.red,
-                                        fontSize: 12))
-                              else if (step.departureDelay != null &&
-                                  step.departureDelay != 0)
-                                Text(
-                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: step.departureDelay! > 0
-                                            ? colors.delayLate
-                                            : colors.delayOnTime))
-                            ],
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (combinePlatformAndStopLabel(
+                                    step.platform,
+                                    step.departureStopLabel,
+                                    stationName: step.startStationName,
+                                    isRail: _lineLooksRailForPlatformLabel(
+                                      step.line,
+                                    ),
+                                  )
+                                      case final collapsedStopDetail?) ...[
+                                    _buildCollapsedStopDetailChip(
+                                      context,
+                                      detail: collapsedStopDetail,
+                                    ),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  Text(
+                                      "${step.departureTime} - ${step.arrivalTime}",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: step.isCancelled
+                                              ? colors.textSecondary
+                                              : colors.textPrimary,
+                                          decoration: step.isCancelled
+                                              ? TextDecoration.lineThrough
+                                              : null)),
+                                  if (step.isCancelled)
+                                    Text(
+                                        AppLocalizations.of(context)!
+                                            .cancelledL10n,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.red,
+                                            fontSize: 12))
+                                  else if (step.departureDelay != null &&
+                                      step.departureDelay != 0)
+                                    Text(
+                                        " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: step.departureDelay! > 0
+                                                ? colors.delayLate
+                                                : colors.delayOnTime))
+                                ],
+                              ),
+                            ),
                           )
                         ],
                       )
@@ -7379,6 +7572,8 @@ class _StepCardState extends State<_StepCard> {
                                       platform: step.platform,
                                       stopLabel: step.departureStopLabel,
                                     ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                         color: colors.textPrimary,
                                         fontSize: 14,
@@ -7497,6 +7692,8 @@ class _StepCardState extends State<_StepCard> {
                                       leading: const Icon(Icons.circle,
                                           size: 8, color: Colors.grey),
                                       title: Text(displayName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
                                               color: colors.textPrimary,
                                               fontSize: 13)),
@@ -7621,6 +7818,8 @@ class _StepCardState extends State<_StepCard> {
                                   platform: step.arrivalPlatform,
                                   stopLabel: step.arrivalStopLabel,
                                 ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                     color: colors.textPrimary,
                                     fontSize: 14,
