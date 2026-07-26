@@ -27,14 +27,17 @@ class Favorite {
       };
 
   factory Favorite.fromJson(Map<String, dynamic> json) {
+    final rawIconCode = json['iconCode'];
     return Favorite(
-      id: json['id'],
-      label: json['label'],
-      type: json['type'],
+      id: json['id'].toString(),
+      label: json['label']?.toString() ?? '',
+      type: json['type']?.toString() ?? 'station',
       station:
           json['station'] != null ? Station.fromJson(json['station']) : null,
-      friendId: json['friendId'],
-      iconCode: json['iconCode'],
+      friendId: json['friendId']?.toString(),
+      iconCode: rawIconCode is num
+          ? rawIconCode.toInt()
+          : int.tryParse(rawIconCode?.toString() ?? ''),
     );
   }
 }

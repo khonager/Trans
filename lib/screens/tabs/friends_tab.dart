@@ -8,7 +8,9 @@ import '../../widgets/private_chat_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
 import '../../models/journey_sharing.dart';
+import '../../models/favorite.dart';
 import '../../models/station.dart';
+import '../../utils/favorite_icons.dart';
 import '../friend_location_screen.dart';
 
 bool isAutoAddedFriend(Map<String, dynamic> friend) =>
@@ -712,12 +714,17 @@ class _FriendsTabState extends State<FriendsTab> {
                           builder: (_) => FriendLocationScreen(
                             username: friend['username']?.toString() ??
                                 AppLocalizations.of(context)!.unknown,
+                            avatarEmoji: friend['avatar_emoji']?.toString(),
+                            themeColor: friend['theme_color'],
                             latitude: (friend['latitude'] as num).toDouble(),
                             longitude: (friend['longitude'] as num).toDouble(),
                             accuracyMeters:
                                 (friend['accuracy_m'] as num?)?.toDouble(),
                             updatedAt: DateTime.tryParse(
                                 friend['updated_at']?.toString() ?? ''),
+                            sharedFavorites: friend['shared_favorites'] is List
+                                ? friend['shared_favorites'] as List
+                                : const [],
                           ),
                         ));
                       },
@@ -894,8 +901,19 @@ class _FriendsTabState extends State<FriendsTab> {
           spacing: 6,
           runSpacing: 6,
           children: favorites.whereType<Map>().map((favorite) {
+            Favorite? parsedFavorite;
+            try {
+              parsedFavorite = Favorite.fromJson(
+                Map<String, dynamic>.from(favorite),
+              );
+            } catch (_) {}
             return ActionChip(
-              avatar: const Icon(Icons.star_outline, size: 16),
+              avatar: Icon(
+                parsedFavorite == null
+                    ? Icons.star_outline
+                    : resolveFavoriteIcon(parsedFavorite),
+                size: 16,
+              ),
               label: Text(favorite['label']?.toString() ?? 'Favorite'),
               onPressed: () {
                 final rawStation = favorite['station'];

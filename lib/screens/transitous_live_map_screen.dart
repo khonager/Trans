@@ -11,10 +11,12 @@ import 'package:latlong2/latlong.dart';
 
 import '../config/app_theme.dart';
 import '../services/favorites_manager.dart';
+import '../services/supabase_service.dart';
 import '../services/transport_api.dart';
 import '../utils/app_error.dart';
 import '../widgets/compass_icon.dart';
 import '../widgets/favorite_map_markers.dart';
+import '../widgets/friend_map_markers.dart';
 
 class TransitousLiveMapScreen extends StatefulWidget {
   final Position? currentPosition;
@@ -59,6 +61,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   List<_LiveBusTrip> _displayedTripsCache = const [];
   String? _displayedTripsCacheKey;
   List<Marker> _favoriteMarkers = const [];
+  List<Marker> _friendMarkers = const [];
   Position? _liveCurrentPosition;
   bool _isStartingLiveLocationUpdates = false;
   bool _isCompassMode = false;
@@ -250,11 +253,13 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
 
   Future<void> _loadFavoriteMarkers() async {
     final favorites = await FavoritesManager.getFavorites();
+    final friends = await SupabaseService.getFriends();
     if (!mounted) return;
     setState(() {
       _favoriteMarkers = buildFavoriteMapMarkers(
         favorites.where((favorite) => favorite.type == 'station').toList(),
       );
+      _friendMarkers = buildFriendMapMarkers(friends);
     });
   }
 
@@ -1510,6 +1515,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
               ),
               if (_favoriteMarkers.isNotEmpty)
                 MarkerLayer(markers: _favoriteMarkers),
+              if (_friendMarkers.isNotEmpty)
+                MarkerLayer(markers: _friendMarkers),
               if (selectedTrip != null)
                 ValueListenableBuilder<DateTime>(
                   valueListenable: _clock,

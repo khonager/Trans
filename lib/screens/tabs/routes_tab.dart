@@ -702,6 +702,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void routeToSharedPlace(Station station) {
     setState(() {
+      _activeTabId = null;
       _toStation = station;
       _toIsCapturedCurrentLocation = false;
       _toController.text = station.name;
@@ -709,7 +710,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _suggestions = [];
     });
     FocusScope.of(context).unfocus();
-    unawaited(_findRoutes());
   }
 
   @override
