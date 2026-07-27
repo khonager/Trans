@@ -33,7 +33,10 @@ import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import 'route_results_view.dart';
 
-const int _activeJourneyRefreshWindowSize = 8;
+// A route detail refresh needs enough of a window to find the selected
+// service again, including when the provider returns nearby alternatives
+// first. This is only used for explicit/visible detail refreshes.
+const int _activeJourneyRefreshWindowSize = 20;
 const int _routeLoadMoreResultCount = 30;
 const int _routeLoadEarlierResultCount = 16;
 
@@ -656,6 +659,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   StreamSubscription<Position>? _gpsStream;
   StreamSubscription<Position>? _sharingGpsStream;
   Timer? _journeyDetectionTimer;
+  Timer? _activeJourneyRefreshTimer;
+  DateTime? _lastActiveJourneyRefresh;
   JourneyDetectionMatch? _detectedJourney;
   String? _detectedJourneyTabId;
   String? _detectedDestinationName;
@@ -702,6 +707,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   void routeToSharedPlace(Station station) {
     setState(() {
+      _activeTabId = null;
       _toStation = station;
       _toIsCapturedCurrentLocation = false;
       _toController.text = station.name;
@@ -709,7 +715,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _suggestions = [];
     });
     FocusScope.of(context).unfocus();
-    unawaited(_findRoutes());
   }
 
   @override
@@ -730,6 +735,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _journeyDetectionTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _updateJourneyDetectionMonitoring(),
+    );
+    _activeJourneyRefreshTimer = Timer.periodic(
+      const Duration(minutes: 3),
+      (_) => _refreshVisibleActiveJourneyIfDue(),
     );
   }
 
@@ -940,7 +949,34 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadDeviceRoutePreferences());
+      _refreshVisibleActiveJourneyIfDue();
     }
+  }
+
+  void _refreshVisibleActiveJourneyIfDue() {
+    if (!mounted || _isLoadingRoute || _activeTabId == null) return;
+
+    final route = _tabs.cast<RouteTab?>().firstWhere(
+          (tab) => tab?.id == _activeTabId,
+          orElse: () => null,
+        );
+    final journey = route?.activeJourney;
+    if (route == null || journey == null) return;
+
+    final now = DateTime.now();
+    final departure = journey.plannedDeparture ?? journey.departure;
+    // Poll only a journey that is about to start or has just started. A
+    // single visible tab is refreshed at most once every three minutes.
+    if (departure.isBefore(now.subtract(const Duration(minutes: 15))) ||
+        departure.isAfter(now.add(const Duration(hours: 2))) ||
+        (_lastActiveJourneyRefresh != null &&
+            now.difference(_lastActiveJourneyRefresh!) <
+                const Duration(minutes: 3))) {
+      return;
+    }
+
+    _lastActiveJourneyRefresh = now;
+    unawaited(_refreshActiveJourney(route, showCompletionFeedback: false));
   }
 
   bool _isCurrentLocationText(String text, {String? addressOverride}) {
@@ -1105,6 +1141,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _gpsStream?.cancel();
     _sharingGpsStream?.cancel();
     _journeyDetectionTimer?.cancel();
+    _activeJourneyRefreshTimer?.cancel();
     for (final timer in _savedJourneyReminderTimers.values) {
       timer.cancel();
     }
@@ -6618,7 +6655,49 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return null;
   }
 
-  Future<void> _refreshActiveJourney(RouteTab route) async {
+  Journey? _findRealtimeJourneyMatch(
+      Journey currentJourney, List<Journey> candidates) {
+    final strictMatch = _findStrictJourneyMatch(currentJourney, candidates);
+    if (strictMatch != null) return strictMatch;
+
+    final currentRideSteps =
+        currentJourney.steps.where((step) => step.type == 'ride').toList();
+    if (currentRideSteps.isEmpty) return null;
+
+    // Providers can add or remove transfer/walk legs as realtime information
+    // changes. When that happens the old strict, whole-itinerary comparison
+    // rejects the very same vehicle. Match all ride identities instead, while
+    // retaining a tight scheduled-departure guard for services without IDs.
+    for (final candidate in candidates) {
+      final candidateRideSteps =
+          candidate.steps.where((step) => step.type == 'ride').toList();
+      if (candidateRideSteps.length != currentRideSteps.length) continue;
+
+      final allRidesMatch = List.generate(currentRideSteps.length, (index) {
+        return _sameRideIdentity(
+          currentRideSteps[index],
+          candidateRideSteps[index],
+        );
+      }).every((matches) => matches);
+      if (!allRidesMatch) continue;
+
+      final scheduledDifference =
+          (candidate.plannedDeparture ?? candidate.departure)
+              .difference(
+                  currentJourney.plannedDeparture ?? currentJourney.departure)
+              .abs();
+      if (scheduledDifference <= const Duration(minutes: 5)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> _refreshActiveJourney(
+    RouteTab route, {
+    bool showCompletionFeedback = true,
+  }) async {
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
@@ -6668,8 +6747,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
 
         // Find the best match
-        final matched =
-            _findStrictJourneyMatch(currentRoute.activeJourney!, newJourneys);
+        final matched = _findRealtimeJourneyMatch(
+          currentRoute.activeJourney!,
+          newJourneys,
+        );
 
         if (matched != null) {
           final upd =
@@ -6714,7 +6795,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         originStation,
         route.destination,
         settings: route.searchSettings.copyWith(
-          when: refDate.subtract(const Duration(minutes: 20)),
+          // Start well before the selected service. In particular, this keeps
+          // pull-to-refresh from missing it when several alternatives precede
+          // it in the provider response.
+          when: refDate.subtract(const Duration(hours: 1)),
           isArrival: false,
         ),
         // We only need a compact window around the active trip to merge live updates.
@@ -6727,7 +6811,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
-      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
+      if (showCompletionFeedback &&
+          mounted &&
+          !_isRouteSearchCancelled(refreshToken)) {
         _showRouteRefreshToast(
           completionMessage ??
               (hasMatchedUpdate
@@ -6736,7 +6822,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
       }
     } catch (e) {
-      if (mounted && !_isRouteSearchCancelled(refreshToken)) {
+      if (showCompletionFeedback &&
+          mounted &&
+          !_isRouteSearchCancelled(refreshToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
                 AppLocalizations.of(context)!.refreshFailed(e.toString()))));

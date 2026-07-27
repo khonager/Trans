@@ -2,25 +2,47 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../models/favorite.dart';
+import '../widgets/favorite_map_markers.dart';
+import '../widgets/friend_map_markers.dart';
+
 class FriendLocationScreen extends StatelessWidget {
   final String username;
+  final String? avatarEmoji;
+  final dynamic themeColor;
   final double latitude;
   final double longitude;
   final double? accuracyMeters;
   final DateTime? updatedAt;
+  final List<dynamic> sharedFavorites;
 
   const FriendLocationScreen({
     super.key,
     required this.username,
+    this.avatarEmoji,
+    this.themeColor,
     required this.latitude,
     required this.longitude,
     this.accuracyMeters,
     this.updatedAt,
+    this.sharedFavorites = const [],
   });
 
   @override
   Widget build(BuildContext context) {
     final point = LatLng(latitude, longitude);
+    final favorites = sharedFavorites
+        .map((raw) {
+          if (raw is! Map) return null;
+          try {
+            return Favorite.fromJson(Map<String, dynamic>.from(raw));
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<Favorite>()
+        .toList(growable: false);
+    final favoriteMarkers = buildFavoriteMapMarkers(favorites);
     final age = updatedAt == null
         ? null
         : DateTime.now().toUtc().difference(updatedAt!.toUtc());
@@ -56,13 +78,18 @@ class FriendLocationScreen extends StatelessWidget {
                     borderStrokeWidth: 1,
                   ),
                 ]),
+              if (favoriteMarkers.isNotEmpty)
+                MarkerLayer(markers: favoriteMarkers),
               MarkerLayer(markers: [
                 Marker(
                   point: point,
-                  width: 64,
-                  height: 64,
-                  child: const Icon(Icons.location_pin,
-                      size: 52, color: Colors.red),
+                  width: 50,
+                  height: 50,
+                  child: FriendProfileMarker(
+                    username: username,
+                    emoji: avatarEmoji,
+                    themeColor: themeColor,
+                  ),
                 ),
               ]),
             ],
