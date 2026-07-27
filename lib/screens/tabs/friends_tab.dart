@@ -248,7 +248,7 @@ class _FriendsTabState extends State<FriendsTab> {
       backgroundColor: TransColors.of(context).cardBg,
       builder: (sheetContext) {
         final colors = TransColors.of(sheetContext);
-        final override = friend['my_signal_override'] as int?;
+        final override = friend['my_privacy_override'] as int?;
         return SafeArea(
           child: ListView(
             shrinkWrap: true,
@@ -314,7 +314,7 @@ class _FriendsTabState extends State<FriendsTab> {
     );
     if (!mounted) return;
     setState(() {
-      friend['my_signal_override'] = selected == -1 ? null : selected;
+      friend['my_privacy_override'] = selected == -1 ? null : selected;
     });
   }
 
@@ -694,11 +694,11 @@ class _FriendsTabState extends State<FriendsTab> {
                               AppLocalizations.of(context)!.unknown)),
                   _buildActionButton(
                     icon: Icons.cell_tower,
-                    label: friend['my_signal_override'] == null
+                    label: friend['my_privacy_override'] == null
                         ? AppLocalizations.of(context)!
                             .signalLevel(_globalSignalLevel)
                         : AppLocalizations.of(context)!
-                            .signalLevel(friend['my_signal_override'] as int),
+                            .signalLevel(friend['my_privacy_override'] as int),
                     color: Colors.teal,
                     onTap: () => _showSignalOverrideSheet(friend),
                   ),
@@ -722,7 +722,7 @@ class _FriendsTabState extends State<FriendsTab> {
                         ));
                       },
                     ),
-                  if ((friend['visible_signal_level'] as int? ?? 0) >= 7 &&
+                  if ((friend['visible_privacy_level'] as int? ?? 0) >= 7 &&
                       friend['latitude'] is num &&
                       friend['longitude'] is num)
                     _buildActionButton(

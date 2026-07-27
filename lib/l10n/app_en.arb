@@ -440,12 +440,12 @@
   "privacy": "Privacy",
   "ghostMode": "Ghost Mode",
   "hideLocation": "Hide location from everyone",
-  "journeySignal": "Journey Signal",
+  "journeySignal": "Privacy Level",
   "signalLevel": "Level {level}",
   "@signalLevel": {
     "placeholders": {"level": {"type": "int"}}
   },
-  "signalSharingWith": "Journey Signal for {username}",
+  "signalSharingWith": "Privacy Level for {username}",
   "@signalSharingWith": {
     "placeholders": {"username": {"type": "String"}}
   },

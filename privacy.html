@@ -12,10 +12,10 @@
 
   <h2>Data Trans processes</h2>
   <p>Trans can process account information (including email address, username, user id, avatar and authentication data), app settings, searches, journeys, favorite places, friend relationships, blocks, messages, tickets, reports, and device location. Route and station requests are sent to the transport provider selected in the app and can contain station identifiers, search text, coordinates, travel times, and routing preferences.</p>
-  <p>Location is used for current-location route planning, nearby transit, wake alarms, automatic journey detection, and optional friend sharing. Trans does not intentionally build a historical trail for Journey Signal: the cloud presence record contains the latest location snapshot and replaces it when updated.</p>
+  <p>Location is used for current-location route planning, nearby transit, wake alarms, automatic journey detection, and optional friend sharing. Trans does not intentionally build a historical trail for Privacy Level: the cloud presence record contains the latest location snapshot and replaces it when updated.</p>
 
-  <h2>Journey Signal friend sharing</h2>
-  <p>Journey Signal is available only between accepted friends. A global level applies by default and can be replaced by a per-friend override. The effective level controls what that friend receives:</p>
+  <h2>Privacy Level friend sharing</h2>
+  <p>Privacy Level is available only between accepted friends. A global level applies by default and can be replaced by a per-friend override. The effective level controls what that friend receives:</p>
   <table>
     <tr><th>Level</th><th>Information available to the friend</th></tr>
     <tr><td>0</td><td>Nothing (Ghost).</td></tr>
@@ -34,7 +34,7 @@
   <p>Journey detection normally monitors only around the departure of an open candidate and during a detected journey. It uses distance filters and reuses an existing wake-alarm or always-available location stream where possible. Levels 7–8 can operate in the background with a low-accuracy, distance-filtered stream and may cause the operating system to display a persistent location indicator. Location sharing cannot operate when the required system permission or location service is unavailable.</p>
 
   <h2>Storage, recipients, and retention</h2>
-  <p>Account and social data is stored using Supabase. Authorized friends receive only the Journey Signal fields allowed by the effective sharing level. Transport providers receive information necessary to answer transit requests. Device and platform providers may process permission, notification, and network information as part of operating the device. Trans does not include a dedicated advertising, analytics, or crash-reporting SDK.</p>
+  <p>Account and social data is stored using Supabase. Authorized friends receive only the Privacy Level fields allowed by the effective sharing level. Transport providers receive information necessary to answer transit requests. Device and platform providers may process permission, notification, and network information as part of operating the device. Trans does not include a dedicated advertising, analytics, or crash-reporting SDK.</p>
   <p>Recent and frequent searches are limited in the app, saved journeys expire after arrival plus 24 hours, recent line status expires, and published journey status expires after the journey. A latest level-7 location can remain until it is replaced, sharing is set to level 0, or the account is deleted. Messages, account settings, favorites, friendships, and other account data remain while needed to provide the account or until deleted, subject to technical backups and legal obligations.</p>
 
   <h2>Your choices</h2>

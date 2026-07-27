@@ -1,4 +1,4 @@
--- Journey Signal: cumulative friend visibility levels with per-friend overrides.
+-- Privacy Level: cumulative friend visibility levels with per-friend overrides.
 -- Legacy ghost_mode and user_locations columns remain writable during the
 -- rollout, while friend reads move to the tier-masking RPC below.
 

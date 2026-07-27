@@ -246,12 +246,12 @@
   "privacy": "Datenschutz",
   "ghostMode": "Geist-Modus",
   "hideLocation": "Standort vor allen verbergen",
-  "journeySignal": "Reisesignal",
+  "journeySignal": "Datenschutzstufe",
   "signalLevel": "Stufe {level}",
   "@signalLevel": {
     "placeholders": {"level": {"type": "int"}}
   },
-  "signalSharingWith": "Reisesignal für {username}",
+  "signalSharingWith": "Datenschutzstufe für {username}",
   "@signalSharingWith": {
     "placeholders": {"username": {"type": "String"}}
   },

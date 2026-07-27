@@ -654,7 +654,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hideLocation => 'Hide location from everyone';
 
   @override
-  String get journeySignal => 'Journey Signal';
+  String get journeySignal => 'Privacy Level';
 
   @override
   String signalLevel(int level) {
@@ -663,7 +663,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String signalSharingWith(String username) {
-    return 'Journey Signal for $username';
+    return 'Privacy Level for $username';
   }
 
   @override

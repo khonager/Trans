@@ -21,7 +21,7 @@ import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
 import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
-import '../../widgets/journey_signal_tutorial.dart';
+import '../../widgets/privacy_level_tutorial.dart';
 
 @visibleForTesting
 String deleteAccountErrorMessage(

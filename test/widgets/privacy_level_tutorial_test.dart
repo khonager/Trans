@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trans/config/app_theme.dart';
-import 'package:trans/widgets/journey_signal_tutorial.dart';
+import 'package:trans/widgets/privacy_level_tutorial.dart';
 
 void main() {
   testWidgets('walks through levels and returns the chosen level',

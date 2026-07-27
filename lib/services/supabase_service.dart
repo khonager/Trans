@@ -20,7 +20,8 @@ import 'wake_alarm_settings.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
-  static const String signalLevelPreferenceKey = 'journey_signal_level';
+  static const String privacyLevelPreferenceKey = 'privacy_level';
+  static const String _legacySignalLevelPreferenceKey = 'journey_signal_level';
   static SupabaseClient get client => Supabase.instance.client;
 
   static SupabaseClient? get maybeClient {
@@ -43,6 +44,18 @@ class SupabaseService {
   static String? _pendingPortfolioBridgeState;
   static JourneySharingSettings? _sharingSettingsCache;
   static DateTime? _sharingSettingsCachedAt;
+
+  static int? _readPrivacyLevelPreference(SharedPreferences prefs) =>
+      prefs.getInt(privacyLevelPreferenceKey) ??
+      prefs.getInt(_legacySignalLevelPreferenceKey);
+
+  static Future<void> _storePrivacyLevelPreference(
+    SharedPreferences prefs,
+    int level,
+  ) async {
+    await prefs.setInt(privacyLevelPreferenceKey, level);
+    await prefs.remove(_legacySignalLevelPreferenceKey);
+  }
 
   // --- INITIALIZATION ---
   static Future<void> init() async {
@@ -744,7 +757,7 @@ class SupabaseService {
       TransportApi.advancedPostTransitBikeEnabledPreferenceKey,
     ];
     const intKeys = <String>[
-      signalLevelPreferenceKey,
+      privacyLevelPreferenceKey,
       'theme_color_value',
       'vibration_intensity',
       'alarm_stops_before',
@@ -816,7 +829,7 @@ class SupabaseService {
     try {
       final data = await client
           .from('profiles')
-          .select('settings, signal_level, ghost_mode')
+          .select('settings, privacy_level, ghost_mode')
           .eq('id', user.id)
           .single();
       final settings = data['settings'] as Map<String, dynamic>? ?? {};
@@ -846,10 +859,10 @@ class SupabaseService {
       await _syncHistorySettingsToPrefs(prefs, settings);
 
       final cloudSignalLevel = JourneySignalLevel.clamp(
-        data['signal_level'],
+        data['privacy_level'],
         fallback: data['ghost_mode'] == true ? 0 : 1,
       );
-      await prefs.setInt(signalLevelPreferenceKey, cloudSignalLevel);
+      await _storePrivacyLevelPreference(prefs, cloudSignalLevel);
       await prefs.setBool('ghost_mode', cloudSignalLevel == 0);
 
       final List<String> favs =
@@ -885,10 +898,10 @@ class SupabaseService {
     triggerFriendsListRefresh();
   }
 
-  // --- JOURNEY SIGNAL SHARING ---
+  // --- PRIVACY LEVEL SHARING ---
   static Future<int> getMySignalLevel() async {
     final prefs = await SharedPreferences.getInstance();
-    final local = prefs.getInt(signalLevelPreferenceKey);
+    final local = _readPrivacyLevelPreference(prefs);
     final user = currentUser;
     if (user == null) {
       return local ?? JourneySignalLevel.defaultForNewUsers;
@@ -896,14 +909,14 @@ class SupabaseService {
     try {
       final profile = await client
           .from('profiles')
-          .select('signal_level, ghost_mode')
+          .select('privacy_level, ghost_mode')
           .eq('id', user.id)
           .single();
       final level = JourneySignalLevel.clamp(
-        profile['signal_level'],
+        profile['privacy_level'],
         fallback: profile['ghost_mode'] == true ? 0 : 1,
       );
-      await prefs.setInt(signalLevelPreferenceKey, level);
+      await _storePrivacyLevelPreference(prefs, level);
       await prefs.setBool('ghost_mode', level == 0);
       return level;
     } catch (_) {
@@ -914,15 +927,15 @@ class SupabaseService {
   static Future<void> setMySignalLevel(int requestedLevel) async {
     final level = JourneySignalLevel.clamp(requestedLevel);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(signalLevelPreferenceKey, level);
+    await _storePrivacyLevelPreference(prefs, level);
     await prefs.setBool('ghost_mode', level == 0);
     final user = currentUser;
     if (user != null) {
-      await client.rpc('set_my_signal_level', params: {
+      await client.rpc('set_my_privacy_level', params: {
         'requested_level': level,
       });
       await updateSettings({
-        signalLevelPreferenceKey: level,
+        privacyLevelPreferenceKey: level,
         'ghost_mode': level == 0,
       });
     }
@@ -938,12 +951,12 @@ class SupabaseService {
     try {
       final rows = await client
           .from('friend_sharing_overrides')
-          .select('friend_id, signal_level')
+          .select('friend_id, privacy_level')
           .eq('owner_id', user.id);
       return {
         for (final row in rows)
           row['friend_id'].toString():
-              JourneySignalLevel.clamp(row['signal_level']),
+              JourneySignalLevel.clamp(row['privacy_level']),
       };
     } catch (e) {
       debugPrint('Could not load friend Signal overrides: $e');
@@ -966,7 +979,7 @@ class SupabaseService {
       await client.from('friend_sharing_overrides').upsert({
         'owner_id': user.id,
         'friend_id': friendId,
-        'signal_level': JourneySignalLevel.clamp(requestedLevel),
+        'privacy_level': JourneySignalLevel.clamp(requestedLevel),
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
     }
@@ -1204,7 +1217,7 @@ class SupabaseService {
       profileRows = await client
           .from('profiles')
           .select(
-              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, signal_level, created_at')
+              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, privacy_level, created_at')
           .filter('id', 'in', friendIds);
     } catch (e) {
       debugPrint(
@@ -1231,7 +1244,7 @@ class SupabaseService {
 
       final presence = presenceMap[id];
       final visibleLevel = JourneySignalLevel.clamp(
-        presence?['signal_level'],
+        presence?['privacy_level'],
         fallback: 0,
       );
 
@@ -1242,8 +1255,8 @@ class SupabaseService {
         'avatar_emoji': profile['avatar_emoji'],
         'theme_color': profile['theme_color'],
         'ghost_mode': visibleLevel == 0,
-        'visible_signal_level': visibleLevel,
-        'my_signal_override': myOverrides[id],
+        'visible_privacy_level': visibleLevel,
+        'my_privacy_override': myOverrides[id],
         'created_at': profile['created_at'],
         'is_auto_added': autoAddedMap[id] == true,
         'updated_at': presence?['updated_at'],

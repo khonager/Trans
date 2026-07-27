@@ -1223,7 +1223,7 @@ abstract class AppLocalizations {
   /// No description provided for @journeySignal.
   ///
   /// In en, this message translates to:
-  /// **'Journey Signal'**
+  /// **'Privacy Level'**
   String get journeySignal;
 
   /// No description provided for @signalLevel.
@@ -1235,7 +1235,7 @@ abstract class AppLocalizations {
   /// No description provided for @signalSharingWith.
   ///
   /// In en, this message translates to:
-  /// **'Journey Signal for {username}'**
+  /// **'Privacy Level for {username}'**
   String signalSharingWith(String username);
 
   /// No description provided for @signalOverrideExplanation.

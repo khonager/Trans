@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../models/journey_sharing.dart';
 
-/// Opens the guided explanation for the Journey Signal privacy levels.
+/// Opens the guided explanation for the Privacy Levels.
 ///
 /// The guide deliberately uses lightweight UI previews instead of screenshots,
 /// so it remains crisp at every display size and adds no image assets to the
@@ -393,7 +393,7 @@ class _JourneySignalTutorialCopy {
   const _JourneySignalTutorialCopy({required this.isGerman});
 
   String get title =>
-      isGerman ? 'Reisesignal verstehen' : 'Understand Journey Signal';
+      isGerman ? 'Datenschutzstufe verstehen' : 'Understand Privacy Level';
   String get subtitle => isGerman
       ? 'Wähle genau, was Freunde sehen können.'
       : 'Choose exactly what friends can see.';
@@ -508,57 +508,57 @@ class _JourneySignalTutorialCopy {
     final german = <_LevelDetails>[
       const _LevelDetails(
         why:
-            'Der vollständige Aus-Schalter fürs Teilen. Wähle ihn, wenn du für Freunde unsichtbar sein möchtest.',
+            'Eine Einstellung für besonders Datenschutzbewusste, die nicht möchten, dass andere wissen, was sie gerade tun.',
         privacyNote:
-            'Das Reisesignal löscht deine veröffentlichte Präsenz. Freunde sehen keine Linie, Reise oder Position.',
+            'Für deine Freunde kann es so aussehen, als würdest du die App gar nicht nutzen. Sie können dir weiterhin schreiben und du kannst deine Reise weiterhin einzeln mit ihnen teilen.',
       ),
       const _LevelDetails(
         why:
-            'Freunde sehen, dass du unterwegs bist, ohne Start oder Ziel deiner Reise zu erfahren.',
+            'Damit deine Verkehrslinie wie ein kleines Status-Update sichtbar ist, ohne zu viel preiszugeben. Es sollte nicht reichen, damit dich jemand leicht verfolgen kann.',
         privacyNote:
             'Es wird nur die Verkehrslinie geteilt. Fahrplan, Ziel, Halte und Standort bleiben privat.',
       ),
       const _LevelDetails(
         why:
-            'Praktisch zum Abstimmen, etwa um ungefähr zu wissen, wann jemand unterwegs ist.',
+            'Wenn deine Freunde wissen sollen, wann du abfährst und ankommst, ohne dass du sie jedes Mal selbst informieren musst.',
         privacyNote:
-            'Dazu kommt das Zeitfenster der Reise, nicht aber Ziel, Halte oder Standort.',
+            'Damit wird das Zeitfenster der Reise ergänzt, nicht aber Ziel, Halteliste oder Standort. Wenn ihr euch trefft, müssen deine Freunde den Treffpunkt also weiterhin kennen.',
       ),
       const _LevelDetails(
         why:
-            'Erleichtert das Treffen an einem Bahnhof, während die eigentliche Route privat bleibt.',
+            'Jetzt können deine Freunde entsprechend planen, weil sie genau wissen, wann und wo du ankommen sollst.',
         privacyNote:
             'Freunde sehen den Zielbahnhof, aber weder den genauen Reiseverlauf noch deinen Live-Standort.',
       ),
       const _LevelDetails(
         why:
-            'Für Menschen, die zusammen reisen und Halte, Linien und Umstiege vergleichen möchten.',
+            'Einen Schritt weiter: Deine Freunde kennen jetzt jeden Halt auf deiner Reise, sodass ihr euch unterwegs treffen und gemeinsam weiterreisen könnt.',
         privacyNote:
             'Der geplante Reiseverlauf wird geteilt – keine Live-Bewegung und kein genauer Gerätestandort.',
       ),
       const _LevelDetails(
         why:
-            'Hilft Freunden, einer gemeinsamen Reise zu folgen und ihren Fortschritt zu sehen.',
+            'Jetzt können Freunde anhand der Reise, die du unternimmst, ungefähr sehen, wo du dich befindest.',
         privacyNote:
             'Der Fortschritt bezieht sich auf die Reise. Der genaue Standort bleibt bis Stufe 6 aus.',
       ),
       const _LevelDetails(
         why:
-            'Geeignet für enge Freunde, die sich während einer erkannten Reise finden möchten, etwa beim Umstieg.',
+            'Manchmal – eigentlich oft – ist die geschätzte Reise nicht genau genug. Wenn du dich damit wohlfühlst, deinen tatsächlichen Gerätestandort mit Freunden zu teilen, kannst du diese Stufe verwenden.',
         privacyNote:
             'Der genaue Standort wird nur während einer erkannten Reise geteilt – nicht dauerhaft.',
       ),
       const _LevelDetails(
         why:
-            'Ermöglicht Freunden eine Route zu dir, auch wenn gerade keine Reise erkannt wird.',
+            'Damit Freunde dich und deinen zuletzt erfassten Standort als Ziel verwenden können. So finden sie leichter zu dir, egal wo du bist.',
         privacyNote:
             'Dein letzter genauer Standort kann für Routen zu dir genutzt werden. Wähle das nur für vertraute Personen.',
       ),
       const _LevelDetails(
         why:
-            'Vertraute Freunde können deine gespeicherten Orte nutzen, z. B. für eine Route zu deinem benannten Zuhause.',
+            'Nutzt du Favoriten, um tolle Orte zu speichern, etwa die besten Burger der Stadt? Oder eher für Schule, Arbeit und Zuhause? So oder so: Deine Freunde können alle gespeicherten Favoriten sehen und nach Belieben dorthin navigieren.',
         privacyNote:
-            'Favoriten und ihre Bezeichnungen werden zusätzlich zu allen niedrigeren Stufen geteilt.',
+            'Favoriten werden zusätzlich zu allem geteilt, was die niedrigeren Stufen freigeben.',
       ),
     ];
     return (isGerman ? german : english)[level];

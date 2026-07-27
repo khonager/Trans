@@ -315,7 +315,8 @@ class _TransAppState extends State<TransApp> {
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
     final signalLevel =
-        prefs.getInt(SupabaseService.signalLevelPreferenceKey) ??
+        prefs.getInt(SupabaseService.privacyLevelPreferenceKey) ??
+            prefs.getInt('journey_signal_level') ??
             ((prefs.getBool('ghost_mode') ?? true) ? 0 : 1);
     final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
     final storedIsDark = prefs.getBool('is_dark_mode');

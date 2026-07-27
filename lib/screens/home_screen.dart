@@ -180,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         distanceFilter: 250,
         intervalDuration: const Duration(minutes: 2),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Journey Signal',
+          notificationTitle: 'Privacy Level',
           notificationText:
               'Keeping your location available to trusted friends',
           notificationIcon: AndroidResource(name: 'ic_launcher'),

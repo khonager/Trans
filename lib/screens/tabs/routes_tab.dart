@@ -1175,7 +1175,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         distanceFilter: 120,
         intervalDuration: const Duration(seconds: 45),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Journey Signal',
+          notificationTitle: 'Privacy Level',
           notificationText: 'Checking for your current journey',
           notificationIcon: AndroidResource(name: 'ic_launcher'),
           enableWakeLock: false,
@@ -1195,7 +1195,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       (position) => unawaited(_handleJourneyDetectionPosition(position)),
       onError: (Object error, StackTrace stackTrace) {
         AppError.log(error,
-            stackTrace: stackTrace, source: 'Journey Signal GPS');
+            stackTrace: stackTrace, source: 'Privacy Level GPS');
         _sharingGpsStream?.cancel();
         _sharingGpsStream = null;
       },

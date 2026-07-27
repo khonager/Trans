@@ -97,7 +97,7 @@ Save frequently used locations for one-tap route planning.
 - **Custom names** – Label your favorites however you like
 - **Quick routing** – Tap a favorite to instantly plan a route there
 
-### 👥 Friends & Journey Signal
+### 👥 Friends & Privacy Level
 Connect with friends and automatically share as much—or as little—of a detected journey as you choose.
 
 - **Add friends** – Search by username and send friend requests
@@ -159,7 +159,7 @@ The app stores these locally first and also writes them to your Supabase profile
 | Theme and display settings | Dark mode, system theme sync, accent color, claimed color metadata, and language. |
 | Transit preferences | Deutschlandticket/local transport mode and advanced routing values such as transfer time, walk/bike options, walking speed, cycling speed, and maximum walking time. |
 | Alarm and haptic settings | Vibration pattern, intensity, selected wake-alarm sound id, sound/vibration toggles, and alarm stop count. The alarm trigger threshold is uploaded to account settings when changed, but the current settings download path does not restore it on other devices yet. |
-| Journey Signal setting | Global sharing level from 0–8. Level 0 is Ghost. Existing per-friend overrides are stored in the cloud. |
+| Privacy Level setting | Global sharing level from 0–8. Level 0 is Ghost. Existing per-friend overrides are stored in the cloud. |
 
 One important custom sound detail: the selected sound id can sync, but the imported audio file does not. A custom sound chosen on one device may not exist on another device unless it is imported there too.
 
@@ -170,7 +170,7 @@ These are stored in Supabase because they are account or social features:
 | Data | How it is used |
 |------|----------------|
 | Account identity | Email address, Supabase user id, auth provider data, username, password/auth credentials managed by Supabase Auth, and password reset/email confirmation state. |
-| Profile and sharing settings | Username, avatar fields, theme color, global Journey Signal level, per-friend overrides, settings JSON, favorites JSON, ticket URL, and timestamps. |
+| Profile and sharing settings | Username, avatar fields, theme color, global Privacy Level, per-friend overrides, settings JSON, favorites JSON, ticket URL, and timestamps. |
 | Detected journey presence | A generated journey id, active state, transit line, planned start/end, destination station, transit-only itinerary, journey-relative progress, expiry, and update time. Walking addresses are excluded from the shared itinerary. |
 | Location snapshot | Latest latitude, longitude, accuracy, and update time when an effective friend level requires it. The snapshot is replaced rather than accumulated into a location history. Level 6 exposes it only during a detected journey; levels 7–8 keep it available for friend routing. |
 | Signal level enforcement | A database function calculates each friend's effective override-or-global level and removes fields above that level before returning presence. Level 0 deletes published presence. |
@@ -207,7 +207,7 @@ When you report content, the app prepares an email to the support address. The r
 ### Privacy
 | Setting | Description |
 |---------|-------------|
-| **Journey Signal** | Select a global level from 0–8. Level 0 shares nothing. Higher levels cumulatively share line, times, destination, itinerary, progress, journey location, always-available location, and favorites. |
+| **Privacy Level** | Select a global level from 0–8. Level 0 shares nothing. Higher levels cumulatively share line, times, destination, itinerary, progress, journey location, always-available location, and favorites. |
 | **Friend Signal override** | On an expanded friend card, use the global level or select a level that applies only to that friend. |
 
 ### Display
