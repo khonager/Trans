@@ -1021,6 +1021,33 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  Future<String> _currentLocationName(Position position) async {
+    try {
+      final stops = await TransportApi.getNearbyStops(
+        position.latitude,
+        position.longitude,
+      );
+      final name = stops.isNotEmpty ? stops.first.name.trim() : '';
+      if (name.isNotEmpty) {
+        if (mounted) {
+          setState(() => _currentAddress = name);
+        }
+        return name;
+      }
+    } catch (e) {
+      debugPrint('Error resolving current location name: $e');
+    }
+
+    final knownAddress = _currentAddress?.trim();
+    if (knownAddress != null && knownAddress.isNotEmpty) {
+      return knownAddress;
+    }
+    // A coordinate is still an actual, stable location and avoids persisting
+    // the UI-only "Current Location" placeholder in route history.
+    return '${position.latitude.toStringAsFixed(5)}, '
+        '${position.longitude.toStringAsFixed(5)}';
+  }
+
   Future<void> _refreshCurrentLocationManually() async {
     if (_isRefreshingLocation) return;
     setState(() => _isRefreshingLocation = true);
@@ -4589,10 +4616,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
         if (_isRouteSearchCancelled(searchToken) || !mounted) return;
         if (pos != null) {
-          // Use GPS directly
+          final locationName = await _currentLocationName(pos);
+          if (_isRouteSearchCancelled(searchToken) || !mounted) return;
+          // Keep GPS coordinates for routing, but retain the resolved place
+          // name so recents and frequent journeys do not show a placeholder.
           from = Station(
               id: 'gps',
-              name: l10n.currentLocation,
+              name: locationName,
               type: 'location',
               latitude: pos.latitude,
               longitude: pos.longitude);
