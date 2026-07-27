@@ -453,57 +453,56 @@ class _JourneySignalTutorialCopy {
     final english = <_LevelDetails>[
       const _LevelDetails(
         why:
-            'A complete off switch for sharing. Choose this whenever you want to be invisible to friends.',
+            'A setting for the privacy concious who don’t want anyone to know what the’re up to.',
         privacyNote:
-            'Journey Signal clears your published presence at this level. Friends cannot see a line, a journey, or a location.',
+            'To you friends it might seem like you don’t even use the app. They can still chat with you and you can still choose to share your journey with them individually.',
       ),
       const _LevelDetails(
         why:
-            'Lets friends know that you are travelling without revealing where your trip starts or ends.',
+            'To show your transport line like a small status update without giving away too much. It should not be enough for someone to track you down easily.',
         privacyNote:
             'Only the transit line is shared. No schedule, destination, stops, or location is included.',
       ),
       const _LevelDetails(
         why:
-            'Useful for coordinating timing, such as knowing roughly when someone is on the move.',
+            'For when you want your friends to know when you’ll depart and arrive without having to update them yourself each time.',
         privacyNote:
-            'This adds the trip’s time window, but not its destination, stop list, or location.',
+            'This adds the trip’s time window, but not its destination, stop list, or location. So your friends still need to know the meeting point if you’re meeting up.',
       ),
       const _LevelDetails(
         why:
-            'Makes meeting at a station easier while keeping the route itself private.',
+            'Now your friends can make plans acordingly, knowing exactly when and where you’re supposed to arrive.',
         privacyNote:
             'Friends can see the destination station, but not the detailed itinerary or your live location.',
       ),
       const _LevelDetails(
         why:
-            'For people travelling together who need to compare stops, lines, and transfers.',
+            'Going one further your friends now know every stop you take along your journey, making meetups in between possible to continue your journey together.',
         privacyNote:
             'This reveals the planned transit itinerary, not live movement or an exact device location.',
       ),
       const _LevelDetails(
         why:
-            'Helps friends follow a shared journey and see how far it has progressed.',
+            'Now friends can see where your location aproximateley is based on the journey you’re taking.',
         privacyNote:
             'Progress is about the journey. Exact location sharing remains off until level 6.',
       ),
       const _LevelDetails(
         why:
-            'Best for close friends coordinating during a detected trip, such as finding each other at a transfer.',
+            'Sometimes- a lot of the times, the estimated journey isn’t accurate enough. So if you feel comfortable sharing your actul device locatiion with your friends, you can use this level.',
         privacyNote:
             'Exact location is shared only while the app has detected a journey. It is not always-on sharing.',
       ),
       const _LevelDetails(
         why:
-            'Enables friends to plan a route to you even when you are not currently on a detected journey.',
-        privacyNote:
-            'Your latest exact location can be used for friend routing. Choose it only for people you trust.',
+            'To let friends use you and your most recent tracked location as a destination, making it easier for them to get to you, no matter where you are.',
+        privacyNote: 'Choose it only for people you trust.',
       ),
       const _LevelDetails(
         why:
-            'Lets trusted friends use your saved places, for example to plan a route to your labelled home or meeting point.',
+            'Are you using your favorites to mark down cool places, like the best burgers in town? Or are you more a School, Work, Home type op Person? Whatever the case. Let your friends see all your saved favorites and navigate to them as they please.',
         privacyNote:
-            'Favorites and their labels are shared in addition to everything in the lower levels.',
+            'Favorites are shared in addition to everything in the levels below.',
       ),
     ];
     final german = <_LevelDetails>[
