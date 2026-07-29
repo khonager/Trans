@@ -1104,6 +1104,25 @@ class SupabaseService {
   }
 
   // --- PROFILES ---
+  static Future<List<Map<String, dynamic>>> _getPublicProfiles(
+    Iterable<dynamic> userIds,
+  ) async {
+    final ids = userIds
+        .map((id) => id?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .take(100)
+        .toList();
+    if (ids.isEmpty) return const [];
+
+    final response = await client.rpc(
+      'get_public_profiles',
+      params: {'target_ids': ids},
+    );
+    return List<Map<String, dynamic>>.from(response as List);
+  }
+
   static Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = currentUser;
     if (user == null) return null;
@@ -1136,10 +1155,7 @@ class SupabaseService {
     if (data.isEmpty) return [];
 
     final senderIds = (data as List).map((r) => r['sender_id']).toList();
-    final profiles = await client
-        .from('profiles')
-        .select('id, username, avatar_url, avatar_emoji, theme_color')
-        .filter('id', 'in', senderIds);
+    final profiles = await _getPublicProfiles(senderIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     return data.map((req) {
@@ -1210,28 +1226,7 @@ class SupabaseService {
     final friendIds = autoAddedMap.keys.toList();
     if (friendIds.isEmpty) return [];
 
-    // Fetch friend profiles.  Try with extended fields (ghost_mode, created_at)
-    // and fall back gracefully when those columns are absent in older schemas.
-    List profileRows = [];
-    try {
-      profileRows = await client
-          .from('profiles')
-          .select(
-              'id, username, avatar_url, avatar_emoji, theme_color, ghost_mode, privacy_level, created_at')
-          .filter('id', 'in', friendIds);
-    } catch (e) {
-      debugPrint(
-          'profiles extended fields unavailable, falling back to basic select: $e');
-      try {
-        profileRows = await client
-            .from('profiles')
-            .select('id, username, avatar_url, avatar_emoji, theme_color')
-            .filter('id', 'in', friendIds);
-      } catch (e2) {
-        debugPrint('profiles basic select also failed: $e2');
-        return [];
-      }
-    }
+    final profileRows = await _getPublicProfiles(friendIds);
     final profileMap = {for (var p in profileRows) p['id']: p};
 
     final presenceMap = await _getVisibleFriendPresence();
@@ -1481,11 +1476,13 @@ class SupabaseService {
   static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     if (query.length < 3) return [];
     try {
-      final response = await client
-          .from('profiles')
-          .select()
-          .ilike('username', '%$query%')
-          .limit(10);
+      final response = await client.rpc(
+        'search_public_profiles',
+        params: {
+          'search_term': query,
+          'result_limit': 10,
+        },
+      );
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       return [];
@@ -1619,10 +1616,7 @@ class SupabaseService {
 
     final userIds =
         messages.map((m) => m['user_id'] as String).toSet().toList();
-    final profiles = await client
-        .from('profiles')
-        .select('id, username, avatar_url, avatar_emoji, theme_color')
-        .filter('id', 'in', userIds);
+    final profiles = await _getPublicProfiles(userIds);
     final profileMap = {for (var p in profiles) p['id']: p};
 
     final keyString =
@@ -1742,9 +1736,7 @@ class SupabaseService {
     final List blockedIds =
         (response as List).map((e) => e['blocked_id']).toList();
     if (blockedIds.isEmpty) return [];
-    final profiles =
-        await client.from('profiles').select().filter('id', 'in', blockedIds);
-    return List<Map<String, dynamic>>.from(profiles);
+    return _getPublicProfiles(blockedIds);
   }
 
   static Future<void> blockUser(String userId) async {
