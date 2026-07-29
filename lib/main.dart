@@ -159,14 +159,18 @@ class _TransAppState extends State<TransApp> {
   Color _themeColor = appThemeColors[0];
   Locale? _locale;
   StreamSubscription<Uri>? _authLinkSubscription;
+  StreamSubscription<AuthState>? _authStateSubscription;
   int _appRefreshKey = 0;
   bool _isAppRefreshing = false;
+  bool _appRefreshRequested = false;
 
   @override
   void initState() {
     super.initState();
     _readPreferences(); // Show immediate local state
-    _initSync(); // Start cloud sync
+    if (_setupAuthStateSync()) {
+      unawaited(_refreshAppShell());
+    }
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
     SupabaseService.appRefreshNotifier.addListener(_handleAppRefreshRequest);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -180,13 +184,25 @@ class _TransAppState extends State<TransApp> {
   @override
   void dispose() {
     _authLinkSubscription?.cancel();
+    _authStateSubscription?.cancel();
     SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
     SupabaseService.appRefreshNotifier.removeListener(_handleAppRefreshRequest);
     super.dispose();
   }
 
-  Future<void> _initSync() async {
-    await SupabaseService.loadAndSyncSettings();
+  bool _setupAuthStateSync() {
+    final client = SupabaseService.maybeClient;
+    if (client == null) return false;
+
+    _authStateSubscription = client.auth.onAuthStateChange.listen((state) {
+      if (state.event == AuthChangeEvent.signedIn ||
+          state.event == AuthChangeEvent.signedOut ||
+          state.event == AuthChangeEvent.initialSession ||
+          state.event == AuthChangeEvent.userUpdated) {
+        unawaited(_refreshAppShell());
+      }
+    });
+    return true;
   }
 
   void _handleAppRefreshRequest() {
@@ -194,20 +210,40 @@ class _TransAppState extends State<TransApp> {
   }
 
   Future<void> _refreshAppShell() async {
-    if (_isAppRefreshing) return;
     if (!mounted) return;
+    if (_isAppRefreshing) {
+      _appRefreshRequested = true;
+      return;
+    }
 
     setState(() => _isAppRefreshing = true);
-    await Future.wait<void>([
-      _readPreferences(),
-      Future<void>.delayed(const Duration(milliseconds: 650)),
-    ]);
+    final minimumOverlayTime =
+        Future<void>.delayed(const Duration(milliseconds: 650));
+    try {
+      do {
+        _appRefreshRequested = false;
+        await _prepareCurrentSession();
+        await _readPreferences();
 
-    if (!mounted) return;
-    setState(() {
-      _appRefreshKey++;
-      _isAppRefreshing = false;
-    });
+        if (!mounted) return;
+        setState(() => _appRefreshKey++);
+      } while (_appRefreshRequested);
+      await minimumOverlayTime;
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'app session refresh');
+    } finally {
+      if (mounted) {
+        setState(() => _isAppRefreshing = false);
+      }
+    }
+  }
+
+  Future<void> _prepareCurrentSession() async {
+    if (SupabaseService.currentUser == null) {
+      await SupabaseService.prepareSignedOutState();
+      return;
+    }
+    await SupabaseService.ensureCurrentUserReady();
   }
 
   Future<void> _showStartupAuthNotice(StartupAuthNotice notice) async {

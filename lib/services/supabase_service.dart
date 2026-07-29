@@ -22,6 +22,42 @@ import '../utils/app_error.dart';
 class SupabaseService {
   static const String privacyLevelPreferenceKey = 'privacy_level';
   static const String _legacySignalLevelPreferenceKey = 'journey_signal_level';
+  static const Set<String> accountBoundPreferenceKeys = {
+    'is_dark_mode',
+    'use_system_theme',
+    'only_nahverkehr',
+    'ghost_mode',
+    privacyLevelPreferenceKey,
+    _legacySignalLevelPreferenceKey,
+    'theme_color_value',
+    'vibration_pattern',
+    'vibration_intensity',
+    'wake_alarm_sound',
+    'wake_alarm_sound_enabled',
+    'wake_alarm_vibration_enabled',
+    'leave_alarm_sound_enabled',
+    'leave_alarm_vibration_enabled',
+    'alarm_stops_before',
+    'alarm_trigger_threshold',
+    'locale_code',
+    'advanced_transfer_comfort',
+    'advanced_bike_preference',
+    'advanced_min_transfer_time_minutes',
+    'advanced_additional_transfer_time_minutes',
+    'advanced_transfer_time_factor',
+    'advanced_pre_transit_walk_enabled',
+    'advanced_pre_transit_bike_enabled',
+    'advanced_post_transit_walk_enabled',
+    'advanced_post_transit_bike_enabled',
+    'advanced_cycling_speed_kmh',
+    'advanced_pedestrian_speed_kmh',
+    'advanced_max_walking_time_minutes',
+    'recent_stations',
+    'frequent_journeys',
+    'recent_journeys',
+    'saved_journeys',
+    'saved_favorites',
+  };
   static SupabaseClient get client => Supabase.instance.client;
 
   static SupabaseClient? get maybeClient {
@@ -39,7 +75,7 @@ class SupabaseService {
   static final ValueNotifier<int> appRefreshNotifier = ValueNotifier(0);
   static StreamSubscription? _friendReqSubscription;
   static StreamSubscription? _msgSubscription;
-  static Future<void>? _pendingSignInPreparation;
+  static Future<bool>? _pendingSignInPreparation;
   static String? _preparedUserId;
   static String? _pendingPortfolioBridgeState;
   static JourneySharingSettings? _sharingSettingsCache;
@@ -375,7 +411,7 @@ class SupabaseService {
     await ensureCurrentUserReady();
   }
 
-  static Future<void> _finishSignIn() async {
+  static Future<bool> _finishSignIn() async {
     final user = currentUser;
     if (user != null) {
       final username = user.userMetadata?['username']?.toString();
@@ -383,8 +419,9 @@ class SupabaseService {
     }
     _startMessageListener();
     _startFriendRequestListener();
-    await loadAndSyncSettings();
+    final settingsLoaded = await loadAndSyncSettings();
     triggerFriendsListRefresh();
+    return settingsLoaded;
   }
 
   static Future<void> ensureCurrentUserReady() async {
@@ -400,7 +437,10 @@ class SupabaseService {
 
     final pending = _pendingSignInPreparation;
     if (pending != null) {
-      await pending;
+      final prepared = await pending;
+      if (prepared && currentUser?.id == user.id) {
+        _preparedUserId = user.id;
+      }
       return;
     }
 
@@ -408,8 +448,10 @@ class SupabaseService {
     _pendingSignInPreparation = preparation;
 
     try {
-      await preparation;
-      _preparedUserId = user.id;
+      final prepared = await preparation;
+      if (prepared && currentUser?.id == user.id) {
+        _preparedUserId = user.id;
+      }
     } finally {
       if (identical(_pendingSignInPreparation, preparation)) {
         _pendingSignInPreparation = null;
@@ -555,13 +597,32 @@ class SupabaseService {
   }
 
   static Future<void> signOut() async {
-    _msgSubscription?.cancel();
-    _friendReqSubscription?.cancel();
+    await client.auth.signOut();
+    await prepareSignedOutState();
+    requestAppRefresh();
+  }
+
+  static Future<void> prepareSignedOutState() async {
+    await _msgSubscription?.cancel();
+    await _friendReqSubscription?.cancel();
+    _msgSubscription = null;
+    _friendReqSubscription = null;
     _preparedUserId = null;
     _pendingSignInPreparation = null;
-    await client.auth.signOut();
+    _sharingSettingsCache = null;
+    _sharingSettingsCachedAt = null;
+
+    await _clearAccountBoundPreferences();
+
+    settingsRefreshNotifier.value++;
     triggerFriendsListRefresh();
-    requestAppRefresh();
+  }
+
+  static Future<void> _clearAccountBoundPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in accountBoundPreferenceKeys) {
+      await prefs.remove(key);
+    }
   }
 
   static Future<void> updatePassword(String newPassword) async {
@@ -775,6 +836,7 @@ class SupabaseService {
     const stringKeys = <String>[
       'vibration_pattern',
       'wake_alarm_sound',
+      'alarm_trigger_threshold',
       'locale_code',
     ];
 
@@ -822,9 +884,9 @@ class SupabaseService {
     );
   }
 
-  static Future<void> loadAndSyncSettings() async {
+  static Future<bool> loadAndSyncSettings() async {
     final user = currentUser;
-    if (user == null) return;
+    if (user == null) return false;
 
     try {
       final data = await client
@@ -851,9 +913,11 @@ class SupabaseService {
         favoritePayloads = legacy['favorites'] as List<dynamic>? ?? const [];
       }
       final favorites = sanitizeFavoritePayloads(favoritePayloads);
+      if (currentUser?.id != user.id) return false;
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
+      await _clearAccountBoundPreferences();
 
       await _syncPrimitiveSettingsToPrefs(prefs, settings);
       await _syncHistorySettingsToPrefs(prefs, settings);
@@ -868,11 +932,23 @@ class SupabaseService {
       final List<String> favs =
           favorites.map((f) => json.encode(f)).toList().cast<String>();
       await prefs.setStringList('saved_favorites', favs);
+      if (currentUser?.id != user.id) {
+        await _clearAccountBoundPreferences();
+        settingsRefreshNotifier.value++;
+        return false;
+      }
 
       // Notify app to reload settings
       settingsRefreshNotifier.value++;
-    } catch (e) {
-      debugPrint("Error syncing settings: $e");
+      return true;
+    } catch (e, st) {
+      // Never leave data cached from a previous account visible if the new
+      // account cannot be downloaded. The app can safely fall back to guest
+      // defaults and retry on the next auth/session refresh.
+      await _clearAccountBoundPreferences();
+      settingsRefreshNotifier.value++;
+      AppError.log(e, stackTrace: st, source: 'loadAndSyncSettings');
+      return false;
     }
   }
 
