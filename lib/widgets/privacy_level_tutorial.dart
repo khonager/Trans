@@ -393,7 +393,7 @@ class _JourneySignalTutorialCopy {
   const _JourneySignalTutorialCopy({required this.isGerman});
 
   String get title =>
-      isGerman ? 'Datenschutzstufe verstehen' : 'Understand Privacy Level';
+      isGerman ? 'Datenschutzstufe verstehen' : 'Understand Privacy Levels';
   String get subtitle => isGerman
       ? 'Wähle genau, was Freunde sehen können.'
       : 'Choose exactly what friends can see.';
