@@ -246,6 +246,18 @@
   "privacy": "Datenschutz",
   "ghostMode": "Geist-Modus",
   "hideLocation": "Standort vor allen verbergen",
+  "journeySignal": "Datenschutzstufe",
+  "signalLevel": "Stufe {level}",
+  "@signalLevel": {
+    "placeholders": {"level": {"type": "int"}}
+  },
+  "signalSharingWith": "Datenschutzstufe für {username}",
+  "@signalSharingWith": {
+    "placeholders": {"username": {"type": "String"}}
+  },
+  "signalOverrideExplanation": "Dies überschreibt deine globale Stufe nur für diesen Freund.",
+  "useGlobalSignal": "Globale Stufe verwenden",
+  "friendLocation": "Standort",
   "darkMode": "Dunkelmodus",
   "syncedWithSystem": "Mit System synchronisiert",
   "systemSyncActive": "System-Sync aktiv. Gedrückt halten zum Deaktivieren.",

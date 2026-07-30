@@ -9,7 +9,7 @@ void main() {
 
   test('does not duplicate platform suffix when already present', () {
     final formatted = formatRideLineWithPlatform('RB21 (Pl. 6)', '6');
-    expect(formatted, 'RB21 (Pl. 6)');
+    expect(formatted, 'RB21 (Gl. 6)');
   });
 
   test('does not duplicate platform suffix when Gl. suffix already present',
@@ -34,8 +34,9 @@ void main() {
       '24',
       'Gleis 24-25',
       stationName: 'München Hbf',
+      isRail: true,
     );
-    expect(combined, '24 • Gleis 24-25');
+    expect(combined, 'Gl. 24');
   });
 
   test('does not duplicate stop label when it only repeats the platform', () {
@@ -43,8 +44,9 @@ void main() {
       '7',
       'Bahnsteig Gleis 7',
       stationName: 'Berlin Hbf',
+      isRail: true,
     );
-    expect(combined, '7');
+    expect(combined, 'Gl. 7');
   });
 
   test('does not duplicate bus stand labels like Bussteig B', () {
@@ -52,8 +54,9 @@ void main() {
       'B',
       'Bussteig B',
       stationName: 'Wiesbaden Hauptbahnhof',
+      isRail: false,
     );
-    expect(combined, 'Bussteig B');
+    expect(combined, 'Steig B');
   });
 
   test('prefers cleaned stop label for Platz B instead of B bullet B', () {
@@ -61,8 +64,9 @@ void main() {
       'B',
       'Platz B',
       stationName: 'Wiesbaden Luisenplatz',
+      isRail: false,
     );
-    expect(combined, 'Platz B');
+    expect(combined, 'Steig B');
   });
 
   test('trims opaque suffix from stand label before deduping', () {
@@ -70,6 +74,7 @@ void main() {
       'B',
       'Steig B NAUROD',
       stationName: 'Wiesbaden-Naurod Fondetter Straße',
+      isRail: false,
     );
     expect(combined, 'Steig B');
   });
@@ -79,8 +84,9 @@ void main() {
       '1',
       'NWaldstraße',
       stationName: 'Wiesbaden-Biebrich Kahle Mühle P+R',
+      isRail: false,
     );
-    expect(combined, '1');
+    expect(combined, 'Steig 1');
   });
 
   test('suppresses opaque stop codes even without a platform', () {
@@ -88,6 +94,7 @@ void main() {
       null,
       'VBhf SCHRGK',
       stationName: 'Wiesbaden Schiersteiner Straße',
+      isRail: false,
     );
     expect(combined, isNull);
   });

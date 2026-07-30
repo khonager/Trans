@@ -658,6 +658,29 @@ class AppLocalizationsDe extends AppLocalizations {
   String get hideLocation => 'Standort vor allen verbergen';
 
   @override
+  String get journeySignal => 'Datenschutzstufe';
+
+  @override
+  String signalLevel(int level) {
+    return 'Stufe $level';
+  }
+
+  @override
+  String signalSharingWith(String username) {
+    return 'Datenschutzstufe für $username';
+  }
+
+  @override
+  String get signalOverrideExplanation =>
+      'Dies überschreibt deine globale Stufe nur für diesen Freund.';
+
+  @override
+  String get useGlobalSignal => 'Globale Stufe verwenden';
+
+  @override
+  String get friendLocation => 'Standort';
+
+  @override
   String get darkMode => 'Dunkelmodus';
 
   @override

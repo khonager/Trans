@@ -440,6 +440,18 @@
   "privacy": "Privacy",
   "ghostMode": "Ghost Mode",
   "hideLocation": "Hide location from everyone",
+  "journeySignal": "Privacy Level",
+  "signalLevel": "Level {level}",
+  "@signalLevel": {
+    "placeholders": {"level": {"type": "int"}}
+  },
+  "signalSharingWith": "Privacy Level for {username}",
+  "@signalSharingWith": {
+    "placeholders": {"username": {"type": "String"}}
+  },
+  "signalOverrideExplanation": "This overrides your global level only for this friend.",
+  "useGlobalSignal": "Use global level",
+  "friendLocation": "Location",
   "darkMode": "Dark Mode",
   "syncedWithSystem": "Synced with System",
   "systemSyncActive": "System Sync Active. Long press to disable.",

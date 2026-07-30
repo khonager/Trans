@@ -10,8 +10,10 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/services/favorites_manager.dart';
+import 'package:trans/services/supabase_service.dart';
 import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
+import 'package:trans/widgets/friend_map_markers.dart';
 
 String googleMapsTravelModeForRoute({
   required List<JourneyStep> steps,
@@ -61,6 +63,7 @@ class _MapScreenState extends State<MapScreen> {
   List<LatLng> _routePoints = [];
   List<Marker> _markers = [];
   List<Marker> _favoriteMarkers = [];
+  List<Marker> _friendMarkers = [];
   LatLngBounds? _bounds;
   bool _isLoadingPath = true;
   Position? _liveCurrentPosition;
@@ -91,11 +94,13 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _loadFavoriteMarkers() async {
     final favorites = await FavoritesManager.getFavorites();
+    final friends = await SupabaseService.getFriends();
     if (!mounted) return;
     setState(() {
       _favoriteMarkers = buildFavoriteMapMarkers(
         favorites.where((favorite) => favorite.type == 'station').toList(),
       );
+      _friendMarkers = buildFriendMapMarkers(friends);
     });
   }
 
@@ -629,6 +634,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           if (_favoriteMarkers.isNotEmpty)
             MarkerLayer(markers: _favoriteMarkers),
+          if (_friendMarkers.isNotEmpty) MarkerLayer(markers: _friendMarkers),
           MarkerLayer(markers: displayedMarkers),
         ],
       ),

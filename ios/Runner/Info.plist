@@ -42,9 +42,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Trans needs access to your camera so you can scan and upload ticket QR codes in the app.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>We need your location to track your journey and wake you up even when the app is in the background.</string>
+	<string>Trans uses background location for wake alarms, automatic journey detection, and Journey Signal levels 7–8 when you choose to keep your latest location available to friends.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>We need your location to track your journey and wake you up.</string>
+	<string>Trans uses your location for route planning, nearby transit, wake alarms, and automatic Journey Signal detection.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Trans needs access to your photo library so you can select and upload ticket QR-Codes for scanning and store them in the app.</string>
 	<key>UIApplicationSceneManifest</key>

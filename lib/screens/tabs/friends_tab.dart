@@ -7,6 +7,11 @@ import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
+import '../../models/journey_sharing.dart';
+import '../../models/favorite.dart';
+import '../../models/station.dart';
+import '../../utils/favorite_icons.dart';
+import '../friend_location_screen.dart';
 
 bool isAutoAddedFriend(Map<String, dynamic> friend) =>
     friend['is_auto_added'] == true;
@@ -31,8 +36,15 @@ int _usernameComparator(Map<String, dynamic> a, Map<String, dynamic> b) =>
 
 class FriendsTab extends StatefulWidget {
   final Position? currentPosition;
+  final void Function(Station station) onRouteToStation;
+  final bool isActive;
 
-  const FriendsTab({super.key, required this.currentPosition});
+  const FriendsTab({
+    super.key,
+    required this.currentPosition,
+    required this.onRouteToStation,
+    required this.isActive,
+  });
 
   @override
   State<FriendsTab> createState() => _FriendsTabState();
@@ -43,6 +55,7 @@ class _FriendsTabState extends State<FriendsTab> {
   List<Map<String, dynamic>> _requests = [];
   bool _isLoading = true;
   String? _expandedFriendId;
+  int _globalSignalLevel = JourneySignalLevel.defaultForNewUsers;
 
   StreamSubscription? _friendsSub;
   StreamSubscription? _requestsSub;
@@ -50,8 +63,21 @@ class _FriendsTabState extends State<FriendsTab> {
   @override
   void initState() {
     super.initState();
-    _initData();
+    if (widget.isActive) _initData();
     SupabaseService.friendsListRefresh.addListener(_initData);
+  }
+
+  @override
+  void didUpdateWidget(FriendsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isActive && widget.isActive) {
+      _initData();
+    } else if (oldWidget.isActive && !widget.isActive) {
+      _friendsSub?.cancel();
+      _friendsSub = null;
+      _requestsSub?.cancel();
+      _requestsSub = null;
+    }
   }
 
   @override
@@ -63,20 +89,25 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 
   void _initData() async {
+    if (!widget.isActive) return;
     try {
       final friends = await SupabaseService.getFriends();
       final requests = await SupabaseService.getPendingRequests();
-      if (mounted) {
+      final globalSignalLevel = await SupabaseService.getMySignalLevel();
+      if (mounted && widget.isActive) {
         setState(() {
           _friends = friends;
           _requests = requests;
           _isLoading = false;
+          _globalSignalLevel = globalSignalLevel;
         });
       }
     } catch (e) {
       debugPrint("Friends init error: $e");
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && widget.isActive) setState(() => _isLoading = false);
     }
+
+    if (!mounted || !widget.isActive) return;
 
     _friendsSub?.cancel();
     _friendsSub = SupabaseService.streamFriends().listen((data) {
@@ -209,6 +240,84 @@ class _FriendsTabState extends State<FriendsTab> {
         isScrollControlled: true,
         builder: (_) =>
             PrivateChatSheet(friendId: friendId, friendName: username));
+  }
+
+  Future<void> _showSignalOverrideSheet(Map<String, dynamic> friend) async {
+    final languageCode = Localizations.localeOf(context).languageCode;
+    final friendId = friend['id'].toString();
+    final selected = await showModalBottomSheet<int?>(
+      context: context,
+      backgroundColor: TransColors.of(context).cardBg,
+      builder: (sheetContext) {
+        final colors = TransColors.of(sheetContext);
+        final override = friend['my_privacy_override'] as int?;
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              ListTile(
+                title: Text(
+                  AppLocalizations.of(context)!
+                      .signalSharingWith(friend['username'] ?? ''),
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Text(
+                  AppLocalizations.of(context)!.signalOverrideExplanation,
+                  style: TextStyle(color: colors.textSecondary),
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  override == null
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: Colors.teal,
+                ),
+                title: Text(
+                  '${AppLocalizations.of(context)!.useGlobalSignal} '
+                  '(${AppLocalizations.of(context)!.signalLevel(_globalSignalLevel)})',
+                  style: TextStyle(color: colors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(sheetContext, -1),
+              ),
+              ...List.generate(JourneySignalLevel.maximum + 1, (level) {
+                return ListTile(
+                  leading: Icon(
+                    override == level
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: Colors.teal,
+                  ),
+                  title: Text(
+                    '$level · ${JourneySignalLevel.title(level, languageCode: languageCode)}',
+                    style: TextStyle(color: colors.textPrimary),
+                  ),
+                  subtitle: Text(
+                    JourneySignalLevel.description(level,
+                        languageCode: languageCode),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, level),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+    if (selected == null) return;
+    await SupabaseService.setFriendSignalOverride(
+      friendId,
+      selected == -1 ? null : selected,
+    );
+    if (!mounted) return;
+    setState(() {
+      friend['my_privacy_override'] = selected == -1 ? null : selected;
+    });
   }
 
   @override
@@ -571,6 +680,7 @@ class _FriendsTabState extends State<FriendsTab> {
             if (isExpanded) ...[
               const SizedBox(height: 16),
               Divider(color: colors.divider),
+              _buildSharedJourneyDetails(friend, colors),
               Wrap(
                 alignment: WrapAlignment.spaceEvenly,
                 spacing: 8,
@@ -584,6 +694,57 @@ class _FriendsTabState extends State<FriendsTab> {
                           friend['id'],
                           friend['username'] ??
                               AppLocalizations.of(context)!.unknown)),
+                  _buildActionButton(
+                    icon: Icons.cell_tower,
+                    label: friend['my_privacy_override'] == null
+                        ? AppLocalizations.of(context)!
+                            .signalLevel(_globalSignalLevel)
+                        : AppLocalizations.of(context)!
+                            .signalLevel(friend['my_privacy_override'] as int),
+                    color: Colors.teal,
+                    onTap: () => _showSignalOverrideSheet(friend),
+                  ),
+                  if (friend['latitude'] is num && friend['longitude'] is num)
+                    _buildActionButton(
+                      icon: Icons.location_on_outlined,
+                      label: AppLocalizations.of(context)!.friendLocation,
+                      color: Colors.red,
+                      onTap: () {
+                        Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => FriendLocationScreen(
+                            username: friend['username']?.toString() ??
+                                AppLocalizations.of(context)!.unknown,
+                            avatarEmoji: friend['avatar_emoji']?.toString(),
+                            themeColor: friend['theme_color'],
+                            latitude: (friend['latitude'] as num).toDouble(),
+                            longitude: (friend['longitude'] as num).toDouble(),
+                            accuracyMeters:
+                                (friend['accuracy_m'] as num?)?.toDouble(),
+                            updatedAt: DateTime.tryParse(
+                                friend['updated_at']?.toString() ?? ''),
+                            sharedFavorites: friend['shared_favorites'] is List
+                                ? friend['shared_favorites'] as List
+                                : const [],
+                          ),
+                        ));
+                      },
+                    ),
+                  if ((friend['visible_privacy_level'] as int? ?? 0) >= 7 &&
+                      friend['latitude'] is num &&
+                      friend['longitude'] is num)
+                    _buildActionButton(
+                      icon: Icons.directions_outlined,
+                      label: AppLocalizations.of(context)!.routeLabel,
+                      color: Colors.green,
+                      onTap: () => widget.onRouteToStation(Station(
+                        id: 'friend:$friendId',
+                        name: friend['username']?.toString() ??
+                            AppLocalizations.of(context)!.unknown,
+                        type: 'location',
+                        latitude: (friend['latitude'] as num).toDouble(),
+                        longitude: (friend['longitude'] as num).toDouble(),
+                      )),
+                    ),
                   _buildActionButton(
                       icon: Icons.person_remove,
                       label: AppLocalizations.of(context)!.remove,
@@ -663,6 +824,118 @@ class _FriendsTabState extends State<FriendsTab> {
             ]
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSharedJourneyDetails(
+    Map<String, dynamic> friend,
+    TransColors colors,
+  ) {
+    final details = <Widget>[];
+    final departure =
+        DateTime.tryParse(friend['journey_departure']?.toString() ?? '')
+            ?.toLocal();
+    final arrival =
+        DateTime.tryParse(friend['journey_arrival']?.toString() ?? '')
+            ?.toLocal();
+    if (departure != null && arrival != null) {
+      details.add(Text(
+        '${departure.hour.toString().padLeft(2, '0')}:${departure.minute.toString().padLeft(2, '0')} – '
+        '${arrival.hour.toString().padLeft(2, '0')}:${arrival.minute.toString().padLeft(2, '0')}',
+        style:
+            TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w600),
+      ));
+    }
+    final destination = friend['journey_destination']?.toString();
+    if (destination != null && destination.isNotEmpty) {
+      details.add(Text('→ $destination',
+          style: TextStyle(color: colors.textSecondary)));
+    }
+    final progress = friend['journey_progress'];
+    if (progress is num) {
+      details.add(Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: LinearProgressIndicator(value: progress.toDouble().clamp(0, 1)),
+      ));
+      final progressLabel = friend['journey_progress_label']?.toString();
+      if (progressLabel != null && progressLabel.isNotEmpty) {
+        details.add(Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(progressLabel,
+              style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+        ));
+      }
+    }
+    final itinerary = friend['journey_itinerary'];
+    if (itinerary is List && itinerary.isNotEmpty) {
+      details.add(Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: itinerary.whereType<Map>().map((step) {
+            final line = step['line']?.toString() ?? '';
+            final from = step['from']?.toString();
+            final to = step['to']?.toString();
+            final endpoints = [from, to]
+                .where((value) => value != null && value.isNotEmpty)
+                .join(' → ');
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                [line, endpoints]
+                    .where((value) => value.isNotEmpty)
+                    .join(' · '),
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
+            );
+          }).toList(),
+        ),
+      ));
+    }
+    final favorites = friend['shared_favorites'];
+    if (favorites is List && favorites.isNotEmpty) {
+      details.add(Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: favorites.whereType<Map>().map((favorite) {
+            Favorite? parsedFavorite;
+            try {
+              parsedFavorite = Favorite.fromJson(
+                Map<String, dynamic>.from(favorite),
+              );
+            } catch (_) {}
+            return ActionChip(
+              avatar: Icon(
+                parsedFavorite == null
+                    ? Icons.star_outline
+                    : resolveFavoriteIcon(parsedFavorite),
+                size: 16,
+              ),
+              label: Text(favorite['label']?.toString() ?? 'Favorite'),
+              onPressed: () {
+                final rawStation = favorite['station'];
+                if (rawStation is! Map) return;
+                try {
+                  final station = Station.fromJson(
+                    Map<String, dynamic>.from(rawStation),
+                  );
+                  widget.onRouteToStation(station);
+                } catch (_) {}
+              },
+            );
+          }).toList(),
+        ),
+      ));
+    }
+    if (details.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: details,
       ),
     );
   }

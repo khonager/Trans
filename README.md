@@ -97,14 +97,17 @@ Save frequently used locations for one-tap route planning.
 - **Custom names** – Label your favorites however you like
 - **Quick routing** – Tap a favorite to instantly plan a route there
 
-### 👥 Friends & Location Sharing
-Connect with friends and share your real-time location.
+### 👥 Friends & Privacy Level
+Connect with friends and automatically share as much—or as little—of a detected journey as you choose.
 
 - **Add friends** – Search by username and send friend requests
-- **Live location** – See where your friends are on a map
-- **Navigate to friends** – Plan routes directly to a friend's current location
+- **Signal levels 0–8** – Progress from Ghost through line, times, destination, itinerary, journey progress, exact location, routing, and favorites
+- **Per-friend overrides** – Use a global default while granting a different level to individual friends
+- **Automatic journey detection** – Open route candidates are matched using time and low-power location signals; searches alone are never published
+- **Navigate to friends** – At level 7+, use a friend's latest location in From/To search
+- **Shared favorites** – At level 8, use a friend's synced favorite places in route search
 - **Private chat** – Message friends directly within the app
-- **Ghost Mode** – Hide your location from everyone with one toggle
+- **Level 0 / Ghost** – Stop sharing and clear published presence
 
 ### 🌐 Multiple Data Sources
 The app supports multiple transit APIs for broad coverage:
@@ -156,7 +159,7 @@ The app stores these locally first and also writes them to your Supabase profile
 | Theme and display settings | Dark mode, system theme sync, accent color, claimed color metadata, and language. |
 | Transit preferences | Deutschlandticket/local transport mode and advanced routing values such as transfer time, walk/bike options, walking speed, cycling speed, and maximum walking time. |
 | Alarm and haptic settings | Vibration pattern, intensity, selected wake-alarm sound id, sound/vibration toggles, and alarm stop count. The alarm trigger threshold is uploaded to account settings when changed, but the current settings download path does not restore it on other devices yet. |
-| Ghost Mode setting | Whether your account should hide live location sharing. |
+| Privacy Level setting | Global sharing level from 0–8. Level 0 is Ghost. Existing per-friend overrides are stored in the cloud. |
 
 One important custom sound detail: the selected sound id can sync, but the imported audio file does not. A custom sound chosen on one device may not exist on another device unless it is imported there too.
 
@@ -167,9 +170,10 @@ These are stored in Supabase because they are account or social features:
 | Data | How it is used |
 |------|----------------|
 | Account identity | Email address, Supabase user id, auth provider data, username, password/auth credentials managed by Supabase Auth, and password reset/email confirmation state. |
-| Profile | Username, avatar emoji, avatar URL field, theme color, Ghost Mode, settings JSON, favorites JSON, ticket URL, and profile timestamps when available. |
-| Live location | Latitude, longitude, current line/status, and updated time. This is uploaded only when signed in and Ghost Mode is off. Friends can read it through Supabase access rules. |
-| Ghost Mode cleanup | When Ghost Mode is enabled, the app clears latitude, longitude, and current line from the cloud location row. |
+| Profile and sharing settings | Username, avatar fields, theme color, global Privacy Level, per-friend overrides, settings JSON, favorites JSON, ticket URL, and timestamps. |
+| Detected journey presence | A generated journey id, active state, transit line, planned start/end, destination station, transit-only itinerary, journey-relative progress, expiry, and update time. Walking addresses are excluded from the shared itinerary. |
+| Location snapshot | Latest latitude, longitude, accuracy, and update time when an effective friend level requires it. The snapshot is replaced rather than accumulated into a location history. Level 6 exposes it only during a detected journey; levels 7–8 keep it available for friend routing. |
+| Signal level enforcement | A database function calculates each friend's effective override-or-global level and removes fields above that level before returning presence. Level 0 deletes published presence. |
 | Friends | Friend relationships and friend request sender/receiver/status rows. |
 | Blocked users | Blocker id and blocked user id. Blocking also removes the friendship link. |
 | Messages | Public line chat messages are stored as plaintext. Private messages are encrypted by the app before upload and stored with sender/receiver ids, but the key is derived from the two account ids, so do not treat it as high-security end-to-end encryption. |
@@ -188,7 +192,7 @@ Route planning, station search, nearby stops, live departures, and trip details 
 
 Those requests can include search text, station ids, coordinates, dates/times, routing preferences, and a Trans app user-agent string. The app keeps short-lived in-memory caches for some transport responses to avoid duplicate requests during the same session.
 
-Device location is requested from the operating system when needed for current-location route planning, wake alarms, nearby transit features, and live sharing. Notification permissions are requested for alarms, route reminders, private messages, and friend requests.
+Device location is requested from the operating system when needed for current-location route planning, wake alarms, nearby transit features, automatic journey detection, and Signal levels that include location. Detection monitoring is limited to seven minutes around candidate departure and an active journey, uses movement filters, and reuses the wake-alarm or level-7 stream when one already exists. Levels 7–8 use a low-accuracy, distance-filtered background stream and may show a persistent operating-system indicator. Notification permissions are requested for alarms, route reminders, private messages, friend requests, and foreground location services where required.
 
 Ticket image cropping, QR detection, and custom alarm sound import happen locally before anything is uploaded. The app does not include a dedicated analytics or crash-reporting SDK.
 
@@ -203,7 +207,8 @@ When you report content, the app prepares an email to the support address. The r
 ### Privacy
 | Setting | Description |
 |---------|-------------|
-| **Ghost Mode** | When enabled, your location is hidden from all friends. The toggle turns red when active. |
+| **Privacy Level** | Select a global level from 0–8. Level 0 shares nothing. Higher levels cumulatively share line, times, destination, itinerary, progress, journey location, always-available location, and favorites. |
+| **Friend Signal override** | On an expanded friend card, use the global level or select a level that applies only to that friend. |
 
 ### Display
 | Setting | Description |
@@ -278,6 +283,11 @@ flutter run
 ```
 
 This automatically provides Flutter, Dart, Android SDK, and all other required tools without manual installation.
+
+The development shell also provides the project-pinned Supabase CLI. Use
+`supabase login` and `supabase db push` from inside `nix develop`; do not prefix
+these commands with `npx`, because that downloads a separate CLI version with a
+separate credential-store entry.
 
 ---
 

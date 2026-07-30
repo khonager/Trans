@@ -19,7 +19,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
+import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
+import '../../widgets/privacy_level_tutorial.dart';
 
 @visibleForTesting
 String deleteAccountErrorMessage(
@@ -42,8 +44,8 @@ class SettingsTab extends StatefulWidget {
   final Function(bool) onSystemSyncChanged;
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
-  final bool isGhostMode;
-  final Function(bool) onGhostModeChanged;
+  final int signalLevel;
+  final Future<void> Function(int) onSignalLevelChanged;
   final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final bool showTrainNumbers;
@@ -61,8 +63,8 @@ class SettingsTab extends StatefulWidget {
     required this.onSystemSyncChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
-    required this.isGhostMode,
-    required this.onGhostModeChanged,
+    required this.signalLevel,
+    required this.onSignalLevelChanged,
     required this.onColorChanged,
     required this.currentColor,
     required this.showTrainNumbers,
@@ -677,21 +679,39 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   Future<void> _unlockAdvancedSettingsForDevice() async {
+    await _setAdvancedSettingsEnabledForDevice(true);
+    if (!mounted) return;
+    _suppressNextChangelogTap = true;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          Localizations.localeOf(context).languageCode == 'de'
+              ? 'Erweiterte Sucheinstellungen sind jetzt auf diesem Gerät aktiviert.'
+              : 'Advanced search settings are now enabled on this device.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setAdvancedSettingsEnabledForDevice(bool enabled) async {
+    if (!enabled) {
+      _cancelAdvancedUnlockHold();
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(
       TransportApi.advancedSettingsEnabledPreferenceKey,
-      true,
+      enabled,
     );
     if (!mounted) return;
 
     setState(() {
-      _advancedSettingsEnabledForDevice = true;
+      _advancedSettingsEnabledForDevice = enabled;
       _advancedUnlockCountdownSecondsLeft = null;
     });
-    _suppressNextChangelogTap = true;
 
     TransportApi.configureAdvancedSearchSettings(
-      enabledForDevice: true,
+      enabledForDevice: enabled,
       minTransferTimeMinutes: _advancedMinTransferTimeMinutes,
       additionalTransferTimeMinutes: _advancedAdditionalTransferTimeMinutes,
       transferTimeFactor: _advancedTransferTimeFactor,
@@ -704,16 +724,6 @@ class _SettingsTabState extends State<SettingsTab> {
       cyclingSpeedKmh: _advancedCyclingSpeedKmh,
     );
     SupabaseService.settingsRefreshNotifier.value++;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          Localizations.localeOf(context).languageCode == 'de'
-              ? 'Erweiterte Sucheinstellungen sind jetzt auf diesem Gerät aktiviert.'
-              : 'Advanced search settings are now enabled on this device.',
-        ),
-      ),
-    );
   }
 
   void _cancelAdvancedUnlockHold() {
@@ -2260,26 +2270,85 @@ class _SettingsTabState extends State<SettingsTab> {
                         color: colors.settingsHeader)),
                 const SizedBox(height: 8),
                 _buildSection(context, [
-                  SwitchListTile(
-                      title: Text(AppLocalizations.of(context)!.ghostMode,
-                          style: TextStyle(color: colors.textPrimary)),
-                      subtitle: Text(AppLocalizations.of(context)!.hideLocation,
-                          style: TextStyle(
-                              fontSize: 12, color: colors.textSecondary)),
-                      value: widget.isGhostMode,
-                      activeTrackColor: Colors.red,
-                      thumbColor: WidgetStateProperty.resolveWith((states) {
-                        if (states.contains(WidgetState.selected)) {
-                          return Colors.white;
-                        }
-                        return null;
-                      }),
-                      onChanged: (val) {
-                        widget.onGhostModeChanged(val);
-                        // Give it a moment to update DB then reload profile to see status change
-                        Future.delayed(
-                            const Duration(milliseconds: 500), _loadProfile);
-                      }),
+                  ListTile(
+                    leading: Icon(
+                      widget.signalLevel == 0
+                          ? Icons.visibility_off
+                          : Icons.cell_tower,
+                      color: widget.signalLevel == 0
+                          ? colors.textSecondary
+                          : colors.settingsHeader,
+                    ),
+                    title: Text(
+                      AppLocalizations.of(context)!.journeySignal,
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
+                      '${AppLocalizations.of(context)!.signalLevel(widget.signalLevel)} · '
+                      '${JourneySignalLevel.title(widget.signalLevel, languageCode: Localizations.localeOf(context).languageCode)}\n'
+                      '${JourneySignalLevel.description(widget.signalLevel, languageCode: Localizations.localeOf(context).languageCode)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    trailing: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        value: widget.signalLevel,
+                        dropdownColor: colors.cardBg,
+                        items: List.generate(
+                          JourneySignalLevel.maximum + 1,
+                          (level) => DropdownMenuItem<int>(
+                            value: level,
+                            child: Text(
+                              '$level · ${JourneySignalLevel.title(level, languageCode: Localizations.localeOf(context).languageCode)}',
+                              style: TextStyle(color: colors.textPrimary),
+                            ),
+                          ),
+                        ),
+                        onChanged: (level) async {
+                          if (level == null) return;
+                          await widget.onSignalLevelChanged(level);
+                          await _loadProfile();
+                        },
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: Icon(
+                      Icons.help_outline_rounded,
+                      color: colors.settingsHeader,
+                    ),
+                    title: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Stufen erklärt'
+                          : 'Explain the levels',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Sieh dir an, was Freunde bei jeder Stufe sehen.'
+                          : 'See what friends can see at every level.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      color: colors.textSecondary,
+                    ),
+                    onTap: () async {
+                      final level = await showJourneySignalTutorial(
+                        context,
+                        initialLevel: widget.signalLevel,
+                      );
+                      if (level == null || !mounted) return;
+                      await widget.onSignalLevelChanged(level);
+                      await _loadProfile();
+                    },
+                  ),
                 ]),
                 const SizedBox(height: 20),
               ],
@@ -2922,6 +2991,31 @@ class _SettingsTabState extends State<SettingsTab> {
                               ),
                 ),
               ]),
+              if (_isUnstableBuild) ...[
+                const SizedBox(height: 20),
+                _buildSection(context, [
+                  SwitchListTile(
+                    value: _advancedSettingsEnabledForDevice,
+                    activeThumbColor: colors.effectiveSeed,
+                    title: Text(
+                      isGerman
+                          ? 'Erweiterte Sucheinstellungen'
+                          : 'Advanced search settings',
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
+                      isGerman
+                          ? 'Erweiterte Suche ein- oder ausschalten'
+                          : 'Turn advanced search on or off',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    onChanged: _setAdvancedSettingsEnabledForDevice,
+                  ),
+                ]),
+              ],
               if (_advancedSettingsEnabledForDevice) ...[
                 const SizedBox(height: 20),
                 Text(
@@ -4321,7 +4415,7 @@ class _SettingsTabState extends State<SettingsTab> {
         }
       }
 
-      if (widget.isGhostMode) {
+      if (widget.signalLevel == 0) {
         if (isActive && currentLine == null) {
           statusText = AppLocalizations.of(context)!.activeRecentlyGhost;
           statusColor = colors.textSecondary;

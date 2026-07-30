@@ -17,6 +17,7 @@ import 'screens/home_screen.dart';
 import 'services/color_claim_service.dart';
 import 'services/supabase_service.dart';
 import 'services/linux_url_scheme_registration.dart';
+import 'models/journey_sharing.dart';
 import 'utils/app_error.dart';
 
 enum StartupAuthNotice {
@@ -154,18 +155,22 @@ class _TransAppState extends State<TransApp> {
   ThemeMode _themeMode = ThemeMode.light;
   bool _useSystemTheme = false;
   bool _onlyNahverkehr = false;
-  bool _isGhostMode = false;
+  int _signalLevel = JourneySignalLevel.defaultForNewUsers;
   Color _themeColor = appThemeColors[0];
   Locale? _locale;
   StreamSubscription<Uri>? _authLinkSubscription;
+  StreamSubscription<AuthState>? _authStateSubscription;
   int _appRefreshKey = 0;
   bool _isAppRefreshing = false;
+  bool _appRefreshRequested = false;
 
   @override
   void initState() {
     super.initState();
     _readPreferences(); // Show immediate local state
-    _initSync(); // Start cloud sync
+    if (_setupAuthStateSync()) {
+      unawaited(_refreshAppShell());
+    }
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
     SupabaseService.appRefreshNotifier.addListener(_handleAppRefreshRequest);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -179,13 +184,25 @@ class _TransAppState extends State<TransApp> {
   @override
   void dispose() {
     _authLinkSubscription?.cancel();
+    _authStateSubscription?.cancel();
     SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
     SupabaseService.appRefreshNotifier.removeListener(_handleAppRefreshRequest);
     super.dispose();
   }
 
-  Future<void> _initSync() async {
-    await SupabaseService.loadAndSyncSettings();
+  bool _setupAuthStateSync() {
+    final client = SupabaseService.maybeClient;
+    if (client == null) return false;
+
+    _authStateSubscription = client.auth.onAuthStateChange.listen((state) {
+      if (state.event == AuthChangeEvent.signedIn ||
+          state.event == AuthChangeEvent.signedOut ||
+          state.event == AuthChangeEvent.initialSession ||
+          state.event == AuthChangeEvent.userUpdated) {
+        unawaited(_refreshAppShell());
+      }
+    });
+    return true;
   }
 
   void _handleAppRefreshRequest() {
@@ -193,20 +210,40 @@ class _TransAppState extends State<TransApp> {
   }
 
   Future<void> _refreshAppShell() async {
-    if (_isAppRefreshing) return;
     if (!mounted) return;
+    if (_isAppRefreshing) {
+      _appRefreshRequested = true;
+      return;
+    }
 
     setState(() => _isAppRefreshing = true);
-    await Future.wait<void>([
-      _readPreferences(),
-      Future<void>.delayed(const Duration(milliseconds: 650)),
-    ]);
+    final minimumOverlayTime =
+        Future<void>.delayed(const Duration(milliseconds: 650));
+    try {
+      do {
+        _appRefreshRequested = false;
+        await _prepareCurrentSession();
+        await _readPreferences();
 
-    if (!mounted) return;
-    setState(() {
-      _appRefreshKey++;
-      _isAppRefreshing = false;
-    });
+        if (!mounted) return;
+        setState(() => _appRefreshKey++);
+      } while (_appRefreshRequested);
+      await minimumOverlayTime;
+    } catch (e, st) {
+      AppError.log(e, stackTrace: st, source: 'app session refresh');
+    } finally {
+      if (mounted) {
+        setState(() => _isAppRefreshing = false);
+      }
+    }
+  }
+
+  Future<void> _prepareCurrentSession() async {
+    if (SupabaseService.currentUser == null) {
+      await SupabaseService.prepareSignedOutState();
+      return;
+    }
+    await SupabaseService.ensureCurrentUserReady();
   }
 
   Future<void> _showStartupAuthNotice(StartupAuthNotice notice) async {
@@ -313,7 +350,10 @@ class _TransAppState extends State<TransApp> {
 
     final onlyNv = prefs.getBool('only_nahverkehr') ?? false;
     final colorVal = prefs.getInt('theme_color_value');
-    final isGhost = prefs.getBool('ghost_mode') ?? false;
+    final signalLevel =
+        prefs.getInt(SupabaseService.privacyLevelPreferenceKey) ??
+            prefs.getInt('journey_signal_level') ??
+            ((prefs.getBool('ghost_mode') ?? true) ? 0 : 1);
     final storedSystemSync = prefs.getBool('use_system_theme') ?? false;
     final storedIsDark = prefs.getBool('is_dark_mode');
 
@@ -321,7 +361,7 @@ class _TransAppState extends State<TransApp> {
 
     setState(() {
       _onlyNahverkehr = onlyNv;
-      _isGhostMode = isGhost;
+      _signalLevel = JourneySignalLevel.clamp(signalLevel);
       if (colorVal != null) {
         _themeColor = Color(colorVal);
       } else {
@@ -393,14 +433,10 @@ class _TransAppState extends State<TransApp> {
     await SupabaseService.updateSettings({'only_nahverkehr': enabled});
   }
 
-  void _toggleGhostMode(bool enabled) async {
-    setState(() {
-      _isGhostMode = enabled;
-    });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('ghost_mode', enabled);
-    await SupabaseService.toggleGhostMode(enabled);
-    await SupabaseService.updateSettings({'ghost_mode': enabled});
+  Future<void> _setSignalLevel(int level) async {
+    final normalized = JourneySignalLevel.clamp(level);
+    setState(() => _signalLevel = normalized);
+    await SupabaseService.setMySignalLevel(normalized);
   }
 
   Future<void> _updateThemeColor(Color color) async {
@@ -468,8 +504,8 @@ class _TransAppState extends State<TransApp> {
                     onSystemSyncChanged: _toggleSystemSync,
                     onlyNahverkehr: _onlyNahverkehr,
                     onNahverkehrChanged: _toggleNahverkehr,
-                    isGhostMode: _isGhostMode,
-                    onGhostModeChanged: _toggleGhostMode,
+                    signalLevel: _signalLevel,
+                    onSignalLevelChanged: _setSignalLevel,
                     onColorChanged: _updateThemeColor,
                     currentColor: _themeColor,
                     locale: _locale,

@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/transport_api.dart';
+import 'package:trans/models/station.dart';
 import 'package:trans/screens/transitous_live_map_screen.dart';
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
@@ -24,8 +25,8 @@ class HomeScreen extends StatefulWidget {
   final Function(bool) onSystemSyncChanged;
   final bool onlyNahverkehr;
   final Function(bool) onNahverkehrChanged;
-  final bool isGhostMode;
-  final Function(bool) onGhostModeChanged;
+  final int signalLevel;
+  final Future<void> Function(int) onSignalLevelChanged;
   final Future<void> Function(Color) onColorChanged;
   final Color currentColor;
   final Locale? locale;
@@ -39,8 +40,8 @@ class HomeScreen extends StatefulWidget {
     required this.onSystemSyncChanged,
     required this.onlyNahverkehr,
     required this.onNahverkehrChanged,
-    required this.isGhostMode,
-    required this.onGhostModeChanged,
+    required this.signalLevel,
+    required this.onSignalLevelChanged,
     required this.onColorChanged,
     required this.currentColor,
     required this.locale,
@@ -58,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _hasAcceptedCommunityTerms = false;
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
+  StreamSubscription<Position>? _alwaysLocationSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
   bool _isShowingRecoveryDialog = false;
 
@@ -71,6 +73,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _determinePosition();
     }
     _setupAuthListener();
+    SupabaseService.settingsRefreshNotifier
+        .addListener(_handleSharingSettingsRefresh);
+    unawaited(_syncAlwaysLocationSharing());
   }
 
   Future<void> _loadSettings() async {
@@ -104,18 +109,109 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setBool('always_wake_me', value);
   }
 
+  void _routeToSharedStation(Station station) {
+    setState(() => _currentIndex = 0);
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setInt('current_tab_index', 0));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _routesTabKey.currentState?.routeToSharedPlace(station);
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
+    _alwaysLocationSubscription?.cancel();
+    SupabaseService.settingsRefreshNotifier
+        .removeListener(_handleSharingSettingsRefresh);
     super.dispose();
+  }
+
+  void _handleSharingSettingsRefresh() {
+    unawaited(_syncAlwaysLocationSharing());
+  }
+
+  void _handleHighAccuracyTrackingChanged(bool active) {
+    if (active) {
+      _alwaysLocationSubscription?.cancel();
+      _alwaysLocationSubscription = null;
+    } else {
+      unawaited(_syncAlwaysLocationSharing());
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && !kIsWeb) {
       _determinePosition();
+      unawaited(_syncAlwaysLocationSharing());
     }
+  }
+
+  @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.signalLevel != widget.signalLevel) {
+      unawaited(_syncAlwaysLocationSharing());
+    }
+  }
+
+  Future<void> _syncAlwaysLocationSharing() async {
+    final sharing = await SupabaseService.getJourneySharingSettings();
+    if (!sharing.needsAlwaysLocation) {
+      await _alwaysLocationSubscription?.cancel();
+      _alwaysLocationSubscription = null;
+      return;
+    }
+    if (_alwaysLocationSubscription != null || kIsWeb) return;
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+    LocationSettings settings = const LocationSettings(
+      accuracy: LocationAccuracy.low,
+      distanceFilter: 250,
+    );
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      settings = AndroidSettings(
+        accuracy: LocationAccuracy.low,
+        distanceFilter: 250,
+        intervalDuration: const Duration(minutes: 2),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Privacy Level',
+          notificationText:
+              'Keeping your location available to trusted friends',
+          notificationIcon: AndroidResource(name: 'ic_launcher'),
+          enableWakeLock: false,
+        ),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      settings = AppleSettings(
+        accuracy: LocationAccuracy.low,
+        activityType: ActivityType.other,
+        distanceFilter: 250,
+        pauseLocationUpdatesAutomatically: true,
+        showBackgroundLocationIndicator: true,
+      );
+    }
+    _alwaysLocationSubscription =
+        Geolocator.getPositionStream(locationSettings: settings).listen(
+      (position) {
+        if (mounted) setState(() => _currentPosition = position);
+        unawaited(SupabaseService.publishLocationSnapshot(
+          position,
+          isJourneyLocation: false,
+        ));
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        AppError.log(error,
+            stackTrace: stackTrace, source: 'Always-available location');
+        _alwaysLocationSubscription?.cancel();
+        _alwaysLocationSubscription = null;
+      },
+    );
   }
 
   void _setupAuthListener() {
@@ -363,13 +459,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final pos = await Geolocator.getCurrentPosition();
       setState(() => _currentPosition = pos);
 
-      if (!widget.isGhostMode) {
-        try {
-          SupabaseService.updateLocation(pos);
-        } catch (e) {
-          debugPrint("Location Sync Error (Ignored): $e");
-        }
-      }
+      unawaited(
+        SupabaseService.publishLocationSnapshot(
+          pos,
+          isJourneyLocation: false,
+        ).catchError(
+          (Object error) => debugPrint('Location Sync Error (Ignored): $error'),
+        ),
+      );
     } catch (e) {
       debugPrint("Geolocation Error (Ignored): $e");
     }
@@ -385,8 +482,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onlyNahverkehr: widget.onlyNahverkehr,
         showTrainNumbers: _showTrainNumbers,
         alwaysWakeMe: _alwaysWakeMe,
+        signalLevel: widget.signalLevel,
+        onHighAccuracyTrackingChanged: _handleHighAccuracyTrackingChanged,
       ),
-      FriendsTab(currentPosition: _currentPosition),
+      FriendsTab(
+        currentPosition: _currentPosition,
+        onRouteToStation: _routeToSharedStation,
+        isActive: _currentIndex == 1,
+      ),
       SettingsTab(
         isDarkMode: widget.isDarkMode,
         onThemeChanged: widget.onThemeChanged,
@@ -394,8 +497,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onSystemSyncChanged: widget.onSystemSyncChanged,
         onlyNahverkehr: widget.onlyNahverkehr,
         onNahverkehrChanged: widget.onNahverkehrChanged,
-        isGhostMode: widget.isGhostMode,
-        onGhostModeChanged: widget.onGhostModeChanged,
+        signalLevel: widget.signalLevel,
+        onSignalLevelChanged: widget.onSignalLevelChanged,
         onColorChanged: widget.onColorChanged,
         currentColor: widget.currentColor,
         showTrainNumbers: _showTrainNumbers,
