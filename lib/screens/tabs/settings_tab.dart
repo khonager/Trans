@@ -2991,7 +2991,11 @@ class _SettingsTabState extends State<SettingsTab> {
                               ),
                 ),
               ]),
-              if (_isUnstableBuild) ...[
+              // Unstable builds always expose this switch. On stable builds it
+              // becomes visible after the changelog-button hold unlocks the
+              // setting, allowing users to turn it off again while retaining
+              // the changelog button for a future unlock.
+              if (_isUnstableBuild || _advancedSettingsEnabledForDevice) ...[
                 const SizedBox(height: 20),
                 _buildSection(context, [
                   SwitchListTile(
