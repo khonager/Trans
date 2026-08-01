@@ -26,51 +26,7 @@ enum RouteSortOption {
 }
 
 const double _routeResultsBottomInset = 320;
-const double _routeResultsPrependCacheExtent = 6000;
-
-class _RouteScrollDebugSnapshot {
-  final String label;
-  final bool hasClients;
-  final double? pixels;
-  final double? min;
-  final double? max;
-  final double? viewport;
-  final int candidateCount;
-  final String firstJourney;
-  final String lastJourney;
-
-  const _RouteScrollDebugSnapshot({
-    required this.label,
-    required this.hasClients,
-    required this.pixels,
-    required this.min,
-    required this.max,
-    required this.viewport,
-    required this.candidateCount,
-    required this.firstJourney,
-    required this.lastJourney,
-  });
-
-  String deltaFrom(_RouteScrollDebugSnapshot? previous) {
-    if (previous == null || pixels == null || previous.pixels == null) {
-      return 'deltaPixels=n/a deltaMax=n/a';
-    }
-    final maxDelta = max == null || previous.max == null
-        ? 'n/a'
-        : (max! - previous.max!).toStringAsFixed(1);
-    return 'deltaPixels=${(pixels! - previous.pixels!).toStringAsFixed(1)} '
-        'deltaMax=$maxDelta';
-  }
-
-  @override
-  String toString() {
-    return '$label hasClients=$hasClients pixels=${_fmt(pixels)} '
-        'min=${_fmt(min)} max=${_fmt(max)} viewport=${_fmt(viewport)} '
-        'count=$candidateCount first=$firstJourney last=$lastJourney';
-  }
-
-  static String _fmt(double? value) => value?.toStringAsFixed(1) ?? 'n/a';
-}
+const double _routeResultsAnchorCacheExtent = 6000;
 
 final RegExp _summaryEmbeddedPlatformParenthesesPattern = RegExp(
   r'\s*\((?:pl\.|gl\.|gleis|gleise|steig|bahnsteig|bussteig|bussteige|bstg\.?|platz)\s+[^)]+\)',
@@ -173,14 +129,13 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   final GlobalKey _ticketKey = GlobalKey();
   final GlobalKey _listKey = GlobalKey();
   final Map<String, GlobalKey> _journeyCardKeys = <String, GlobalKey>{};
+  final Map<String, GlobalKey> _pendingJourneyMeasurementKeys =
+      <String, GlobalKey>{};
   Journey? _ticketJourney;
   String _userName = "Anon";
-  int _debugLoadEarlierSequence = 0;
-  int? _debugActiveLoadEarlierSequence;
-  _RouteScrollDebugSnapshot? _debugLoadEarlierStartSnapshot;
-  int? _debugLoadEarlierStartCandidateCount;
-  String? _prependAnchorIdentity;
-  double? _prependAnchorTop;
+  List<Journey>? _pendingSortedCandidates;
+  Set<String> _pendingInsertedJourneyIdentities = <String>{};
+  int _pendingCandidateUpdateGeneration = 0;
 
   @override
   void initState() {
@@ -214,41 +169,12 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   void didUpdateWidget(RouteResultsView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldCount = oldWidget.candidates.length;
-    final seq = _debugActiveLoadEarlierSequence;
-    final shouldPreservePrependAnchor =
-        seq != null && widget.candidates.length > oldCount;
-    if (shouldPreservePrependAnchor) {
-      _capturePrependAnchor();
-      _preCompensateEarlierPrependScroll(widget.candidates);
-    }
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
-    _sortCandidates();
-    if (oldCount != widget.candidates.length) {
-      final snapshot = _debugCaptureScrollSnapshot('didUpdateWidget');
-      if (kDebugMode) {
-        _debugLogScroll(
-          'candidate-change seq=${seq ?? 'none'} oldCount=$oldCount '
-          'newCount=${widget.candidates.length} added=${widget.candidates.length - oldCount} '
-          '${snapshot.deltaFrom(_debugLoadEarlierStartSnapshot)} $snapshot',
-        );
-      }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final afterFrame = _debugCaptureScrollSnapshot('post-candidate-frame');
-        if (shouldPreservePrependAnchor) {
-          _compensateEarlierPrependScroll(seq, afterFrame);
-        }
-        if (kDebugMode) {
-          _debugLogScroll(
-            'candidate-change-post-frame seq=${seq ?? 'none'} '
-            '${afterFrame.deltaFrom(_debugLoadEarlierStartSnapshot)} $afterFrame',
-          );
-        }
-      });
-    }
+    _stageCandidateUpdate(
+      _sortedJourneys(widget.candidates, _currentSort),
+    );
   }
 
   void _sortCandidates() {
@@ -286,6 +212,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
 
   void _onSortChanged(RouteSortOption option) {
     setState(() {
+      _cancelPendingCandidateUpdate();
       _currentSort = option;
       _sortCandidates();
     });
@@ -295,35 +222,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   void _debugLogScroll(String message) {
     if (!kDebugMode) return;
     TransportApi.addSyntheticDebugLog('route-scroll: $message');
-  }
-
-  String _debugJourneyLabel(Journey? journey) {
-    if (journey == null) return 'none';
-    final departure = journey.plannedDeparture ?? journey.departure;
-    final arrival = journey.plannedArrival ?? journey.arrival;
-    return '${DateFormat('HH:mm:ss').format(departure)}-'
-        '${DateFormat('HH:mm:ss').format(arrival)}';
-  }
-
-  _RouteScrollDebugSnapshot _debugCaptureScrollSnapshot(String label) {
-    final controller = widget.scrollController;
-    final hasClients = controller?.hasClients ?? false;
-    final position = hasClients ? controller!.position : null;
-    return _RouteScrollDebugSnapshot(
-      label: label,
-      hasClients: hasClients,
-      pixels: position?.pixels,
-      min: position?.minScrollExtent,
-      max: position?.maxScrollExtent,
-      viewport: position?.viewportDimension,
-      candidateCount: _sortedCandidates.length,
-      firstJourney: _debugJourneyLabel(
-        _sortedCandidates.isEmpty ? null : _sortedCandidates.first,
-      ),
-      lastJourney: _debugJourneyLabel(
-        _sortedCandidates.isEmpty ? null : _sortedCandidates.last,
-      ),
-    );
   }
 
   bool _debugHandleScrollNotification(ScrollNotification _) {
@@ -338,15 +236,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       content: Text('Debug logs copied'),
       duration: Duration(seconds: 2),
     ));
-  }
-
-  void _clearLoadEarlierProbe(int? seq) {
-    if (_debugActiveLoadEarlierSequence != seq) return;
-    _debugActiveLoadEarlierSequence = null;
-    _debugLoadEarlierStartSnapshot = null;
-    _debugLoadEarlierStartCandidateCount = null;
-    _prependAnchorIdentity = null;
-    _prependAnchorTop = null;
   }
 
   String _scrollIdentityFor(Journey journey) {
@@ -434,189 +323,134 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     return (journey: anchorJourney, top: anchorTop);
   }
 
-  void _capturePrependAnchor() {
+  void _cancelPendingCandidateUpdate() {
+    _pendingCandidateUpdateGeneration++;
+    _pendingSortedCandidates = null;
+    _pendingInsertedJourneyIdentities = <String>{};
+    _pendingJourneyMeasurementKeys.clear();
+  }
+
+  void _stageCandidateUpdate(List<Journey> nextCandidates) {
+    final pendingCandidates = _pendingSortedCandidates;
+    if (pendingCandidates != null &&
+        _sameJourneyIdentityOrder(pendingCandidates, nextCandidates)) {
+      // Loading phases can rebuild the parent several times while this one
+      // measurement frame is pending. Keep its keys and callback stable while
+      // still retaining the newest Journey objects.
+      _pendingSortedCandidates = nextCandidates;
+      return;
+    }
+
+    final oldIdentities = _sortedCandidates.map(_scrollIdentityFor).toSet();
+    final nextIdentities = nextCandidates.map(_scrollIdentityFor).toSet();
+    final insertedIdentities = nextIdentities.difference(oldIdentities);
+    final isPureAddition = oldIdentities.difference(nextIdentities).isEmpty;
     final anchor = _visibleScrollAnchor();
-    if (anchor == null) {
-      _prependAnchorIdentity = null;
-      _prependAnchorTop = null;
-      return;
-    }
-    _prependAnchorIdentity = _scrollIdentityFor(anchor.journey);
-    _prependAnchorTop = anchor.top;
-    _debugLogScroll(
-      'prepend-anchor-captured identity=$_prependAnchorIdentity top=${anchor.top.toStringAsFixed(1)}',
-    );
-  }
+    final anchorIdentity =
+        anchor == null ? null : _scrollIdentityFor(anchor.journey);
+    final nextAnchorIndex = anchorIdentity == null
+        ? -1
+        : nextCandidates.indexWhere(
+            (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+          );
+    final insertsBeforeAnchor = nextAnchorIndex > 0 &&
+        nextCandidates.take(nextAnchorIndex).any((journey) =>
+            insertedIdentities.contains(_scrollIdentityFor(journey)));
 
-  double? _averageMeasuredJourneyExtent() {
-    var total = 0.0;
-    var count = 0;
-    for (final journey in _sortedCandidates) {
-      final bounds = _globalBoundsFor(_journeyCardKeyFor(journey));
-      if (bounds == null) continue;
-      total += bounds.height;
-      count++;
-    }
-    if (count == 0) return null;
-    return total / count;
-  }
-
-  void _preCompensateEarlierPrependScroll(List<Journey> nextCandidates) {
-    final anchorIdentity = _prependAnchorIdentity;
-    final controller = widget.scrollController;
-    if (anchorIdentity == null ||
-        controller == null ||
-        !controller.hasClients ||
-        _sortedCandidates.isEmpty) {
+    if (!isPureAddition ||
+        insertedIdentities.isEmpty ||
+        !insertsBeforeAnchor ||
+        widget.scrollController?.hasClients != true) {
+      _cancelPendingCandidateUpdate();
+      _sortedCandidates = nextCandidates;
       return;
     }
 
-    final oldIndex = _sortedCandidates.indexWhere(
-      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
-    );
-    if (oldIndex < 0) return;
-
-    final nextSortedCandidates = _sortedJourneys(nextCandidates, _currentSort);
-    final newIndex = nextSortedCandidates.indexWhere(
-      (journey) => _scrollIdentityFor(journey) == anchorIdentity,
-    );
-    final insertedBefore = newIndex - oldIndex;
-    if (insertedBefore <= 0) return;
-
-    final averageExtent = _averageMeasuredJourneyExtent();
-    if (averageExtent == null || averageExtent <= 0) return;
-
-    final target = controller.offset + insertedBefore * averageExtent;
-    _debugLogScroll(
-      'prepend-precompensation insertedBefore=$insertedBefore averageExtent=${averageExtent.toStringAsFixed(1)} '
-      'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
-    );
-    controller.position.correctPixels(target);
+    _pendingSortedCandidates = nextCandidates;
+    _pendingInsertedJourneyIdentities = insertedIdentities;
+    _pendingJourneyMeasurementKeys
+      ..clear()
+      ..addEntries(
+        insertedIdentities.map(
+          (identity) => MapEntry(identity, GlobalKey()),
+        ),
+      );
+    final generation = ++_pendingCandidateUpdateGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyMeasuredCandidateUpdate(generation);
+    });
   }
 
-  void _compensateEarlierPrependScroll(
-    int seq,
-    _RouteScrollDebugSnapshot afterFrame,
-  ) {
-    final start = _debugLoadEarlierStartSnapshot;
+  bool _sameJourneyIdentityOrder(List<Journey> a, List<Journey> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (_scrollIdentityFor(a[i]) != _scrollIdentityFor(b[i])) return false;
+    }
+    return true;
+  }
+
+  void _applyMeasuredCandidateUpdate(int generation) {
+    if (!mounted || generation != _pendingCandidateUpdateGeneration) return;
+    final nextCandidates = _pendingSortedCandidates;
     final controller = widget.scrollController;
-    if (start == null ||
-        start.max == null ||
-        start.pixels == null ||
-        afterFrame.max == null ||
+    if (nextCandidates == null ||
         controller == null ||
         !controller.hasClients) {
-      _debugLogScroll(
-        'prepend-compensation-skipped seq=$seq reason=missing-metrics',
-      );
-      _clearLoadEarlierProbe(seq);
       return;
     }
 
-    final anchorIdentity = _prependAnchorIdentity;
-    final anchorTop = _prependAnchorTop;
-    if (anchorIdentity != null && anchorTop != null) {
-      final key = _journeyCardKeys[anchorIdentity];
-      final currentBounds = key == null ? null : _globalBoundsFor(key);
-      if (currentBounds != null) {
-        final delta = currentBounds.top - anchorTop;
-        if (delta.abs() > 0.5) {
-          final target = (controller.offset + delta).clamp(
-            controller.position.minScrollExtent,
-            controller.position.maxScrollExtent,
-          );
-          _debugLogScroll(
-            'prepend-anchor-compensation seq=$seq delta=${delta.toStringAsFixed(1)} '
-            'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
-          );
-          controller.jumpTo(target.toDouble());
-        } else {
-          _debugLogScroll(
-            'prepend-anchor-compensation-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
-          );
+    // Capture the anchor now, after the measurement frame. If the user kept
+    // scrolling while the request completed, the route currently under their
+    // finger is the one that remains fixed.
+    final anchor = _visibleScrollAnchor();
+    var insertedExtentBeforeAnchor = 0.0;
+    if (anchor != null) {
+      final anchorIdentity = _scrollIdentityFor(anchor.journey);
+      final nextAnchorIndex = nextCandidates.indexWhere(
+        (journey) => _scrollIdentityFor(journey) == anchorIdentity,
+      );
+      if (nextAnchorIndex > 0) {
+        for (final journey in nextCandidates.take(nextAnchorIndex)) {
+          final identity = _scrollIdentityFor(journey);
+          if (!_pendingInsertedJourneyIdentities.contains(identity)) continue;
+          final measurementKey = _pendingJourneyMeasurementKeys[identity];
+          final bounds =
+              measurementKey == null ? null : _globalBoundsFor(measurementKey);
+          if (bounds == null) {
+            // Layout can be deferred for a frame on slower devices. Keep the
+            // old list painted and retry instead of applying an estimate.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _applyMeasuredCandidateUpdate(generation);
+            });
+            return;
+          }
+          insertedExtentBeforeAnchor += bounds.height;
         }
-        final afterJump =
-            _debugCaptureScrollSnapshot('after-prepend-anchor-compensation');
-        _debugLogScroll(
-          'prepend-anchor-compensation-after seq=$seq $afterJump',
-        );
-        _clearLoadEarlierProbe(seq);
-        return;
       }
+    }
+
+    if (insertedExtentBeforeAnchor > 0.5) {
+      final oldOffset = controller.offset;
+      final target = oldOffset + insertedExtentBeforeAnchor;
+      // correctPixels is intentionally used before the new list is built. It
+      // neither emits a synthetic scroll nor cancels an Android drag/fling.
+      controller.position.correctPixels(target);
       _debugLogScroll(
-        'prepend-anchor-compensation-fallback seq=$seq reason=missing-anchor-bounds',
+        'candidate-addition-preserved insertedExtent=${insertedExtentBeforeAnchor.toStringAsFixed(1)} '
+        'from=${oldOffset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
       );
     }
 
-    final addedExtent = afterFrame.max! - start.max!;
-    if (addedExtent <= 0.5) {
-      _debugLogScroll(
-        'prepend-compensation-skipped seq=$seq addedExtent=${addedExtent.toStringAsFixed(1)}',
-      );
-      _clearLoadEarlierProbe(seq);
-      return;
-    }
-
-    final target = (controller.offset + addedExtent).clamp(
-      controller.position.minScrollExtent,
-      controller.position.maxScrollExtent,
-    );
-    _debugLogScroll(
-      'prepend-compensation seq=$seq addedExtent=${addedExtent.toStringAsFixed(1)} '
-      'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
-    );
-    controller.jumpTo(target.toDouble());
-    final afterJump = _debugCaptureScrollSnapshot('after-prepend-compensation');
-    _debugLogScroll(
-      'prepend-compensation-after seq=$seq $afterJump',
-    );
-    if (anchorIdentity != null && anchorTop != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _debugActiveLoadEarlierSequence != seq) return;
-        final key = _journeyCardKeys[anchorIdentity];
-        final currentBounds = key == null ? null : _globalBoundsFor(key);
-        if (currentBounds == null) {
-          _debugLogScroll(
-            'prepend-anchor-second-pass-skipped seq=$seq reason=missing-anchor-bounds',
-          );
-          _clearLoadEarlierProbe(seq);
-          return;
-        }
-        final delta = currentBounds.top - anchorTop;
-        if (delta.abs() > 0.5) {
-          final target = (controller.offset + delta).clamp(
-            controller.position.minScrollExtent,
-            controller.position.maxScrollExtent,
-          );
-          _debugLogScroll(
-            'prepend-anchor-second-pass seq=$seq delta=${delta.toStringAsFixed(1)} '
-            'from=${controller.offset.toStringAsFixed(1)} target=${target.toStringAsFixed(1)}',
-          );
-          controller.jumpTo(target.toDouble());
-        } else {
-          _debugLogScroll(
-            'prepend-anchor-second-pass-skipped seq=$seq delta=${delta.toStringAsFixed(1)}',
-          );
-        }
-        _clearLoadEarlierProbe(seq);
-      });
-      return;
-    }
-    _clearLoadEarlierProbe(seq);
+    setState(() {
+      _sortedCandidates = nextCandidates;
+      _pendingSortedCandidates = null;
+      _pendingInsertedJourneyIdentities = <String>{};
+      _pendingJourneyMeasurementKeys.clear();
+    });
   }
 
   Future<void> _handleLoadEarlier() async {
     if (_isLoadingMoreEarlier) return;
-    final seq = ++_debugLoadEarlierSequence;
-    _debugActiveLoadEarlierSequence = seq;
-    _debugLoadEarlierStartCandidateCount = widget.candidates.length;
-    _debugLoadEarlierStartSnapshot =
-        _debugCaptureScrollSnapshot('load-earlier-start');
-    if (kDebugMode) {
-      _debugLogScroll(
-        'load-earlier-start seq=$seq $_debugLoadEarlierStartSnapshot',
-      );
-    }
     setState(() {
       _isLoadingMoreEarlier = true;
       _reserveBackgroundLoadingSpaceDuringLoadMore = widget.isBackgroundLoading;
@@ -624,31 +458,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     try {
       await widget.onLoadEarlier?.call();
     } finally {
-      if (kDebugMode) {
-        final seq = _debugActiveLoadEarlierSequence;
-        final returned = _debugCaptureScrollSnapshot('load-earlier-returned');
-        _debugLogScroll(
-          'load-earlier-returned seq=${seq ?? 'none'} '
-          '${returned.deltaFrom(_debugLoadEarlierStartSnapshot)} $returned',
-        );
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final postFrame =
-              _debugCaptureScrollSnapshot('load-earlier-final-frame');
-          _debugLogScroll(
-            'load-earlier-final-frame seq=${seq ?? 'none'} '
-            '${postFrame.deltaFrom(_debugLoadEarlierStartSnapshot)} $postFrame',
-          );
-          if (_debugActiveLoadEarlierSequence == seq &&
-              widget.candidates.length ==
-                  _debugLoadEarlierStartCandidateCount) {
-            _clearLoadEarlierProbe(seq);
-          }
-        });
-      } else if (widget.candidates.length ==
-          _debugLoadEarlierStartCandidateCount) {
-        _clearLoadEarlierProbe(_debugActiveLoadEarlierSequence);
-      }
       if (mounted) {
         setState(() {
           _isLoadingMoreEarlier = false;
@@ -751,6 +560,46 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     } finally {
       if (mounted) setState(() => _ticketJourney = null);
     }
+  }
+
+  Widget _buildPendingJourneyMeasurements() {
+    final pendingCandidates = _pendingSortedCandidates;
+    if (pendingCandidates == null ||
+        _pendingInsertedJourneyIdentities.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: Offstage(
+            offstage: true,
+            child: SingleChildScrollView(
+              child: Padding(
+                // Match the horizontal constraints of the real ListView so
+                // wrapped line chips have exactly the same height on phones.
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    for (final journey in pendingCandidates)
+                      if (_pendingInsertedJourneyIdentities
+                          .contains(_scrollIdentityFor(journey)))
+                        _JourneyCard(
+                          key: _pendingJourneyMeasurementKeys[
+                              _scrollIdentityFor(journey)],
+                          journey: journey,
+                          onTap: () {},
+                          onCopy: () {},
+                          showTrainNumbers: widget.showTrainNumbers,
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -894,7 +743,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                   child: ListView.builder(
                     key: _listKey,
                     controller: widget.scrollController,
-                    cacheExtent: _routeResultsPrependCacheExtent,
+                    cacheExtent: _routeResultsAnchorCacheExtent,
                     findChildIndexCallback: _findJourneyChildIndex,
                     padding: EdgeInsets.fromLTRB(
                       16,
@@ -995,6 +844,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             ),
           ],
         ),
+        _buildPendingJourneyMeasurements(),
         // Hidden Ticket Widget for Generation
         Positioned(
           left: -2000,
