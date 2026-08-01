@@ -3000,7 +3000,12 @@ class _SettingsTabState extends State<SettingsTab> {
                 _buildSection(context, [
                   SwitchListTile(
                     value: _advancedSettingsEnabledForDevice,
-                    activeThumbColor: colors.effectiveSeed,
+                    thumbColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return primaryColor;
+                      }
+                      return null;
+                    }),
                     title: Text(
                       isGerman
                           ? 'Erweiterte Sucheinstellungen'
