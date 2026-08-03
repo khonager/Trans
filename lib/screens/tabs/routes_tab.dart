@@ -7646,8 +7646,19 @@ class _StepCardState extends State<_StepCard> {
   Widget _buildStopDetailChip(
     BuildContext context, {
     required String detail,
+    bool constrainWidth = true,
   }) {
     final colors = TransColors.of(context);
+    final detailText = Text(
+      detail,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+      ),
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -7660,19 +7671,13 @@ class _StepCardState extends State<_StepCard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 110),
-            child: Text(
-              detail,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
+          if (constrainWidth)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 110),
+              child: detailText,
+            )
+          else
+            detailText,
         ],
       ),
     );
@@ -7700,23 +7705,6 @@ class _StepCardState extends State<_StepCard> {
           style: timeStyle,
         ),
       ],
-    );
-  }
-
-  Widget _buildCollapsedStopDetailChip(
-    BuildContext context, {
-    required String detail,
-  }) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        reverse: true,
-        child: _buildStopDetailChip(
-          context,
-          detail: detail,
-        ),
-      ),
     );
   }
 
@@ -7895,61 +7883,51 @@ class _StepCardState extends State<_StepCard> {
 
                       const SizedBox(height: 12), // Spacer before actions
 
-                      // Action Buttons + Time (Bottom Row)
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // Actions (Left)
+                          // The actions scroll independently; the journey
+                          // time stays fixed at the trailing edge.
                           Expanded(
-                              child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Row(children: [
-                                    _buildActionChip(
-                                        context,
-                                        Icons.chat_bubble_outline,
-                                        AppLocalizations.of(context)!.chat,
-                                        onTap: () => widget.onChat(step.line)),
-                                    const SizedBox(width: 8),
-                                    if (step.startStationId != null &&
-                                        step.dateTime != null) ...[
-                                      _buildActionChip(
-                                          context,
-                                          Icons.alt_route,
-                                          AppLocalizations.of(context)!
-                                              .altShort,
-                                          onTap: () =>
-                                              widget.onOpenAlternatives(
-                                                  step.startStationId!,
-                                                  step.dateTime!,
-                                                  lat: step.startLat,
-                                                  lng: step.startLng)),
-                                      const SizedBox(width: 8)
-                                    ],
-                                    _buildActionChip(
-                                        context,
-                                        Icons.vibration,
-                                        step.isWakeAlarmOn
-                                            ? AppLocalizations.of(context)!
-                                                .alarmOn
-                                            : AppLocalizations.of(context)!
-                                                .wakeMe,
-                                        isActive: step.isWakeAlarmOn &&
-                                            !_hasCustomAlarmTarget,
-                                        outlined: step.isWakeAlarmOn &&
-                                            _hasCustomAlarmTarget,
-                                        onTap: widget.onAlarmToggle)
-                                  ]))),
-                          const SizedBox(width: 8),
-
-                          // Time (Right)
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerRight,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (step.startStationId != null &&
+                                      step.dateTime != null) ...[
+                                    _buildActionChip(
+                                      context,
+                                      Icons.alt_route,
+                                      AppLocalizations.of(context)!.altShort,
+                                      onTap: () => widget.onOpenAlternatives(
+                                        step.startStationId!,
+                                        step.dateTime!,
+                                        lat: step.startLat,
+                                        lng: step.startLng,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  _buildActionChip(
+                                    context,
+                                    Icons.vibration,
+                                    step.isWakeAlarmOn
+                                        ? AppLocalizations.of(context)!.alarmOn
+                                        : AppLocalizations.of(context)!.wakeMe,
+                                    isActive: step.isWakeAlarmOn &&
+                                        !_hasCustomAlarmTarget,
+                                    outlined: step.isWakeAlarmOn &&
+                                        _hasCustomAlarmTarget,
+                                    onTap: widget.onAlarmToggle,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildActionChip(
+                                    context,
+                                    Icons.chat_bubble_outline,
+                                    AppLocalizations.of(context)!.chat,
+                                    onTap: () => widget.onChat(step.line),
+                                  ),
                                   if (combinePlatformAndStopLabel(
                                     step.platform,
                                     step.departureStopLabel,
@@ -7959,43 +7937,49 @@ class _StepCardState extends State<_StepCard> {
                                     ),
                                   )
                                       case final collapsedStopDetail?) ...[
-                                    _buildCollapsedStopDetailChip(
+                                    const SizedBox(width: 8),
+                                    _buildStopDetailChip(
                                       context,
                                       detail: collapsedStopDetail,
+                                      constrainWidth: false,
                                     ),
-                                    const SizedBox(width: 10),
                                   ],
-                                  Text(
-                                      "${step.departureTime} - ${step.arrivalTime}",
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: step.isCancelled
-                                              ? colors.textSecondary
-                                              : colors.textPrimary,
-                                          decoration: step.isCancelled
-                                              ? TextDecoration.lineThrough
-                                              : null)),
-                                  if (step.isCancelled)
-                                    Text(
-                                        AppLocalizations.of(context)!
-                                            .cancelledL10n,
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.red,
-                                            fontSize: 12))
-                                  else if (step.departureDelay != null &&
-                                      step.departureDelay != 0)
-                                    Text(
-                                        " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: step.departureDelay! > 0
-                                                ? colors.delayLate
-                                                : colors.delayOnTime))
                                 ],
                               ),
                             ),
-                          )
+                          ),
+                          const SizedBox(width: 8),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                  "${step.departureTime} - ${step.arrivalTime}",
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: step.isCancelled
+                                          ? colors.textSecondary
+                                          : colors.textPrimary,
+                                      decoration: step.isCancelled
+                                          ? TextDecoration.lineThrough
+                                          : null)),
+                              if (step.isCancelled)
+                                Text(
+                                    AppLocalizations.of(context)!.cancelledL10n,
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red,
+                                        fontSize: 12))
+                              else if (step.departureDelay != null &&
+                                  step.departureDelay != 0)
+                                Text(
+                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: step.departureDelay! > 0
+                                            ? colors.delayLate
+                                            : colors.delayOnTime))
+                            ],
+                          ),
                         ],
                       )
                     ]),
