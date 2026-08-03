@@ -79,6 +79,7 @@ class _TicketPanelState extends State<TicketPanel>
   double _interactiveDockProgress = 0;
   double? _latestSheetPointerY;
   double? _dockDragOriginY;
+  int _dockGestureEpoch = 0;
   Timer? _dockHoldTimer;
 
   @override
@@ -182,7 +183,7 @@ class _TicketPanelState extends State<TicketPanel>
     _dockHoldTimer?.cancel();
     _dockHoldTimer = null;
     _isDockLongPressTracking = true;
-    if (!_isDockGestureActive) {
+    if (!_isDockGestureActive || _isSettlingDockGesture) {
       _beginInteractiveDockDrag();
     }
     _setDockGestureActive(true);
@@ -257,7 +258,20 @@ class _TicketPanelState extends State<TicketPanel>
     _releaseDockGesture();
   }
 
+  void _cancelDockLongPress() {
+    _isDockLongPressTracking = false;
+    _sheetPointerIsDown = false;
+    _latestSheetPointerY = null;
+    _dockDragOriginY = null;
+    _dockHoldTimer?.cancel();
+    _dockHoldTimer = null;
+    if (_isDockGestureActive && !_isSettlingDockGesture) {
+      unawaited(_settleDockGestureBack());
+    }
+  }
+
   void _beginInteractiveDockDrag() {
+    _dockGestureEpoch += 1;
     _isSettlingDockGesture = false;
     _dockGestureWasDragged = false;
     _interactiveDockProgress = 0;
@@ -291,20 +305,26 @@ class _TicketPanelState extends State<TicketPanel>
   }
 
   Future<void> _settleDockGestureBack() async {
+    final settleEpoch = ++_dockGestureEpoch;
     _isSettlingDockGesture = true;
     void reportProgress() {
+      if (settleEpoch != _dockGestureEpoch) return;
       _interactiveDockProgress = _dockTransitionController.value;
       widget.onDockGestureProgressChanged?.call(_interactiveDockProgress);
     }
 
     _dockTransitionController.addListener(reportProgress);
     try {
-      await _dockTransitionController.reverse();
+      await _dockTransitionController.reverse().orCancel;
+    } on TickerCanceled {
+      return;
     } finally {
       _dockTransitionController.removeListener(reportProgress);
-      _isSettlingDockGesture = false;
+      if (settleEpoch == _dockGestureEpoch) {
+        _isSettlingDockGesture = false;
+      }
     }
-    if (!mounted) return;
+    if (!mounted || settleEpoch != _dockGestureEpoch) return;
     _interactiveDockProgress = 0;
     widget.onDockGestureProgressChanged?.call(0);
     _setDockGestureActive(false);
@@ -318,6 +338,8 @@ class _TicketPanelState extends State<TicketPanel>
 
   void _finishDockGesture({required bool shouldDock}) {
     if (!_isDockGestureActive) return;
+    _dockGestureEpoch += 1;
+    _isSettlingDockGesture = false;
     _isDockLongPressTracking = false;
     _sheetPointerIsDown = false;
     _dockHoldTimer?.cancel();
@@ -924,6 +946,7 @@ class _TicketPanelState extends State<TicketPanel>
                       onLongPressStart: _startDockGesture,
                       onLongPressMoveUpdate: _updateDockGesture,
                       onLongPressEnd: _endDockGesture,
+                      onLongPressCancel: _cancelDockLongPress,
                       behavior: HitTestBehavior.opaque,
                       child: Column(
                         children: [

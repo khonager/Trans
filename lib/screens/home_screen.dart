@@ -454,12 +454,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted || _ticketDockGestureArmed == armed) return;
     setState(() {
       _ticketDockGestureArmed = armed;
-      if (!armed) _ticketDockGestureProgress = 0;
+      _ticketDockGestureProgress = 0;
     });
   }
 
   void _handleTicketDockGestureProgressChanged(double progress) {
-    if (!mounted || (_ticketDockGestureProgress - progress).abs() < 0.001) {
+    if (!mounted) return;
+    if (!_ticketDockGestureArmed && !_ticketDockAnimationPending) {
+      return;
+    }
+    if ((_ticketDockGestureProgress - progress).abs() < 0.001) {
       return;
     }
     setState(() => _ticketDockGestureProgress = progress.clamp(0.0, 1.0));
@@ -1158,7 +1162,7 @@ class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
                         label: 'QR',
                         icon: widget.qrIcon,
                         opacity: dockingTicket
-                            ? 0
+                            ? ((t - 0.84) / 0.12).clamp(0.0, 1.0)
                             : t * (1 - widget.ticketPullProgress),
                         iconVerticalOffset: dockingTicket ? 0 : -30 * (1 - t),
                         labelOpacity: dockingTicket
