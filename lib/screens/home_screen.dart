@@ -53,7 +53,20 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  static const _ticketDockedPreferenceKey = 'ticket_docked_to_navigation';
+  static const _currentTabIdPreferenceKey = 'current_tab_id';
+
   int _currentIndex = 0;
+  bool _ticketDocked = false;
+  bool _ticketDockAnimationPending = false;
+  bool _qrRestoreArmed = false;
+  bool _qrRestoreGestureActive = false;
+  bool _qrRestoreCancelPending = false;
+  bool _qrRestoreEverMovedUp = false;
+  double _qrRestoreProgress = 0;
+  double _qrRestoreSheetExtent = 0.1;
+  String? _qrRestoreOriginTabId;
+  bool _ticketDockTransitionInProgress = false;
   bool _showTrainNumbers = false;
   bool _alwaysWakeMe = false;
   bool _hasAcceptedCommunityTerms = false;
@@ -61,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<AuthState>? _authSubscription;
   StreamSubscription<Position>? _alwaysLocationSubscription;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
+  final GlobalKey _ticketPanelKey = GlobalKey();
   bool _isShowingRecoveryDialog = false;
 
   @override
@@ -111,8 +125,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _routeToSharedStation(Station station) {
     setState(() => _currentIndex = 0);
-    SharedPreferences.getInstance()
-        .then((prefs) => prefs.setInt('current_tab_index', 0));
+    unawaited(_persistCurrentTab());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _routesTabKey.currentState?.routeToSharedPlace(station);
     });
@@ -364,12 +377,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Load the saved tab index from SharedPreferences
   Future<void> _loadSavedTab() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedIndex = prefs.getInt('current_tab_index') ?? 0;
+    final ticketDocked = prefs.getBool(_ticketDockedPreferenceKey) ?? false;
+    final savedTabId = prefs.getString(_currentTabIdPreferenceKey);
+    final legacyIndex = prefs.getInt('current_tab_index') ?? 0;
+    final savedIndex = savedTabId == null
+        ? legacyIndex.clamp(0, ticketDocked ? 3 : 2)
+        : _indexForTabId(savedTabId, ticketDocked: ticketDocked);
     if (mounted) {
       setState(() {
+        _ticketDocked = ticketDocked;
         _currentIndex = savedIndex;
       });
     }
+  }
+
+  int _indexForTabId(String id, {required bool ticketDocked}) {
+    switch (id) {
+      case 'friends':
+        return 1;
+      case 'ticket':
+        return ticketDocked ? 2 : 0;
+      case 'settings':
+        return ticketDocked ? 3 : 2;
+      default:
+        return 0;
+    }
+  }
+
+  String _tabIdForIndex(int index) {
+    if (index == 0) return 'routes';
+    if (index == 1) return 'friends';
+    if (_ticketDocked && index == 2) return 'ticket';
+    return 'settings';
+  }
+
+  Future<void> _persistCurrentTab() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('current_tab_index', _currentIndex);
+    await prefs.setString(
+        _currentTabIdPreferenceKey, _tabIdForIndex(_currentIndex));
+  }
+
+  Future<void> _dockTicket() async {
+    if (_ticketDocked || _ticketDockTransitionInProgress) return;
+    _ticketDockTransitionInProgress = true;
+    try {
+      await HapticFeedback.mediumImpact();
+      if (!mounted) return;
+      setState(() {
+        _ticketDocked = true;
+        _ticketDockAnimationPending = false;
+        if (_currentIndex >= 2) _currentIndex += 1;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_ticketDockedPreferenceKey, true);
+      await _persistCurrentTab();
+    } finally {
+      _ticketDockTransitionInProgress = false;
+    }
+  }
+
+  void _beginTicketDockAnimation() {
+    if (_ticketDocked || _ticketDockAnimationPending || !mounted) return;
+    setState(() => _ticketDockAnimationPending = true);
   }
 
   // Save the tab index whenever it changes
@@ -390,8 +460,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     setState(() => _currentIndex = index);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('current_tab_index', index);
+    await _persistCurrentTab();
   }
 
   Future<void> _openLiveMap() async {
@@ -412,8 +481,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       behavior: HitTestBehavior.opaque,
       onLongPress: _openLiveMap,
       child: const SizedBox(
-        width: 56,
-        height: 56,
+        width: 48,
+        height: 36,
         child: Center(
           child: Icon(Icons.directions),
         ),
@@ -421,23 +490,116 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  List<NavigationDestination> _buildDestinations(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return [
-      NavigationDestination(
-        icon: _buildRoutesNavIcon(),
-        selectedIcon: _buildRoutesNavIcon(),
-        label: l10n.routes,
+  void _startQrRestore(LongPressStartDetails details) {
+    if (!_ticketDocked || _qrRestoreGestureActive) return;
+    HapticFeedback.selectionClick();
+    final originTabId = _tabIdForIndex(_currentIndex);
+    setState(() {
+      _qrRestoreOriginTabId = originTabId;
+      _qrRestoreArmed = true;
+      _qrRestoreGestureActive = true;
+      _qrRestoreEverMovedUp = false;
+      _qrRestoreProgress = 0;
+      _qrRestoreSheetExtent = 0.1;
+      _ticketDocked = false;
+      _currentIndex = _indexForTabId(originTabId, ticketDocked: false);
+    });
+  }
+
+  void _moveQrRestore(LongPressMoveUpdateDetails details) {
+    if (!_qrRestoreGestureActive) return;
+    final upwardDistance = (-details.offsetFromOrigin.dy).clamp(0.0, 1000.0);
+    final progress = (upwardDistance / 150).clamp(0.0, 1.0);
+    final extraDistance = (upwardDistance - 150).clamp(0.0, 1000.0);
+    final availableHeight = MediaQuery.sizeOf(context).height * 0.72;
+    final extent = (0.1 + (extraDistance / availableHeight)).clamp(0.1, 0.85);
+    setState(() {
+      if (upwardDistance > 8) _qrRestoreEverMovedUp = true;
+      _qrRestoreProgress = progress;
+      _qrRestoreSheetExtent = extent;
+    });
+  }
+
+  void _endQrRestore(LongPressEndDetails details) {
+    if (!_qrRestoreGestureActive) return;
+    final shouldRestore = !_qrRestoreEverMovedUp ||
+        _qrRestoreProgress >= 0.22 ||
+        _qrRestoreSheetExtent > 0.105;
+    if (shouldRestore) {
+      unawaited(_commitInteractiveQrRestore());
+    } else {
+      _cancelInteractiveQrRestore();
+    }
+  }
+
+  Future<void> _commitInteractiveQrRestore() async {
+    await HapticFeedback.mediumImpact();
+    if (!mounted || !_qrRestoreGestureActive) return;
+    setState(() {
+      _qrRestoreGestureActive = false;
+      _ticketDockAnimationPending = false;
+      _qrRestoreOriginTabId = null;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_ticketDockedPreferenceKey, false);
+    await _persistCurrentTab();
+  }
+
+  void _cancelInteractiveQrRestore() {
+    setState(() {
+      _qrRestoreGestureActive = false;
+      _qrRestoreCancelPending = true;
+    });
+  }
+
+  void _finishCancelledQrRestore() {
+    if (!mounted || !_qrRestoreCancelPending) return;
+    final originTabId = _qrRestoreOriginTabId ?? 'routes';
+    setState(() {
+      _ticketDocked = true;
+      _qrRestoreCancelPending = false;
+      _qrRestoreArmed = false;
+      _qrRestoreProgress = 0;
+      _qrRestoreSheetExtent = 0.1;
+      _qrRestoreOriginTabId = null;
+      _currentIndex = _indexForTabId(originTabId, ticketDocked: true);
+    });
+  }
+
+  void _handleQrExitAnimationCompleted() {
+    if (!mounted || _ticketDocked || _qrRestoreGestureActive) return;
+    setState(() {
+      _qrRestoreArmed = false;
+      _qrRestoreProgress = 0;
+      _qrRestoreSheetExtent = 0.1;
+    });
+  }
+
+  Widget _buildQrNavIcon() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: _startQrRestore,
+      onLongPressMoveUpdate: _moveQrRestore,
+      onLongPressEnd: _endQrRestore,
+      child: SizedBox(
+        width: 48,
+        height: 36,
+        child: Center(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: _qrRestoreArmed ? 34 : 24,
+            height: _qrRestoreArmed ? 5 : 24,
+            decoration: _qrRestoreArmed
+                ? BoxDecoration(
+                    color: TransColors.of(context).navBarSelected,
+                    borderRadius: BorderRadius.circular(3),
+                  )
+                : null,
+            child: _qrRestoreArmed ? null : const Icon(Icons.qr_code_2_rounded),
+          ),
+        ),
       ),
-      NavigationDestination(
-        icon: const Icon(Icons.people),
-        label: l10n.friends,
-      ),
-      NavigationDestination(
-        icon: const Icon(Icons.settings),
-        label: l10n.settings,
-      ),
-    ];
+    );
   }
 
   Future<void> _determinePosition() async {
@@ -475,7 +637,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    final screens = [
+    final ticketPanel = TicketPanel(
+      key: _ticketPanelKey,
+      fullPage: _ticketDocked,
+      interactiveRestoreProgress:
+          _qrRestoreGestureActive ? _qrRestoreProgress : null,
+      interactiveRestoreSheetExtent: _qrRestoreSheetExtent,
+      settleRestoreBackToNavigation: _qrRestoreCancelPending,
+      onDockAnimationStarted: _beginTicketDockAnimation,
+      onDockRequested: () => unawaited(_dockTicket()),
+      onInteractiveRestoreCancelled: _finishCancelledQrRestore,
+    );
+    final screens = <Widget>[
       RoutesTab(
         key: _routesTabKey,
         currentPosition: _currentPosition,
@@ -490,6 +663,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onRouteToStation: _routeToSharedStation,
         isActive: _currentIndex == 1,
       ),
+      if (_ticketDocked) ticketPanel,
       SettingsTab(
         isDarkMode: widget.isDarkMode,
         onThemeChanged: widget.onThemeChanged,
@@ -510,61 +684,399 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     ];
 
-    return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) async {
-          if (didPop) return;
+    return Stack(
+      children: [
+        PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, result) async {
+              if (didPop) return;
 
-          // 1. Try to handle back in RoutesTab if it is active
-          if (_currentIndex == 0 &&
-              (_routesTabKey.currentState?.handleBack() ?? false)) {
-            return;
-          }
+              // 1. Try to handle back in RoutesTab if it is active
+              if (_currentIndex == 0 &&
+                  (_routesTabKey.currentState?.handleBack() ?? false)) {
+                return;
+              }
 
-          // 2. Otherwise ask to quit
-          final shouldQuit = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: Text(AppLocalizations.of(context)!.quitAppTitle),
-                  content: Text(AppLocalizations.of(context)!.quitAppMessage),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: Text(AppLocalizations.of(context)!.no),
+              // 2. Otherwise ask to quit
+              final shouldQuit = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Text(AppLocalizations.of(context)!.quitAppTitle),
+                      content:
+                          Text(AppLocalizations.of(context)!.quitAppMessage),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: Text(AppLocalizations.of(context)!.no),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: Text(AppLocalizations.of(context)!.yes),
+                        ),
+                      ],
                     ),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: Text(AppLocalizations.of(context)!.yes),
-                    ),
-                  ],
-                ),
-              ) ??
-              false;
+                  ) ??
+                  false;
 
-          if (shouldQuit) {
-            if (context.mounted) {
-              SystemNavigator.pop();
-            }
-          }
-        },
-        child: Scaffold(
-          backgroundColor: colors.scaffoldBg,
-          // ALLOW: Set to true to allow keyboard to push UI up
-          resizeToAvoidBottomInset: true,
-          body: Stack(
-            children: [
-              IndexedStack(
-                index: _currentIndex,
-                children: screens,
+              if (shouldQuit) {
+                if (context.mounted) {
+                  SystemNavigator.pop();
+                }
+              }
+            },
+            child: Scaffold(
+              backgroundColor: colors.scaffoldBg,
+              // ALLOW: Set to true to allow keyboard to push UI up
+              resizeToAvoidBottomInset: true,
+              body: Stack(
+                children: [
+                  IndexedStack(
+                    index: _currentIndex,
+                    children: screens,
+                  ),
+                  if (!_ticketDocked) ticketPanel,
+                ],
               ),
-              const TicketPanel(),
-            ],
+              bottomNavigationBar: _AnimatedHomeNavigationBar(
+                ticketDocked: _ticketDocked ||
+                    _ticketDockAnimationPending ||
+                    _qrRestoreGestureActive ||
+                    _qrRestoreCancelPending,
+                ticketEnabled: _ticketDocked ||
+                    _qrRestoreGestureActive ||
+                    _qrRestoreCancelPending,
+                ticketPullProgress: _qrRestoreProgress,
+                currentTabId: _tabIdForIndex(_currentIndex),
+                routesLabel: AppLocalizations.of(context)!.routes,
+                friendsLabel: AppLocalizations.of(context)!.friends,
+                settingsLabel: AppLocalizations.of(context)!.settings,
+                routesIcon: _buildRoutesNavIcon(),
+                qrIcon: _buildQrNavIcon(),
+                onTicketExitAnimationCompleted: _handleQrExitAnimationCompleted,
+                onTabSelected: (id) => unawaited(
+                  _onTabChanged(
+                    _indexForTabId(id, ticketDocked: _ticketDocked),
+                  ),
+                ),
+              ),
+            )),
+        if (_ticketDockAnimationPending)
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: _TicketDockFlightOverlay(),
+            ),
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: _onTabChanged,
-            destinations: _buildDestinations(context),
+      ],
+    );
+  }
+}
+
+class _TicketDockFlightOverlay extends StatelessWidget {
+  const _TicketDockFlightOverlay();
+
+  double _mix(double from, double to, double t) => from + (to - from) * t;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    final size = MediaQuery.sizeOf(context);
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final bodyHeight = size.height - 72 - bottomInset;
+    final start = Offset(size.width / 2, (bodyHeight * 0.9) + 15);
+    final end = Offset(size.width * 5 / 8, bodyHeight + 20);
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeInOutCubic,
+      builder: (context, progress, child) {
+        final center = Offset(
+          _mix(start.dx, end.dx, progress),
+          _mix(start.dy, end.dy, progress),
+        );
+        final morph = ((progress - 0.68) / 0.28).clamp(0.0, 1.0);
+        return Stack(
+          children: [
+            Positioned(
+              left: center.dx - 42,
+              top: center.dy - 18,
+              width: 84,
+              height: 36,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Opacity(
+                    opacity: 1 - morph,
+                    child: Container(
+                      width: _mix(64, 12, morph),
+                      height: _mix(6, 5, morph),
+                      decoration: BoxDecoration(
+                        color: colors.navBarSelected,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                  Opacity(
+                    opacity: morph,
+                    child: Transform.scale(
+                      scale: 0.72 + (0.28 * morph),
+                      child: Icon(
+                        Icons.qr_code_2_rounded,
+                        color: colors.navBarUnselected,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AnimatedHomeNavigationBar extends StatefulWidget {
+  final bool ticketDocked;
+  final bool ticketEnabled;
+  final double ticketPullProgress;
+  final String currentTabId;
+  final String routesLabel;
+  final String friendsLabel;
+  final String settingsLabel;
+  final Widget routesIcon;
+  final Widget qrIcon;
+  final VoidCallback onTicketExitAnimationCompleted;
+  final ValueChanged<String> onTabSelected;
+
+  const _AnimatedHomeNavigationBar({
+    required this.ticketDocked,
+    required this.ticketEnabled,
+    required this.ticketPullProgress,
+    required this.currentTabId,
+    required this.routesLabel,
+    required this.friendsLabel,
+    required this.settingsLabel,
+    required this.routesIcon,
+    required this.qrIcon,
+    required this.onTicketExitAnimationCompleted,
+    required this.onTabSelected,
+  });
+
+  @override
+  State<_AnimatedHomeNavigationBar> createState() =>
+      _AnimatedHomeNavigationBarState();
+}
+
+class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _layoutAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+      value: widget.ticketDocked ? 1 : 0,
+    );
+    _layoutAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInOutCubic,
+    );
+    _controller.addStatusListener(_handleAnimationStatus);
+  }
+
+  void _handleAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed) {
+      widget.onTicketExitAnimationCompleted();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedHomeNavigationBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ticketDocked == widget.ticketDocked) return;
+    if (widget.ticketDocked) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeStatusListener(_handleAnimationStatus);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  double _mix(double from, double to, double t) => from + (to - from) * t;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    final textStyle = Theme.of(context).textTheme.labelMedium;
+
+    return Material(
+      color: colors.navBarBg,
+      elevation: 3,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 72,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return AnimatedBuilder(
+                animation: _layoutAnimation,
+                builder: (context, child) {
+                  final t = _layoutAnimation.value;
+                  final width = constraints.maxWidth;
+                  final dockingTicket =
+                      widget.ticketDocked && !widget.ticketEnabled;
+
+                  double centerFor(String id) {
+                    switch (id) {
+                      case 'routes':
+                        return _mix(width / 6, width / 8, t);
+                      case 'friends':
+                        return _mix(width / 2, width * 3 / 8, t);
+                      case 'ticket':
+                        if (dockingTicket) {
+                          return _mix(width / 2, width * 5 / 8, t);
+                        }
+                        return width * 5 / 8;
+                      default:
+                        return _mix(width * 5 / 6, width * 7 / 8, t);
+                    }
+                  }
+
+                  Widget item({
+                    required String id,
+                    required String label,
+                    required Widget icon,
+                    double opacity = 1,
+                    double iconVerticalOffset = 0,
+                    double labelOpacity = 1,
+                    double scale = 1,
+                    bool enabled = true,
+                  }) {
+                    final selected = widget.currentTabId == id;
+                    final foreground = selected
+                        ? colors.navBarSelected
+                        : colors.navBarUnselected;
+                    return Positioned(
+                      left: centerFor(id) - 42,
+                      top: 2,
+                      width: 84,
+                      height: 68,
+                      child: IgnorePointer(
+                        ignoring: !enabled,
+                        child: Opacity(
+                          opacity: opacity,
+                          child: Transform.scale(
+                            scale: scale,
+                            child: Semantics(
+                              button: true,
+                              selected: selected,
+                              label: label,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => widget.onTabSelected(id),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Transform.translate(
+                                      offset: Offset(0, iconVerticalOffset),
+                                      child: AnimatedContainer(
+                                        duration:
+                                            const Duration(milliseconds: 240),
+                                        width: selected ? 64 : 48,
+                                        height: 36,
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? colors.navBarIndicator
+                                              : Colors.transparent,
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                        ),
+                                        child: IconTheme(
+                                          data:
+                                              IconThemeData(color: foreground),
+                                          child: Center(
+                                            child: icon,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Opacity(
+                                      opacity: labelOpacity,
+                                      child: Text(
+                                        label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.fade,
+                                        softWrap: false,
+                                        style: textStyle?.copyWith(
+                                          color: foreground,
+                                          fontWeight: selected
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      item(
+                        id: 'routes',
+                        label: widget.routesLabel,
+                        icon: widget.routesIcon,
+                      ),
+                      item(
+                        id: 'friends',
+                        label: widget.friendsLabel,
+                        icon: const Icon(Icons.people),
+                      ),
+                      item(
+                        id: 'ticket',
+                        label: 'QR',
+                        icon: widget.qrIcon,
+                        opacity: dockingTicket
+                            ? 0
+                            : t * (1 - widget.ticketPullProgress),
+                        iconVerticalOffset: dockingTicket ? 0 : -30 * (1 - t),
+                        labelOpacity: dockingTicket
+                            ? ((t - 0.58) / 0.32).clamp(0.0, 1.0)
+                            : 1,
+                        scale: dockingTicket ? 1 : 0.76 + (0.24 * t),
+                        enabled: widget.ticketEnabled,
+                      ),
+                      item(
+                        id: 'settings',
+                        label: widget.settingsLabel,
+                        icon: const Icon(Icons.settings),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
           ),
-        ));
+        ),
+      ),
+    );
   }
 }
