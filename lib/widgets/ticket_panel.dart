@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import '../l10n/app_localizations.dart';
 import 'dart:convert';
@@ -5,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,15 +23,42 @@ import 'package:zxing_lib/common.dart' as zxing;
 import 'package:trans/widgets/manual_crop_wrapper.dart';
 
 class TicketPanel extends StatefulWidget {
-  const TicketPanel({super.key});
+  final bool fullPage;
+  final double? interactiveRestoreProgress;
+  final double interactiveRestoreSheetExtent;
+  final bool settleRestoreBackToNavigation;
+  final bool hideDockHandle;
+  final VoidCallback? onDockAnimationStarted;
+  final VoidCallback? onDockRequested;
+  final VoidCallback? onInteractiveRestoreCancelled;
+  final ValueChanged<bool>? onDockGestureArmedChanged;
+  final ValueChanged<double>? onDockGestureProgressChanged;
+
+  const TicketPanel({
+    super.key,
+    this.fullPage = false,
+    this.interactiveRestoreProgress,
+    this.interactiveRestoreSheetExtent = 0.1,
+    this.settleRestoreBackToNavigation = false,
+    this.hideDockHandle = false,
+    this.onDockAnimationStarted,
+    this.onDockRequested,
+    this.onInteractiveRestoreCancelled,
+    this.onDockGestureArmedChanged,
+    this.onDockGestureProgressChanged,
+  });
 
   @override
   State<TicketPanel> createState() => _TicketPanelState();
 }
 
-class _TicketPanelState extends State<TicketPanel> {
+class _TicketPanelState extends State<TicketPanel>
+    with SingleTickerProviderStateMixin {
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
+  late final AnimationController _dockTransitionController;
+  late final Animation<Offset> _dockSlideAnimation;
+  late final Animation<double> _dockFadeAnimation;
 
   File? _mobileFile;
   Uint8List? _webBytes;
@@ -42,11 +71,81 @@ class _TicketPanelState extends State<TicketPanel> {
 
   List<dynamic> _history = [];
   bool _isLoading = false;
+  bool _isDockGestureActive = false;
+  bool _isDockLongPressTracking = false;
+  bool _sheetPointerIsDown = false;
+  bool _dockGestureWasDragged = false;
+  bool _isSettlingDockGesture = false;
+  double _interactiveDockProgress = 0;
+  double? _latestSheetPointerY;
+  double? _dockDragOriginY;
+  int _dockGestureEpoch = 0;
+  Timer? _dockHoldTimer;
 
   @override
   void initState() {
     super.initState();
+    _dockTransitionController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+      value: widget.fullPage ? 1 : 0,
+    );
+    final dockCurve = CurvedAnimation(
+      parent: _dockTransitionController,
+      curve: Curves.easeInCubic,
+      reverseCurve: Curves.easeOutCubic,
+    );
+    _dockSlideAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, 0.18),
+    ).animate(dockCurve);
+    _dockFadeAnimation = Tween<double>(begin: 1, end: 0.72).animate(dockCurve);
+    _sheetController.addListener(_handleSheetExtentChanged);
     _initTicket();
+  }
+
+  @override
+  void didUpdateWidget(TicketPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final interactiveProgress = widget.interactiveRestoreProgress;
+    if (interactiveProgress != null) {
+      _dockTransitionController
+        ..stop()
+        ..value = 1 - interactiveProgress.clamp(0.0, 1.0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_sheetController.isAttached) return;
+        _sheetController.jumpTo(
+          widget.interactiveRestoreSheetExtent.clamp(0.1, 0.85),
+        );
+      });
+      return;
+    }
+    if (oldWidget.interactiveRestoreProgress != null && !widget.fullPage) {
+      if (widget.settleRestoreBackToNavigation) {
+        unawaited(_settleRestoreBackToNavigation());
+      } else {
+        _dockTransitionController.reverse();
+      }
+      return;
+    }
+    if (oldWidget.fullPage && !widget.fullPage) {
+      _dockTransitionController.value = 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !widget.fullPage) {
+          _dockTransitionController.reverse();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _dockHoldTimer?.cancel();
+    _dockTransitionController.dispose();
+    _sheetController
+      ..removeListener(_handleSheetExtentChanged)
+      ..dispose();
+    super.dispose();
   }
 
   @override
@@ -76,6 +175,192 @@ class _TicketPanelState extends State<TicketPanel> {
     } else {
       _sheetController.animateTo(0.1,
           duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
+    }
+  }
+
+  void _startDockGesture(LongPressStartDetails details) {
+    if (_sheetController.isAttached && _sheetController.size > 0.115) return;
+    _dockHoldTimer?.cancel();
+    _dockHoldTimer = null;
+    _isDockLongPressTracking = true;
+    if (!_isDockGestureActive || _isSettlingDockGesture) {
+      _beginInteractiveDockDrag();
+    }
+    _setDockGestureActive(true);
+  }
+
+  void _handleSheetPointerDown(PointerDownEvent event) {
+    if (event.localPosition.dy > 120) return;
+    _sheetPointerIsDown = true;
+    _latestSheetPointerY = event.localPosition.dy;
+    _dockDragOriginY = null;
+    _handleSheetExtentChanged();
+  }
+
+  void _handleSheetPointerMove(PointerMoveEvent event) {
+    if (!_sheetPointerIsDown) return;
+    _latestSheetPointerY = event.localPosition.dy;
+    if (!_isDockGestureActive || _isDockLongPressTracking) return;
+    _dockDragOriginY ??= event.localPosition.dy;
+    _updateInteractiveDockProgress(
+      event.localPosition.dy - _dockDragOriginY!,
+    );
+  }
+
+  void _handleSheetPointerEnd(PointerEvent event) {
+    _sheetPointerIsDown = false;
+    _latestSheetPointerY = null;
+    _dockDragOriginY = null;
+    _dockHoldTimer?.cancel();
+    _dockHoldTimer = null;
+    _releaseDockGesture();
+  }
+
+  void _handleSheetExtentChanged() {
+    if (!_sheetPointerIsDown || !_sheetController.isAttached) return;
+    if (_isDockLongPressTracking) return;
+    if (_sheetController.size <= 0.105) {
+      _dockHoldTimer ??= Timer(const Duration(milliseconds: 550), () {
+        _dockHoldTimer = null;
+        if (_sheetPointerIsDown && mounted) {
+          _beginInteractiveDockDrag();
+          _setDockGestureActive(true);
+          HapticFeedback.selectionClick();
+        }
+      });
+    } else {
+      _dockHoldTimer?.cancel();
+      _dockHoldTimer = null;
+      if (_isDockGestureActive) {
+        _setDockGestureActive(false);
+      }
+    }
+  }
+
+  void _updateDockGesture(LongPressMoveUpdateDetails details) {
+    if (!_isDockLongPressTracking || !_sheetController.isAttached) return;
+    final downwardDistance = details.offsetFromOrigin.dy;
+    if (downwardDistance >= 0) {
+      _sheetController.jumpTo(0.1);
+      _updateInteractiveDockProgress(downwardDistance);
+      return;
+    }
+    _updateInteractiveDockProgress(0);
+    final upwardDistance = (-details.offsetFromOrigin.dy).clamp(0.0, 1000.0);
+    final availableHeight = MediaQuery.sizeOf(context).height * 0.75;
+    final extent = (0.1 + (upwardDistance / availableHeight)).clamp(0.1, 0.85);
+    _sheetController.jumpTo(extent);
+  }
+
+  void _endDockGesture(LongPressEndDetails details) {
+    if (!_isDockLongPressTracking) return;
+    _isDockLongPressTracking = false;
+    _releaseDockGesture();
+  }
+
+  void _cancelDockLongPress() {
+    _isDockLongPressTracking = false;
+    _sheetPointerIsDown = false;
+    _latestSheetPointerY = null;
+    _dockDragOriginY = null;
+    _dockHoldTimer?.cancel();
+    _dockHoldTimer = null;
+    if (_isDockGestureActive && !_isSettlingDockGesture) {
+      unawaited(_settleDockGestureBack());
+    }
+  }
+
+  void _beginInteractiveDockDrag() {
+    _dockGestureEpoch += 1;
+    _isSettlingDockGesture = false;
+    _dockGestureWasDragged = false;
+    _interactiveDockProgress = 0;
+    _dockDragOriginY = _latestSheetPointerY;
+    _dockTransitionController
+      ..stop()
+      ..value = 0;
+    widget.onDockGestureProgressChanged?.call(0);
+  }
+
+  void _updateInteractiveDockProgress(double downwardDistance) {
+    final progress = (downwardDistance / 120).clamp(0.0, 1.0);
+    if ((progress - _interactiveDockProgress).abs() < 0.001) return;
+    if (progress > 0.02) _dockGestureWasDragged = true;
+    _interactiveDockProgress = progress;
+    _dockTransitionController.value = progress;
+    widget.onDockGestureProgressChanged?.call(progress);
+  }
+
+  void _releaseDockGesture() {
+    if (!_isDockGestureActive || _isSettlingDockGesture) return;
+    final sheetIsCollapsed =
+        _sheetController.isAttached && _sheetController.size <= 0.105;
+    final shouldDock = sheetIsCollapsed &&
+        (!_dockGestureWasDragged || _interactiveDockProgress >= 0.42);
+    if (shouldDock) {
+      _finishDockGesture(shouldDock: true);
+    } else {
+      unawaited(_settleDockGestureBack());
+    }
+  }
+
+  Future<void> _settleDockGestureBack() async {
+    final settleEpoch = ++_dockGestureEpoch;
+    _isSettlingDockGesture = true;
+    void reportProgress() {
+      if (settleEpoch != _dockGestureEpoch) return;
+      _interactiveDockProgress = _dockTransitionController.value;
+      widget.onDockGestureProgressChanged?.call(_interactiveDockProgress);
+    }
+
+    _dockTransitionController.addListener(reportProgress);
+    try {
+      await _dockTransitionController.reverse().orCancel;
+    } on TickerCanceled {
+      return;
+    } finally {
+      _dockTransitionController.removeListener(reportProgress);
+      if (settleEpoch == _dockGestureEpoch) {
+        _isSettlingDockGesture = false;
+      }
+    }
+    if (!mounted || settleEpoch != _dockGestureEpoch) return;
+    _interactiveDockProgress = 0;
+    widget.onDockGestureProgressChanged?.call(0);
+    _setDockGestureActive(false);
+  }
+
+  void _setDockGestureActive(bool active, {bool notifyParent = true}) {
+    if (_isDockGestureActive == active) return;
+    setState(() => _isDockGestureActive = active);
+    if (notifyParent) widget.onDockGestureArmedChanged?.call(active);
+  }
+
+  void _finishDockGesture({required bool shouldDock}) {
+    if (!_isDockGestureActive) return;
+    _dockGestureEpoch += 1;
+    _isSettlingDockGesture = false;
+    _isDockLongPressTracking = false;
+    _sheetPointerIsDown = false;
+    _dockHoldTimer?.cancel();
+    _dockHoldTimer = null;
+    _setDockGestureActive(false, notifyParent: false);
+    if (shouldDock) unawaited(_animateDockAndRequest());
+  }
+
+  Future<void> _animateDockAndRequest() async {
+    if (_dockTransitionController.isAnimating || widget.fullPage) return;
+    widget.onDockAnimationStarted?.call();
+    await _dockTransitionController.forward();
+    if (mounted && !widget.fullPage) {
+      widget.onDockRequested?.call();
+    }
+  }
+
+  Future<void> _settleRestoreBackToNavigation() async {
+    await _dockTransitionController.forward();
+    if (mounted && widget.settleRestoreBackToNavigation) {
+      widget.onInteractiveRestoreCancelled?.call();
     }
   }
 
@@ -593,241 +878,312 @@ class _TicketPanelState extends State<TicketPanel> {
     final bool showGeneratedQr =
         imageToShow != null && _showGeneratedQr && _styledQrBytes != null;
 
-    return DraggableScrollableSheet(
-      controller: _sheetController,
-      initialChildSize: 0.1,
-      minChildSize: 0.1,
-      maxChildSize: 0.85,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: colors.ticketSheetBg,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 12,
-                  offset: const Offset(0, -4))
+    if (widget.fullPage) {
+      return ColoredBox(
+        color: colors.scaffoldBg,
+        child: SafeArea(
+          bottom: false,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.qr_code_2_rounded, color: colors.ticketHeader),
+                  const SizedBox(width: 8),
+                  Text(
+                    AppLocalizations.of(context)!.myTicket,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: colors.ticketHeader,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 28),
+              ..._buildTicketContent(colors, imageToShow, showGeneratedQr),
             ],
           ),
-          child: ListView(
-            controller: scrollController,
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-            children: [
-              GestureDetector(
-                onTap: _toggleSheet,
-                behavior: HitTestBehavior.opaque,
-                child: Column(
+        ),
+      );
+    }
+
+    return SlideTransition(
+      position: _dockSlideAnimation,
+      child: FadeTransition(
+        opacity: _dockFadeAnimation,
+        child: DraggableScrollableSheet(
+          controller: _sheetController,
+          initialChildSize: 0.1,
+          minChildSize: 0.1,
+          maxChildSize: 0.85,
+          builder: (context, scrollController) {
+            return Listener(
+              onPointerDown: _handleSheetPointerDown,
+              onPointerMove: _handleSheetPointerMove,
+              onPointerUp: _handleSheetPointerEnd,
+              onPointerCancel: _handleSheetPointerEnd,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: colors.ticketSheetBg,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(24)),
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 12,
+                        offset: const Offset(0, -4))
+                  ],
+                ),
+                child: ListView(
+                  controller: scrollController,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
                   children: [
-                    Center(
-                        child: Container(
-                            width: 40,
-                            height: 4,
-                            margin: const EdgeInsets.only(bottom: 20),
-                            decoration: BoxDecoration(
-                                color: colors.modalHandle,
-                                borderRadius: BorderRadius.circular(2)))),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.confirmation_number_outlined,
-                            color: colors.ticketHeader),
-                        const SizedBox(width: 8),
-                        Text(AppLocalizations.of(context)!.myTicket,
-                            style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: colors.ticketHeader)),
-                      ],
+                    GestureDetector(
+                      onTap: _toggleSheet,
+                      onLongPressStart: _startDockGesture,
+                      onLongPressMoveUpdate: _updateDockGesture,
+                      onLongPressEnd: _endDockGesture,
+                      onLongPressCancel: _cancelDockLongPress,
+                      behavior: HitTestBehavior.opaque,
+                      child: Column(
+                        children: [
+                          AnimatedBuilder(
+                            animation: _dockTransitionController,
+                            builder: (context, child) {
+                              final transition =
+                                  _dockTransitionController.value;
+                              return Transform.translate(
+                                offset: Offset(
+                                  MediaQuery.sizeOf(context).width *
+                                      0.125 *
+                                      transition,
+                                  0,
+                                ),
+                                child: Opacity(
+                                  opacity: widget.hideDockHandle ? 0 : 1,
+                                  child: Container(
+                                    width: 40,
+                                    height: 4,
+                                    margin: const EdgeInsets.only(bottom: 20),
+                                    decoration: BoxDecoration(
+                                      color: colors.modalHandle,
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.confirmation_number_outlined,
+                                  color: colors.ticketHeader),
+                              const SizedBox(width: 8),
+                              Text(AppLocalizations.of(context)!.myTicket,
+                                  style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: colors.ticketHeader)),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 24),
+                    ..._buildTicketContent(
+                        colors, imageToShow, showGeneratedQr),
                   ],
                 ),
               ),
-              if (_isLoading)
-                Container(
-                    height: 300,
-                    alignment: Alignment.center,
-                    child: const CircularProgressIndicator())
-              else if (imageToShow != null)
-                Column(
-                  children: [
-                    Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        if (showGeneratedQr)
-                          GestureDetector(
-                            onTap: _styledQrBytes == null
-                                ? null
-                                : () => _openFullScreen(
-                                      MemoryImage(_styledQrBytes!),
-                                    ),
-                            child: _buildStyledQr(),
-                          )
-                        else
-                          GestureDetector(
-                            onTap: () => _openFullScreen(imageToShow!),
-                            onLongPress: kIsWeb ? null : _showHistorySheet,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Image(
-                                image: imageToShow,
-                                fit: BoxFit.contain,
-                                errorBuilder: (c, e, s) => Container(
-                                    height: 200,
-                                    alignment: Alignment.center,
-                                    child: Text(AppLocalizations.of(context)!
-                                        .errorLoadingTicket)),
-                              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildTicketContent(
+    TransColors colors,
+    ImageProvider? imageToShow,
+    bool showGeneratedQr,
+  ) {
+    return [
+      if (_isLoading)
+        Container(
+            height: 300,
+            alignment: Alignment.center,
+            child: const CircularProgressIndicator())
+      else if (imageToShow != null)
+        Column(
+          children: [
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                if (showGeneratedQr)
+                  GestureDetector(
+                    onTap: _styledQrBytes == null
+                        ? null
+                        : () => _openFullScreen(
+                              MemoryImage(_styledQrBytes!),
                             ),
-                          ),
-                        if (_isGeneratingStyledQr)
-                          Positioned.fill(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.35),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    CircularProgressIndicator(),
-                                    SizedBox(height: 12),
-                                    Text(
-                                        AppLocalizations.of(context)!
-                                            .generatingStyledQr,
-                                        style: TextStyle(color: Colors.white)),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                        showGeneratedQr
-                            ? AppLocalizations.of(context)!
-                                .styledFromOriginalTicketQrPattern
-                            : (kIsWeb
-                                ? AppLocalizations.of(context)!.tapForFullscreen
-                                : AppLocalizations.of(context)!
-                                    .tapForFullscreenHoldForHistory),
-                        style:
-                            const TextStyle(fontSize: 10, color: Colors.grey)),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: colors.textPrimary,
-                            side: BorderSide(color: colors.divider),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12))),
-                        onPressed: _isGeneratingStyledQr
-                            ? null
-                            : () async {
-                                if (showGeneratedQr) {
-                                  if (mounted) {
-                                    setState(() => _showGeneratedQr = false);
-                                  }
-                                  return;
-                                }
-
-                                if (mounted) {
-                                  setState(() => _isGeneratingStyledQr = true);
-                                }
-                                await Future<void>.delayed(
-                                    const Duration(milliseconds: 16));
-
-                                bool available = false;
-                                try {
-                                  available =
-                                      await _ensureStyledQrForCurrentTicket(
-                                    colors.effectiveSeed,
-                                  );
-                                } finally {
-                                  if (mounted) {
-                                    setState(
-                                        () => _isGeneratingStyledQr = false);
-                                  }
-                                }
-                                if (!available) return;
-
-                                if (mounted) {
-                                  setState(() => _showGeneratedQr = true);
-                                }
-                              },
-                        icon: Icon(showGeneratedQr
-                            ? Icons.image_outlined
-                            : Icons.qr_code_2_outlined),
-                        label: Text(showGeneratedQr
-                            ? AppLocalizations.of(context)!.showOriginalTicket
-                            : AppLocalizations.of(context)!.showStyledQr),
+                    child: _buildStyledQr(),
+                  )
+                else
+                  GestureDetector(
+                    onTap: () => _openFullScreen(imageToShow),
+                    onLongPress: kIsWeb ? null : _showHistorySheet,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Image(
+                        image: imageToShow,
+                        fit: BoxFit.contain,
+                        errorBuilder: (c, e, s) => Container(
+                            height: 200,
+                            alignment: Alignment.center,
+                            child: Text(AppLocalizations.of(context)!
+                                .errorLoadingTicket)),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: colors.textPrimary,
-                            side: BorderSide(color: colors.divider),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12))),
-                        onPressed: _pickAndUploadImage,
-                        icon: const Icon(Icons.edit),
-                        label: Text(AppLocalizations.of(context)!.changeTicket),
-                      ),
-                    )
-                  ],
-                )
-              else
-                GestureDetector(
-                  onTap: _pickAndUploadImage,
-                  child: Container(
-                    height: 220,
-                    decoration: BoxDecoration(
-                      color:
-                          colors.isDark ? Colors.white10 : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: colors.ticketBorder, width: 2),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                                color: colors.scaffoldBg,
-                                shape: BoxShape.circle),
-                            child: Icon(Icons.add_a_photo_rounded,
-                                size: 32, color: colors.textSecondary)),
-                        const SizedBox(height: 16),
-                        Text(AppLocalizations.of(context)!.addTicket,
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: colors.textPrimary)),
-                        const SizedBox(height: 4),
-                        Text(
-                            AppLocalizations.of(context)!
-                                .selectImageFromGallery,
-                            style: TextStyle(
-                                fontSize: 12, color: colors.textSecondary)),
-                      ],
                     ),
                   ),
-                ),
-            ],
+                if (_isGeneratingStyledQr)
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 12),
+                            Text(
+                                AppLocalizations.of(context)!
+                                    .generatingStyledQr,
+                                style: TextStyle(color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+                showGeneratedQr
+                    ? AppLocalizations.of(context)!
+                        .styledFromOriginalTicketQrPattern
+                    : (kIsWeb
+                        ? AppLocalizations.of(context)!.tapForFullscreen
+                        : AppLocalizations.of(context)!
+                            .tapForFullscreenHoldForHistory),
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textPrimary,
+                    side: BorderSide(color: colors.divider),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
+                onPressed: _isGeneratingStyledQr
+                    ? null
+                    : () async {
+                        if (showGeneratedQr) {
+                          if (mounted) {
+                            setState(() => _showGeneratedQr = false);
+                          }
+                          return;
+                        }
+
+                        if (mounted) {
+                          setState(() => _isGeneratingStyledQr = true);
+                        }
+                        await Future<void>.delayed(
+                            const Duration(milliseconds: 16));
+
+                        bool available = false;
+                        try {
+                          available = await _ensureStyledQrForCurrentTicket(
+                            colors.effectiveSeed,
+                          );
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isGeneratingStyledQr = false);
+                          }
+                        }
+                        if (!available) return;
+
+                        if (mounted) {
+                          setState(() => _showGeneratedQr = true);
+                        }
+                      },
+                icon: Icon(showGeneratedQr
+                    ? Icons.image_outlined
+                    : Icons.qr_code_2_outlined),
+                label: Text(showGeneratedQr
+                    ? AppLocalizations.of(context)!.showOriginalTicket
+                    : AppLocalizations.of(context)!.showStyledQr),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textPrimary,
+                    side: BorderSide(color: colors.divider),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
+                onPressed: _pickAndUploadImage,
+                icon: const Icon(Icons.edit),
+                label: Text(AppLocalizations.of(context)!.changeTicket),
+              ),
+            )
+          ],
+        )
+      else
+        GestureDetector(
+          onTap: _pickAndUploadImage,
+          child: Container(
+            height: 220,
+            decoration: BoxDecoration(
+              color: colors.isDark ? Colors.white10 : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: colors.ticketBorder, width: 2),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                        color: colors.scaffoldBg, shape: BoxShape.circle),
+                    child: Icon(Icons.add_a_photo_rounded,
+                        size: 32, color: colors.textSecondary)),
+                const SizedBox(height: 16),
+                Text(AppLocalizations.of(context)!.addTicket,
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary)),
+                const SizedBox(height: 4),
+                Text(AppLocalizations.of(context)!.selectImageFromGallery,
+                    style:
+                        TextStyle(fontSize: 12, color: colors.textSecondary)),
+              ],
+            ),
           ),
-        );
-      },
-    );
+        ),
+    ];
   }
 
   Widget _buildStyledQr() {

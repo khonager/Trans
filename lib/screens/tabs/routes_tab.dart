@@ -39,6 +39,7 @@ import 'route_results_view.dart';
 const int _activeJourneyRefreshWindowSize = 20;
 const int _routeLoadMoreResultCount = 30;
 const int _routeLoadEarlierResultCount = 16;
+const String _routeSortOrderPreferenceKey = 'route_results_sort_order';
 
 enum RouteHistoryView { frequent, recent }
 
@@ -698,6 +699,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
+  List<RouteSortOption> _routeResultsSortOrder =
+      List<RouteSortOption>.from(defaultRouteSortOrder);
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
@@ -744,6 +747,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _loadDeviceRoutePreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedSortOrder =
+        prefs.getStringList(_routeSortOrderPreferenceKey)?.map((name) {
+      for (final option in RouteSortOption.values) {
+        if (option.name == name) return option;
+      }
+      return null;
+    }).whereType<RouteSortOption>();
     final alarmStopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
     final advancedEnabled = prefs.getBool(
           TransportApi.advancedSettingsEnabledPreferenceKey,
@@ -774,7 +784,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _alarmStopsBefore = alarmStopsBefore;
       _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
       _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
+      _routeResultsSortOrder = normalizedRouteSortOrder(
+        savedSortOrder ?? defaultRouteSortOrder,
+      );
     });
+  }
+
+  Future<void> _saveRouteResultsSortOrder(
+    List<RouteSortOption> order,
+  ) async {
+    final normalized = normalizedRouteSortOrder(order);
+    setState(() => _routeResultsSortOrder = normalized);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _routeSortOrderPreferenceKey,
+      normalized.map((option) => option.name).toList(),
+    );
   }
 
   RouteSearchSettings _routeSearchSettingsForRequest(
@@ -1296,22 +1321,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _pendingDetectionKey = null;
       _pendingDetectionSamples = 0;
       _detectedMismatchSamples = 0;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Journey detected and shared automatically.'),
-          action: SnackBarAction(
-            label: 'Not this journey',
-            onPressed: () {
-              _suppressedDetectionKeys.add(best.key);
-              _detectedJourney = null;
-              _detectedJourneyTabId = null;
-              _detectedDestinationName = null;
-              unawaited(SupabaseService.clearPublishedJourney());
-              unawaited(_updateJourneyDetectionMonitoring());
-            },
-          ),
-        ));
-      }
     } else {
       final reranked = JourneyDetectionService.rankCandidates(
         candidates: [MapEntry(match.key, match.journey)],
@@ -7316,9 +7325,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
         initialSort: _routeResultsSortSelections[route.id] ??
-            RouteSortOption.earliestDeparture,
+            _routeResultsSortOrder.first,
+        sortOrder: _routeResultsSortOrder,
         onSortChanged: (sort) => _routeResultsSortSelections[route.id] = sort,
-        onSortLongPressed: (sort) => _showRouteSortAdjustSheet(route, sort),
+        onSortOrderChanged: (order) {
+          unawaited(_saveRouteResultsSortOrder(order));
+        },
+        onSortDoubleTapped: (sort) => _showRouteSortAdjustSheet(route, sort),
         scrollController: _routeResultsScrollControllerFor(route.id),
       );
     }
@@ -7633,8 +7646,19 @@ class _StepCardState extends State<_StepCard> {
   Widget _buildStopDetailChip(
     BuildContext context, {
     required String detail,
+    bool constrainWidth = true,
   }) {
     final colors = TransColors.of(context);
+    final detailText = Text(
+      detail,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: colors.textPrimary,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+      ),
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -7647,19 +7671,13 @@ class _StepCardState extends State<_StepCard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 110),
-            child: Text(
-              detail,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
+          if (constrainWidth)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 110),
+              child: detailText,
+            )
+          else
+            detailText,
         ],
       ),
     );
@@ -7687,23 +7705,6 @@ class _StepCardState extends State<_StepCard> {
           style: timeStyle,
         ),
       ],
-    );
-  }
-
-  Widget _buildCollapsedStopDetailChip(
-    BuildContext context, {
-    required String detail,
-  }) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        reverse: true,
-        child: _buildStopDetailChip(
-          context,
-          detail: detail,
-        ),
-      ),
     );
   }
 
@@ -7882,61 +7883,51 @@ class _StepCardState extends State<_StepCard> {
 
                       const SizedBox(height: 12), // Spacer before actions
 
-                      // Action Buttons + Time (Bottom Row)
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // Actions (Left)
+                          // The actions scroll independently; the journey
+                          // time stays fixed at the trailing edge.
                           Expanded(
-                              child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Row(children: [
-                                    _buildActionChip(
-                                        context,
-                                        Icons.chat_bubble_outline,
-                                        AppLocalizations.of(context)!.chat,
-                                        onTap: () => widget.onChat(step.line)),
-                                    const SizedBox(width: 8),
-                                    if (step.startStationId != null &&
-                                        step.dateTime != null) ...[
-                                      _buildActionChip(
-                                          context,
-                                          Icons.alt_route,
-                                          AppLocalizations.of(context)!
-                                              .altShort,
-                                          onTap: () =>
-                                              widget.onOpenAlternatives(
-                                                  step.startStationId!,
-                                                  step.dateTime!,
-                                                  lat: step.startLat,
-                                                  lng: step.startLng)),
-                                      const SizedBox(width: 8)
-                                    ],
-                                    _buildActionChip(
-                                        context,
-                                        Icons.vibration,
-                                        step.isWakeAlarmOn
-                                            ? AppLocalizations.of(context)!
-                                                .alarmOn
-                                            : AppLocalizations.of(context)!
-                                                .wakeMe,
-                                        isActive: step.isWakeAlarmOn &&
-                                            !_hasCustomAlarmTarget,
-                                        outlined: step.isWakeAlarmOn &&
-                                            _hasCustomAlarmTarget,
-                                        onTap: widget.onAlarmToggle)
-                                  ]))),
-                          const SizedBox(width: 8),
-
-                          // Time (Right)
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerRight,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (step.startStationId != null &&
+                                      step.dateTime != null) ...[
+                                    _buildActionChip(
+                                      context,
+                                      Icons.alt_route,
+                                      AppLocalizations.of(context)!.altShort,
+                                      onTap: () => widget.onOpenAlternatives(
+                                        step.startStationId!,
+                                        step.dateTime!,
+                                        lat: step.startLat,
+                                        lng: step.startLng,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  _buildActionChip(
+                                    context,
+                                    Icons.vibration,
+                                    step.isWakeAlarmOn
+                                        ? AppLocalizations.of(context)!.alarmOn
+                                        : AppLocalizations.of(context)!.wakeMe,
+                                    isActive: step.isWakeAlarmOn &&
+                                        !_hasCustomAlarmTarget,
+                                    outlined: step.isWakeAlarmOn &&
+                                        _hasCustomAlarmTarget,
+                                    onTap: widget.onAlarmToggle,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildActionChip(
+                                    context,
+                                    Icons.chat_bubble_outline,
+                                    AppLocalizations.of(context)!.chat,
+                                    onTap: () => widget.onChat(step.line),
+                                  ),
                                   if (combinePlatformAndStopLabel(
                                     step.platform,
                                     step.departureStopLabel,
@@ -7946,43 +7937,49 @@ class _StepCardState extends State<_StepCard> {
                                     ),
                                   )
                                       case final collapsedStopDetail?) ...[
-                                    _buildCollapsedStopDetailChip(
+                                    const SizedBox(width: 8),
+                                    _buildStopDetailChip(
                                       context,
                                       detail: collapsedStopDetail,
+                                      constrainWidth: false,
                                     ),
-                                    const SizedBox(width: 10),
                                   ],
-                                  Text(
-                                      "${step.departureTime} - ${step.arrivalTime}",
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: step.isCancelled
-                                              ? colors.textSecondary
-                                              : colors.textPrimary,
-                                          decoration: step.isCancelled
-                                              ? TextDecoration.lineThrough
-                                              : null)),
-                                  if (step.isCancelled)
-                                    Text(
-                                        AppLocalizations.of(context)!
-                                            .cancelledL10n,
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.red,
-                                            fontSize: 12))
-                                  else if (step.departureDelay != null &&
-                                      step.departureDelay != 0)
-                                    Text(
-                                        " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: step.departureDelay! > 0
-                                                ? colors.delayLate
-                                                : colors.delayOnTime))
                                 ],
                               ),
                             ),
-                          )
+                          ),
+                          const SizedBox(width: 8),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                  "${step.departureTime} - ${step.arrivalTime}",
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: step.isCancelled
+                                          ? colors.textSecondary
+                                          : colors.textPrimary,
+                                      decoration: step.isCancelled
+                                          ? TextDecoration.lineThrough
+                                          : null)),
+                              if (step.isCancelled)
+                                Text(
+                                    AppLocalizations.of(context)!.cancelledL10n,
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red,
+                                        fontSize: 12))
+                              else if (step.departureDelay != null &&
+                                  step.departureDelay != 0)
+                                Text(
+                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: step.departureDelay! > 0
+                                            ? colors.delayLate
+                                            : colors.delayOnTime))
+                            ],
+                          ),
                         ],
                       )
                     ]),
