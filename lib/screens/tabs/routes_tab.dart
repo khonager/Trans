@@ -1296,22 +1296,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _pendingDetectionKey = null;
       _pendingDetectionSamples = 0;
       _detectedMismatchSamples = 0;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Journey detected and shared automatically.'),
-          action: SnackBarAction(
-            label: 'Not this journey',
-            onPressed: () {
-              _suppressedDetectionKeys.add(best.key);
-              _detectedJourney = null;
-              _detectedJourneyTabId = null;
-              _detectedDestinationName = null;
-              unawaited(SupabaseService.clearPublishedJourney());
-              unawaited(_updateJourneyDetectionMonitoring());
-            },
-          ),
-        ));
-      }
     } else {
       final reranked = JourneyDetectionService.rankCandidates(
         candidates: [MapEntry(match.key, match.journey)],
