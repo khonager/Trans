@@ -59,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _ticketDocked = false;
   bool _ticketDockAnimationPending = false;
+  bool _ticketDockGestureArmed = false;
+  double _ticketDockGestureProgress = 0;
   bool _qrRestoreArmed = false;
   bool _qrRestoreGestureActive = false;
   bool _qrRestoreCancelPending = false;
@@ -427,6 +429,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _ticketDocked = true;
         _ticketDockAnimationPending = false;
+        _ticketDockGestureArmed = false;
+        _ticketDockGestureProgress = 1;
         if (_currentIndex >= 2) _currentIndex += 1;
       });
       final prefs = await SharedPreferences.getInstance();
@@ -439,7 +443,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _beginTicketDockAnimation() {
     if (_ticketDocked || _ticketDockAnimationPending || !mounted) return;
-    setState(() => _ticketDockAnimationPending = true);
+    setState(() {
+      _ticketDockAnimationPending = true;
+      _qrRestoreArmed = false;
+      _qrRestoreProgress = 0;
+    });
+  }
+
+  void _handleTicketDockGestureArmedChanged(bool armed) {
+    if (!mounted || _ticketDockGestureArmed == armed) return;
+    setState(() {
+      _ticketDockGestureArmed = armed;
+      if (!armed) _ticketDockGestureProgress = 0;
+    });
+  }
+
+  void _handleTicketDockGestureProgressChanged(double progress) {
+    if (!mounted || (_ticketDockGestureProgress - progress).abs() < 0.001) {
+      return;
+    }
+    setState(() => _ticketDockGestureProgress = progress.clamp(0.0, 1.0));
   }
 
   // Save the tab index whenever it changes
@@ -538,6 +561,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _qrRestoreGestureActive = false;
       _ticketDockAnimationPending = false;
+      _qrRestoreProgress = 1;
       _qrRestoreOriginTabId = null;
     });
     final prefs = await SharedPreferences.getInstance();
@@ -549,6 +573,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _qrRestoreGestureActive = false;
       _qrRestoreCancelPending = true;
+      _qrRestoreProgress = 0;
     });
   }
 
@@ -585,17 +610,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         width: 48,
         height: 36,
         child: Center(
-          child: AnimatedContainer(
+          child: AnimatedOpacity(
             duration: const Duration(milliseconds: 160),
-            width: _qrRestoreArmed ? 34 : 24,
-            height: _qrRestoreArmed ? 5 : 24,
-            decoration: _qrRestoreArmed
-                ? BoxDecoration(
-                    color: TransColors.of(context).navBarSelected,
-                    borderRadius: BorderRadius.circular(3),
-                  )
-                : null,
-            child: _qrRestoreArmed ? null : const Icon(Icons.qr_code_2_rounded),
+            opacity: _qrRestoreArmed ? 0 : 1,
+            child: const Icon(Icons.qr_code_2_rounded),
           ),
         ),
       ),
@@ -637,6 +655,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final restoreHandleBelongsToSheet =
+        _qrRestoreArmed && _qrRestoreSheetExtent > 0.105;
+    final showSharedPill = _ticketDockGestureArmed ||
+        _ticketDockAnimationPending ||
+        (_qrRestoreArmed && !restoreHandleBelongsToSheet);
     final ticketPanel = TicketPanel(
       key: _ticketPanelKey,
       fullPage: _ticketDocked,
@@ -644,9 +667,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _qrRestoreGestureActive ? _qrRestoreProgress : null,
       interactiveRestoreSheetExtent: _qrRestoreSheetExtent,
       settleRestoreBackToNavigation: _qrRestoreCancelPending,
+      hideDockHandle: _ticketDockGestureArmed ||
+          _ticketDockAnimationPending ||
+          (_qrRestoreArmed && !restoreHandleBelongsToSheet),
       onDockAnimationStarted: _beginTicketDockAnimation,
       onDockRequested: () => unawaited(_dockTicket()),
       onInteractiveRestoreCancelled: _finishCancelledQrRestore,
+      onDockGestureArmedChanged: _handleTicketDockGestureArmedChanged,
+      onDockGestureProgressChanged: _handleTicketDockGestureProgressChanged,
     );
     final screens = <Widget>[
       RoutesTab(
@@ -739,6 +767,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               bottomNavigationBar: _AnimatedHomeNavigationBar(
                 ticketDocked: _ticketDocked ||
+                    _ticketDockGestureArmed ||
                     _ticketDockAnimationPending ||
                     _qrRestoreGestureActive ||
                     _qrRestoreCancelPending,
@@ -746,6 +775,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _qrRestoreGestureActive ||
                     _qrRestoreCancelPending,
                 ticketPullProgress: _qrRestoreProgress,
+                dockGestureProgress: _ticketDockGestureProgress,
+                dockGestureInteractive:
+                    _ticketDockGestureArmed && !_ticketDockAnimationPending,
                 currentTabId: _tabIdForIndex(_currentIndex),
                 routesLabel: AppLocalizations.of(context)!.routes,
                 friendsLabel: AppLocalizations.of(context)!.friends,
@@ -760,10 +792,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             )),
-        if (_ticketDockAnimationPending)
-          const Positioned.fill(
+        if (showSharedPill)
+          Positioned.fill(
             child: IgnorePointer(
-              child: _TicketDockFlightOverlay(),
+              child: _TicketDockFlightOverlay(
+                position: _qrRestoreArmed
+                    ? 1 - _qrRestoreProgress
+                    : _ticketDockGestureProgress,
+                animateToNavigation: _ticketDockAnimationPending,
+                interactive: _qrRestoreGestureActive ||
+                    (_ticketDockGestureArmed && !_ticketDockAnimationPending),
+                animateFromCardHandle:
+                    _ticketDockGestureArmed || _ticketDockAnimationPending,
+              ),
             ),
           ),
       ],
@@ -771,10 +812,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 }
 
-class _TicketDockFlightOverlay extends StatelessWidget {
-  const _TicketDockFlightOverlay();
+class _TicketDockFlightOverlay extends StatefulWidget {
+  final double position;
+  final bool animateToNavigation;
+  final bool interactive;
+  final bool animateFromCardHandle;
+
+  const _TicketDockFlightOverlay({
+    required this.position,
+    required this.animateToNavigation,
+    required this.interactive,
+    required this.animateFromCardHandle,
+  });
+
+  @override
+  State<_TicketDockFlightOverlay> createState() =>
+      _TicketDockFlightOverlayState();
+}
+
+class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
+    with TickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final AnimationController _handleMorphController;
 
   double _mix(double from, double to, double t) => from + (to - from) * t;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+      value: widget.position.clamp(0.0, 1.0),
+    );
+    _handleMorphController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+      value: widget.animateFromCardHandle ? 0 : 1,
+    );
+    if (widget.animateFromCardHandle) {
+      _handleMorphController.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_TicketDockFlightOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final target =
+        widget.animateToNavigation ? 1.0 : widget.position.clamp(0.0, 1.0);
+    if (widget.interactive) {
+      _controller.value = target;
+    } else {
+      _controller.animateTo(target, curve: Curves.easeInOutCubic);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _handleMorphController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -785,16 +883,20 @@ class _TicketDockFlightOverlay extends StatelessWidget {
     final start = Offset(size.width / 2, (bodyHeight * 0.9) + 15);
     final end = Offset(size.width * 5 / 8, bodyHeight + 20);
 
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 360),
-      curve: Curves.easeInOutCubic,
-      builder: (context, progress, child) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_controller, _handleMorphController]),
+      builder: (context, child) {
+        final progress = _controller.value;
+        final handleMorph = Curves.easeOutCubic.transform(
+          _handleMorphController.value,
+        );
         final center = Offset(
           _mix(start.dx, end.dx, progress),
           _mix(start.dy, end.dy, progress),
         );
-        final morph = ((progress - 0.68) / 0.28).clamp(0.0, 1.0);
+        final morph = widget.animateToNavigation
+            ? ((progress - 0.68) / 0.28).clamp(0.0, 1.0)
+            : 0.0;
         return Stack(
           children: [
             Positioned(
@@ -808,10 +910,22 @@ class _TicketDockFlightOverlay extends StatelessWidget {
                   Opacity(
                     opacity: 1 - morph,
                     child: Container(
-                      width: _mix(64, 12, morph),
-                      height: _mix(6, 5, morph),
+                      width: _mix(
+                        _mix(40, 64, handleMorph),
+                        12,
+                        morph,
+                      ),
+                      height: _mix(
+                        _mix(4, 6, handleMorph),
+                        5,
+                        morph,
+                      ),
                       decoration: BoxDecoration(
-                        color: colors.navBarSelected,
+                        color: Color.lerp(
+                          colors.modalHandle,
+                          colors.navBarSelected,
+                          handleMorph,
+                        ),
                         borderRadius: BorderRadius.circular(3),
                       ),
                     ),
@@ -840,6 +954,8 @@ class _AnimatedHomeNavigationBar extends StatefulWidget {
   final bool ticketDocked;
   final bool ticketEnabled;
   final double ticketPullProgress;
+  final double dockGestureProgress;
+  final bool dockGestureInteractive;
   final String currentTabId;
   final String routesLabel;
   final String friendsLabel;
@@ -853,6 +969,8 @@ class _AnimatedHomeNavigationBar extends StatefulWidget {
     required this.ticketDocked,
     required this.ticketEnabled,
     required this.ticketPullProgress,
+    required this.dockGestureProgress,
+    required this.dockGestureInteractive,
     required this.currentTabId,
     required this.routesLabel,
     required this.friendsLabel,
@@ -898,6 +1016,20 @@ class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
   @override
   void didUpdateWidget(_AnimatedHomeNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.dockGestureInteractive) {
+      _controller
+        ..stop()
+        ..value = widget.dockGestureProgress.clamp(0.0, 1.0);
+      return;
+    }
+    if (oldWidget.dockGestureInteractive) {
+      if (widget.ticketDocked) {
+        _controller.forward();
+      } else {
+        _controller.reverse();
+      }
+      return;
+    }
     if (oldWidget.ticketDocked == widget.ticketDocked) return;
     if (widget.ticketDocked) {
       _controller.forward();

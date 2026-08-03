@@ -27,9 +27,12 @@ class TicketPanel extends StatefulWidget {
   final double? interactiveRestoreProgress;
   final double interactiveRestoreSheetExtent;
   final bool settleRestoreBackToNavigation;
+  final bool hideDockHandle;
   final VoidCallback? onDockAnimationStarted;
   final VoidCallback? onDockRequested;
   final VoidCallback? onInteractiveRestoreCancelled;
+  final ValueChanged<bool>? onDockGestureArmedChanged;
+  final ValueChanged<double>? onDockGestureProgressChanged;
 
   const TicketPanel({
     super.key,
@@ -37,9 +40,12 @@ class TicketPanel extends StatefulWidget {
     this.interactiveRestoreProgress,
     this.interactiveRestoreSheetExtent = 0.1,
     this.settleRestoreBackToNavigation = false,
+    this.hideDockHandle = false,
     this.onDockAnimationStarted,
     this.onDockRequested,
     this.onInteractiveRestoreCancelled,
+    this.onDockGestureArmedChanged,
+    this.onDockGestureProgressChanged,
   });
 
   @override
@@ -66,9 +72,13 @@ class _TicketPanelState extends State<TicketPanel>
   List<dynamic> _history = [];
   bool _isLoading = false;
   bool _isDockGestureActive = false;
-  bool _isDocking = false;
   bool _isDockLongPressTracking = false;
   bool _sheetPointerIsDown = false;
+  bool _dockGestureWasDragged = false;
+  bool _isSettlingDockGesture = false;
+  double _interactiveDockProgress = 0;
+  double? _latestSheetPointerY;
+  double? _dockDragOriginY;
   Timer? _dockHoldTimer;
 
   @override
@@ -172,29 +182,37 @@ class _TicketPanelState extends State<TicketPanel>
     _dockHoldTimer?.cancel();
     _dockHoldTimer = null;
     _isDockLongPressTracking = true;
-    setState(() => _isDockGestureActive = true);
+    if (!_isDockGestureActive) {
+      _beginInteractiveDockDrag();
+    }
+    _setDockGestureActive(true);
   }
 
   void _handleSheetPointerDown(PointerDownEvent event) {
     if (event.localPosition.dy > 120) return;
     _sheetPointerIsDown = true;
+    _latestSheetPointerY = event.localPosition.dy;
+    _dockDragOriginY = null;
     _handleSheetExtentChanged();
   }
 
+  void _handleSheetPointerMove(PointerMoveEvent event) {
+    if (!_sheetPointerIsDown) return;
+    _latestSheetPointerY = event.localPosition.dy;
+    if (!_isDockGestureActive || _isDockLongPressTracking) return;
+    _dockDragOriginY ??= event.localPosition.dy;
+    _updateInteractiveDockProgress(
+      event.localPosition.dy - _dockDragOriginY!,
+    );
+  }
+
   void _handleSheetPointerEnd(PointerEvent event) {
-    final shouldDock = _isDockGestureActive &&
-        _sheetController.isAttached &&
-        _sheetController.size <= 0.105;
-    if (shouldDock) {
-      _finishDockGesture(shouldDock: true);
-      return;
-    }
     _sheetPointerIsDown = false;
+    _latestSheetPointerY = null;
+    _dockDragOriginY = null;
     _dockHoldTimer?.cancel();
     _dockHoldTimer = null;
-    if (_isDockGestureActive) {
-      setState(() => _isDockGestureActive = false);
-    }
+    _releaseDockGesture();
   }
 
   void _handleSheetExtentChanged() {
@@ -204,7 +222,8 @@ class _TicketPanelState extends State<TicketPanel>
       _dockHoldTimer ??= Timer(const Duration(milliseconds: 550), () {
         _dockHoldTimer = null;
         if (_sheetPointerIsDown && mounted) {
-          setState(() => _isDockGestureActive = true);
+          _beginInteractiveDockDrag();
+          _setDockGestureActive(true);
           HapticFeedback.selectionClick();
         }
       });
@@ -212,13 +231,20 @@ class _TicketPanelState extends State<TicketPanel>
       _dockHoldTimer?.cancel();
       _dockHoldTimer = null;
       if (_isDockGestureActive) {
-        setState(() => _isDockGestureActive = false);
+        _setDockGestureActive(false);
       }
     }
   }
 
   void _updateDockGesture(LongPressMoveUpdateDetails details) {
     if (!_isDockLongPressTracking || !_sheetController.isAttached) return;
+    final downwardDistance = details.offsetFromOrigin.dy;
+    if (downwardDistance >= 0) {
+      _sheetController.jumpTo(0.1);
+      _updateInteractiveDockProgress(downwardDistance);
+      return;
+    }
+    _updateInteractiveDockProgress(0);
     final upwardDistance = (-details.offsetFromOrigin.dy).clamp(0.0, 1000.0);
     final availableHeight = MediaQuery.sizeOf(context).height * 0.75;
     final extent = (0.1 + (upwardDistance / availableHeight)).clamp(0.1, 0.85);
@@ -228,14 +254,66 @@ class _TicketPanelState extends State<TicketPanel>
   void _endDockGesture(LongPressEndDetails details) {
     if (!_isDockLongPressTracking) return;
     _isDockLongPressTracking = false;
-    final shouldDock = _sheetController.isAttached &&
-        _sheetController.size <= 0.105 &&
-        _isDockGestureActive;
+    _releaseDockGesture();
+  }
+
+  void _beginInteractiveDockDrag() {
+    _isSettlingDockGesture = false;
+    _dockGestureWasDragged = false;
+    _interactiveDockProgress = 0;
+    _dockDragOriginY = _latestSheetPointerY;
+    _dockTransitionController
+      ..stop()
+      ..value = 0;
+    widget.onDockGestureProgressChanged?.call(0);
+  }
+
+  void _updateInteractiveDockProgress(double downwardDistance) {
+    final progress = (downwardDistance / 120).clamp(0.0, 1.0);
+    if ((progress - _interactiveDockProgress).abs() < 0.001) return;
+    if (progress > 0.02) _dockGestureWasDragged = true;
+    _interactiveDockProgress = progress;
+    _dockTransitionController.value = progress;
+    widget.onDockGestureProgressChanged?.call(progress);
+  }
+
+  void _releaseDockGesture() {
+    if (!_isDockGestureActive || _isSettlingDockGesture) return;
+    final sheetIsCollapsed =
+        _sheetController.isAttached && _sheetController.size <= 0.105;
+    final shouldDock = sheetIsCollapsed &&
+        (!_dockGestureWasDragged || _interactiveDockProgress >= 0.42);
     if (shouldDock) {
       _finishDockGesture(shouldDock: true);
-    } else if (_isDockGestureActive) {
-      setState(() => _isDockGestureActive = false);
+    } else {
+      unawaited(_settleDockGestureBack());
     }
+  }
+
+  Future<void> _settleDockGestureBack() async {
+    _isSettlingDockGesture = true;
+    void reportProgress() {
+      _interactiveDockProgress = _dockTransitionController.value;
+      widget.onDockGestureProgressChanged?.call(_interactiveDockProgress);
+    }
+
+    _dockTransitionController.addListener(reportProgress);
+    try {
+      await _dockTransitionController.reverse();
+    } finally {
+      _dockTransitionController.removeListener(reportProgress);
+      _isSettlingDockGesture = false;
+    }
+    if (!mounted) return;
+    _interactiveDockProgress = 0;
+    widget.onDockGestureProgressChanged?.call(0);
+    _setDockGestureActive(false);
+  }
+
+  void _setDockGestureActive(bool active, {bool notifyParent = true}) {
+    if (_isDockGestureActive == active) return;
+    setState(() => _isDockGestureActive = active);
+    if (notifyParent) widget.onDockGestureArmedChanged?.call(active);
   }
 
   void _finishDockGesture({required bool shouldDock}) {
@@ -244,18 +322,16 @@ class _TicketPanelState extends State<TicketPanel>
     _sheetPointerIsDown = false;
     _dockHoldTimer?.cancel();
     _dockHoldTimer = null;
-    setState(() => _isDockGestureActive = false);
+    _setDockGestureActive(false, notifyParent: false);
     if (shouldDock) unawaited(_animateDockAndRequest());
   }
 
   Future<void> _animateDockAndRequest() async {
     if (_dockTransitionController.isAnimating || widget.fullPage) return;
-    setState(() => _isDocking = true);
     widget.onDockAnimationStarted?.call();
     await _dockTransitionController.forward();
     if (mounted && !widget.fullPage) {
       widget.onDockRequested?.call();
-      setState(() => _isDocking = false);
     }
   }
 
@@ -823,6 +899,7 @@ class _TicketPanelState extends State<TicketPanel>
           builder: (context, scrollController) {
             return Listener(
               onPointerDown: _handleSheetPointerDown,
+              onPointerMove: _handleSheetPointerMove,
               onPointerUp: _handleSheetPointerEnd,
               onPointerCancel: _handleSheetPointerEnd,
               child: Container(
@@ -863,7 +940,7 @@ class _TicketPanelState extends State<TicketPanel>
                                   0,
                                 ),
                                 child: Opacity(
-                                  opacity: _isDocking ? 0 : 1,
+                                  opacity: widget.hideDockHandle ? 0 : 1,
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 160),
                                     width:
