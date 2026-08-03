@@ -1162,7 +1162,7 @@ class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
                         label: 'QR',
                         icon: widget.qrIcon,
                         opacity: dockingTicket
-                            ? ((t - 0.84) / 0.12).clamp(0.0, 1.0)
+                            ? 0
                             : t * (1 - widget.ticketPullProgress),
                         iconVerticalOffset: dockingTicket ? 0 : -30 * (1 - t),
                         labelOpacity: dockingTicket
