@@ -802,8 +802,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 animateToNavigation: _ticketDockAnimationPending,
                 interactive: _qrRestoreGestureActive ||
                     (_ticketDockGestureArmed && !_ticketDockAnimationPending),
-                animateFromCardHandle:
-                    _ticketDockGestureArmed || _ticketDockAnimationPending,
               ),
             ),
           ),
@@ -816,13 +814,11 @@ class _TicketDockFlightOverlay extends StatefulWidget {
   final double position;
   final bool animateToNavigation;
   final bool interactive;
-  final bool animateFromCardHandle;
 
   const _TicketDockFlightOverlay({
     required this.position,
     required this.animateToNavigation,
     required this.interactive,
-    required this.animateFromCardHandle,
   });
 
   @override
@@ -831,9 +827,8 @@ class _TicketDockFlightOverlay extends StatefulWidget {
 }
 
 class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  late final AnimationController _handleMorphController;
 
   double _mix(double from, double to, double t) => from + (to - from) * t;
 
@@ -845,14 +840,6 @@ class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
       duration: const Duration(milliseconds: 360),
       value: widget.position.clamp(0.0, 1.0),
     );
-    _handleMorphController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 180),
-      value: widget.animateFromCardHandle ? 0 : 1,
-    );
-    if (widget.animateFromCardHandle) {
-      _handleMorphController.forward();
-    }
   }
 
   @override
@@ -870,7 +857,6 @@ class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
   @override
   void dispose() {
     _controller.dispose();
-    _handleMorphController.dispose();
     super.dispose();
   }
 
@@ -884,19 +870,15 @@ class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
     final end = Offset(size.width * 5 / 8, bodyHeight + 20);
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_controller, _handleMorphController]),
+      animation: _controller,
       builder: (context, child) {
         final progress = _controller.value;
-        final handleMorph = Curves.easeOutCubic.transform(
-          _handleMorphController.value,
-        );
         final center = Offset(
           _mix(start.dx, end.dx, progress),
           _mix(start.dy, end.dy, progress),
         );
-        final morph = widget.animateToNavigation
-            ? ((progress - 0.68) / 0.28).clamp(0.0, 1.0)
-            : 0.0;
+        final shapeMorph = ((progress - 0.62) / 0.22).clamp(0.0, 1.0);
+        final iconMorph = ((progress - 0.84) / 0.12).clamp(0.0, 1.0);
         return Stack(
           children: [
             Positioned(
@@ -908,32 +890,21 @@ class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
                 alignment: Alignment.center,
                 children: [
                   Opacity(
-                    opacity: 1 - morph,
+                    opacity: 1 - iconMorph,
                     child: Container(
-                      width: _mix(
-                        _mix(40, 64, handleMorph),
-                        12,
-                        morph,
-                      ),
-                      height: _mix(
-                        _mix(4, 6, handleMorph),
-                        5,
-                        morph,
-                      ),
+                      width: _mix(40, 24, shapeMorph),
+                      height: _mix(4, 24, shapeMorph),
                       decoration: BoxDecoration(
-                        color: Color.lerp(
-                          colors.modalHandle,
-                          colors.navBarSelected,
-                          handleMorph,
-                        ),
-                        borderRadius: BorderRadius.circular(3),
+                        color: colors.modalHandle,
+                        borderRadius:
+                            BorderRadius.circular(_mix(3, 2, shapeMorph)),
                       ),
                     ),
                   ),
                   Opacity(
-                    opacity: morph,
+                    opacity: iconMorph,
                     child: Transform.scale(
-                      scale: 0.72 + (0.28 * morph),
+                      scale: 0.72 + (0.28 * iconMorph),
                       child: Icon(
                         Icons.qr_code_2_rounded,
                         color: colors.navBarUnselected,

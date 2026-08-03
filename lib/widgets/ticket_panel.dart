@@ -941,22 +941,12 @@ class _TicketPanelState extends State<TicketPanel>
                                 ),
                                 child: Opacity(
                                   opacity: widget.hideDockHandle ? 0 : 1,
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 160),
-                                    width:
-                                        _isDockGestureActive || transition > 0
-                                            ? 64
-                                            : 40,
-                                    height:
-                                        _isDockGestureActive || transition > 0
-                                            ? 6
-                                            : 4,
+                                  child: Container(
+                                    width: 40,
+                                    height: 4,
                                     margin: const EdgeInsets.only(bottom: 20),
                                     decoration: BoxDecoration(
-                                      color:
-                                          _isDockGestureActive || transition > 0
-                                              ? colors.effectiveSeed
-                                              : colors.modalHandle,
+                                      color: colors.modalHandle,
                                       borderRadius: BorderRadius.circular(3),
                                     ),
                                   ),
