@@ -37,6 +37,34 @@ Journey _journey(int minute, {int rideCount = 1}) {
   );
 }
 
+Journey _journeyWithPriorities({
+  required String label,
+  required int walkingMinutes,
+  required int waitMinutes,
+}) {
+  final departure = DateTime(2026, 8, 1, 15);
+  return Journey(
+    steps: [
+      JourneyStep(
+        type: 'ride',
+        line: label,
+        instruction: '',
+        duration: '30 min',
+        departureTime: '15:00',
+        arrivalTime: '15:30',
+      ),
+    ],
+    departure: departure,
+    arrival: departure.add(const Duration(minutes: 30)),
+    duration: const Duration(minutes: 30),
+    transferCount: 0,
+    totalWaitTime: Duration(minutes: waitMinutes),
+    totalWalkingDuration: Duration(minutes: walkingMinutes),
+    rawSource: const {},
+    source: 'test',
+  );
+}
+
 class _RouteResultsHarness extends StatefulWidget {
   final List<Journey> initialCandidates;
 
@@ -214,5 +242,91 @@ void main() {
       tester.getTopLeft(find.text(before.label)).dy,
       closeTo(before.top, 0.5),
     );
+  });
+
+  testWidgets('ordered sort priorities break ties in the configured order',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(500, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final shortWait = _journeyWithPriorities(
+      label: 'short-wait',
+      walkingMinutes: 20,
+      waitMinutes: 0,
+    );
+    final shortWalk = _journeyWithPriorities(
+      label: 'short-walk',
+      walkingMinutes: 5,
+      waitMinutes: 12,
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: RouteResultsView(
+          candidates: [shortWait, shortWalk],
+          onSelect: (_) {},
+          onBack: () {},
+          destination: _destination,
+          sortOrder: const [
+            RouteSortOption.earliestDeparture,
+            RouteSortOption.leastWalking,
+            RouteSortOption.shortestWait,
+            RouteSortOption.earliestArrival,
+            RouteSortOption.shortestDuration,
+            RouteSortOption.leastTransfers,
+          ],
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    expect(
+      tester.getTopLeft(find.text('short-walk')).dy,
+      lessThan(tester.getTopLeft(find.text('short-wait')).dy),
+    );
+  });
+
+  testWidgets('long-press dragging a sort chip updates its priority',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(700, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    List<RouteSortOption>? reordered;
+    RouteSortOption? selected;
+
+    await tester.pumpWidget(MaterialApp(
+      theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: RouteResultsView(
+          candidates: [_journey(0)],
+          onSelect: (_) {},
+          onBack: () {},
+          destination: _destination,
+          onSortOrderChanged: (value) => reordered = value,
+          onSortChanged: (value) => selected = value,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final dragged = find.byKey(
+      const ValueKey<String>('route-sort-earliestArrival'),
+    );
+    final target = find.byKey(
+      const ValueKey<String>('route-sort-earliestDeparture'),
+    );
+    final targetCenter = tester.getCenter(target);
+    final gesture = await tester.startGesture(tester.getCenter(dragged));
+    await tester.pump(const Duration(milliseconds: 400));
+    await gesture.moveTo(targetCenter);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(reordered?.first, RouteSortOption.earliestArrival);
+    expect(selected, RouteSortOption.earliestArrival);
   });
 }

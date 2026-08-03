@@ -39,6 +39,7 @@ import 'route_results_view.dart';
 const int _activeJourneyRefreshWindowSize = 20;
 const int _routeLoadMoreResultCount = 30;
 const int _routeLoadEarlierResultCount = 16;
+const String _routeSortOrderPreferenceKey = 'route_results_sort_order';
 
 enum RouteHistoryView { frequent, recent }
 
@@ -698,6 +699,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
+  List<RouteSortOption> _routeResultsSortOrder =
+      List<RouteSortOption>.from(defaultRouteSortOrder);
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
@@ -744,6 +747,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Future<void> _loadDeviceRoutePreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedSortOrder =
+        prefs.getStringList(_routeSortOrderPreferenceKey)?.map((name) {
+      for (final option in RouteSortOption.values) {
+        if (option.name == name) return option;
+      }
+      return null;
+    }).whereType<RouteSortOption>();
     final alarmStopsBefore = prefs.getInt('alarm_stops_before') ?? 1;
     final advancedEnabled = prefs.getBool(
           TransportApi.advancedSettingsEnabledPreferenceKey,
@@ -774,7 +784,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _alarmStopsBefore = alarmStopsBefore;
       _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
       _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
+      _routeResultsSortOrder = normalizedRouteSortOrder(
+        savedSortOrder ?? defaultRouteSortOrder,
+      );
     });
+  }
+
+  Future<void> _saveRouteResultsSortOrder(
+    List<RouteSortOption> order,
+  ) async {
+    final normalized = normalizedRouteSortOrder(order);
+    setState(() => _routeResultsSortOrder = normalized);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _routeSortOrderPreferenceKey,
+      normalized.map((option) => option.name).toList(),
+    );
   }
 
   RouteSearchSettings _routeSearchSettingsForRequest(
@@ -7300,9 +7325,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
         initialSort: _routeResultsSortSelections[route.id] ??
-            RouteSortOption.earliestDeparture,
+            _routeResultsSortOrder.first,
+        sortOrder: _routeResultsSortOrder,
         onSortChanged: (sort) => _routeResultsSortSelections[route.id] = sort,
-        onSortLongPressed: (sort) => _showRouteSortAdjustSheet(route, sort),
+        onSortOrderChanged: (order) {
+          unawaited(_saveRouteResultsSortOrder(order));
+        },
+        onSortDoubleTapped: (sort) => _showRouteSortAdjustSheet(route, sort),
         scrollController: _routeResultsScrollControllerFor(route.id),
       );
     }

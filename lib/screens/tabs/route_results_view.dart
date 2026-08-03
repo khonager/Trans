@@ -25,6 +25,28 @@ enum RouteSortOption {
   leastWalking,
 }
 
+const List<RouteSortOption> defaultRouteSortOrder = <RouteSortOption>[
+  RouteSortOption.earliestDeparture,
+  RouteSortOption.earliestArrival,
+  RouteSortOption.shortestDuration,
+  RouteSortOption.leastTransfers,
+  RouteSortOption.shortestWait,
+  RouteSortOption.leastWalking,
+];
+
+List<RouteSortOption> normalizedRouteSortOrder(
+  Iterable<RouteSortOption> order,
+) {
+  final normalized = <RouteSortOption>[];
+  for (final option in order) {
+    if (!normalized.contains(option)) normalized.add(option);
+  }
+  for (final option in defaultRouteSortOrder) {
+    if (!normalized.contains(option)) normalized.add(option);
+  }
+  return normalized;
+}
+
 const double _routeResultsBottomInset = 320;
 const double _routeResultsAnchorCacheExtent = 6000;
 
@@ -91,8 +113,10 @@ class RouteResultsView extends StatefulWidget {
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
   final RouteSortOption initialSort;
+  final List<RouteSortOption> sortOrder;
   final ValueChanged<RouteSortOption>? onSortChanged;
-  final ValueChanged<RouteSortOption>? onSortLongPressed;
+  final ValueChanged<List<RouteSortOption>>? onSortOrderChanged;
+  final ValueChanged<RouteSortOption>? onSortDoubleTapped;
   final ScrollController? scrollController;
 
   const RouteResultsView({
@@ -109,8 +133,10 @@ class RouteResultsView extends StatefulWidget {
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
     this.initialSort = RouteSortOption.earliestDeparture,
+    this.sortOrder = defaultRouteSortOrder,
     this.onSortChanged,
-    this.onSortLongPressed,
+    this.onSortOrderChanged,
+    this.onSortDoubleTapped,
     this.scrollController,
   });
 
@@ -120,6 +146,7 @@ class RouteResultsView extends StatefulWidget {
 
 class _RouteResultsViewState extends State<RouteResultsView> {
   late RouteSortOption _currentSort;
+  late List<RouteSortOption> _sortOrder;
   late List<Journey> _sortedCandidates;
   bool _isLoadingMoreEarlier = false;
   bool _isLoadingMoreLater = false;
@@ -140,6 +167,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
   @override
   void initState() {
     super.initState();
+    _sortOrder = normalizedRouteSortOrder(widget.sortOrder);
     _currentSort = widget.initialSort;
     _sortCandidates();
     _loadUserName();
@@ -172,42 +200,57 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     if (oldWidget.initialSort != widget.initialSort) {
       _currentSort = widget.initialSort;
     }
+    if (!listEquals(oldWidget.sortOrder, widget.sortOrder)) {
+      _sortOrder = normalizedRouteSortOrder(widget.sortOrder);
+    }
     _stageCandidateUpdate(
-      _sortedJourneys(widget.candidates, _currentSort),
+      _sortedJourneys(widget.candidates, _currentSort, _sortOrder),
     );
   }
 
   void _sortCandidates() {
-    _sortedCandidates = _sortedJourneys(widget.candidates, _currentSort);
+    _sortedCandidates =
+        _sortedJourneys(widget.candidates, _currentSort, _sortOrder);
   }
 
   List<Journey> _sortedJourneys(
     Iterable<Journey> journeys,
     RouteSortOption sort,
+    List<RouteSortOption> sortOrder,
   ) {
     final sorted = List<Journey>.from(journeys);
+    final originalIndices = <Journey, int>{
+      for (var index = 0; index < sorted.length; index++) sorted[index]: index,
+    };
+    final priorities = <RouteSortOption>[
+      sort,
+      ...sortOrder.where((option) => option != sort),
+    ];
+    sorted.sort((a, b) {
+      for (final priority in priorities) {
+        final comparison = _compareJourneys(a, b, priority);
+        if (comparison != 0) return comparison;
+      }
+      return originalIndices[a]!.compareTo(originalIndices[b]!);
+    });
+    return sorted;
+  }
+
+  int _compareJourneys(Journey a, Journey b, RouteSortOption sort) {
     switch (sort) {
       case RouteSortOption.earliestDeparture:
-        sorted.sort((a, b) => a.departure.compareTo(b.departure));
-        break;
+        return a.departure.compareTo(b.departure);
       case RouteSortOption.earliestArrival:
-        sorted.sort((a, b) => a.arrival.compareTo(b.arrival));
-        break;
+        return a.arrival.compareTo(b.arrival);
       case RouteSortOption.shortestDuration:
-        sorted.sort((a, b) => a.duration.compareTo(b.duration));
-        break;
+        return a.duration.compareTo(b.duration);
       case RouteSortOption.leastTransfers:
-        sorted.sort((a, b) => a.transferCount.compareTo(b.transferCount));
-        break;
+        return a.transferCount.compareTo(b.transferCount);
       case RouteSortOption.shortestWait:
-        sorted.sort((a, b) => a.totalWaitTime.compareTo(b.totalWaitTime));
-        break;
+        return a.totalWaitTime.compareTo(b.totalWaitTime);
       case RouteSortOption.leastWalking:
-        sorted.sort(
-            (a, b) => a.totalWalkingDuration.compareTo(b.totalWalkingDuration));
-        break;
+        return a.totalWalkingDuration.compareTo(b.totalWalkingDuration);
     }
-    return sorted;
   }
 
   void _onSortChanged(RouteSortOption option) {
@@ -217,6 +260,24 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       _sortCandidates();
     });
     widget.onSortChanged?.call(option);
+  }
+
+  void _moveSortOption(RouteSortOption dragged, RouteSortOption target) {
+    final oldIndex = _sortOrder.indexOf(dragged);
+    final targetIndex = _sortOrder.indexOf(target);
+    if (oldIndex == -1 || targetIndex == -1 || oldIndex == targetIndex) return;
+
+    setState(() {
+      _sortOrder.removeAt(oldIndex);
+      _sortOrder.insert(targetIndex, dragged);
+      _currentSort = _sortOrder.first;
+      _cancelPendingCandidateUpdate();
+      _sortCandidates();
+    });
+    widget.onSortOrderChanged?.call(List<RouteSortOption>.unmodifiable(
+      _sortOrder,
+    ));
+    widget.onSortChanged?.call(_currentSort);
   }
 
   void _debugLogScroll(String message) {
@@ -602,6 +663,77 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     );
   }
 
+  _SortOptionPresentation _sortPresentation(
+    BuildContext context,
+    RouteSortOption option,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    return switch (option) {
+      RouteSortOption.earliestDeparture => _SortOptionPresentation(
+          label: l10n.earliestDep,
+          icon: Icons.schedule,
+        ),
+      RouteSortOption.earliestArrival => _SortOptionPresentation(
+          label: l10n.earliestArr,
+          icon: Icons.timer_off,
+        ),
+      RouteSortOption.shortestDuration => _SortOptionPresentation(
+          label: l10n.fastest,
+          icon: Icons.flash_on,
+        ),
+      RouteSortOption.leastTransfers => _SortOptionPresentation(
+          label: l10n.leastTransfers,
+          icon: Icons.directions_walk,
+        ),
+      RouteSortOption.shortestWait => _SortOptionPresentation(
+          label: l10n.leastWait,
+          icon: Icons.hourglass_empty,
+        ),
+      RouteSortOption.leastWalking => _SortOptionPresentation(
+          label: l10n.leastWalking,
+          icon: Icons.directions_walk,
+        ),
+    };
+  }
+
+  Widget _buildReorderableSortChip(
+    BuildContext context,
+    RouteSortOption option,
+  ) {
+    final presentation = _sortPresentation(context, option);
+    final chip = _SortChip(
+      key: ValueKey<String>('route-sort-${option.name}'),
+      label: presentation.label,
+      icon: presentation.icon,
+      isSelected: _currentSort == option,
+      onTap: () => _onSortChanged(option),
+      onDoubleTap: () => widget.onSortDoubleTapped?.call(option),
+    );
+    final placeholder = _SortChipPlaceholder(
+      label: presentation.label,
+      icon: presentation.icon,
+    );
+
+    return DragTarget<RouteSortOption>(
+      onWillAcceptWithDetails: (details) => details.data != option,
+      onAcceptWithDetails: (details) => _moveSortOption(details.data, option),
+      builder: (context, candidateData, rejectedData) {
+        if (candidateData.isNotEmpty) return placeholder;
+        return LongPressDraggable<RouteSortOption>(
+          data: option,
+          delay: const Duration(milliseconds: 350),
+          hapticFeedbackOnStart: true,
+          feedback: Material(
+            color: Colors.transparent,
+            child: Transform.scale(scale: 1.04, child: chip),
+          ),
+          childWhenDragging: placeholder,
+          child: chip,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
@@ -649,71 +781,11 @@ class _RouteResultsViewState extends State<RouteResultsView> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
-                children: [
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.earliestDep,
-                    icon: Icons.schedule,
-                    isSelected:
-                        _currentSort == RouteSortOption.earliestDeparture,
-                    onTap: () =>
-                        _onSortChanged(RouteSortOption.earliestDeparture),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.earliestDeparture,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.earliestArr,
-                    icon: Icons.timer_off,
-                    isSelected: _currentSort == RouteSortOption.earliestArrival,
-                    onTap: () =>
-                        _onSortChanged(RouteSortOption.earliestArrival),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.earliestArrival,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.fastest,
-                    icon: Icons.flash_on,
-                    isSelected:
-                        _currentSort == RouteSortOption.shortestDuration,
-                    onTap: () =>
-                        _onSortChanged(RouteSortOption.shortestDuration),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.shortestDuration,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.leastTransfers,
-                    icon: Icons.directions_walk,
-                    isSelected: _currentSort == RouteSortOption.leastTransfers,
-                    onTap: () => _onSortChanged(RouteSortOption.leastTransfers),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.leastTransfers,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.leastWait,
-                    icon: Icons.hourglass_empty,
-                    isSelected: _currentSort == RouteSortOption.shortestWait,
-                    onTap: () => _onSortChanged(RouteSortOption.shortestWait),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.shortestWait,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SortChip(
-                    label: AppLocalizations.of(context)!.leastWalking,
-                    icon: Icons.directions_walk,
-                    isSelected: _currentSort == RouteSortOption.leastWalking,
-                    onTap: () => _onSortChanged(RouteSortOption.leastWalking),
-                    onLongPress: () => widget.onSortLongPressed?.call(
-                      RouteSortOption.leastWalking,
-                    ),
-                  ),
+                children: <Widget>[
+                  for (var index = 0; index < _sortOrder.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    _buildReorderableSortChip(context, _sortOrder[index]),
+                  ],
                 ],
               ),
             ),
@@ -1114,19 +1186,27 @@ class _LoadTrigger extends StatelessWidget {
   }
 }
 
+class _SortOptionPresentation {
+  final String label;
+  final IconData icon;
+
+  const _SortOptionPresentation({required this.label, required this.icon});
+}
+
 class _SortChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool isSelected;
   final VoidCallback onTap;
-  final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
 
   const _SortChip({
+    super.key,
     required this.label,
     required this.icon,
     required this.isSelected,
     required this.onTap,
-    this.onLongPress,
+    this.onDoubleTap,
   });
 
   @override
@@ -1134,7 +1214,7 @@ class _SortChip extends StatelessWidget {
     final colors = TransColors.of(context);
     return GestureDetector(
       onTap: onTap,
-      onLongPress: onLongPress,
+      onDoubleTap: onDoubleTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -1165,6 +1245,73 @@ class _SortChip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SortChipPlaceholder extends StatelessWidget {
+  final String label;
+  final IconData icon;
+
+  const _SortChipPlaceholder({required this.label, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final themeColor = Theme.of(context).colorScheme.primary;
+    return CustomPaint(
+      foregroundPainter: _DashedRoundedBorderPainter(color: themeColor),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: themeColor.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: IgnorePointer(
+          child: Opacity(
+            opacity: 0,
+            child: _SortChip(
+              label: label,
+              icon: icon,
+              isSelected: false,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashedRoundedBorderPainter extends CustomPainter {
+  final Color color;
+
+  const _DashedRoundedBorderPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        rect.deflate(1),
+        const Radius.circular(20),
+      ));
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        canvas.drawPath(
+          metric.extractPath(distance, distance + 4),
+          paint,
+        );
+        distance += 8;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRoundedBorderPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _JourneyCard extends StatelessWidget {
