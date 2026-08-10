@@ -7821,17 +7821,26 @@ class _StepCardState extends State<_StepCard> {
                     showTrainNumbers: widget.showTrainNumbers,
                   );
 
-                  // Keep the line compact and give the destination the
-                  // remaining width. An unconstrained destination can shrink
-                  // to one character per line on narrow screens.
+                  // Keep the line compact and let the destination use all
+                  // remaining space. Giving both labels flex space leaves a
+                  // short line number with an unused half of the row.
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(_rideModeIconForLine(step.line),
-                          size: 18, color: colors.textSecondary),
+                      // Icons use a geometric rather than typographic
+                      // baseline, so nudge the vehicle glyph down to sit on
+                      // the same visual line as the route number.
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Icon(
+                          _rideModeIconForLine(step.line),
+                          size: 18,
+                          color: colors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(width: 6),
-                      Flexible(
-                        fit: FlexFit.loose,
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 72),
                         child: Text(
                           displayLine,
                           maxLines: 1,
@@ -7858,13 +7867,17 @@ class _StepCardState extends State<_StepCard> {
                       ),
                       const SizedBox(width: 8),
                       // Manual Arrow on Top Line with Rotation
-                      AnimatedRotation(
-                          turns: _isExpanded ? 0.5 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(Icons.keyboard_arrow_down,
-                              color: _isExpanded
-                                  ? colors.effectiveSeed
-                                  : colors.textSecondary)),
+                      Baseline(
+                        baseline: 16,
+                        baselineType: TextBaseline.alphabetic,
+                        child: AnimatedRotation(
+                            turns: _isExpanded ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(Icons.keyboard_arrow_down,
+                                color: _isExpanded
+                                    ? colors.effectiveSeed
+                                    : colors.textSecondary)),
+                      ),
                     ],
                   );
                 }),
