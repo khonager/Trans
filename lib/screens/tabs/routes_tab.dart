@@ -630,6 +630,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FocusNode _toFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final ScrollController _suggestionsScrollController = ScrollController();
+  final GlobalKey _fromFieldKey = GlobalKey();
+  final GlobalKey _toFieldKey = GlobalKey();
 
   Station? _fromStation;
   Station? _toStation;
@@ -1144,7 +1146,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _activeSearchField = 'from';
           _fetchSuggestions(forceHistory: _fromController.text.isEmpty);
         });
-        _scrollToTop();
+        _scrollFocusedFieldIntoViewIfNeeded();
       }
     } else if (_toFocusNode.hasFocus) {
       _focusDebounce?.cancel();
@@ -1153,6 +1155,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _activeSearchField = 'to';
           _fetchSuggestions(forceHistory: _toController.text.isEmpty);
         });
+        _scrollFocusedFieldIntoViewIfNeeded();
       }
     } else {
       // We no longer clear suggestions on focus loss so users can interact with them after dismissing the keyboard.
@@ -1409,11 +1412,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     // Check if search suggestions are open, maybe close them?
     // For now, let's say if suggestions are open, we just close them.
     if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
-      setState(() {
-        _activeSearchField = '';
-        _suggestions = [];
-        FocusScope.of(context).unfocus();
-      });
+      _collapseSearchSuggestions();
       return true;
     }
 
@@ -1429,7 +1428,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isVisible &&
         _activeTabId == null &&
         _activeSearchField.isNotEmpty) {
-      _scrollToTop();
+      _scrollFocusedFieldIntoViewIfNeeded();
     }
     if (_wasKeyboardVisible && !isVisible) {
       // Keyboard JUST closed
@@ -1441,6 +1440,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _scrollToTop() {
+    if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+      _scrollFocusedFieldIntoViewIfNeeded();
+      return;
+    }
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(0.0,
@@ -1448,6 +1451,60 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             curve: Curves.easeInOut);
       }
     });
+  }
+
+  /// Gives the focused field room for its suggestion list on compact screens.
+  /// Large viewports already have that room, so their scroll position is left
+  /// untouched.
+  void _scrollFocusedFieldIntoViewIfNeeded() {
+    final fieldKey = _fromFocusNode.hasFocus ? _fromFieldKey : _toFieldKey;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (!_fromFocusNode.hasFocus && !_toFocusNode.hasFocus) return;
+
+      final fieldContext = fieldKey.currentContext;
+      final viewportContext = _scrollController.position.context.storageContext;
+      if (fieldContext == null) return;
+
+      final fieldBox = fieldContext.findRenderObject() as RenderBox?;
+      final viewportBox = viewportContext.findRenderObject() as RenderBox?;
+      if (fieldBox == null || viewportBox == null) return;
+
+      final fieldBottom = fieldBox
+          .localToGlobal(
+            Offset(0, fieldBox.size.height),
+          )
+          .dy;
+      final viewportBottom = viewportBox
+          .localToGlobal(
+            Offset(0, viewportBox.size.height),
+          )
+          .dy;
+
+      // Suggestions are capped at 250 px; reserve that space below the
+      // field so the user can type and choose a result without extra scrolls.
+      const suggestionRoom = 250.0;
+      if (viewportBottom - fieldBottom >= suggestionRoom) return;
+
+      Scrollable.ensureVisible(
+        fieldContext,
+        alignment: 0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _collapseSearchSuggestions() {
+    _suggestionRequestToken++;
+    _debounce?.cancel();
+    setState(() {
+      _activeSearchField = '';
+      _suggestions = [];
+      _isSuggestionsLoading = false;
+    });
+    FocusScope.of(context).unfocus();
   }
 
   void _scrollSuggestionsToTop() {
@@ -5218,7 +5275,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return GestureDetector(
       onTap: () {
-        FocusScope.of(context).unfocus();
+        // Tapping the surrounding page is an explicit way to leave search.
+        // Keep taps inside fields and suggestion rows handled by their own
+        // controls, as users would expect.
+        if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
+          _collapseSearchSuggestions();
+        } else {
+          FocusScope.of(context).unfocus();
+        }
       },
       behavior: HitTestBehavior.translucent,
       child: SingleChildScrollView(
@@ -5253,17 +5317,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               color: colors.textPrimary))
                     ]),
                     const SizedBox(height: 20),
-                    _buildTextField(
-                        AppLocalizations.of(context)!.fromLabel,
-                        _fromController,
-                        _fromFocusNode,
-                        _fromStation != null,
-                        'from',
-                        hint: (_fromStation == null &&
-                                _effectiveCurrentPosition != null)
-                            ? AppLocalizations.of(context)!.currentLocation
-                            : AppLocalizations.of(context)!
-                                .fromStationOrAddress),
+                    KeyedSubtree(
+                      key: _fromFieldKey,
+                      child: _buildTextField(
+                          AppLocalizations.of(context)!.fromLabel,
+                          _fromController,
+                          _fromFocusNode,
+                          _fromStation != null,
+                          'from',
+                          hint: (_fromStation == null &&
+                                  _effectiveCurrentPosition != null)
+                              ? AppLocalizations.of(context)!.currentLocation
+                              : AppLocalizations.of(context)!
+                                  .fromStationOrAddress),
+                    ),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     Stack(
                       clipBehavior: Clip.none,
@@ -5272,14 +5339,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 12),
-                            _buildTextField(
-                                AppLocalizations.of(context)!.toLabel,
-                                _toController,
-                                _toFocusNode,
-                                _toStation != null,
-                                'to',
-                                hint: AppLocalizations.of(context)!
-                                    .toStationOrAddress),
+                            KeyedSubtree(
+                              key: _toFieldKey,
+                              child: _buildTextField(
+                                  AppLocalizations.of(context)!.toLabel,
+                                  _toController,
+                                  _toFocusNode,
+                                  _toStation != null,
+                                  'to',
+                                  hint: AppLocalizations.of(context)!
+                                      .toStationOrAddress),
+                            ),
                           ],
                         ),
                         Positioned(
