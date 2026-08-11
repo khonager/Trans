@@ -58,7 +58,6 @@ class _TicketPanelState extends State<TicketPanel>
       DraggableScrollableController();
   late final AnimationController _dockTransitionController;
   late final Animation<Offset> _dockSlideAnimation;
-  late final Animation<double> _dockFadeAnimation;
 
   File? _mobileFile;
   Uint8List? _webBytes;
@@ -74,7 +73,6 @@ class _TicketPanelState extends State<TicketPanel>
   bool _isDockGestureActive = false;
   bool _isDockLongPressTracking = false;
   bool _sheetPointerIsDown = false;
-  bool _dockGestureWasDragged = false;
   bool _isSettlingDockGesture = false;
   double _interactiveDockProgress = 0;
   double? _latestSheetPointerY;
@@ -99,7 +97,6 @@ class _TicketPanelState extends State<TicketPanel>
       begin: Offset.zero,
       end: const Offset(0, 0.18),
     ).animate(dockCurve);
-    _dockFadeAnimation = Tween<double>(begin: 1, end: 0.72).animate(dockCurve);
     _sheetController.addListener(_handleSheetExtentChanged);
     _initTicket();
   }
@@ -201,10 +198,12 @@ class _TicketPanelState extends State<TicketPanel>
     if (!_sheetPointerIsDown) return;
     _latestSheetPointerY = event.localPosition.dy;
     if (!_isDockGestureActive || _isDockLongPressTracking) return;
+    if (_sheetController.isAttached) {
+      _sheetController.jumpTo(0.1);
+    }
     _dockDragOriginY ??= event.localPosition.dy;
-    _updateInteractiveDockProgress(
-      event.localPosition.dy - _dockDragOriginY!,
-    );
+    final downwardDistance = event.localPosition.dy - _dockDragOriginY!;
+    _updateInteractiveDockProgress(downwardDistance);
   }
 
   void _handleSheetPointerEnd(PointerEvent event) {
@@ -217,8 +216,11 @@ class _TicketPanelState extends State<TicketPanel>
   }
 
   void _handleSheetExtentChanged() {
-    if (!_sheetPointerIsDown || !_sheetController.isAttached) return;
+    if (!_sheetPointerIsDown || !_sheetController.isAttached) {
+      return;
+    }
     if (_isDockLongPressTracking) return;
+    if (_isDockGestureActive) return;
     if (_sheetController.size <= 0.105) {
       _dockHoldTimer ??= Timer(const Duration(milliseconds: 550), () {
         _dockHoldTimer = null;
@@ -231,25 +233,21 @@ class _TicketPanelState extends State<TicketPanel>
     } else {
       _dockHoldTimer?.cancel();
       _dockHoldTimer = null;
-      if (_isDockGestureActive) {
-        _setDockGestureActive(false);
-      }
     }
   }
 
   void _updateDockGesture(LongPressMoveUpdateDetails details) {
-    if (!_isDockLongPressTracking || !_sheetController.isAttached) return;
+    if (!_isDockLongPressTracking || !_sheetController.isAttached) {
+      return;
+    }
     final downwardDistance = details.offsetFromOrigin.dy;
     if (downwardDistance >= 0) {
       _sheetController.jumpTo(0.1);
       _updateInteractiveDockProgress(downwardDistance);
       return;
     }
+    _sheetController.jumpTo(0.1);
     _updateInteractiveDockProgress(0);
-    final upwardDistance = (-details.offsetFromOrigin.dy).clamp(0.0, 1000.0);
-    final availableHeight = MediaQuery.sizeOf(context).height * 0.75;
-    final extent = (0.1 + (upwardDistance / availableHeight)).clamp(0.1, 0.85);
-    _sheetController.jumpTo(extent);
   }
 
   void _endDockGesture(LongPressEndDetails details) {
@@ -273,7 +271,6 @@ class _TicketPanelState extends State<TicketPanel>
   void _beginInteractiveDockDrag() {
     _dockGestureEpoch += 1;
     _isSettlingDockGesture = false;
-    _dockGestureWasDragged = false;
     _interactiveDockProgress = 0;
     _dockDragOriginY = _latestSheetPointerY;
     _dockTransitionController
@@ -285,7 +282,6 @@ class _TicketPanelState extends State<TicketPanel>
   void _updateInteractiveDockProgress(double downwardDistance) {
     final progress = (downwardDistance / 120).clamp(0.0, 1.0);
     if ((progress - _interactiveDockProgress).abs() < 0.001) return;
-    if (progress > 0.02) _dockGestureWasDragged = true;
     _interactiveDockProgress = progress;
     _dockTransitionController.value = progress;
     widget.onDockGestureProgressChanged?.call(progress);
@@ -295,8 +291,7 @@ class _TicketPanelState extends State<TicketPanel>
     if (!_isDockGestureActive || _isSettlingDockGesture) return;
     final sheetIsCollapsed =
         _sheetController.isAttached && _sheetController.size <= 0.105;
-    final shouldDock = sheetIsCollapsed &&
-        (!_dockGestureWasDragged || _interactiveDockProgress >= 0.42);
+    final shouldDock = sheetIsCollapsed && _interactiveDockProgress >= 0.5;
     if (shouldDock) {
       _finishDockGesture(shouldDock: true);
     } else {
@@ -358,9 +353,14 @@ class _TicketPanelState extends State<TicketPanel>
   }
 
   Future<void> _settleRestoreBackToNavigation() async {
-    await _dockTransitionController.forward();
-    if (mounted && widget.settleRestoreBackToNavigation) {
-      widget.onInteractiveRestoreCancelled?.call();
+    try {
+      await _dockTransitionController.forward().orCancel;
+    } on TickerCanceled {
+      // The parent callback below still restores the single docked state.
+    } finally {
+      if (mounted && widget.settleRestoreBackToNavigation) {
+        widget.onInteractiveRestoreCancelled?.call();
+      }
     }
   }
 
@@ -909,10 +909,9 @@ class _TicketPanelState extends State<TicketPanel>
       );
     }
 
-    return SlideTransition(
-      position: _dockSlideAnimation,
-      child: FadeTransition(
-        opacity: _dockFadeAnimation,
+    return ClipRect(
+      child: SlideTransition(
+        position: _dockSlideAnimation,
         child: DraggableScrollableSheet(
           controller: _sheetController,
           initialChildSize: 0.1,
