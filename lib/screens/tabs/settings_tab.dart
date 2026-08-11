@@ -37,6 +37,10 @@ String deleteAccountErrorMessage(
   return fallbackMessage;
 }
 
+@visibleForTesting
+bool usesStackedPrivacyLevelLayout(double availableWidth) =>
+    availableWidth < 540;
+
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
@@ -2270,49 +2274,68 @@ class _SettingsTabState extends State<SettingsTab> {
                         color: colors.settingsHeader)),
                 const SizedBox(height: 8),
                 _buildSection(context, [
-                  ListTile(
-                    leading: Icon(
-                      widget.signalLevel == 0
-                          ? Icons.visibility_off
-                          : Icons.cell_tower,
-                      color: widget.signalLevel == 0
-                          ? colors.textSecondary
-                          : colors.settingsHeader,
-                    ),
-                    title: Text(
-                      AppLocalizations.of(context)!.journeySignal,
-                      style: TextStyle(color: colors.textPrimary),
-                    ),
-                    subtitle: Text(
-                      '${AppLocalizations.of(context)!.signalLevel(widget.signalLevel)} · '
-                      '${JourneySignalLevel.title(widget.signalLevel, languageCode: Localizations.localeOf(context).languageCode)}\n'
-                      '${JourneySignalLevel.description(widget.signalLevel, languageCode: Localizations.localeOf(context).languageCode)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    trailing: DropdownButtonHideUnderline(
-                      child: DropdownButton<int>(
-                        value: widget.signalLevel,
-                        dropdownColor: colors.cardBg,
-                        items: List.generate(
-                          JourneySignalLevel.maximum + 1,
-                          (level) => DropdownMenuItem<int>(
-                            value: level,
-                            child: Text(
-                              '$level · ${JourneySignalLevel.title(level, languageCode: Localizations.localeOf(context).languageCode)}',
-                              style: TextStyle(color: colors.textPrimary),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final locale = Localizations.localeOf(context);
+                      final levelPicker = DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: widget.signalLevel,
+                          dropdownColor: colors.cardBg,
+                          items: List.generate(
+                            JourneySignalLevel.maximum + 1,
+                            (level) => DropdownMenuItem<int>(
+                              value: level,
+                              child: Text(
+                                '$level · ${JourneySignalLevel.title(level, languageCode: locale.languageCode)}',
+                                style: TextStyle(color: colors.textPrimary),
+                              ),
                             ),
                           ),
+                          onChanged: (level) async {
+                            if (level == null) return;
+                            await widget.onSignalLevelChanged(level);
+                            await _loadProfile();
+                          },
                         ),
-                        onChanged: (level) async {
-                          if (level == null) return;
-                          await widget.onSignalLevelChanged(level);
-                          await _loadProfile();
-                        },
-                      ),
-                    ),
+                      );
+                      final levelDescription = Text(
+                        '${AppLocalizations.of(context)!.signalLevel(widget.signalLevel)} · '
+                        '${JourneySignalLevel.title(widget.signalLevel, languageCode: locale.languageCode)}\n'
+                        '${JourneySignalLevel.description(widget.signalLevel, languageCode: locale.languageCode)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
+                      );
+                      final isStacked =
+                          usesStackedPrivacyLevelLayout(constraints.maxWidth);
+
+                      return ListTile(
+                        leading: Icon(
+                          widget.signalLevel == 0
+                              ? Icons.visibility_off
+                              : Icons.cell_tower,
+                          color: widget.signalLevel == 0
+                              ? colors.textSecondary
+                              : colors.settingsHeader,
+                        ),
+                        title: Text(
+                          AppLocalizations.of(context)!.journeySignal,
+                          style: TextStyle(color: colors.textPrimary),
+                        ),
+                        subtitle: isStacked
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  levelDescription,
+                                  const SizedBox(height: 8),
+                                  levelPicker,
+                                ],
+                              )
+                            : levelDescription,
+                        trailing: isStacked ? null : levelPicker,
+                      );
+                    },
                   ),
                   const Divider(height: 1),
                   ListTile(

@@ -2,6 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trans/screens/tabs/settings_tab.dart';
 
 void main() {
+  group('usesStackedPrivacyLevelLayout', () {
+    test('moves the picker below the text on small screens', () {
+      expect(usesStackedPrivacyLevelLayout(425), isTrue);
+    });
+
+    test('keeps the picker beside the text when there is room', () {
+      expect(usesStackedPrivacyLevelLayout(540), isFalse);
+    });
+  });
+
   group('deleteAccountErrorMessage', () {
     test('returns invalid password message for auth credential failures', () {
       final message = deleteAccountErrorMessage(
