@@ -934,6 +934,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _routeSortOrderPreferenceKey,
       normalized.map((option) => option.name).toList(),
     );
+    await SupabaseService.updateRouteResultsSortOrder(
+      normalized.map((option) => option.name).toList(),
+    );
   }
 
   RouteSearchSettings _routeSearchSettingsForRequest(

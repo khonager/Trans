@@ -57,6 +57,7 @@ class SupabaseService {
     'recent_journeys',
     'saved_journeys',
     'saved_favorites',
+    'route_results_sort_order',
   };
   static SupabaseClient get client => Supabase.instance.client;
 
@@ -742,6 +743,11 @@ class SupabaseService {
     await updateSettings({'saved_journeys': journeys});
   }
 
+  static Future<void> updateRouteResultsSortOrder(
+      List<String> sortOrder) async {
+    await updateSettings({'route_results_sort_order': sortOrder});
+  }
+
   static Future<void> _syncBoolSetting(
     SharedPreferences prefs,
     Map<String, dynamic> settings,
@@ -796,6 +802,18 @@ class SupabaseService {
     if (raw is List) {
       final encoded = raw.map((item) => json.encode(item)).toList();
       await prefs.setStringList(localKey, encoded);
+    }
+  }
+
+  static Future<void> _syncStringListSetting(
+    SharedPreferences prefs,
+    Map<String, dynamic> settings, {
+    required String key,
+  }) async {
+    final raw = settings[key];
+    if (raw is List) {
+      final values = raw.whereType<String>().toList();
+      await prefs.setStringList(key, values);
     }
   }
 
@@ -881,6 +899,11 @@ class SupabaseService {
       settings,
       cloudKey: 'saved_journeys',
       localKey: 'saved_journeys',
+    );
+    await _syncStringListSetting(
+      prefs,
+      settings,
+      key: 'route_results_sort_order',
     );
   }
 
