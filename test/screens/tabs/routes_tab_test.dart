@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/models/journey.dart';
 import 'package:trans/screens/tabs/routes_tab.dart';
 
 void main() {
@@ -202,5 +203,61 @@ void main() {
     ]);
 
     expect(journeys, hasLength(1));
+  });
+
+  test('refreshed candidates replace stale delays and retain platform detail',
+      () {
+    final plannedDeparture = DateTime.utc(2026, 8, 11, 10, 27);
+    final plannedArrival = DateTime.utc(2026, 8, 11, 10, 39);
+
+    Journey journey({
+      required String departureTime,
+      required int departureDelay,
+      String? platform,
+    }) {
+      return Journey(
+        steps: [
+          JourneyStep(
+            type: 'ride',
+            line: 'X26',
+            instruction: 'X26 → Anne-Frank-Straße',
+            duration: '12 min',
+            departureTime: departureTime,
+            arrivalTime: '10:39',
+            tripId: 'live-x26',
+            startStationName: 'Wiesbaden Hauptbahnhof',
+            destinationName: 'Anne-Frank-Straße',
+            plannedDeparture: plannedDeparture,
+            plannedArrival: plannedArrival,
+            departureDelay: departureDelay,
+            arrivalDelay: departureDelay,
+            platform: platform,
+          ),
+        ],
+        departure: plannedDeparture.add(Duration(minutes: departureDelay)),
+        arrival: plannedArrival.add(Duration(minutes: departureDelay)),
+        plannedDeparture: plannedDeparture,
+        plannedArrival: plannedArrival,
+        duration: const Duration(minutes: 12),
+        transferCount: 0,
+        totalWaitTime: Duration.zero,
+        rawSource: const {},
+        source: 'motis',
+      );
+    }
+
+    final stale = journey(
+      departureTime: '10:27',
+      departureDelay: 0,
+      platform: 'D',
+    );
+    final refreshed = journey(departureTime: '10:33', departureDelay: 6);
+
+    final merged = mergeRefreshedJourneyCandidates([stale], [refreshed]);
+
+    expect(merged, hasLength(1));
+    expect(merged.single.steps.single.departureTime, '10:33');
+    expect(merged.single.steps.single.departureDelay, 6);
+    expect(merged.single.steps.single.platform, 'D');
   });
 }

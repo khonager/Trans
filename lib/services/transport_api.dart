@@ -3362,6 +3362,37 @@ class TransportApi {
     return decodeJsonMap(response.body);
   }
 
+  /// Fetches one MOTIS trip without using the itinerary cache.
+  ///
+  /// Route searches are snapshots and can omit a selected service in busy
+  /// result windows. A trip id addresses that exact vehicle, so route-detail
+  /// refreshes use this as their realtime-first path and retain plan search as
+  /// a fallback for providers that do not expose MOTIS trip ids.
+  static Future<Map<String, dynamic>?> fetchLiveTripJourney(
+    String tripId,
+  ) async {
+    final normalizedTripId = tripId.trim();
+    if (normalizedTripId.isEmpty) return null;
+
+    try {
+      final itinerary = await fetchTripItinerary(
+        normalizedTripId,
+        withScheduledSkippedStops: true,
+        joinInterlinedLegs: true,
+      );
+      if (itinerary == null) return null;
+      final journey = journeyFromMotisItinerary(itinerary);
+      journey['source'] = 'motis';
+      return journey;
+    } catch (error) {
+      // A v6 trip id is not necessarily understood by MOTIS. Callers fall
+      // back to a route search in that case, rather than failing refresh.
+      _syntheticLog(
+          'live trip refresh unavailable trip=$normalizedTripId error=$error');
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> _fetchTripItineraryCached(
     String tripId,
   ) async {

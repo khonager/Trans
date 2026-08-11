@@ -478,10 +478,21 @@ List<Map<String, dynamic>> mergeAlternativeJourneys(
 }
 
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
-  return journeys
-      .map((j) =>
-          "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
-      .join("||");
+  return journeys.map((journey) {
+    final realtime = journey.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => [
+              step.tripId?.trim() ?? '',
+              step.departureTime,
+              step.arrivalTime,
+              step.departureDelay?.toString() ?? '',
+              step.arrivalDelay?.toString() ?? '',
+              step.isCancelled ? '1' : '0',
+            ].join('|'))
+        .join('||');
+    return '${journey.plannedDeparture ?? journey.departure}_'
+        '${journey.plannedArrival ?? journey.arrival}_$realtime';
+  }).join("||");
 }
 
 String _journeyListKey(Journey journey) {
@@ -549,7 +560,99 @@ Journey _preferJourneyWithMorePlatformDetail(
   return existing;
 }
 
-List<Journey> _mergeJourneyCandidates(
+bool _sameRideForRealtimeRefresh(JourneyStep current, JourneyStep fresh) {
+  final currentTripId = current.tripId?.trim();
+  final freshTripId = fresh.tripId?.trim();
+  if ((currentTripId?.isNotEmpty ?? false) &&
+      (freshTripId?.isNotEmpty ?? false)) {
+    return currentTripId == freshTripId;
+  }
+
+  if (current.plannedDeparture != null &&
+      fresh.plannedDeparture != null &&
+      current.plannedArrival != null &&
+      fresh.plannedArrival != null) {
+    return current.plannedDeparture == fresh.plannedDeparture &&
+        current.plannedArrival == fresh.plannedArrival &&
+        current.startStationName == fresh.startStationName &&
+        current.destinationName == fresh.destinationName;
+  }
+
+  return current.line.trim().toLowerCase() == fresh.line.trim().toLowerCase() &&
+      current.startStationName == fresh.startStationName &&
+      current.destinationName == fresh.destinationName;
+}
+
+/// Retains local route-only state (walk legs, alarms and richer platform
+/// labels) while treating the incoming provider result as the newest source
+/// for every matched vehicle's live fields.
+Journey _mergeJourneyWithFreshRealtime(
+  Journey existing,
+  Journey incoming, {
+  bool updateJourneyBounds = true,
+  bool replaceRawSource = true,
+}) {
+  final freshRideSteps =
+      incoming.steps.where((step) => step.type == 'ride').toList();
+  var matchedRide = false;
+
+  final mergedSteps = existing.steps.map((step) {
+    if (step.type != 'ride') return step;
+
+    JourneyStep? fresh;
+    for (final candidate in freshRideSteps) {
+      if (_sameRideForRealtimeRefresh(step, candidate)) {
+        fresh = candidate;
+        break;
+      }
+    }
+    if (fresh == null) return step;
+    matchedRide = true;
+
+    return step.copyWith(
+      departureTime: fresh.departureTime,
+      arrivalTime: fresh.arrivalTime,
+      dateTime: fresh.dateTime,
+      startStationId: fresh.startStationId ?? step.startStationId,
+      destinationStationId:
+          fresh.destinationStationId ?? step.destinationStationId,
+      platform: fresh.platform ?? step.platform,
+      arrivalPlatform: fresh.arrivalPlatform ?? step.arrivalPlatform,
+      departureStopLabel: fresh.departureStopLabel ?? step.departureStopLabel,
+      arrivalStopLabel: fresh.arrivalStopLabel ?? step.arrivalStopLabel,
+      stopovers: fresh.stopovers ?? step.stopovers,
+      departureDelay: fresh.departureDelay,
+      arrivalDelay: fresh.arrivalDelay,
+      clearDepartureDelay: fresh.departureDelay == null,
+      clearArrivalDelay: fresh.arrivalDelay == null,
+      isCancelled: fresh.isCancelled,
+      plannedDeparture: fresh.plannedDeparture ?? step.plannedDeparture,
+      plannedArrival: fresh.plannedArrival ?? step.plannedArrival,
+      headsign: fresh.headsign ?? step.headsign,
+      tripId: fresh.tripId ?? step.tripId,
+    );
+  }).toList();
+
+  // Do not replace an itinerary merely because a same-key provider result has
+  // an unexpected shape. This can happen when a transfer is no longer offered.
+  if (!matchedRide && existing.steps.any((step) => step.type == 'ride')) {
+    return _preferJourneyWithMorePlatformDetail(existing, incoming);
+  }
+
+  return existing.copyWith(
+    steps: mergedSteps,
+    departure: updateJourneyBounds ? incoming.departure : existing.departure,
+    arrival: updateJourneyBounds ? incoming.arrival : existing.arrival,
+    duration: updateJourneyBounds ? incoming.duration : existing.duration,
+    rawSource: replaceRawSource ? incoming.rawSource : existing.rawSource,
+    source: replaceRawSource ? incoming.source : existing.source,
+    plannedDeparture: incoming.plannedDeparture ?? existing.plannedDeparture,
+    plannedArrival: incoming.plannedArrival ?? existing.plannedArrival,
+  );
+}
+
+@visibleForTesting
+List<Journey> mergeRefreshedJourneyCandidates(
   Iterable<Journey> existing,
   Iterable<Journey> incoming,
 ) {
@@ -562,12 +665,18 @@ List<Journey> _mergeJourneyCandidates(
     final previous = byKey[key];
     byKey[key] = previous == null
         ? journey
-        : _preferJourneyWithMorePlatformDetail(previous, journey);
+        : _mergeJourneyWithFreshRealtime(previous, journey);
   }
 
   return byKey.values.toList()
     ..sort((a, b) => a.departure.compareTo(b.departure));
 }
+
+List<Journey> _mergeJourneyCandidates(
+  Iterable<Journey> existing,
+  Iterable<Journey> incoming,
+) =>
+    mergeRefreshedJourneyCandidates(existing, incoming);
 
 Journey _bestCurrentJourneyVersion(
   Journey target,
@@ -579,7 +688,7 @@ Journey _bestCurrentJourneyVersion(
         !_journeysLikelySameRoute(candidate, target)) {
       continue;
     }
-    best = _preferJourneyWithMorePlatformDetail(best, candidate);
+    best = _mergeJourneyWithFreshRealtime(best, candidate);
   }
   return best;
 }
@@ -6663,43 +6772,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Journey _mergeRealtimeIntoJourney(Journey existing, Journey fresh) {
-    final freshRideSteps =
-        fresh.steps.where((step) => step.type == 'ride').toList();
-
-    final mergedSteps = existing.steps.map((step) {
-      if (step.type != 'ride') return step;
-
-      final match = _findRealtimeMatchForStep(step, freshRideSteps);
-      if (match == null) return step;
-
-      return step.copyWith(
-        departureTime: match.departureTime,
-        arrivalTime: match.arrivalTime,
-        dateTime: match.dateTime,
-        startStationId: match.startStationId ?? step.startStationId,
-        destinationStationId:
-            match.destinationStationId ?? step.destinationStationId,
-        platform: match.platform ?? step.platform,
-        arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
-        departureStopLabel: match.departureStopLabel ?? step.departureStopLabel,
-        arrivalStopLabel: match.arrivalStopLabel ?? step.arrivalStopLabel,
-        departureDelay: match.departureDelay,
-        arrivalDelay: match.arrivalDelay,
-        isCancelled: match.isCancelled,
-        plannedDeparture: match.plannedDeparture ?? step.plannedDeparture,
-        plannedArrival: match.plannedArrival ?? step.plannedArrival,
-      );
-    }).toList();
-
-    return existing.copyWith(
-      steps: mergedSteps,
-      departure: fresh.departure,
-      arrival: fresh.arrival,
-      duration: fresh.duration,
-      plannedDeparture: fresh.plannedDeparture ?? existing.plannedDeparture,
-      plannedArrival: fresh.plannedArrival ?? existing.plannedArrival,
-      rawSource: fresh.rawSource,
-    );
+    return _mergeJourneyWithFreshRealtime(existing, fresh);
   }
 
   bool _sameRideIdentity(JourneyStep current, JourneyStep candidate) {
@@ -6803,6 +6876,165 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return null;
   }
 
+  /// Refresh the selected vehicle directly when it has a MOTIS trip id. This
+  /// does not depend on the service appearing in a limited route-search page.
+  /// The route-search refresh below remains the fallback for v6-only trips and
+  /// also refreshes walking/transfer alternatives.
+  bool _liveTripStopMatches(
+    Map<String, dynamic> stop,
+    String? targetId,
+    String? targetName,
+  ) {
+    final stopId = stop['id']?.toString();
+    if (targetId != null && targetId.isNotEmpty && stopId == targetId) {
+      return true;
+    }
+    final stopName = stop['name']?.toString().trim().toLowerCase();
+    return targetName != null &&
+        targetName.isNotEmpty &&
+        stopName == targetName.trim().toLowerCase();
+  }
+
+  /// Narrows a whole-trip response to the selected ride's boarding and
+  /// alighting stops. MOTIS `/trip` reports the vehicle's complete run, while
+  /// a route step can begin at any intermediate stop.
+  Journey? _journeyForStepFromLiveTrip(
+    Map<String, dynamic> liveTrip,
+    JourneyStep selectedStep, {
+    required String destinationName,
+  }) {
+    final selectedTripId = selectedStep.tripId?.trim();
+    if (selectedTripId == null || selectedTripId.isEmpty) return null;
+
+    final rawLegs = liveTrip['legs'];
+    if (rawLegs is! List) return null;
+    for (final rawLeg in rawLegs.whereType<Map>()) {
+      final leg = Map<String, dynamic>.from(rawLeg);
+      final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+      final tripId = line?['tripId']?.toString().trim();
+      if (tripId != selectedTripId) continue;
+
+      final stopovers = leg['stopovers'];
+      if (stopovers is! List) continue;
+      final events = <Map<String, dynamic>>[
+        {
+          'stop': leg['origin'],
+          'departure': leg['departure'],
+          'arrival': leg['arrival'],
+          'plannedDeparture': leg['plannedDeparture'],
+          'plannedArrival': leg['plannedArrival'],
+        },
+        ...stopovers.whereType<Map>().map(Map<String, dynamic>.from),
+        {
+          'stop': leg['destination'],
+          'departure': leg['departure'],
+          'arrival': leg['arrival'],
+          'plannedDeparture': leg['plannedDeparture'],
+          'plannedArrival': leg['plannedArrival'],
+        },
+      ];
+
+      Map<String, dynamic>? fromEvent;
+      Map<String, dynamic>? toEvent;
+      for (final event in events) {
+        final stop = (event['stop'] as Map?)?.cast<String, dynamic>();
+        if (stop == null) continue;
+        if (fromEvent == null &&
+            _liveTripStopMatches(
+              stop,
+              selectedStep.startStationId,
+              selectedStep.startStationName,
+            )) {
+          fromEvent = event;
+        }
+        if (_liveTripStopMatches(
+          stop,
+          selectedStep.destinationStationId,
+          selectedStep.destinationName,
+        )) {
+          toEvent = event;
+        }
+      }
+      if (fromEvent == null) continue;
+
+      final fromStop =
+          (fromEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
+      leg['origin'] = Map<String, dynamic>.from(fromStop);
+      leg['departure'] = fromEvent['departure'] ?? fromEvent['arrival'];
+      leg['plannedDeparture'] =
+          fromEvent['plannedDeparture'] ?? fromEvent['plannedArrival'];
+
+      if (toEvent != null) {
+        final toStop =
+            (toEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
+        leg['destination'] = Map<String, dynamic>.from(toStop);
+        leg['arrival'] = toEvent['arrival'] ?? toEvent['departure'];
+        leg['plannedArrival'] =
+            toEvent['plannedArrival'] ?? toEvent['plannedDeparture'];
+      }
+
+      return _createJourney(
+        {
+          'legs': [leg],
+          'source': liveTrip['source'] ?? 'motis',
+        },
+        destinationNameOverride: destinationName,
+      );
+    }
+    return null;
+  }
+
+  Future<Journey?> _refreshActiveJourneyFromLiveTrips(
+    Journey journey, {
+    required String destinationName,
+  }) async {
+    if (journey.source != 'motis' && journey.source != 'motis_synthetic') {
+      return null;
+    }
+
+    final tripIds = journey.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => step.tripId?.trim() ?? '')
+        .where((tripId) => tripId.isNotEmpty)
+        .toSet();
+    if (tripIds.isEmpty) return null;
+
+    var updated = journey;
+    var foundMatchingVehicle = false;
+    final liveTrips = await Future.wait(
+      tripIds.map(TransportApi.fetchLiveTripJourney),
+    );
+    for (final liveTrip in liveTrips) {
+      if (liveTrip == null) continue;
+      try {
+        for (final selectedStep
+            in updated.steps.where((step) => step.type == 'ride')) {
+          final freshTrip = _journeyForStepFromLiveTrip(
+            liveTrip,
+            selectedStep,
+            destinationName: destinationName,
+          );
+          if (freshTrip == null) continue;
+          final merged = _mergeJourneyWithFreshRealtime(
+            updated,
+            freshTrip,
+            // A trip response covers the vehicle's full run, not necessarily
+            // the user's complete door-to-door itinerary.
+            updateJourneyBounds: false,
+            replaceRawSource: false,
+          );
+          if (!identical(merged, updated)) {
+            foundMatchingVehicle = true;
+            updated = merged;
+          }
+        }
+      } catch (_) {
+        // A malformed trip response must not prevent the plan-search fallback.
+      }
+    }
+    return foundMatchingVehicle ? updated : null;
+  }
+
   Future<void> _refreshActiveJourney(
     RouteTab route, {
     bool showCompletionFeedback = true,
@@ -6827,6 +7059,62 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final previousSignature = _savedJourneyRealtimeSignature(previousJourney);
       bool hasMatchedUpdate = false;
       String? completionMessage;
+
+      final directTripUpdate = await _refreshActiveJourneyFromLiveTrips(
+        previousJourney,
+        destinationName: route.destination.name,
+      );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
+      if (directTripUpdate != null) {
+        final directSignature =
+            _savedJourneyRealtimeSignature(directTripUpdate);
+        setState(() {
+          final idx = _tabs.indexWhere((t) => t.id == route.id);
+          if (idx == -1 || _tabs[idx].activeJourney == null) return;
+          final latest = _tabs[idx];
+          final currentActive = latest.activeJourney!;
+          final refreshedActive = _mergeJourneyWithFreshRealtime(
+            currentActive,
+            directTripUpdate,
+            updateJourneyBounds: false,
+            replaceRawSource: false,
+          );
+          _tabs[idx] = latest.copyWith(
+            activeJourney: refreshedActive,
+            steps: refreshedActive.steps,
+            candidates: latest.candidates
+                ?.map((candidate) => _journeysLikelySameRoute(
+                      candidate,
+                      currentActive,
+                    )
+                        ? _mergeJourneyWithFreshRealtime(
+                            candidate,
+                            directTripUpdate,
+                            updateJourneyBounds: false,
+                            replaceRawSource: false,
+                          )
+                        : candidate)
+                .toList(),
+            stack: latest.stack
+                .map((stackedJourney) => _journeysLikelySameRoute(
+                      stackedJourney,
+                      currentActive,
+                    )
+                        ? _mergeJourneyWithFreshRealtime(
+                            stackedJourney,
+                            directTripUpdate,
+                            updateJourneyBounds: false,
+                            replaceRawSource: false,
+                          )
+                        : stackedJourney)
+                .toList(),
+          );
+        });
+        hasMatchedUpdate = true;
+        completionMessage = directSignature != previousSignature
+            ? 'Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: directTripUpdate)}.'
+            : 'Route refresh finished: no changes.';
+      }
 
       // Use planned departure time as the anchor for refresh
       final DateTime refDate =

@@ -117,6 +117,8 @@ class JourneyStep {
     DateTime? dateTime,
     int? departureDelay,
     int? arrivalDelay,
+    bool clearDepartureDelay = false,
+    bool clearArrivalDelay = false,
     bool? isCancelled,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
@@ -157,8 +159,10 @@ class JourneyStep {
       stopovers: stopovers ?? this.stopovers,
       chatCount: chatCount ?? this.chatCount,
       dateTime: dateTime ?? this.dateTime,
-      departureDelay: departureDelay ?? this.departureDelay,
-      arrivalDelay: arrivalDelay ?? this.arrivalDelay,
+      departureDelay:
+          clearDepartureDelay ? null : (departureDelay ?? this.departureDelay),
+      arrivalDelay:
+          clearArrivalDelay ? null : (arrivalDelay ?? this.arrivalDelay),
       isCancelled: isCancelled ?? this.isCancelled,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
