@@ -87,6 +87,29 @@ String formatRideLineWithPlatform(String line, String? platform) {
   return '$normalizedLine ($formattedPlatform)';
 }
 
+@visibleForTesting
+String formatRealtimeDelay(int minutes) {
+  final sign = minutes > 0 ? '+' : (minutes < 0 ? '-' : '');
+  final absoluteMinutes = minutes.abs();
+  if (absoluteMinutes < 60) return '$sign$absoluteMinutes min';
+
+  final hours = absoluteMinutes ~/ 60;
+  final remainingMinutes = absoluteMinutes % 60;
+  return remainingMinutes == 0
+      ? '$sign${hours}h'
+      : '$sign${hours}h ${remainingMinutes}min';
+}
+
+@visibleForTesting
+int realtimeChangedSuffixStart(String plannedTime, String actualTime) {
+  final limit = min(plannedTime.length, actualTime.length);
+  var index = 0;
+  while (index < limit && plannedTime[index] == actualTime[index]) {
+    index++;
+  }
+  return index;
+}
+
 bool _lineLooksRailForPlatformLabel(String line) {
   final normalized = line.trim().toUpperCase();
   if (normalized.isEmpty) return false;
@@ -8041,10 +8064,9 @@ class _StepCardState extends State<_StepCard> {
     );
   }
 
-  Widget _buildTrailingTimeAndStopDetail(
+  Widget _buildTrailingTimeAndStopDetailWidget(
     BuildContext context, {
-    required String timeText,
-    required TextStyle timeStyle,
+    required Widget timeWidget,
     String? stopDetail,
   }) {
     return Row(
@@ -8057,12 +8079,57 @@ class _StepCardState extends State<_StepCard> {
           ),
           const SizedBox(width: 8),
         ],
-        Text(
-          timeText,
-          textAlign: TextAlign.right,
-          style: timeStyle,
-        ),
+        timeWidget,
       ],
+    );
+  }
+
+  Widget _buildRealtimeTime(
+    BuildContext context, {
+    required String actualTime,
+    required DateTime? plannedTime,
+    required int? delayMinutes,
+    required TextStyle style,
+    bool includeDelayLabel = true,
+  }) {
+    final colors = TransColors.of(context);
+    final plannedLabel =
+        plannedTime == null ? null : DateFormat('HH:mm').format(plannedTime);
+    final hasDelay = delayMinutes != null && delayMinutes != 0;
+    final actualStyle = style.copyWith(
+      // Green suggested that a displayed time was a special “on-time” state.
+      // Keep ordinary times neutral; only changed realtime digits are red.
+      color: colors.textPrimary,
+    );
+
+    if (!hasDelay || plannedLabel == null) {
+      return Text(
+        actualTime,
+        textAlign: TextAlign.right,
+        style: actualStyle,
+      );
+    }
+
+    final changedStart = realtimeChangedSuffixStart(plannedLabel, actualTime);
+    final unchangedPrefix = actualTime.substring(0, changedStart);
+    final changedSuffix = actualTime.substring(changedStart);
+    return Text.rich(
+      TextSpan(
+        style: actualStyle,
+        children: [
+          if (unchangedPrefix.isNotEmpty) TextSpan(text: unchangedPrefix),
+          TextSpan(
+            text: changedSuffix,
+            style: style.copyWith(color: colors.delayLate),
+          ),
+          if (includeDelayLabel)
+            TextSpan(
+              text: ' (${formatRealtimeDelay(delayMinutes)})',
+              style: style.copyWith(color: colors.delayLate),
+            ),
+        ],
+      ),
+      textAlign: TextAlign.right,
     );
   }
 
@@ -8257,8 +8324,6 @@ class _StepCardState extends State<_StepCard> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // The actions scroll independently; the journey
-                          // time stays fixed at the trailing edge.
                           Expanded(
                             child: SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
@@ -8320,36 +8385,45 @@ class _StepCardState extends State<_StepCard> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                  "${step.departureTime} - ${step.arrivalTime}",
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: step.isCancelled
-                                          ? colors.textSecondary
-                                          : colors.textPrimary,
-                                      decoration: step.isCancelled
-                                          ? TextDecoration.lineThrough
-                                          : null)),
-                              if (step.isCancelled)
-                                Text(
-                                    AppLocalizations.of(context)!.cancelledL10n,
-                                    style: TextStyle(
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: step.isCancelled
+                                  ? Text(
+                                      '${step.departureTime} - ${step.arrivalTime} ${AppLocalizations.of(context)!.cancelledL10n}',
+                                      style: TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        color: Colors.red,
-                                        fontSize: 12))
-                              else if (step.departureDelay != null &&
-                                  step.departureDelay != 0)
-                                Text(
-                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: step.departureDelay! > 0
-                                            ? colors.delayLate
-                                            : colors.delayOnTime))
-                            ],
+                                        color: colors.textSecondary,
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _buildRealtimeTime(
+                                          context,
+                                          actualTime: step.departureTime,
+                                          plannedTime: step.plannedDeparture,
+                                          delayMinutes: step.departureDelay,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const Text(' - '),
+                                        _buildRealtimeTime(
+                                          context,
+                                          actualTime: step.arrivalTime,
+                                          plannedTime: step.plannedArrival,
+                                          delayMinutes: step.arrivalDelay,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                            ),
                           ),
                         ],
                       )
@@ -8391,13 +8465,17 @@ class _StepCardState extends State<_StepCard> {
                                         color: colors.textPrimary,
                                         fontSize: 14,
                                         fontWeight: FontWeight.bold)),
-                                trailing: _buildTrailingTimeAndStopDetail(
+                                trailing: _buildTrailingTimeAndStopDetailWidget(
                                   context,
-                                  timeText: step.departureTime,
-                                  timeStyle: TextStyle(
-                                    color: colors.delayOnTime,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
+                                  timeWidget: _buildRealtimeTime(
+                                    context,
+                                    actualTime: step.departureTime,
+                                    plannedTime: step.plannedDeparture,
+                                    delayMinutes: step.departureDelay,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                   stopDetail: combinePlatformAndStopLabel(
                                     step.platform,
@@ -8457,24 +8535,22 @@ class _StepCardState extends State<_StepCard> {
                                         ?['location']?['longitude']) ??
                                     previousLng;
                               }
-                              String timeStr = "--:--";
-                              Color timeColor = Colors.grey;
+                              String actualTimeText = "--:--";
+                              DateTime? plannedTime;
+                              int? delayMinutes;
                               DateTime? exactStopDate;
 
                               if (plannedDep != null) {
                                 final p = DateTime.parse(plannedDep).toLocal();
+                                plannedTime = p;
                                 exactStopDate = p;
-                                timeStr =
+                                actualTimeText =
                                     "${p.hour.toString().padLeft(2, '0')}:${p.minute.toString().padLeft(2, '0')}";
                                 if (actualDep != null) {
                                   final a = DateTime.parse(actualDep).toLocal();
-                                  final delay = a.difference(p).inMinutes;
-                                  if (delay > 2) {
-                                    timeStr += " (+$delay')";
-                                    timeColor = colors.delayLate;
-                                  } else {
-                                    timeColor = colors.delayOnTime;
-                                  }
+                                  actualTimeText =
+                                      "${a.hour.toString().padLeft(2, '0')}:${a.minute.toString().padLeft(2, '0')}";
+                                  delayMinutes = a.difference(p).inMinutes;
                                 }
                               }
                               final isAlarmSelected =
@@ -8513,12 +8589,16 @@ class _StepCardState extends State<_StepCard> {
                                       trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            _buildTrailingTimeAndStopDetail(
+                                            _buildTrailingTimeAndStopDetailWidget(
                                               context,
-                                              timeText: timeStr,
-                                              timeStyle: TextStyle(
-                                                color: timeColor,
-                                                fontSize: 12,
+                                              timeWidget: _buildRealtimeTime(
+                                                context,
+                                                actualTime: actualTimeText,
+                                                plannedTime: plannedTime,
+                                                delayMinutes: delayMinutes,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
                                               ),
                                               stopDetail:
                                                   combinePlatformAndStopLabel(
@@ -8637,32 +8717,27 @@ class _StepCardState extends State<_StepCard> {
                                     color: colors.textPrimary,
                                     fontSize: 14,
                                     fontWeight: FontWeight.bold)),
-                            trailing: Builder(builder: (context) {
-                              String timeStr = step.arrivalTime;
-                              Color timeColor = colors.delayOnTime;
-                              if (step.arrivalDelay != null &&
-                                  step.arrivalDelay! > 0) {
-                                timeColor = colors.delayLate;
-                                timeStr += " (+${step.arrivalDelay})";
-                              }
-                              return _buildTrailingTimeAndStopDetail(
+                            trailing: _buildTrailingTimeAndStopDetailWidget(
+                              context,
+                              timeWidget: _buildRealtimeTime(
                                 context,
-                                timeText: timeStr,
-                                timeStyle: TextStyle(
-                                  color: timeColor,
+                                actualTime: step.arrivalTime,
+                                plannedTime: step.plannedArrival,
+                                delayMinutes: step.arrivalDelay,
+                                style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,
                                 ),
-                                stopDetail: combinePlatformAndStopLabel(
-                                  step.arrivalPlatform,
-                                  step.arrivalStopLabel,
-                                  stationName: step.destinationName,
-                                  isRail: _lineLooksRailForPlatformLabel(
-                                    step.line,
-                                  ),
+                              ),
+                              stopDetail: combinePlatformAndStopLabel(
+                                step.arrivalPlatform,
+                                step.arrivalStopLabel,
+                                stationName: step.destinationName,
+                                isRail: _lineLooksRailForPlatformLabel(
+                                  step.line,
                                 ),
-                              );
-                            }),
+                              ),
+                            ),
                           )))
                 ])));
   }

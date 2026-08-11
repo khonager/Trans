@@ -260,4 +260,15 @@ void main() {
     expect(merged.single.steps.single.departureDelay, 6);
     expect(merged.single.steps.single.platform, 'D');
   });
+
+  test('formats short and long realtime delays clearly', () {
+    expect(formatRealtimeDelay(7), '+7 min');
+    expect(formatRealtimeDelay(124), '+2h 4min');
+    expect(formatRealtimeDelay(-3), '-3 min');
+  });
+
+  test('highlights only the changed realtime suffix', () {
+    expect(realtimeChangedSuffixStart('10:42', '10:49'), 4);
+    expect(realtimeChangedSuffixStart('10:42', '10:50'), 3);
+  });
 }
