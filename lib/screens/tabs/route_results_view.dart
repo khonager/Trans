@@ -1580,45 +1580,50 @@ class _JourneyCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            // Line Summary (first 3 lines)
+            // Line summary. Keep the card height stable while allowing every
+            // vehicle in a longer journey to remain accessible.
             Align(
               alignment: Alignment.centerLeft,
-              child: Wrap(
-                alignment: WrapAlignment.start,
-                spacing: 6,
-                runSpacing: 6,
-                children: journey.steps
-                    .where((s) => s.type == 'ride')
-                    .take(4)
-                    .map((step) {
-                  String displayLine = step.line.trim();
-                  final displayableTripId =
-                      _shouldDisplaySummaryTripId(step.tripId)
-                          ? step.tripId!.trim()
-                          : null;
-                  // Clean train numbers if disabled
-                  if (!showTrainNumbers) {
-                    final regexParens = RegExp(r'\s*\(\d+\)$');
-                    displayLine =
-                        displayLine.replaceAll(regexParens, '').trim();
-                    if (step.tripId != null) {
-                      displayLine =
-                          displayLine.replaceAll(step.tripId!, "").trim();
-                    }
-                  } else {
-                    // Ensure it's there if enabled
-                    if (displayableTripId != null &&
-                        !displayLine.contains(displayableTripId)) {
-                      displayLine += " ($displayableTripId)";
-                    }
-                  }
-                  displayLine = _stripSummaryPlatformText(displayLine);
-                  return _buildRideChip(
-                    context,
-                    icon: _summaryRideModeIcon(step.line),
-                    label: displayLine,
-                  );
-                }).toList(),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: journey.steps
+                      .where((s) => s.type == 'ride')
+                      .map((step) {
+                        String displayLine = step.line.trim();
+                        final displayableTripId =
+                            _shouldDisplaySummaryTripId(step.tripId)
+                                ? step.tripId!.trim()
+                                : null;
+                        // Clean train numbers if disabled
+                        if (!showTrainNumbers) {
+                          final regexParens = RegExp(r'\s*\(\d+\)$');
+                          displayLine =
+                              displayLine.replaceAll(regexParens, '').trim();
+                          if (step.tripId != null) {
+                            displayLine =
+                                displayLine.replaceAll(step.tripId!, "").trim();
+                          }
+                        } else {
+                          // Ensure it's there if enabled
+                          if (displayableTripId != null &&
+                              !displayLine.contains(displayableTripId)) {
+                            displayLine += " ($displayableTripId)";
+                          }
+                        }
+                        displayLine = _stripSummaryPlatformText(displayLine);
+                        return _buildRideChip(
+                          context,
+                          icon: _summaryRideModeIcon(step.line),
+                          label: displayLine,
+                        );
+                      })
+                      .expand((chip) => [
+                            chip,
+                            const SizedBox(width: 6),
+                          ])
+                      .toList(),
+                ),
               ),
             ),
           ],
