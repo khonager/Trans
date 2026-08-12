@@ -6960,28 +6960,41 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         },
       ];
 
-      Map<String, dynamic>? fromEvent;
-      Map<String, dynamic>? toEvent;
-      for (final event in events) {
+      int? fromIndex;
+      int? toIndex;
+      for (var index = 0; index < events.length; index++) {
+        final event = events[index];
         final stop = (event['stop'] as Map?)?.cast<String, dynamic>();
         if (stop == null) continue;
-        if (fromEvent == null &&
+        if (fromIndex == null &&
             _liveTripStopMatches(
               stop,
               selectedStep.startStationId,
               selectedStep.startStationName,
             )) {
-          fromEvent = event;
+          fromIndex = index;
+          continue;
         }
-        if (_liveTripStopMatches(
-          stop,
-          selectedStep.destinationStationId,
-          selectedStep.destinationName,
-        )) {
-          toEvent = event;
+        if (fromIndex != null &&
+            _liveTripStopMatches(
+              stop,
+              selectedStep.destinationStationId,
+              selectedStep.destinationName,
+            )) {
+          toIndex = index;
+          break;
         }
       }
-      if (fromEvent == null) continue;
+      // A `/trip` response includes every stop on the vehicle's run. Only use
+      // it when both ends of this specific ride can be located in order; using
+      // the untrimmed response would show stops before boarding and after
+      // alighting.
+      if (fromIndex == null || toIndex == null || toIndex <= fromIndex) {
+        continue;
+      }
+
+      final fromEvent = events[fromIndex];
+      final toEvent = events[toIndex];
 
       final fromStop =
           (fromEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -6990,14 +7003,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       leg['plannedDeparture'] =
           fromEvent['plannedDeparture'] ?? fromEvent['plannedArrival'];
 
-      if (toEvent != null) {
-        final toStop =
-            (toEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
-        leg['destination'] = Map<String, dynamic>.from(toStop);
-        leg['arrival'] = toEvent['arrival'] ?? toEvent['departure'];
-        leg['plannedArrival'] =
-            toEvent['plannedArrival'] ?? toEvent['plannedDeparture'];
-      }
+      final toStop =
+          (toEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
+      leg['destination'] = Map<String, dynamic>.from(toStop);
+      leg['arrival'] = toEvent['arrival'] ?? toEvent['departure'];
+      leg['plannedArrival'] =
+          toEvent['plannedArrival'] ?? toEvent['plannedDeparture'];
+      leg['stopovers'] = events.sublist(fromIndex + 1, toIndex);
 
       return _createJourney(
         {
