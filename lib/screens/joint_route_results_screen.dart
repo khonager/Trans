@@ -31,40 +31,117 @@ class JointRouteResultsScreen extends StatelessWidget {
         foregroundColor: colors.appBarTitle,
         title: Text(german ? 'Gemeinsam planen' : 'Plan together'),
       ),
-      body: options.isEmpty
-          ? _EmptyState(friendName: friendName)
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
-              itemCount: options.length,
-              itemBuilder: (context, index) => _OptionCard(
-                option: options[index],
-                friendName: friendName,
-                destinationName: destinationName,
-                rank: index,
-                onSelect: () => Navigator.of(context).pop(options[index]),
-                onShare: onShare == null
-                    ? null
-                    : () async {
-                        try {
-                          await onShare!(options[index]);
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(german
-                                ? 'Plan wurde an $friendName gesendet.'
-                                : 'Plan sent to $friendName.'),
-                          ));
-                        } catch (_) {
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(german
-                                ? 'Der Plan konnte nicht gesendet werden.'
-                                : 'The plan could not be sent.'),
-                          ));
-                        }
-                      },
-              ),
-            ),
+      body: JointRouteResultsView(
+        friendName: friendName,
+        destinationName: destinationName,
+        options: options,
+        onSelect: (option) => Navigator.of(context).pop(option),
+        onShare: onShare,
+        showHeader: false,
+      ),
     );
+  }
+}
+
+class JointRouteResultsView extends StatelessWidget {
+  final String friendName;
+  final String destinationName;
+  final List<JointJourneyOption> options;
+  final ValueChanged<JointJourneyOption> onSelect;
+  final Future<void> Function(JointJourneyOption option)? onShare;
+  final VoidCallback? onBack;
+  final bool showHeader;
+
+  const JointRouteResultsView({
+    super.key,
+    required this.friendName,
+    required this.destinationName,
+    required this.options,
+    required this.onSelect,
+    this.onShare,
+    this.onBack,
+    this.showHeader = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    final german = Localizations.localeOf(context).languageCode == 'de';
+    final list = options.isEmpty
+        ? _EmptyState(friendName: friendName)
+        : ListView.builder(
+            key: const ValueKey('joint-route-results-list'),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+            itemCount: options.length,
+            itemBuilder: (context, index) => _OptionCard(
+              option: options[index],
+              friendName: friendName,
+              destinationName: destinationName,
+              rank: index,
+              onSelect: () => onSelect(options[index]),
+              onShare: onShare == null
+                  ? null
+                  : () => _share(
+                        context,
+                        option: options[index],
+                        german: german,
+                      ),
+            ),
+          );
+    if (!showHeader) return list;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+          child: Row(
+            children: [
+              IconButton(
+                key: const ValueKey('joint-results-back'),
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back),
+                color: colors.textPrimary,
+              ),
+              Expanded(
+                child: Text(
+                  german
+                      ? '${options.length} gemeinsame Routen'
+                      : '${options.length} shared routes',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: list),
+      ],
+    );
+  }
+
+  Future<void> _share(
+    BuildContext context, {
+    required JointJourneyOption option,
+    required bool german,
+  }) async {
+    try {
+      await onShare!(option);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(german
+            ? 'Plan wurde an $friendName gesendet.'
+            : 'Plan sent to $friendName.'),
+      ));
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(german
+            ? 'Der Plan konnte nicht gesendet werden.'
+            : 'The plan could not be sent.'),
+      ));
+    }
   }
 }
 
@@ -137,8 +214,13 @@ class _OptionCard extends StatelessWidget {
     final sharedMinutes = option.sharedDuration.inMinutes;
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
-      color: colors.cardBg,
-      elevation: rank == 0 ? 3 : 0,
+      color: rank == 0
+          ? Color.alphaBlend(
+              colors.effectiveSeed.withValues(alpha: 0.08),
+              colors.cardBg,
+            )
+          : colors.cardBg,
+      elevation: rank == 0 ? 4 : 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(
@@ -169,7 +251,7 @@ class _OptionCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: colors.effectiveSeed.withValues(alpha: 0.14),
+                    color: colors.effectiveSeed,
                     borderRadius: BorderRadius.circular(99),
                   ),
                   child: Text(
@@ -177,7 +259,7 @@ class _OptionCard extends StatelessWidget {
                         ? '$sharedMinutes Min. zusammen'
                         : '$sharedMinutes min together',
                     style: TextStyle(
-                      color: colors.effectiveSeed,
+                      color: colors.searchBtnText,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -257,6 +339,10 @@ class _OptionCard extends StatelessWidget {
                   label: Text(
                     german ? 'An $friendName senden' : 'Send to $friendName',
                   ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.effectiveSeed,
+                    side: BorderSide(color: colors.effectiveSeed),
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
@@ -269,6 +355,10 @@ class _OptionCard extends StatelessWidget {
                 label: Text(german
                     ? 'Diese Route für mich öffnen'
                     : 'Open my part of this route'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colors.effectiveSeed,
+                  foregroundColor: colors.searchBtnText,
+                ),
               ),
             ),
           ],
@@ -356,16 +446,16 @@ class _SharedModeChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: colors.chipBg,
+        color: colors.effectiveSeed.withValues(alpha: 0.13),
         borderRadius: BorderRadius.circular(99),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 15, color: colors.chipFg),
+          Icon(icon, size: 15, color: colors.effectiveSeed),
           const SizedBox(width: 5),
           Text('$label · $minutes min',
-              style: TextStyle(color: colors.chipFg, fontSize: 12)),
+              style: TextStyle(color: colors.effectiveSeed, fontSize: 12)),
         ],
       ),
     );

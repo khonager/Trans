@@ -62,6 +62,20 @@ class _RouteSearchDefaults {
   });
 }
 
+class _JointRouteContext {
+  final List<JointJourneyOption> options;
+  final String friendId;
+  final String friendName;
+  final String destinationName;
+
+  const _JointRouteContext({
+    required this.options,
+    required this.friendId,
+    required this.friendName,
+    required this.destinationName,
+  });
+}
+
 @visibleForTesting
 ({int leadMinutes, int waitMinutes}) savedJourneyReminderOptionFromWait(
   int reminderMinutes,
@@ -836,12 +850,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
+  final Map<String, _JointRouteContext> _jointRouteContexts =
+      <String, _JointRouteContext>{};
   List<RouteSortOption> _routeResultsSortOrder =
       List<RouteSortOption>.from(defaultRouteSortOrder);
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
   bool _jointPlanningEnabled = false;
+  double _jointHeaderProgress = 0;
+  bool _isJointHeaderDragging = false;
   List<Map<String, dynamic>> _jointPlanningFriends = [];
   String? _selectedJointFriendId;
   JointJourneyIntent _jointJourneyIntent = JointJourneyIntent.balanced;
@@ -922,6 +940,137 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         JointJourneyIntent.balanced => const JointJourneyPreferences.balanced(),
         JointJourneyIntent.together => const JointJourneyPreferences.together(),
       };
+
+  void _setJointPlanningEnabled(bool enabled) {
+    setState(() {
+      _jointPlanningEnabled = enabled;
+      _jointHeaderProgress = enabled ? 1 : 0;
+      _isJointHeaderDragging = false;
+    });
+    if (enabled) unawaited(_loadJointPlanningFriends());
+  }
+
+  Widget _buildPlanModeHeader(TransColors colors, {required bool isGerman}) {
+    Widget glass({required bool moving, double progress = 0}) {
+      final icon = Container(
+        width: 40,
+        height: 40,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: colors.searchHeaderIconBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(Icons.search, color: colors.searchHeaderIcon),
+      );
+      if (!moving) return icon;
+      return Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()
+          ..setEntry(3, 2, 0.001)
+          ..rotateY(pi * progress),
+        child: icon,
+      );
+    }
+
+    return SizedBox(
+      key: const ValueKey('joint-plan-swipe-header'),
+      height: 42,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final travel = max(1.0, constraints.maxWidth - 40);
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: _jointHeaderProgress),
+          duration: Duration(
+            milliseconds: _isJointHeaderDragging ? 35 : 240,
+          ),
+          curve: _isJointHeaderDragging ? Curves.linear : Curves.easeOutCubic,
+          builder: (context, progress, _) => Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(left: 0, top: 1, child: glass(moving: false)),
+              Positioned(
+                left: 52,
+                top: 0,
+                bottom: 0,
+                right: 44,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          AppLocalizations.of(context)!.planJourney,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        ClipRect(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: progress,
+                            child: Opacity(
+                              opacity: progress,
+                              child: Text(
+                                isGerman ? ' zusammen' : ' Together',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.effectiveSeed,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: travel * progress,
+                top: 1,
+                child: Semantics(
+                  button: true,
+                  label: _jointPlanningEnabled
+                      ? (isGerman
+                          ? 'Zur normalen Reiseplanung wechseln'
+                          : 'Switch to normal journey planning')
+                      : (isGerman
+                          ? 'Zur gemeinsamen Reiseplanung wischen'
+                          : 'Swipe to plan a journey together'),
+                  child: GestureDetector(
+                    key: const ValueKey('joint-plan-swipe-handle'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () =>
+                        _setJointPlanningEnabled(!_jointPlanningEnabled),
+                    onHorizontalDragStart: (_) =>
+                        setState(() => _isJointHeaderDragging = true),
+                    onHorizontalDragUpdate: (details) {
+                      setState(() {
+                        _jointHeaderProgress =
+                            (_jointHeaderProgress + details.delta.dx / travel)
+                                .clamp(0.0, 1.0);
+                      });
+                    },
+                    onHorizontalDragEnd: (_) => _setJointPlanningEnabled(
+                      _jointHeaderProgress >= 0.45,
+                    ),
+                    onHorizontalDragCancel: () =>
+                        _setJointPlanningEnabled(_jointPlanningEnabled),
+                    child: glass(moving: true, progress: progress),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
 
   Future<void> _loadDeviceRoutePreferences() async {
     final prefs = await SharedPreferences.getInstance();
@@ -2841,6 +2990,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     controller?.dispose();
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
+    _jointRouteContexts.remove(id);
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -5224,34 +5374,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isArrival: settings.isArrival,
       );
       _releaseBlockingRouteLoad(searchToken);
-      final selected = await Navigator.of(context).push<JointJourneyOption>(
-        MaterialPageRoute(
-          builder: (_) => JointRouteResultsScreen(
-            friendName: friendName,
-            destinationName: destination.name,
-            options: options,
-            onShare: (option) => SupabaseService.sendPrivateMessage(
-              friend!['id'].toString(),
-              _jointPlanMessage(
-                option,
-                friendName: friendName,
-                destinationName: destination.name,
-                german: german,
-              ),
-            ),
-          ),
-        ),
-      );
-      if (!mounted || selected == null) return;
-      _addJourneyTab(
-        singleJourneyData:
-            Map<String, dynamic>.from(selected.myJourney.rawSource),
+      _addJointJourneyTab(
+        options: options,
+        friendId: friend['id'].toString(),
+        friendName: friendName,
         origin: myOrigin,
         destination: destination,
-        title: destination.name,
-        subtitle: german
-            ? '${selected.sharedDuration.inMinutes} Min. mit $friendName'
-            : '${selected.sharedDuration.inMinutes} min with $friendName',
         searchSettings: settings,
       );
     } on TimeoutException {
@@ -5263,6 +5391,46 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         ));
       }
     }
+  }
+
+  void _addJointJourneyTab({
+    required List<JointJourneyOption> options,
+    required String friendId,
+    required String friendName,
+    required Station origin,
+    required Station destination,
+    required RouteSearchSettings searchSettings,
+  }) {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final candidates = <Journey>[];
+    final seen = <String>{};
+    for (final option in options) {
+      if (seen.add(_journeyListKey(option.myJourney))) {
+        candidates.add(option.myJourney);
+      }
+    }
+    setState(() {
+      _jointRouteContexts[id] = _JointRouteContext(
+        options: options,
+        friendId: friendId,
+        friendName: friendName,
+        destinationName: destination.name,
+      );
+      _tabs.add(RouteTab(
+        id: id,
+        title: destination.name,
+        subtitle: friendName,
+        eta: '--:--',
+        totalDuration: '',
+        destination: destination,
+        origin: origin,
+        steps: const [],
+        candidates: candidates,
+        stack: const [],
+        searchSettings: searchSettings,
+      ));
+      _activeTabId = id;
+    });
   }
 
   String _jointPlanMessage(
@@ -5671,21 +5839,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color: colors.searchHeaderIconBg,
-                              borderRadius: BorderRadius.circular(8)),
-                          child: Icon(Icons.search,
-                              color: colors.searchHeaderIcon)),
-                      const SizedBox(width: 12),
-                      Text(AppLocalizations.of(context)!.planJourney,
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textPrimary))
-                    ]),
+                    _buildPlanModeHeader(colors, isGerman: isGerman),
                     const SizedBox(height: 20),
                     KeyedSubtree(
                       key: _fromFieldKey,
@@ -5766,56 +5920,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ],
                     ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: _jointPlanningEnabled
-                            ? colors.effectiveSeed.withValues(alpha: 0.09)
-                            : colors.timeContainerBg,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: _jointPlanningEnabled
-                              ? colors.effectiveSeed.withValues(alpha: 0.35)
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
-                            value: _jointPlanningEnabled,
-                            onChanged: (enabled) {
-                              setState(() => _jointPlanningEnabled = enabled);
-                              if (enabled) {
-                                _loadJointPlanningFriends();
-                              }
-                            },
-                            secondary: Icon(
-                              Icons.group_outlined,
-                              color: _jointPlanningEnabled
-                                  ? colors.effectiveSeed
-                                  : colors.textSecondary,
-                            ),
-                            title: Text(
-                              isGerman
-                                  ? 'Mit einer Person planen'
-                                  : 'Plan with a friend',
-                              style: TextStyle(
-                                color: colors.textPrimary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Text(
-                              isGerman
-                                  ? 'Gemeinsames Fahren, Warten und Laufen zählt.'
-                                  : 'Riding, waiting, and walking together all count.',
-                              style: TextStyle(
-                                  color: colors.textSecondary, fontSize: 12),
-                            ),
+                    if (_jointPlanningEnabled) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        key: const ValueKey('joint-plan-options'),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.effectiveSeed.withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: colors.effectiveSeed.withValues(alpha: 0.35),
                           ),
-                          if (_jointPlanningEnabled) ...[
-                            const SizedBox(height: 8),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.group_outlined,
+                                    size: 18, color: colors.effectiveSeed),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    isGerman
+                                        ? 'Fahren, Warten und Laufen zählen als gemeinsame Zeit.'
+                                        : 'Riding, waiting, and walking all count as time together.',
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
                             if (_jointPlanningFriends.isEmpty)
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
@@ -5901,9 +6038,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                               ),
                             ),
                           ],
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
                         style: TextStyle(
@@ -8042,6 +8179,50 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
+    final jointContext = _jointRouteContexts[route.id];
+    if (route.activeJourney == null && jointContext != null) {
+      return JointRouteResultsView(
+        key: ValueKey<String>('joint-route-results-${route.id}'),
+        friendName: jointContext.friendName,
+        destinationName: jointContext.destinationName,
+        options: jointContext.options,
+        onBack: () => _closeTab(route.id),
+        onSelect: (option) {
+          setState(() {
+            final index = _tabs.indexWhere((tab) => tab.id == route.id);
+            if (index == -1) return;
+            final current = _tabs[index];
+            final stack = List<Journey>.from(current.stack);
+            if (!stack.any((journey) =>
+                _journeysLikelySameRoute(journey, option.myJourney))) {
+              stack.add(option.myJourney);
+            }
+            _tabs[index] = current.copyWith(
+              activeJourney: option.myJourney,
+              steps: option.myJourney.steps,
+              stack: stack,
+              subtitle:
+                  '${option.sharedDuration.inMinutes} min · ${jointContext.friendName}',
+              totalDuration: FormatUtils.formatDuration(
+                  option.myJourney.duration.inMinutes),
+            );
+          });
+          unawaited(_enrichActiveJourneyPlatforms(
+            route.id,
+            option.myJourney,
+          ));
+        },
+        onShare: (option) => SupabaseService.sendPrivateMessage(
+          jointContext.friendId,
+          _jointPlanMessage(
+            option,
+            friendName: jointContext.friendName,
+            destinationName: jointContext.destinationName,
+            german: Localizations.localeOf(context).languageCode == 'de',
+          ),
+        ),
+      );
+    }
     if (route.activeJourney == null &&
         route.candidates != null &&
         route.candidates!.isNotEmpty) {
@@ -8138,8 +8319,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: LayoutBuilder(builder: (context, constraints) {
-                  final showBackButton =
-                      route.candidates != null && route.candidates!.length > 1;
+                  final showBackButton = jointContext != null ||
+                      (route.candidates != null &&
+                          route.candidates!.length > 1);
                   final isCompactHeader = constraints.maxWidth < 430;
                   final timeLabel = route.activeJourney != null
                       ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
