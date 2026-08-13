@@ -11,7 +11,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'package:trans/models/station.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/models/joint_journey.dart';
 import 'package:trans/models/favorite.dart';
+import 'package:trans/services/joint_journey_planner.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -31,6 +33,7 @@ import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
+import '../joint_route_results_screen.dart';
 import 'route_results_view.dart';
 
 // A route detail refresh needs enough of a window to find the selected
@@ -838,6 +841,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
+  bool _jointPlanningEnabled = false;
+  List<Map<String, dynamic>> _jointPlanningFriends = [];
+  String? _selectedJointFriendId;
+  JointJourneyIntent _jointJourneyIntent = JointJourneyIntent.balanced;
 
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
@@ -868,6 +875,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _toFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
     _loadHistoryData();
+    _loadJointPlanningFriends();
     _refreshJourneySharingConfiguration();
     _journeyDetectionTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -878,6 +886,42 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       (_) => _refreshVisibleActiveJourneyIfDue(),
     );
   }
+
+  Future<void> _loadJointPlanningFriends() async {
+    try {
+      final friends = await SupabaseService.getFriends();
+      final available = friends
+          .where((friend) =>
+              (friend['visible_privacy_level'] as int? ?? 0) >= 7 &&
+              friend['latitude'] is num &&
+              friend['longitude'] is num)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _jointPlanningFriends = available;
+        if (_selectedJointFriendId == null && available.isNotEmpty) {
+          _selectedJointFriendId = available.first['id']?.toString();
+        } else if (!available.any(
+            (friend) => friend['id']?.toString() == _selectedJointFriendId)) {
+          _selectedJointFriendId =
+              available.isEmpty ? null : available.first['id']?.toString();
+        }
+      });
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'RoutesTab._loadJointPlanningFriends',
+      );
+    }
+  }
+
+  JointJourneyPreferences get _jointJourneyPreferences =>
+      switch (_jointJourneyIntent) {
+        JointJourneyIntent.fast => const JointJourneyPreferences.fast(),
+        JointJourneyIntent.balanced => const JointJourneyPreferences.balanced(),
+        JointJourneyIntent.together => const JointJourneyPreferences.together(),
+      };
 
   Future<void> _loadDeviceRoutePreferences() async {
     final prefs = await SharedPreferences.getInstance();
@@ -4916,6 +4960,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       );
       final searchSettings =
           _routeSearchSettingsForRequest(when, isArrival: _isArrival);
+      if (_jointPlanningEnabled) {
+        await _findJointRoutes(
+          myOrigin: resolvedFrom,
+          destination: _toStation!,
+          settings: searchSettings,
+          searchToken: searchToken,
+        );
+        return;
+      }
       void handlePartialResults(List<Map<String, dynamic>> partial) {
         if (!mounted || _isRouteSearchCancelled(searchToken)) {
           TransportApi.addSyntheticDebugLog(
@@ -5058,6 +5111,187 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _findJointRoutes({
+    required Station myOrigin,
+    required Station destination,
+    required RouteSearchSettings settings,
+    required int searchToken,
+  }) async {
+    final german = Localizations.localeOf(context).languageCode == 'de';
+    Map<String, dynamic>? friend;
+    for (final candidate in _jointPlanningFriends) {
+      if (candidate['id']?.toString() == _selectedJointFriendId) {
+        friend = candidate;
+        break;
+      }
+    }
+    if (friend == null ||
+        friend['latitude'] is! num ||
+        friend['longitude'] is! num) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(german
+              ? 'Wähle zuerst eine Person mit freigegebenem Standort.'
+              : 'Choose a friend who currently shares their location.'),
+        ));
+      }
+      return;
+    }
+
+    final updatedAt = DateTime.tryParse(friend['updated_at']?.toString() ?? '');
+    final locationIsStale = updatedAt == null ||
+        DateTime.now().toUtc().difference(updatedAt.toUtc()) >
+            const Duration(minutes: 30);
+    if (locationIsStale) {
+      final useStaleLocation = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(german ? 'Standort ist älter' : 'Location may be stale'),
+          content: Text(german
+              ? 'Der letzte freigegebene Standort ist älter als 30 Minuten. Soll er trotzdem als Start verwendet werden?'
+              : 'The last shared location is more than 30 minutes old. Use it as the starting point anyway?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(german ? 'Abbrechen' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(german ? 'Trotzdem verwenden' : 'Use anyway'),
+            ),
+          ],
+        ),
+      );
+      if (useStaleLocation != true || !mounted) return;
+    }
+
+    final friendName = friend['username']?.toString() ??
+        (german ? 'deine Begleitung' : 'your friend');
+    final friendOrigin = Station(
+      id: 'joint-friend:${friend['id']}',
+      name: friendName,
+      type: 'location',
+      latitude: (friend['latitude'] as num).toDouble(),
+      longitude: (friend['longitude'] as num).toDouble(),
+    );
+
+    try {
+      final searches = await Future.wait([
+        _searchJourneysForSettings(
+          myOrigin,
+          destination,
+          settings: settings,
+          results: 20,
+          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+        ),
+        _searchJourneysForSettings(
+          friendOrigin,
+          destination,
+          settings: settings,
+          results: 20,
+          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+        ),
+      ]).timeout(const Duration(seconds: 35));
+      if (!mounted || _isRouteSearchCancelled(searchToken)) return;
+
+      final mine = <Journey>[];
+      final theirs = <Journey>[];
+      for (final raw in searches[0]) {
+        try {
+          mine.add(_createJourney(
+            raw,
+            destinationNameOverride: destination.name,
+          ));
+        } catch (_) {
+          // A malformed provider alternative should not abort joint ranking.
+        }
+      }
+      for (final raw in searches[1]) {
+        try {
+          theirs.add(_createJourney(
+            raw,
+            destinationNameOverride: destination.name,
+          ));
+        } catch (_) {
+          // A malformed provider alternative should not abort joint ranking.
+        }
+      }
+
+      final options = JointJourneyPlanner.rank(
+        myJourneys: mine,
+        friendJourneys: theirs,
+        preferences: _jointJourneyPreferences,
+        isArrival: settings.isArrival,
+      );
+      _releaseBlockingRouteLoad(searchToken);
+      final selected = await Navigator.of(context).push<JointJourneyOption>(
+        MaterialPageRoute(
+          builder: (_) => JointRouteResultsScreen(
+            friendName: friendName,
+            destinationName: destination.name,
+            options: options,
+            onShare: (option) => SupabaseService.sendPrivateMessage(
+              friend!['id'].toString(),
+              _jointPlanMessage(
+                option,
+                friendName: friendName,
+                destinationName: destination.name,
+                german: german,
+              ),
+            ),
+          ),
+        ),
+      );
+      if (!mounted || selected == null) return;
+      _addJourneyTab(
+        singleJourneyData:
+            Map<String, dynamic>.from(selected.myJourney.rawSource),
+        origin: myOrigin,
+        destination: destination,
+        title: destination.name,
+        subtitle: german
+            ? '${selected.sharedDuration.inMinutes} Min. mit $friendName'
+            : '${selected.sharedDuration.inMinutes} min with $friendName',
+        searchSettings: settings,
+      );
+    } on TimeoutException {
+      if (mounted && !_isRouteSearchCancelled(searchToken)) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(german
+              ? 'Die gemeinsame Routensuche hat zu lange gedauert.'
+              : 'The joint route search took too long.'),
+        ));
+      }
+    }
+  }
+
+  String _jointPlanMessage(
+    JointJourneyOption option, {
+    required String friendName,
+    required String destinationName,
+    required bool german,
+  }) {
+    final format = DateFormat('HH:mm');
+    final friendRides = option.friendJourney.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => step.line.trim())
+        .where((line) => line.isNotEmpty)
+        .join(' → ');
+    final shared = option.sharedDuration.inMinutes;
+    final friendDeparture = format.format(option.friendJourney.departure);
+    final friendArrival = format.format(option.friendJourney.arrival);
+    if (german) {
+      return 'Gemeinsamer Routenvorschlag nach $destinationName: '
+          '$shared Min. zusammen. Deine Route: $friendDeparture–$friendArrival'
+          '${friendRides.isEmpty ? '' : ' · $friendRides'}. '
+          'Bitte prüfe die Verbindung vor der Abfahrt noch einmal in Trans.';
+    }
+    return 'Shared route suggestion to $destinationName: '
+        '$shared min together. Your route: $friendDeparture–$friendArrival'
+        '${friendRides.isEmpty ? '' : ' · $friendRides'}. '
+        'Please check the connection in Trans again before departure.';
+  }
+
   Future<void> _triggerVibration() async {
     if (kIsWeb) return;
     if (!await ForegroundHaptics.hasVibrator()) return;
@@ -5151,7 +5385,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final bool canSearch = (_fromStation != null ||
             _fromUsesCurrentLocation ||
             _fromController.text.trim().isNotEmpty) &&
-        (_toStation != null || _toController.text.trim().isNotEmpty);
+        (_toStation != null || _toController.text.trim().isNotEmpty) &&
+        (!_jointPlanningEnabled || _selectedJointFriendId != null);
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -5531,6 +5766,144 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ],
                     ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _jointPlanningEnabled
+                            ? colors.effectiveSeed.withValues(alpha: 0.09)
+                            : colors.timeContainerBg,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _jointPlanningEnabled
+                              ? colors.effectiveSeed.withValues(alpha: 0.35)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            value: _jointPlanningEnabled,
+                            onChanged: (enabled) {
+                              setState(() => _jointPlanningEnabled = enabled);
+                              if (enabled) {
+                                _loadJointPlanningFriends();
+                              }
+                            },
+                            secondary: Icon(
+                              Icons.group_outlined,
+                              color: _jointPlanningEnabled
+                                  ? colors.effectiveSeed
+                                  : colors.textSecondary,
+                            ),
+                            title: Text(
+                              isGerman
+                                  ? 'Mit einer Person planen'
+                                  : 'Plan with a friend',
+                              style: TextStyle(
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              isGerman
+                                  ? 'Gemeinsames Fahren, Warten und Laufen zählt.'
+                                  : 'Riding, waiting, and walking together all count.',
+                              style: TextStyle(
+                                  color: colors.textSecondary, fontSize: 12),
+                            ),
+                          ),
+                          if (_jointPlanningEnabled) ...[
+                            const SizedBox(height: 8),
+                            if (_jointPlanningFriends.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                                child: Text(
+                                  isGerman
+                                      ? 'Niemand teilt gerade einen Standort für Freundes-Routing.'
+                                      : 'No friend currently shares a location for friend routing.',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              )
+                            else
+                              DropdownButtonFormField<String>(
+                                initialValue: _selectedJointFriendId,
+                                isExpanded: true,
+                                decoration: InputDecoration(
+                                  labelText: isGerman ? 'Person' : 'Friend',
+                                  filled: true,
+                                  fillColor: colors.searchInputFill,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                                dropdownColor: colors.cardBg,
+                                items: _jointPlanningFriends
+                                    .map((friend) => DropdownMenuItem<String>(
+                                          value: friend['id']?.toString(),
+                                          child: Text(
+                                            friend['username']?.toString() ??
+                                                (isGerman
+                                                    ? 'Unbekannt'
+                                                    : 'Unknown'),
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                                color: colors.textPrimary),
+                                          ),
+                                        ))
+                                    .toList(),
+                                onChanged: (value) => setState(
+                                    () => _selectedJointFriendId = value),
+                              ),
+                            const SizedBox(height: 10),
+                            SegmentedButton<JointJourneyIntent>(
+                              segments: [
+                                ButtonSegment(
+                                  value: JointJourneyIntent.fast,
+                                  icon: const Icon(Icons.bolt, size: 16),
+                                  label: Text(isGerman ? 'Schnell' : 'Fast'),
+                                ),
+                                ButtonSegment(
+                                  value: JointJourneyIntent.balanced,
+                                  icon: const Icon(Icons.balance, size: 16),
+                                  label:
+                                      Text(isGerman ? 'Balance' : 'Balanced'),
+                                ),
+                                ButtonSegment(
+                                  value: JointJourneyIntent.together,
+                                  icon: const Icon(Icons.group, size: 16),
+                                  label:
+                                      Text(isGerman ? 'Zusammen' : 'Together'),
+                                ),
+                              ],
+                              selected: {_jointJourneyIntent},
+                              onSelectionChanged: (selection) => setState(
+                                () => _jointJourneyIntent = selection.first,
+                              ),
+                              showSelectedIcon: false,
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                isGerman
+                                    ? 'Max. ${_jointJourneyPreferences.maxExtraTravelMinutes} Min. und ${_jointJourneyPreferences.maxExtraTransfers} zusätzliche Umstiege pro Person'
+                                    : 'Up to ${_jointJourneyPreferences.maxExtraTravelMinutes} extra minutes and ${_jointJourneyPreferences.maxExtraTransfers} extra transfers per person',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
                         style: TextStyle(
@@ -5697,7 +6070,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       ],
                                     )
                                   : Text(
-                                      AppLocalizations.of(context)!.findRoutes,
+                                      _jointPlanningEnabled
+                                          ? (isGerman
+                                              ? 'Gemeinsame Route finden'
+                                              : 'Find a shared route')
+                                          : AppLocalizations.of(context)!
+                                              .findRoutes,
                                       style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold)));
