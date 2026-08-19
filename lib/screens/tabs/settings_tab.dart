@@ -2499,7 +2499,14 @@ class _SettingsTabState extends State<SettingsTab> {
                   title: Text(AppLocalizations.of(context)!.language,
                       style: TextStyle(color: colors.textPrimary)),
                   trailing: DropdownButton<String>(
-                    value: widget.locale?.languageCode ?? 'en',
+                    // Falls back to the locale Flutter actually resolved (system
+                    // language) so the dropdown matches the shown translation
+                    // when no explicit choice was stored yet.
+                    value: (widget.locale?.languageCode ??
+                                Localizations.localeOf(context).languageCode) ==
+                            'de'
+                        ? 'de'
+                        : 'en',
                     dropdownColor: colors.cardBg,
                     underline: const SizedBox(),
                     items: [
