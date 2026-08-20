@@ -37,10 +37,6 @@ String deleteAccountErrorMessage(
   return fallbackMessage;
 }
 
-@visibleForTesting
-bool usesStackedPrivacyLevelLayout(double availableWidth) =>
-    availableWidth < 540;
-
 class SettingsTab extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
@@ -2274,41 +2270,9 @@ class _SettingsTabState extends State<SettingsTab> {
                         color: colors.settingsHeader)),
                 const SizedBox(height: 8),
                 _buildSection(context, [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
+                  Builder(
+                    builder: (context) {
                       final locale = Localizations.localeOf(context);
-                      final levelPicker = DropdownButtonHideUnderline(
-                        child: DropdownButton<int>(
-                          value: widget.signalLevel,
-                          dropdownColor: colors.cardBg,
-                          items: List.generate(
-                            JourneySignalLevel.maximum + 1,
-                            (level) => DropdownMenuItem<int>(
-                              value: level,
-                              child: Text(
-                                '$level · ${JourneySignalLevel.title(level, languageCode: locale.languageCode)}',
-                                style: TextStyle(color: colors.textPrimary),
-                              ),
-                            ),
-                          ),
-                          onChanged: (level) async {
-                            if (level == null) return;
-                            await widget.onSignalLevelChanged(level);
-                            await _loadProfile();
-                          },
-                        ),
-                      );
-                      final levelDescription = Text(
-                        '${AppLocalizations.of(context)!.signalLevel(widget.signalLevel)} · '
-                        '${JourneySignalLevel.title(widget.signalLevel, languageCode: locale.languageCode)}\n'
-                        '${JourneySignalLevel.description(widget.signalLevel, languageCode: locale.languageCode)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textSecondary,
-                        ),
-                      );
-                      final isStacked =
-                          usesStackedPrivacyLevelLayout(constraints.maxWidth);
 
                       return ListTile(
                         leading: Icon(
@@ -2323,17 +2287,45 @@ class _SettingsTabState extends State<SettingsTab> {
                           AppLocalizations.of(context)!.journeySignal,
                           style: TextStyle(color: colors.textPrimary),
                         ),
-                        subtitle: isStacked
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  levelDescription,
-                                  const SizedBox(height: 8),
-                                  levelPicker,
-                                ],
-                              )
-                            : levelDescription,
-                        trailing: isStacked ? null : levelPicker,
+                        subtitle: Text(
+                          '${AppLocalizations.of(context)!.signalLevel(widget.signalLevel)} · '
+                          '${JourneySignalLevel.title(widget.signalLevel, languageCode: locale.languageCode)}\n'
+                          '${JourneySignalLevel.description(widget.signalLevel, languageCode: locale.languageCode)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                        // A popup menu instead of a DropdownButton: the closed
+                        // control stays as narrow as the other settings selects
+                        // (the level name is already spelled out in the
+                        // subtitle), while the menu sizes to the level names
+                        // rather than to the button width.
+                        trailing: PopupMenuButton<int>(
+                          tooltip: '',
+                          color: colors.cardBg,
+                          initialValue: widget.signalLevel,
+                          position: PopupMenuPosition.under,
+                          itemBuilder: (context) => List.generate(
+                            JourneySignalLevel.maximum + 1,
+                            (level) => PopupMenuItem<int>(
+                              value: level,
+                              textStyle: _settingsSelectTextStyle(context),
+                              child: Text(
+                                '$level · ${JourneySignalLevel.title(level, languageCode: locale.languageCode)}',
+                                softWrap: false,
+                              ),
+                            ),
+                          ),
+                          onSelected: (level) async {
+                            await widget.onSignalLevelChanged(level);
+                            await _loadProfile();
+                          },
+                          child: _buildSettingsSelectTrigger(
+                            context,
+                            Text('${widget.signalLevel}'),
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -2498,7 +2490,8 @@ class _SettingsTabState extends State<SettingsTab> {
                 ListTile(
                   title: Text(AppLocalizations.of(context)!.language,
                       style: TextStyle(color: colors.textPrimary)),
-                  trailing: DropdownButton<String>(
+                  trailing: _buildSettingsDropdown<String>(
+                    context,
                     // Falls back to the locale Flutter actually resolved (system
                     // language) so the dropdown matches the shown translation
                     // when no explicit choice was stored yet.
@@ -2507,8 +2500,6 @@ class _SettingsTabState extends State<SettingsTab> {
                             'de'
                         ? 'de'
                         : 'en',
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
                     items: [
                       DropdownMenuItem(
                           value: 'en',
@@ -2544,10 +2535,9 @@ class _SettingsTabState extends State<SettingsTab> {
                                 .alertStopsBefore(_stopsBeforeAlarm.toString()),
                         style: TextStyle(
                             fontSize: 12, color: colors.textSecondary)),
-                    trailing: DropdownButton<int>(
+                    trailing: _buildSettingsDropdown<int>(
+                        context,
                         value: _stopsBeforeAlarm,
-                        dropdownColor: colors.cardBg,
-                        underline: const SizedBox(),
                         items: [
                           DropdownMenuItem(
                               value: 0,
@@ -2579,10 +2569,9 @@ class _SettingsTabState extends State<SettingsTab> {
                                 : AppLocalizations.of(context)!.fromTarget),
                         style: TextStyle(
                             fontSize: 12, color: colors.textSecondary)),
-                    trailing: DropdownButton<String>(
+                    trailing: _buildSettingsDropdown<String>(
+                        context,
                         value: _alarmTriggerThreshold,
-                        dropdownColor: colors.cardBg,
-                        underline: const SizedBox(),
                         items: [
                           DropdownMenuItem(
                               value: '5%',
@@ -2638,87 +2627,93 @@ class _SettingsTabState extends State<SettingsTab> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  trailing: DropdownButton<String>(
-                    value: _wakeAlarmSound,
-                    dropdownColor: colors.cardBg,
-                    underline: const SizedBox(),
-                    isDense: true,
-                    selectedItemBuilder: (context) => [
-                      ...WakeAlarmSettings.soundOptions.map(
-                        (option) => SizedBox(
-                          width: 120,
-                          child: Text(
-                            option.label,
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                      ),
-                      if (!kIsWeb)
-                        const SizedBox(
-                          width: 120,
-                          child: Text(
-                            'Add custom audio...',
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ),
-                    ],
-                    items: [
-                      ...WakeAlarmSettings.soundOptions.map(
-                        (option) => DropdownMenuItem(
-                          value: option.id,
-                          child: SizedBox(
-                            width: 170,
-                            child: option.isCustomSound
-                                ? Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          option.label,
-                                          overflow: TextOverflow.ellipsis,
-                                          maxLines: 1,
-                                        ),
-                                      ),
-                                      GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: () async {
-                                          Navigator.of(context).pop();
-                                          await _removeCustomWakeAlarmSound(
-                                            option,
-                                          );
-                                        },
-                                        child: Padding(
-                                          padding:
-                                              const EdgeInsets.only(left: 8),
-                                          child: Icon(
-                                            Icons.delete_outline,
-                                            size: 18,
-                                            color: colors.textSecondary,
+                  // A popup menu rather than a DropdownButton: sound names are
+                  // long and a dropdown menu is locked to the width of its
+                  // (deliberately compact) button, which cut the names off.
+                  trailing: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Give the label as much room as the row can spare
+                      // instead of a fixed budget, so names only ellipsize when
+                      // they really do not fit.
+                      final maxLabelWidth =
+                          (constraints.maxWidth * 0.45).clamp(120.0, 320.0);
+
+                      return PopupMenuButton<String>(
+                        tooltip: '',
+                        color: colors.cardBg,
+                        initialValue: _wakeAlarmSound,
+                        position: PopupMenuPosition.under,
+                        itemBuilder: (context) => [
+                          ...WakeAlarmSettings.soundOptions.map(
+                            (option) => PopupMenuItem<String>(
+                              value: option.id,
+                              textStyle: _settingsSelectTextStyle(context),
+                              child: option.isCustomSound
+                                  ? Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            option.label,
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  )
-                                : Text(
-                                    option.label,
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                  ),
+                                        GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () async {
+                                            Navigator.of(context).pop();
+                                            await _removeCustomWakeAlarmSound(
+                                              option,
+                                            );
+                                          },
+                                          child: Padding(
+                                            padding:
+                                                const EdgeInsets.only(left: 8),
+                                            child: Icon(
+                                              Icons.delete_outline,
+                                              size: 18,
+                                              color: colors.textSecondary,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Text(
+                                      option.label,
+                                      softWrap: false,
+                                    ),
+                            ),
+                          ),
+                          if (!kIsWeb)
+                            PopupMenuItem<String>(
+                              value: _pickCustomSoundValue,
+                              textStyle: _settingsSelectTextStyle(context),
+                              child: const Text(
+                                'Add custom audio...',
+                                softWrap: false,
+                              ),
+                            ),
+                        ],
+                        onSelected: (val) async {
+                          await _selectWakeAlarmSound(val);
+                          if (!mounted) return;
+                          setState(() => _isWakeAlarmPreviewPlaying = false);
+                        },
+                        child: _buildSettingsSelectTrigger(
+                          context,
+                          ConstrainedBox(
+                            constraints:
+                                BoxConstraints(maxWidth: maxLabelWidth),
+                            child: Text(
+                              WakeAlarmSettings.soundForId(_wakeAlarmSound)
+                                  .label,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
                           ),
                         ),
-                      ),
-                      if (!kIsWeb)
-                        const DropdownMenuItem(
-                          value: _pickCustomSoundValue,
-                          child: Text('Add custom audio...'),
-                        ),
-                    ],
-                    onChanged: (val) async {
-                      if (val == null) return;
-                      await _selectWakeAlarmSound(val);
-                      if (!mounted) return;
-                      setState(() => _isWakeAlarmPreviewPlaying = false);
+                      );
                     },
                   ),
                 ),
@@ -2726,10 +2721,9 @@ class _SettingsTabState extends State<SettingsTab> {
                 ListTile(
                     title: Text(AppLocalizations.of(context)!.alarmPattern,
                         style: TextStyle(color: colors.textPrimary)),
-                    trailing: DropdownButton<String>(
+                    trailing: _buildSettingsDropdown<String>(
+                        context,
                         value: _vibrationPattern,
-                        dropdownColor: colors.cardBg,
-                        underline: const SizedBox(),
                         items: const [
                           DropdownMenuItem(
                               value: 'standard', child: Text("Standard")),
@@ -4350,6 +4344,66 @@ class _SettingsTabState extends State<SettingsTab> {
           if (isGerman) const TextSpan(text: ' fortfahren'),
         ],
       ),
+    );
+  }
+
+  /// Shared by every settings select — the closed value and the menu entries,
+  /// dropdown- and popup-backed alike — so none of them picks up a different
+  /// weight from its surroundings.
+  TextStyle _settingsSelectTextStyle(BuildContext context) => TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.normal,
+        color: TransColors.of(context).textPrimary,
+      );
+
+  /// Closed state of a settings select that is backed by a popup menu instead
+  /// of a [DropdownButton]: same label + arrow metrics as
+  /// [_buildSettingsDropdown], but the menu can size to its own content.
+  Widget _buildSettingsSelectTrigger(BuildContext context, Widget label) {
+    final colors = TransColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Replaces the ambient style instead of merging into it: a ListTile
+          // gives its trailing slot the w500 `labelSmall` style, which would
+          // otherwise make this label heavier than the dropdown-backed rows.
+          DefaultTextStyle(
+            style: _settingsSelectTextStyle(context),
+            child: label,
+          ),
+          Icon(Icons.arrow_drop_down, color: colors.textSecondary),
+        ],
+      ),
+    );
+  }
+
+  /// Trailing select for the settings rows.
+  ///
+  /// A bare [DropdownButton] is as wide as its widest menu entry and
+  /// left-aligns the selected label inside that box, so every row ends up with
+  /// a different gap between its value and the arrow. Pinning the label to the
+  /// end makes it hug the arrow identically on every row.
+  Widget _buildSettingsDropdown<T>(
+    BuildContext context, {
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+    List<Widget> Function(BuildContext)? selectedItemBuilder,
+  }) {
+    final colors = TransColors.of(context);
+    return DropdownButton<T>(
+      value: value,
+      dropdownColor: colors.cardBg,
+      underline: const SizedBox(),
+      isDense: true,
+      alignment: AlignmentDirectional.centerEnd,
+      style: _settingsSelectTextStyle(context),
+      iconEnabledColor: colors.textSecondary,
+      selectedItemBuilder: selectedItemBuilder,
+      items: items,
+      onChanged: onChanged,
     );
   }
 
