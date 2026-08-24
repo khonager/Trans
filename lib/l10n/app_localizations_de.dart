@@ -103,6 +103,20 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sentFriendRequest => 'Freundschaftsanfrage gesendet';
 
   @override
+  String get sentRequests => 'Gesendete Anfragen';
+
+  @override
+  String get requestPending => 'Wartet auf Antwort';
+
+  @override
+  String get cancelRequest => 'Anfrage zurückziehen';
+
+  @override
+  String requestCancelledFor(String username) {
+    return 'Anfrage an @$username zurückgezogen';
+  }
+
+  @override
   String get friendRequestAccepted => 'Freundschaftsanfrage angenommen!';
 
   @override

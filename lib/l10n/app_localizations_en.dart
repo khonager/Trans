@@ -103,6 +103,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sentFriendRequest => 'Sent a friend request';
 
   @override
+  String get sentRequests => 'Sent Requests';
+
+  @override
+  String get requestPending => 'Waiting for a response';
+
+  @override
+  String get cancelRequest => 'Cancel request';
+
+  @override
+  String requestCancelledFor(String username) {
+    return 'Request to @$username cancelled';
+  }
+
+  @override
   String get friendRequestAccepted => 'Friend request accepted!';
 
   @override

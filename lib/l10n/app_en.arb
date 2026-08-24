@@ -59,6 +59,17 @@
   "offline": "Offline",
   "noFriendsYet": "No friends yet.",
   "sentFriendRequest": "Sent a friend request",
+  "sentRequests": "Sent Requests",
+  "requestPending": "Waiting for a response",
+  "cancelRequest": "Cancel request",
+  "requestCancelledFor": "Request to @{username} cancelled",
+  "@requestCancelledFor": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
   "friendRequestAccepted": "Friend request accepted!",
   "friendRequestDenied": "Friend request denied.",
   "inactive": "Inactive",

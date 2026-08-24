@@ -266,6 +266,30 @@ abstract class AppLocalizations {
   /// **'Sent a friend request'**
   String get sentFriendRequest;
 
+  /// No description provided for @sentRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent Requests'**
+  String get sentRequests;
+
+  /// No description provided for @requestPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for a response'**
+  String get requestPending;
+
+  /// No description provided for @cancelRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get cancelRequest;
+
+  /// No description provided for @requestCancelledFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Request to @{username} cancelled'**
+  String requestCancelledFor(String username);
+
   /// No description provided for @friendRequestAccepted.
   ///
   /// In en, this message translates to:
