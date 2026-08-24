@@ -8,7 +8,8 @@ Iterable<CustomPainter> _outlinePainters(WidgetTester tester) {
       .widgetList<CustomPaint>(find.byType(CustomPaint))
       .map((paint) => paint.foregroundPainter)
       .nonNulls
-      .where((painter) => painter.runtimeType.toString().contains('RunningBorder'));
+      .where((painter) =>
+          painter.runtimeType.toString().contains('RunningBorder'));
 }
 
 void main() {
@@ -45,5 +46,24 @@ void main() {
     // The animation keeps running without settling.
     await tester.pump(const Duration(milliseconds: 600));
     expect(tester.hasRunningAnimations, isTrue);
+  });
+
+  testWidgets('stops circling when it is switched off', (tester) async {
+    Widget build({required bool active}) => MaterialApp(
+          home: Center(
+            child: RunningBorder(
+              active: active,
+              color: Colors.purple,
+              child: const SizedBox(width: 80, height: 32, child: Text('Alt')),
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(build(active: true));
+    expect(_outlinePainters(tester), isNotEmpty);
+
+    await tester.pumpWidget(build(active: false));
+    expect(_outlinePainters(tester), isEmpty);
+    expect(tester.hasRunningAnimations, isFalse);
   });
 }

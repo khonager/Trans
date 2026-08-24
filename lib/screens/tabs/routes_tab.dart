@@ -1060,6 +1060,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   /// Rides already looked up, so each one costs at most one search.
   final Set<String> _earlierAlternativeScanKeys = <String>{};
+
+  /// Rides whose alternatives the traveller has opened; the border stops
+  /// circling for those.
+  final Set<String> _seenAlternativeHints = <String>{};
+
+  /// Results the background check already fetched, so the sheet has something
+  /// to show the moment it opens.
+  final Map<String, List<Map<String, dynamic>>> _preloadedAlternatives =
+      <String, List<Map<String, dynamic>>>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
@@ -4399,7 +4408,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       String? highlightKey,
       DateTime? earliestDeparture,
       String? currentTripId,
-      String? currentLine}) {
+      String? currentLine,
+      List<Map<String, dynamic>>? initialResults}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -4433,6 +4443,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           earliestDeparture: earliestDeparture,
           currentTripId: currentTripId,
           currentLine: currentLine,
+          initialResults: initialResults,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
             final j = _createJourney(
@@ -8375,6 +8386,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _resetEarlierAlternativeScans(String tabId) {
     _earlierAlternativeScanKeys.removeWhere((key) => key.startsWith('$tabId|'));
     _earlierAlternativeSteps.remove(tabId);
+    _seenAlternativeHints.removeWhere((key) => key.startsWith('$tabId|'));
+    _preloadedAlternatives.removeWhere((key, _) => key.startsWith('$tabId|'));
+  }
+
+  String _alternativeHintKey(String tabId, int stepIndex) =>
+      '$tabId|$stepIndex';
+
+  void _markAlternativeHintSeen(String tabId, int stepIndex) {
+    if (!mounted) return;
+    setState(() {
+      _seenAlternativeHints.add(_alternativeHintKey(tabId, stepIndex));
+    });
   }
 
   /// Earliest departure that is still reachable: the arrival of the ride that
@@ -8433,7 +8456,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   /// Ride key of the earliest departure that is still catchable and arrives no
   /// later than the current plan - the one that buys the most buffer. Null when
-  /// switching would not help.
+  /// switching would not help. The results are kept for the sheet.
   Future<String?> _findEarlierCatchableRide(
     RouteTab route,
     Journey journey,
@@ -8505,7 +8528,43 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       bestKey = alternativeRideKey(raw);
       bestDeparture = alternativeDeparture;
     }
+
+    if (bestKey != null) {
+      // The button will invite a tap, so have the whole sheet ready: the
+      // backward search above plus the departures from here on.
+      unawaited(_preloadAlternatives(route, stepIndex, from, departure,
+          earlier: results));
+    }
     return bestKey;
+  }
+
+  /// Fills the sheet's list ahead of time, so opening it shows something at
+  /// once instead of a spinner.
+  Future<void> _preloadAlternatives(
+    RouteTab route,
+    int stepIndex,
+    Station from,
+    DateTime departure, {
+    required List<Map<String, dynamic>> earlier,
+  }) async {
+    try {
+      final forward = await TransportApi.searchJourneys(
+        from,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: departure,
+        isArrival: false,
+        results: 12,
+        enrichPlatforms: false,
+      );
+      _preloadedAlternatives[_alternativeHintKey(route.id, stepIndex)] =
+          mergeAlternativeJourneys(earlier, forward);
+    } catch (error) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: alternatives preload failed tab=${route.id} '
+        'step=$stepIndex error=$error',
+      );
+    }
   }
 
   Future<void> _enrichActiveJourneyPlatforms(
@@ -8919,6 +8978,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??
                           false,
+                  alternativeHintSeen: _seenAlternativeHints
+                      .contains(_alternativeHintKey(route.id, i)),
+                  onAlternativeHintSeen: () =>
+                      _markAlternativeHintSeen(route.id, i),
                   finalDestinationId: route.destination.id,
                   onShowStopDepartures: ({
                     required String stopId,
@@ -8934,8 +8997,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ),
                   onOpenAlternatives: (stationId, time,
                           {double? lat, double? lng, String? name}) =>
-                      _showAlternatives(
-                          context, stationId, route.destination, time,
+                      _showAlternatives(context, stationId, route.destination, time,
                           lat: lat,
                           lng: lng,
                           stationName: name,
@@ -8943,7 +9005,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           earliestDeparture:
                               earliestCatchableDeparture(route.steps, i),
                           currentTripId: route.steps[i].tripId,
-                          currentLine: route.steps[i].line),
+                          currentLine: route.steps[i].line,
+                          initialResults: _preloadedAlternatives[
+                              _alternativeHintKey(route.id, i)]),
                   onIntermediateAlarmLongPress: (stopName,
                           {required int stopIndex,
                           double? targetLat,
@@ -8987,6 +9051,12 @@ class _StepCard extends StatefulWidget {
   /// An earlier departure for this ride exists that still reaches the
   /// destination in time, so switching buys transfer buffer.
   final bool hasEarlierAlternative;
+
+  /// The traveller has already opened the alternatives for this ride.
+  final bool alternativeHintSeen;
+
+  /// Called when they open them, so the hint stops asking for attention.
+  final VoidCallback? onAlternativeHintSeen;
   final String finalDestinationId;
   final Future<void> Function({
     required String stopId,
@@ -9014,6 +9084,8 @@ class _StepCard extends StatefulWidget {
     required this.step,
     this.isFirst = false,
     this.hasEarlierAlternative = false,
+    this.alternativeHintSeen = false,
+    this.onAlternativeHintSeen,
     required this.finalDestinationId,
     required this.onShowStopDepartures,
     required this.onOpenAlternatives,
@@ -9390,12 +9462,21 @@ class _StepCardState extends State<_StepCard> {
                                       highlighted:
                                           kPreviewAnimateEveryAltButton ||
                                               widget.hasEarlierAlternative,
-                                      onTap: () => widget.onOpenAlternatives(
-                                        step.startStationId!,
-                                        step.dateTime!,
-                                        lat: step.startLat,
-                                        lng: step.startLng,
-                                      ),
+                                      // The line stops circling once the
+                                      // traveller has looked; the tint stays as
+                                      // a reminder that an option is there.
+                                      animated: kPreviewAnimateEveryAltButton ||
+                                          (widget.hasEarlierAlternative &&
+                                              !widget.alternativeHintSeen),
+                                      onTap: () {
+                                        widget.onAlternativeHintSeen?.call();
+                                        widget.onOpenAlternatives(
+                                          step.startStationId!,
+                                          step.dateTime!,
+                                          lat: step.startLat,
+                                          lng: step.startLng,
+                                        );
+                                      },
                                     ),
                                     const SizedBox(width: 8),
                                   ],
@@ -9800,6 +9881,7 @@ class _StepCardState extends State<_StepCard> {
       {bool isActive = false,
       bool outlined = false,
       bool highlighted = false,
+      bool animated = false,
       required VoidCallback onTap}) {
     final colors = TransColors.of(context);
     // A highlighted chip keeps a faint wash of the theme colour so it reads as
@@ -9812,7 +9894,7 @@ class _StepCardState extends State<_StepCard> {
     return GestureDetector(
         onTap: onTap,
         child: RunningBorder(
-            active: highlighted,
+            active: animated,
             color: colors.effectiveSeed,
             child: Container(
                 padding:
@@ -10079,6 +10161,10 @@ class _AlternativesSheet extends StatefulWidget {
   /// the traveller is already on is not an alternative to itself.
   final String? currentTripId;
   final String? currentLine;
+
+  /// Results the background check already fetched. They are shown right away
+  /// and replaced as soon as the fresh search comes back.
+  final List<Map<String, dynamic>>? initialResults;
   final Function(Map<String, dynamic> journeyData, DateTime depTime) onSelected;
 
   const _AlternativesSheet({
@@ -10091,6 +10177,7 @@ class _AlternativesSheet extends StatefulWidget {
     this.earliestDeparture,
     this.currentTripId,
     this.currentLine,
+    this.initialResults,
   });
 
   @override
@@ -10110,16 +10197,25 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   @override
   void initState() {
     super.initState();
+    final preloaded = widget.initialResults;
+    if (preloaded != null && preloaded.isNotEmpty) {
+      // Straight to the list; the refresh below fills in what the background
+      // check left out.
+      _results.addAll(mergeAlternativeJourneys(const [], preloaded));
+      _isLoading = false;
+      _isMoreLoading = true;
+    }
     _fetchInitial();
   }
 
   Future<void> _fetchInitial() async {
-    if (mounted) setState(() => _isLoading = true);
+    // Preloaded rows stay on screen while the fresh search runs behind them.
+    if (mounted && _results.isEmpty) setState(() => _isLoading = true);
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          final merged = mergeAlternativeJourneys(const [], res);
+          final merged = mergeAlternativeJourneys(_results, res);
           _results
             ..clear()
             ..addAll(merged);
@@ -10128,23 +10224,35 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         });
       }
 
-      // We want to see the "Next" connections AND exactly one before it.
-      // We'll search starting from 1 hour ago first.
-      List<Map<String, dynamic>> results = await TransportApi.searchJourneys(
+      // What can still be taken comes first. A search anchored an hour back
+      // spends its itineraries on that hour and can stop before it ever
+      // reaches the planned departure.
+      final forward = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: widget.initialTime,
+        isArrival: false,
+        results: 12,
+        onPartialResults: processResults,
+      );
+      processResults(forward);
+
+      // Then the ones before it, for the sense of how often the line runs.
+      List<Map<String, dynamic>> earlier = await TransportApi.searchJourneys(
         widget.from,
         widget.to,
         nahverkehrOnly: widget.nahverkehrOnly,
         when: widget.initialTime.subtract(const Duration(hours: 1)),
         isArrival: false,
-        results: 12,
+        results: 8,
         onPartialResults: processResults,
       );
+      processResults(earlier);
 
-      processResults(results);
-
-      // If no preceding found (infrequent line), try 4 hours back.
-      if (results.isEmpty || !_hasPreceding(results)) {
-        results = await TransportApi.searchJourneys(
+      // Nothing preceding at all (infrequent line): reach further back.
+      if (!_hasPreceding(_results)) {
+        earlier = await TransportApi.searchJourneys(
           widget.from,
           widget.to,
           nahverkehrOnly: widget.nahverkehrOnly,
@@ -10153,7 +10261,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           results: 15,
           onPartialResults: processResults,
         );
-        processResults(results);
+        processResults(earlier);
       }
     } catch (e, st) {
       AppError.log(e,
@@ -10164,6 +10272,8 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           _isLoading = false;
         });
       }
+    } finally {
+      if (mounted) setState(() => _isMoreLoading = false);
     }
   }
 
