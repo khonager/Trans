@@ -427,7 +427,7 @@ class _SettingsTabState extends State<SettingsTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Custom alarm sound set to "${sound.label}". Tap the trash icon in the picker to remove it.',
+            AppLocalizations.of(context)!.customSoundSet(sound.label),
           ),
         ),
       );
@@ -455,21 +455,26 @@ class _SettingsTabState extends State<SettingsTab> {
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Custom alarm sound removed.')),
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context)!.customSoundRemoved)),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not remove the custom sound: $error')),
+        SnackBar(
+            content: Text(AppLocalizations.of(context)!
+                .couldNotRemoveCustomSound('$error'))),
       );
     }
   }
 
   String _customSoundImportErrorMessage(Object error) {
+    final l10n = AppLocalizations.of(context)!;
     if (error is StateError) {
-      return 'Could not import that audio file: ${error.message}';
+      return l10n.couldNotImportAudioReason(error.message);
     }
-    return 'Could not import that audio file.';
+    return l10n.couldNotImportAudio;
   }
 
   Future<void> _persistAlarmDeliverySettings() async {
@@ -2689,8 +2694,8 @@ class _SettingsTabState extends State<SettingsTab> {
                             PopupMenuItem<String>(
                               value: _pickCustomSoundValue,
                               textStyle: _settingsSelectTextStyle(context),
-                              child: const Text(
-                                'Add custom audio...',
+                              child: Text(
+                                AppLocalizations.of(context)!.addCustomAudio,
                                 softWrap: false,
                               ),
                             ),
@@ -3686,7 +3691,9 @@ class _SettingsTabState extends State<SettingsTab> {
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save that theme color: $error')),
+        SnackBar(
+            content: Text(AppLocalizations.of(context)!
+                .couldNotSaveThemeColor('$error'))),
       );
     } finally {
       if (mounted) {

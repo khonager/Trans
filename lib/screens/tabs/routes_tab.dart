@@ -879,6 +879,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     FocusScope.of(context).unfocus();
   }
 
+  AppLocalizations? _reminderL10n;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reminder notifications are built after awaits, where `context` may already
+    // be defunct, so keep a live copy of the current localizations here.
+    _reminderL10n = AppLocalizations.of(context);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2322,7 +2332,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Wake alert set for $stopName')),
+      SnackBar(
+          content:
+              Text(AppLocalizations.of(context)!.wakeAlertSetFor(stopName))),
     );
   }
 
@@ -3069,9 +3081,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       await _loadHistoryData();
 
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              saved ? 'Connection saved' : 'Connection removed from saved')));
+          content:
+              Text(saved ? l10n.connectionSaved : l10n.connectionUnsaved)));
     } finally {
       if (mounted) {
         setState(() {
@@ -3788,9 +3801,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final departure = _savedJourneyDepartureLocal(item);
     final departureLabel =
         departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
+    final l10n = _reminderL10n ?? AppLocalizations.of(context)!;
     return (
-      title: 'Leave soon',
-      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+      title: l10n.leaveSoonTitle,
+      body: l10n.leaveSoonBody('$minutes', fromName, toName, departureLabel),
     );
   }
 
@@ -3907,10 +3921,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (showedExactAlarmWarning && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Android blocked exact alarms for this reminder. Open "Alarms & reminders" for Trans to make leave alerts reliable.',
-          ),
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.exactAlarmsBlocked),
         ),
       );
     }
@@ -3984,7 +3996,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Leave in $minutes min for $toName')),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!
+            .leaveInMinutesFor('$minutes', toName)),
+      ),
     );
   }
 
@@ -4055,11 +4070,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
     final selectedSummary = normalizedNextMinutes.isEmpty
-        ? 'none'
+        ? l10n.leaveRemindersNone
         : normalizedNextMinutes.map((value) => '${value}m').join(', ');
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Leave reminders: $selectedSummary')),
+      SnackBar(content: Text(l10n.leaveRemindersSummary(selectedSummary))),
     );
   }
 
@@ -4070,7 +4086,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await _loadHistoryData();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saved route deleted')),
+      SnackBar(
+          content: Text(AppLocalizations.of(context)!.savedRouteDeleted)),
     );
   }
 
@@ -4374,8 +4391,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       }
 
-      String fmtPlat(String? p) =>
-          p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
+      String fmtPlat(String? p) => p == null
+          ? ''
+          : (int.tryParse(p) != null
+              ? AppLocalizations.of(context)!.platformShort(p)
+              : p);
 
       if (isAtSameStation && !isSignificantWalk) {
         isWaitInstruction = true;
@@ -6377,7 +6397,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   color: colors.cardBg,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white10)),
-              child: Text('No recent routes yet',
+              child: Text(AppLocalizations.of(context)!.noRecentRoutesYet,
                   style: TextStyle(color: colors.searchHintText)),
             )
           else
@@ -6418,13 +6438,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Row(
               children: [
-                Text('Saved routes',
+                Text(AppLocalizations.of(context)!.savedRoutesTitle,
                     style: TextStyle(
                         color: colors.sectionHeader,
                         fontWeight: FontWeight.bold,
                         fontSize: 12)),
                 const SizedBox(width: 8),
-                Text('(auto-delete 24h after arrival)',
+                Text(AppLocalizations.of(context)!.savedRoutesAutoDelete,
                     style:
                         TextStyle(color: colors.searchHintText, fontSize: 11)),
               ],
@@ -6595,9 +6615,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           color: colors.iconDelete,
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Text(
-                          'Delete',
-                          style: TextStyle(
+                        child: Text(
+                          AppLocalizations.of(context)!.delete,
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -7800,31 +7820,27 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     switch (sort) {
       case RouteSortOption.earliestDeparture:
         title = l10n.earliestDep;
-        subtitle = 'Change the departure time for this route tab only.';
+        subtitle = l10n.sortSheetEarliestDepHint;
         break;
       case RouteSortOption.earliestArrival:
         title = l10n.earliestArr;
-        subtitle = 'Change the arrival time for this route tab only.';
+        subtitle = l10n.sortSheetEarliestArrHint;
         break;
       case RouteSortOption.shortestDuration:
         title = l10n.fastest;
-        subtitle =
-            'Tune walking speed to favor faster overall connections in this tab.';
+        subtitle = l10n.sortSheetFastestHint;
         break;
       case RouteSortOption.leastTransfers:
         title = l10n.leastTransfers;
-        subtitle =
-            'Add transfer buffer so this tab favors routes with easier changes.';
+        subtitle = l10n.sortSheetLeastTransfersHint;
         break;
       case RouteSortOption.shortestWait:
         title = l10n.leastWait;
-        subtitle =
-            'Adjust transfer padding so this tab can favor tighter or looser waits.';
+        subtitle = l10n.sortSheetLeastWaitHint;
         break;
       case RouteSortOption.leastWalking:
         title = l10n.leastWalking;
-        subtitle =
-            'Limit maximum walking time for this tab without changing app settings.';
+        subtitle = l10n.sortSheetLeastWalkingHint;
         break;
     }
 
@@ -7895,7 +7911,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: onReset,
-                      child: const Text('Use app default'),
+                      child: Text(l10n.useAppDefault),
                     ),
                   ),
                 ],
@@ -7907,7 +7923,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               case RouteSortOption.earliestDeparture:
                 editor = ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Departure time'),
+                  title: Text(l10n.departureTimeLabel),
                   subtitle: Text(
                     DateFormat('EEE, MMM d • HH:mm').format(draft.when),
                   ),
@@ -7918,7 +7934,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               case RouteSortOption.earliestArrival:
                 editor = ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Arrival time'),
+                  title: Text(l10n.arrivalTimeLabel),
                   subtitle: Text(
                     DateFormat('EEE, MMM d • HH:mm').format(draft.when),
                   ),
@@ -7930,7 +7946,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveSpeed =
                     draft.pedestrianSpeedKmh ?? defaults.pedestrianSpeedKmh;
                 editor = buildSliderTile(
-                  label: 'Walking speed',
+                  label: l10n.walkingSpeedLabel,
                   valueText: '${effectiveSpeed.toStringAsFixed(1)} km/h',
                   value: effectiveSpeed,
                   min: 2,
@@ -7950,7 +7966,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveMinTransfer = draft.minTransferTimeMinutes ??
                     defaults.minTransferTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Minimum transfer time',
+                  label: l10n.minimumTransferTimeLabel,
                   valueText: '$effectiveMinTransfer min',
                   value: effectiveMinTransfer.toDouble(),
                   min: 0,
@@ -7970,7 +7986,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectivePadding = draft.additionalTransferTimeMinutes ??
                     defaults.additionalTransferTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Transfer padding',
+                  label: l10n.transferPaddingLabel,
                   valueText: '$effectivePadding min',
                   value: effectivePadding.toDouble(),
                   min: 0,
@@ -7992,7 +8008,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveMaxWalking = draft.maxWalkingTimeMinutes ??
                     defaults.maxWalkingTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Maximum walking time',
+                  label: l10n.maximumWalkingTimeLabel,
                   valueText: '$effectiveMaxWalking min',
                   value: effectiveMaxWalking.toDouble(),
                   min: 5,
@@ -8042,7 +8058,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       width: double.infinity,
                       child: FilledButton(
                         onPressed: () => Navigator.of(sheetContext).pop(draft),
-                        child: const Text('Apply to this routes view'),
+                        child: Text(l10n.applyToThisRoutesView),
                       ),
                     ),
                   ],

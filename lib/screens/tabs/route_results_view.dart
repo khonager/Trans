@@ -564,7 +564,8 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     );
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $label.')),
+        SnackBar(
+            content: Text(AppLocalizations.of(context)!.couldNotOpen(label))),
       );
     }
   }
@@ -967,7 +968,7 @@ class _ExternalPlannerActions extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            'Search this connection in',
+            AppLocalizations.of(context)!.searchThisConnectionIn,
             style: TextStyle(
               color: colors.textSecondary,
               fontSize: 12,
