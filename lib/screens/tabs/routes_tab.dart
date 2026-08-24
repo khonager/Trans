@@ -5664,8 +5664,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                // Left padding is intentionally omitted here: it is part of the
+                // close button's tap target instead, so taps next to the small
+                // "x" still close the tab.
+                padding: const EdgeInsets.only(right: 12),
                 decoration: BoxDecoration(
                   color: isActive ? colors.navBarSelected : colors.cardBg,
                   borderRadius: BorderRadius.circular(20),
@@ -5675,9 +5677,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   children: [
                     // Close Button (Left)
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => _closeTab(tab.id),
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
                         child: Icon(Icons.close,
                             size: 14,
                             color: isActive ? Colors.white70 : Colors.grey),
@@ -5760,8 +5763,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 });
               },
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                // Left padding lives inside the close button's tap target so
+                // taps near the small "x" still remove the alternative.
+                padding: const EdgeInsets.only(right: 12),
                 decoration: BoxDecoration(
                   color: isSelected ? colors.navBarSelected : colors.cardBg,
                   borderRadius: BorderRadius.circular(20),
@@ -5771,6 +5775,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   children: [
                     // Subtabs also have Close button?
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
                         // Remove this journey from stack
                         setState(() {
@@ -5806,7 +5811,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         });
                       },
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
                         child: Icon(Icons.close,
                             size: 14,
                             color: isSelected ? Colors.white70 : Colors.grey),
