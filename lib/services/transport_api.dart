@@ -4932,6 +4932,9 @@ class TransportApi {
     Function(List<Map<String, dynamic>>)? onPartialResults,
     void Function(Set<String> activePhases)? onLoadStateChanged,
     bool Function()? shouldContinue,
+    /// Background callers that only need times can skip the per-stop platform
+    /// lookups, which cost one request per leg.
+    bool enrichPlatforms = true,
   }) async {
     final activePhases = <String>{};
     void setPhase(String phase, bool active) {
@@ -5009,10 +5012,12 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
@@ -5142,10 +5147,12 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: hybrid(partial) motis=${resultsList[0].length} '
           'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
@@ -5195,10 +5202,12 @@ class TransportApi {
             shouldContinue: shouldContinue,
           );
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
           'base=${baseResults.length} final=${finalResults.length}',

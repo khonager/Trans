@@ -28,6 +28,7 @@ import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/utils/favorite_icons.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
+import 'package:trans/widgets/running_border.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
@@ -503,6 +504,223 @@ DateTime? alternativeJourneyDisplayDepartureLocal(
   }
 }
 
+/// Ride steps that should be checked for an earlier departure right now.
+///
+/// Opening a route checks the first two upcoming rides; as rides depart the
+/// window slides forward, so the ride after them gets its turn one at a time.
+@visibleForTesting
+List<int> earlierAlternativeScanTargets(
+  List<JourneyStep> steps,
+  DateTime now, {
+  int lookahead = 2,
+}) {
+  final targets = <int>[];
+  for (var i = 0; i < steps.length && targets.length < lookahead; i++) {
+    final step = steps[i];
+    if (step.type != 'ride') continue;
+    final departure = step.plannedDeparture ?? step.dateTime;
+    if (departure == null || !departure.isAfter(now)) continue;
+    targets.add(i);
+  }
+  return targets;
+}
+
+/// Whether an alternative departure is worth pointing at: meaningfully
+/// earlier, still catchable, and not arriving later than the current plan.
+@visibleForTesting
+bool earlierAlternativeQualifies({
+  required DateTime plannedDeparture,
+  required DateTime alternativeDeparture,
+  required DateTime alternativeArrival,
+  required DateTime earliestCatchable,
+  required DateTime latestArrival,
+  Duration minGain = const Duration(minutes: 3),
+}) {
+  if (alternativeDeparture.isAfter(plannedDeparture.subtract(minGain))) {
+    return false;
+  }
+  if (alternativeDeparture.isBefore(earliestCatchable)) return false;
+  if (alternativeArrival.isAfter(latestArrival)) return false;
+  return true;
+}
+
+/// First transit leg of a raw journey map, if it has one.
+Map<String, dynamic>? _firstRideLegOf(Map<String, dynamic> journey) {
+  final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+  if (legs == null || legs.isEmpty) return null;
+  for (final leg in legs) {
+    if (leg['line'] != null) return leg;
+  }
+  return null;
+}
+
+/// When the traveller actually boards: a leading walk leg makes the journey
+/// start earlier than the ride, which is what the route view shows.
+@visibleForTesting
+DateTime? alternativeJourneyBoardingLocal(Map<String, dynamic> journey) {
+  final ride = _firstRideLegOf(journey);
+  final rawTime = ride?['plannedDeparture'] ?? ride?['departure'];
+  if (rawTime == null) return alternativeJourneyDisplayDepartureLocal(journey);
+  try {
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return alternativeJourneyDisplayDepartureLocal(journey);
+  }
+}
+
+@visibleForTesting
+String? alternativeJourneyTripId(Map<String, dynamic> journey) {
+  final ride = _firstRideLegOf(journey);
+  final tripId = (ride?['line'] as Map?)?['tripId'] ?? ride?['tripId'];
+  final normalized = tripId?.toString().trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  return normalized;
+}
+
+/// Line label without the train number, for comparing two rides.
+@visibleForTesting
+String normalizeRideLineKey(String line) {
+  return line
+      .toUpperCase()
+      .replaceAll(RegExp(r'\s*\(\d+\)'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+/// True when a listed journey starts with the very ride the traveller is
+/// already on - the same trip is not an alternative to itself.
+@visibleForTesting
+bool alternativeIsSameRide(
+  Map<String, dynamic> journey, {
+  String? tripId,
+  String? line,
+  DateTime? departure,
+}) {
+  final journeyTripId = alternativeJourneyTripId(journey);
+  if (tripId != null && tripId.isNotEmpty && journeyTripId == tripId) {
+    return true;
+  }
+
+  // Trip ids that differ prove nothing: MOTIS hands out opaque tokens that can
+  // come back different for the same trip in another response. So fall through
+  // instead of trusting the mismatch - the same line leaving at the same minute
+  // is the same ride. Compare boarding times, since a leading walk shifts the
+  // start of the journey.
+  if (departure == null) return false;
+  final boarding = alternativeJourneyBoardingLocal(journey);
+  if (boarding == null) return false;
+  if (boarding.difference(departure).abs() > const Duration(minutes: 1)) {
+    return false;
+  }
+  if (line == null || line.isEmpty) return true;
+  final ride = _firstRideLegOf(journey);
+  final journeyLine = (ride?['line'] as Map?)?['name']?.toString();
+  if (journeyLine == null) return true;
+  return normalizeRideLineKey(journeyLine) == normalizeRideLineKey(line);
+}
+
+/// Keeps the earlier departures short: at most [maxEarlier] of the ones
+/// closest to [reference], everything from [reference] on stays untouched.
+@visibleForTesting
+List<Map<String, dynamic>> limitEarlierAlternatives(
+  List<Map<String, dynamic>> journeys, {
+  required DateTime reference,
+  int maxEarlier = 3,
+}) {
+  bool isEarlier(Map<String, dynamic> journey) {
+    final boarding = alternativeJourneyBoardingLocal(journey);
+    return boarding != null && boarding.isBefore(reference);
+  }
+
+  final earlierCount = journeys.where(isEarlier).length;
+  if (earlierCount <= maxEarlier) return journeys;
+
+  // The list runs from early to late, so dropping from the front keeps the
+  // departures closest to the planned one.
+  var skip = earlierCount - maxEarlier;
+  final kept = <Map<String, dynamic>>[];
+  for (final journey in journeys) {
+    if (skip > 0 && isEarlier(journey)) {
+      skip--;
+      continue;
+    }
+    kept.add(journey);
+  }
+  return kept;
+}
+
+/// Identity of the ride a journey starts with. Two results that begin with the
+/// same ride are one choice for the traveller, however they continue.
+@visibleForTesting
+String? alternativeRideKey(Map<String, dynamic> journey) {
+  final tripId = alternativeJourneyTripId(journey);
+  if (tripId != null) return 'trip:$tripId';
+
+  final boarding = alternativeJourneyBoardingLocal(journey);
+  if (boarding == null) return null;
+  final ride = _firstRideLegOf(journey);
+  final line = (ride?['line'] as Map?)?['name']?.toString() ?? '';
+  return '${normalizeRideLineKey(line)}@${boarding.millisecondsSinceEpoch}';
+}
+
+/// Keeps one entry per ride, the one that reaches the destination first, in
+/// the order the rides depart.
+@visibleForTesting
+List<Map<String, dynamic>> collapseAlternativesByRide(
+  Iterable<Map<String, dynamic>> journeys,
+) {
+  final collapsed = <Map<String, dynamic>>[];
+  final indexByRide = <String, int>{};
+
+  for (final journey in journeys) {
+    final key = alternativeRideKey(journey);
+    if (key == null) {
+      collapsed.add(journey);
+      continue;
+    }
+    final index = indexByRide[key];
+    if (index == null) {
+      indexByRide[key] = collapsed.length;
+      collapsed.add(journey);
+      continue;
+    }
+
+    final keptArrival = alternativeJourneyArrivalLocal(collapsed[index]);
+    final arrival = alternativeJourneyArrivalLocal(journey);
+    if (keptArrival == null ||
+        (arrival != null && arrival.isBefore(keptArrival))) {
+      collapsed[index] = journey;
+    }
+  }
+
+  return collapsed;
+}
+
+/// Identity of a raw journey map: departure and arrival pin one connection.
+@visibleForTesting
+String? alternativeJourneyKey(Map<String, dynamic> journey) {
+  final departure = alternativeJourneyDisplayDepartureLocal(journey);
+  final arrival = alternativeJourneyArrivalLocal(journey);
+  if (departure == null || arrival == null) return null;
+  return '${departure.millisecondsSinceEpoch}_'
+      '${arrival.millisecondsSinceEpoch}';
+}
+
+/// Arrival of a raw journey map at its final stop.
+@visibleForTesting
+DateTime? alternativeJourneyArrivalLocal(Map<String, dynamic> journey) {
+  try {
+    final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+    if (legs == null || legs.isEmpty) return null;
+    final lastLeg = legs.last;
+    final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
+    if (rawTime == null) return null;
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return null;
+  }
+}
+
 @visibleForTesting
 List<Map<String, dynamic>> mergeAlternativeJourneys(
   Iterable<Map<String, dynamic>> existing,
@@ -512,25 +730,8 @@ List<Map<String, dynamic>> mergeAlternativeJourneys(
   final seenIds = <String>{};
 
   void addJourney(Map<String, dynamic> journey) {
-    final departure = alternativeJourneyDisplayDepartureLocal(journey);
-    if (departure == null) return;
-
-    final arrival = (() {
-      try {
-        final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
-        if (legs == null || legs.isEmpty) return null;
-        final lastLeg = legs.last;
-        final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
-        if (rawTime == null) return null;
-        return DateTime.parse(rawTime.toString()).toLocal();
-      } catch (_) {
-        return null;
-      }
-    })();
-    if (arrival == null) return;
-
-    final id =
-        '${departure.millisecondsSinceEpoch}_${arrival.millisecondsSinceEpoch}';
+    final id = alternativeJourneyKey(journey);
+    if (id == null) return;
     if (!seenIds.add(id)) return;
     merged.add(journey);
   }
@@ -616,11 +817,7 @@ int _journeyPlatformSignal(Journey journey) {
 String _firstRideLineKey(Journey journey) {
   for (final step in journey.steps) {
     if (step.type != 'ride') continue;
-    return step.line
-        .toUpperCase()
-        .replaceAll(RegExp(r'\s*\(\d+\)'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    return normalizeRideLineKey(step.line);
   }
   return '';
 }
@@ -853,6 +1050,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Set<int> _cancelledRouteSearchTokens = <int>{};
   final Set<String> _activePlatformEnrichmentKeys = <String>{};
   final Set<String> _completedActivePlatformEnrichmentKeys = <String>{};
+
+  /// Per tab: step index of a ride that can be swapped for an earlier
+  /// departure, pointing at the ride key of that suggestion. Keyed by ride and
+  /// not by connection, because the sheet may keep a different continuation of
+  /// the same ride than the check happened to see.
+  final Map<String, Map<int, String>> _earlierAlternativeSteps =
+      <String, Map<int, String>>{};
+
+  /// Rides already looked up, so each one costs at most one search.
+  final Set<String> _earlierAlternativeScanKeys = <String>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
@@ -1383,6 +1590,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
     final journey = route?.activeJourney;
     if (route == null || journey == null) return;
+
+    // Rides that have meanwhile departed free up the lookahead window, so the
+    // ride after them gets checked for an earlier departure.
+    _scheduleEarlierAlternativeScans(route, journey);
 
     final now = DateTime.now();
     final departure = journey.plannedDeparture ?? journey.departure;
@@ -3059,6 +3270,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
     _jointRouteContexts.remove(id);
+    _resetEarlierAlternativeScans(id);
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -4142,8 +4354,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await _loadHistoryData();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(AppLocalizations.of(context)!.savedRouteDeleted)),
+      SnackBar(content: Text(AppLocalizations.of(context)!.savedRouteDeleted)),
     );
   }
 
@@ -4182,7 +4393,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   // FIX: Accept full Station object
   void _showAlternatives(BuildContext context, String stationId,
       Station destination, DateTime referenceTime,
-      {double? lat, double? lng, String? stationName}) {
+      {double? lat,
+      double? lng,
+      String? stationName,
+      String? highlightKey,
+      DateTime? earliestDeparture,
+      String? currentTripId,
+      String? currentLine}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -4212,6 +4429,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           to: toDummy,
           initialTime: referenceTime,
           nahverkehrOnly: widget.onlyNahverkehr,
+          highlightKey: highlightKey,
+          earliestDeparture: earliestDeparture,
+          currentTripId: currentTripId,
+          currentLine: currentLine,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
             final j = _createJourney(
@@ -5817,6 +6038,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     );
                   }
                 });
+                // Step indices belong to one journey, so the hints start over.
+                _resetEarlierAlternativeScans(tab.id);
+                _scheduleEarlierAlternativeScans(tab, journey);
               },
               child: Container(
                 // Left padding lives inside the close button's tap target so
@@ -8139,6 +8363,151 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  /// How many upcoming rides are checked for an earlier departure: two when a
+  /// route is opened, and the window then slides forward one ride at a time.
+  static const int _earlierAlternativeLookahead = 2;
+
+  /// An alternative has to be at least this much earlier to be worth a hint.
+  static const Duration _earlierAlternativeMinGain = Duration(minutes: 3);
+
+  static const Duration _earlierAlternativeSearchWindow = Duration(minutes: 60);
+
+  void _resetEarlierAlternativeScans(String tabId) {
+    _earlierAlternativeScanKeys.removeWhere((key) => key.startsWith('$tabId|'));
+    _earlierAlternativeSteps.remove(tabId);
+  }
+
+  /// Earliest departure that is still reachable: the arrival of the ride that
+  /// brings the traveller to this stop, or now for the first ride. Walking time
+  /// at the transfer is deliberately not deducted.
+  DateTime earliestCatchableDeparture(List<JourneyStep> steps, int stepIndex) {
+    final now = DateTime.now();
+    for (var i = stepIndex - 1; i >= 0; i--) {
+      if (steps[i].type != 'ride') continue;
+      final previousArrival = steps[i].plannedArrival;
+      if (previousArrival == null) return now;
+      return previousArrival.isAfter(now) ? previousArrival : now;
+    }
+    return now;
+  }
+
+  /// Keeps the next few upcoming rides checked. Called when a route is opened
+  /// and on every active-journey tick, so once a ride has departed the ride
+  /// after it gets its turn.
+  void _scheduleEarlierAlternativeScans(RouteTab route, Journey journey) {
+    final targets = earlierAlternativeScanTargets(
+      journey.steps,
+      DateTime.now(),
+      lookahead: _earlierAlternativeLookahead,
+    );
+    for (final stepIndex in targets) {
+      final key = '${route.id}|${_journeyListKey(journey)}|$stepIndex';
+      if (!_earlierAlternativeScanKeys.add(key)) continue;
+      unawaited(_scanEarlierAlternativeForStep(route, journey, stepIndex));
+    }
+  }
+
+  Future<void> _scanEarlierAlternativeForStep(
+    RouteTab route,
+    Journey journey,
+    int stepIndex,
+  ) async {
+    try {
+      final found = await _findEarlierCatchableRide(route, journey, stepIndex);
+      if (found == null || !mounted) return;
+      setState(() {
+        (_earlierAlternativeSteps[route.id] ??= <int, String>{})[stepIndex] =
+            found;
+      });
+      TransportApi.addSyntheticDebugLog(
+        'ui: earlier alternative tab=${route.id} step=$stepIndex '
+        'line=${journey.steps[stepIndex].line} key=$found',
+      );
+    } catch (error) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: earlier alternative scan failed tab=${route.id} '
+        'step=$stepIndex error=$error',
+      );
+    }
+  }
+
+  /// Ride key of the earliest departure that is still catchable and arrives no
+  /// later than the current plan - the one that buys the most buffer. Null when
+  /// switching would not help.
+  Future<String?> _findEarlierCatchableRide(
+    RouteTab route,
+    Journey journey,
+    int stepIndex,
+  ) async {
+    final step = journey.steps[stepIndex];
+    final departure = step.plannedDeparture ?? step.dateTime;
+    if (departure == null) return null;
+
+    final stationId = step.startStationId;
+    final hasCoordinates = step.startLat != null && step.startLng != null;
+    if ((stationId == null || stationId.isEmpty) && !hasCoordinates) {
+      return null;
+    }
+
+    // Mirrors what the Alt sheet searches, so a lit-up button always has
+    // something behind it when it is tapped.
+    final from = Station(
+      id: stationId ?? '',
+      name: step.startStationName ?? 'Origin',
+      type: hasCoordinates ? 'location' : 'station',
+      latitude: step.startLat,
+      longitude: step.startLng,
+    );
+
+    final results = await TransportApi.searchJourneys(
+      from,
+      route.destination,
+      nahverkehrOnly: widget.onlyNahverkehr,
+      when: departure.subtract(_earlierAlternativeSearchWindow),
+      isArrival: false,
+      results: 8,
+      // Only departure and arrival times decide the hint.
+      enrichPlatforms: false,
+    );
+
+    final earliestCatchable =
+        earliestCatchableDeparture(journey.steps, stepIndex);
+    final latestArrival = journey.plannedArrival ?? journey.arrival;
+
+    String? bestKey;
+    DateTime? bestDeparture;
+    for (final raw in results) {
+      if (alternativeIsSameRide(
+        raw,
+        tripId: step.tripId,
+        line: step.line,
+        departure: departure,
+      )) {
+        continue;
+      }
+      final alternativeDeparture = alternativeJourneyBoardingLocal(raw);
+      final alternativeArrival = alternativeJourneyArrivalLocal(raw);
+      if (alternativeDeparture == null || alternativeArrival == null) continue;
+      if (!earlierAlternativeQualifies(
+        plannedDeparture: departure,
+        alternativeDeparture: alternativeDeparture,
+        alternativeArrival: alternativeArrival,
+        earliestCatchable: earliestCatchable,
+        latestArrival: latestArrival,
+        minGain: _earlierAlternativeMinGain,
+      )) {
+        continue;
+      }
+      if (bestDeparture != null &&
+          !alternativeDeparture.isBefore(bestDeparture)) {
+        continue;
+      }
+      bestKey = alternativeRideKey(raw);
+      bestDeparture = alternativeDeparture;
+    }
+    return bestKey;
+  }
+
   Future<void> _enrichActiveJourneyPlatforms(
     String tabId,
     Journey selectedJourney,
@@ -8345,6 +8714,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               route.id,
               selectedJourneyForEnrichment!,
             ));
+            _resetEarlierAlternativeScans(route.id);
+            _scheduleEarlierAlternativeScans(
+              route,
+              selectedJourneyForEnrichment!,
+            );
           }
         },
         onBack: () => _closeTab(route.id),
@@ -8542,6 +8916,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               _StepCard(
                   step: route.steps[i],
                   isFirst: i == 0,
+                  hasEarlierAlternative:
+                      _earlierAlternativeSteps[route.id]?.containsKey(i) ??
+                          false,
                   finalDestinationId: route.destination.id,
                   onShowStopDepartures: ({
                     required String stopId,
@@ -8559,7 +8936,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           {double? lat, double? lng, String? name}) =>
                       _showAlternatives(
                           context, stationId, route.destination, time,
-                          lat: lat, lng: lng, stationName: name),
+                          lat: lat,
+                          lng: lng,
+                          stationName: name,
+                          highlightKey: _earlierAlternativeSteps[route.id]?[i],
+                          earliestDeparture:
+                              earliestCatchableDeparture(route.steps, i),
+                          currentTripId: route.steps[i].tripId,
+                          currentLine: route.steps[i].line),
                   onIntermediateAlarmLongPress: (stopName,
                           {required int stopIndex,
                           double? targetLat,
@@ -8586,9 +8970,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 }
 
+/// Preview switch for the sheet: with no real suggestion, the first
+/// alternative is marked so the highlight can be looked at on any route.
+/// Off - the sheet only marks what the check actually found.
+const bool kPreviewHighlightSuggestedAlternative = false;
+
+/// Preview switch for the running border: every Alt button animates, whether
+/// or not something was found. Off - only rides with an earlier, still
+/// catchable alternative are marked.
+const bool kPreviewAnimateEveryAltButton = false;
+
 class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
+
+  /// An earlier departure for this ride exists that still reaches the
+  /// destination in time, so switching buys transfer buffer.
+  final bool hasEarlierAlternative;
   final String finalDestinationId;
   final Future<void> Function({
     required String stopId,
@@ -8615,6 +9013,7 @@ class _StepCard extends StatefulWidget {
   const _StepCard({
     required this.step,
     this.isFirst = false,
+    this.hasEarlierAlternative = false,
     required this.finalDestinationId,
     required this.onShowStopDepartures,
     required this.onOpenAlternatives,
@@ -8988,6 +9387,9 @@ class _StepCardState extends State<_StepCard> {
                                       context,
                                       Icons.alt_route,
                                       AppLocalizations.of(context)!.altShort,
+                                      highlighted:
+                                          kPreviewAnimateEveryAltButton ||
+                                              widget.hasEarlierAlternative,
                                       onTap: () => widget.onOpenAlternatives(
                                         step.startStationId!,
                                         step.dateTime!,
@@ -9397,28 +9799,40 @@ class _StepCardState extends State<_StepCard> {
   Widget _buildActionChip(BuildContext context, IconData icon, String label,
       {bool isActive = false,
       bool outlined = false,
+      bool highlighted = false,
       required VoidCallback onTap}) {
     final colors = TransColors.of(context);
+    // A highlighted chip keeps a faint wash of the theme colour so it reads as
+    // marked even while the running border is on the far side of the button.
+    final background = isActive
+        ? colors.chipActiveBg
+        : (highlighted
+            ? colors.effectiveSeed.withValues(alpha: 0.25)
+            : colors.chipBg);
     return GestureDetector(
         onTap: onTap,
-        child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-                color: isActive ? colors.chipActiveBg : colors.chipBg,
-                borderRadius: BorderRadius.circular(20),
-                border: outlined
-                    ? Border.all(color: colors.chipActiveBg, width: 1.4)
-                    : null),
-            child: Row(children: [
-              Icon(icon,
-                  size: 14,
-                  color: isActive ? colors.chipActiveFg : colors.chipFg),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: TextStyle(
-                      color: isActive ? colors.chipActiveFg : colors.chipFg,
-                      fontSize: 12))
-            ])));
+        child: RunningBorder(
+            active: highlighted,
+            color: colors.effectiveSeed,
+            child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                    color: background,
+                    borderRadius: BorderRadius.circular(20),
+                    border: outlined
+                        ? Border.all(color: colors.chipActiveBg, width: 1.4)
+                        : null),
+                child: Row(children: [
+                  Icon(icon,
+                      size: 14,
+                      color: isActive ? colors.chipActiveFg : colors.chipFg),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: TextStyle(
+                          color: isActive ? colors.chipActiveFg : colors.chipFg,
+                          fontSize: 12))
+                ]))));
   }
 }
 
@@ -9650,6 +10064,21 @@ class _AlternativesSheet extends StatefulWidget {
   final Station to;
   final DateTime initialTime;
   final bool nahverkehrOnly;
+
+  /// Ride key of the earlier connection that made the Alt button light up; it
+  /// is marked where it sits in the list.
+  final String? highlightKey;
+
+  /// Departure before which the traveller cannot be at the stop, because the
+  /// ride that brings them there has not arrived yet. Those connections stay
+  /// in the list - knowing how often the line runs is worth something - they
+  /// are only dimmed and never recommended.
+  final DateTime? earliestDeparture;
+
+  /// The ride this sheet was opened from. It is filtered out, because the trip
+  /// the traveller is already on is not an alternative to itself.
+  final String? currentTripId;
+  final String? currentLine;
   final Function(Map<String, dynamic> journeyData, DateTime depTime) onSelected;
 
   const _AlternativesSheet({
@@ -9658,6 +10087,10 @@ class _AlternativesSheet extends StatefulWidget {
     required this.initialTime,
     required this.nahverkehrOnly,
     required this.onSelected,
+    this.highlightKey,
+    this.earliestDeparture,
+    this.currentTripId,
+    this.currentLine,
   });
 
   @override
@@ -9665,6 +10098,10 @@ class _AlternativesSheet extends StatefulWidget {
 }
 
 class _AlternativesSheetState extends State<_AlternativesSheet> {
+  /// Set once the traveller asked for the earlier departures that the cap
+  /// keeps out of the way.
+  bool _showAllEarlier = false;
+
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
   bool _isMoreLoading = false;
@@ -9774,12 +10211,25 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
     }
   }
 
+  /// Boarding time of the first ride - the same time the route view shows, so
+  /// the two do not disagree by the minute a leading walk leg costs.
   DateTime _getDepTime(Map<String, dynamic> j) {
-    return alternativeJourneyDisplayDepartureLocal(j) ?? DateTime.now();
+    return alternativeJourneyBoardingLocal(j) ?? DateTime.now();
   }
 
   void _loadEarlier() {
     if (_results.isEmpty) return;
+    final selectable = _selectableResults();
+    final capped = limitEarlierAlternatives(
+      selectable,
+      reference: widget.initialTime,
+    ).length;
+    if (!_showAllEarlier && capped < selectable.length) {
+      setState(() => _showAllEarlier = true);
+      return;
+    }
+    // Everything loaded from here on is earlier, so the cap stays lifted.
+    _showAllEarlier = true;
     _fetch(
         _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true);
   }
@@ -9838,104 +10288,165 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           Expanded(child: Center(child: Text(l10n.noRoutesFound)))
         else
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _results.length + 2,
-              itemBuilder: (ctx, idx) {
-                if (idx == 0) {
-                  return TextButton.icon(
-                      style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12)),
-                      onPressed: _isMoreLoading ? null : _loadEarlier,
-                      icon: const Icon(Icons.history, size: 18),
-                      label: Text(l10n.loadEarlier));
-                }
-                if (idx == _results.length + 1) {
-                  return TextButton.icon(
-                      style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12)),
-                      onPressed: _isMoreLoading ? null : _loadLater,
-                      icon: const Icon(Icons.update, size: 18),
-                      label: Text(l10n.loadLater));
-                }
+            child: Builder(builder: (ctx) {
+              final selectable = _selectableResults();
+              // At most three earlier departures up front; "Frühere
+              // Verbindungen" reveals the rest and then keeps loading back.
+              final visible = _showAllEarlier
+                  ? selectable
+                  : limitEarlierAlternatives(
+                      selectable,
+                      reference: widget.initialTime,
+                    );
+              const leadingCount = 1;
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: visible.length + leadingCount + 1,
+                itemBuilder: (ctx, idx) {
+                  if (idx == 0) {
+                    return TextButton.icon(
+                        style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12)),
+                        onPressed: _isMoreLoading ? null : _loadEarlier,
+                        icon: const Icon(Icons.history, size: 18),
+                        label: Text(l10n.loadEarlier));
+                  }
+                  if (idx == visible.length + leadingCount) {
+                    return TextButton.icon(
+                        style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12)),
+                        onPressed: _isMoreLoading ? null : _loadLater,
+                        icon: const Icon(Icons.update, size: 18),
+                        label: Text(l10n.loadLater));
+                  }
 
-                final journey = _results[idx - 1];
-                final legs =
-                    (journey['legs'] as List).cast<Map<String, dynamic>>();
-                if (legs.isEmpty) return const SizedBox.shrink();
-                final firstRide = legs.firstWhere((l) => l['line'] != null,
-                    orElse: () => legs.first);
-                final line = firstRide['line'] != null
-                    ? firstRide['line']['name']
-                    : 'Walk/Transfer';
-                final dir = firstRide['direction'] ?? 'Destination';
-                final depTime = _getDepTime(journey);
-
-                int delayMin = 0;
-                if (firstRide['departureDelay'] != null) {
-                  delayMin =
-                      ((firstRide['departureDelay'] as num) / 60).round();
-                } else if (firstRide['plannedDeparture'] != null &&
-                    firstRide['departure'] != null) {
-                  final planned =
-                      DateTime.parse(firstRide['plannedDeparture']).toLocal();
-                  final actual =
-                      DateTime.parse(firstRide['departure']).toLocal();
-                  delayMin = actual.difference(planned).inMinutes;
-                }
-
-                return ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  leading: CircleAvatar(
-                    backgroundColor: colors.chipBg,
-                    child:
-                        Icon(Icons.alt_route, color: colors.chipFg, size: 20),
-                  ),
-                  title: Row(
-                    children: [
-                      Expanded(
-                          child: Text(
-                              AppLocalizations.of(context)!
-                                  .toDirection(line, dir),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold))),
-                      if (depTime.isBefore(widget.initialTime
-                          .subtract(const Duration(minutes: 1))))
-                        Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(4)),
-                            child: Text(AppLocalizations.of(context)!.previous,
-                                style: TextStyle(
-                                    color: Colors.blue,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold)))
-                    ],
-                  ),
-                  subtitle: Text.rich(TextSpan(children: [
-                    TextSpan(
-                        text: AppLocalizations.of(context)!
-                            .departsAt(DateFormat('HH:mm').format(depTime)),
-                        style: TextStyle(color: colors.textSecondary)),
-                    if (delayMin > 0)
-                      TextSpan(
-                          text:
-                              " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
-                          style: const TextStyle(
-                              color: Colors.orange,
-                              fontWeight: FontWeight.bold)),
-                  ])),
-                  onTap: () => widget.onSelected(journey, depTime),
-                );
-              },
-            ),
+                  final journey = visible[idx - leadingCount];
+                  return _buildJourneyTile(
+                    context,
+                    journey,
+                    highlighted:
+                        alternativeRideKey(journey) == _highlightedKey(),
+                    reachable: _isReachable(journey),
+                  );
+                },
+              );
+            }),
           ),
         if (_isMoreLoading && _results.isNotEmpty)
           const LinearProgressIndicator(),
       ],
     );
+  }
+
+  /// The suggested connection is the one the automatic check found; while the
+  /// preview switch is on, the first result stands in for it so the styling
+  /// can be looked at on any route.
+  /// A connection that leaves before the traveller can be at the stop is shown
+  /// for orientation, but greyed out.
+  bool _isReachable(Map<String, dynamic> journey) {
+    final cutoff = widget.earliestDeparture;
+    if (cutoff == null) return true;
+    return !_getDepTime(journey).isBefore(cutoff);
+  }
+
+  String? _highlightedKey() {
+    if (widget.highlightKey != null) return widget.highlightKey;
+    if (!kPreviewHighlightSuggestedAlternative) return null;
+    final reachable = _selectableResults().where(_isReachable);
+    if (reachable.isEmpty) return null;
+    return alternativeRideKey(reachable.first);
+  }
+
+  /// Results worth offering: only the ride the traveller is already on drops
+  /// out, and each remaining ride appears once even if it continues in several
+  /// ways.
+  List<Map<String, dynamic>> _selectableResults() {
+    final offered = _results.where((journey) => !alternativeIsSameRide(
+          journey,
+          tripId: widget.currentTripId,
+          line: widget.currentLine,
+          departure: widget.initialTime,
+        ));
+
+    // Sorted by boarding time, which is what the rows show. The raw results
+    // are ordered by journey start, so a leading walk leg would otherwise put
+    // rows out of order.
+    final collapsed = collapseAlternativesByRide(offered)
+      ..sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
+    return collapsed;
+  }
+
+  Widget _buildJourneyTile(
+    BuildContext context,
+    Map<String, dynamic> journey, {
+    required bool highlighted,
+    bool reachable = true,
+  }) {
+    final colors = TransColors.of(context);
+    final legs = (journey['legs'] as List).cast<Map<String, dynamic>>();
+    if (legs.isEmpty) return const SizedBox.shrink();
+    final firstRide =
+        legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+    final line =
+        firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+    final dir = firstRide['direction'] ?? 'Destination';
+    final depTime = _getDepTime(journey);
+
+    int delayMin = 0;
+    if (firstRide['departureDelay'] != null) {
+      delayMin = ((firstRide['departureDelay'] as num) / 60).round();
+    } else if (firstRide['plannedDeparture'] != null &&
+        firstRide['departure'] != null) {
+      final planned = DateTime.parse(firstRide['plannedDeparture']).toLocal();
+      final actual = DateTime.parse(firstRide['departure']).toLocal();
+      delayMin = actual.difference(planned).inMinutes;
+    }
+
+    final tile = ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      leading: CircleAvatar(
+        backgroundColor: highlighted
+            ? colors.effectiveSeed.withValues(alpha: 0.25)
+            : colors.chipBg,
+        child: Icon(Icons.alt_route,
+            color: highlighted ? colors.effectiveSeed : colors.chipFg,
+            size: 20),
+      ),
+      title: Row(
+        children: [
+          Expanded(
+              child: Text(AppLocalizations.of(context)!.toDirection(line, dir),
+                  style: const TextStyle(fontWeight: FontWeight.bold))),
+          if (depTime.isBefore(
+              widget.initialTime.subtract(const Duration(minutes: 1))))
+            Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4)),
+                child: Text(AppLocalizations.of(context)!.previous,
+                    style: TextStyle(
+                        color: Colors.blue,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold)))
+        ],
+      ),
+      subtitle: Text.rich(TextSpan(children: [
+        TextSpan(
+            text: AppLocalizations.of(context)!
+                .departsAt(DateFormat('HH:mm').format(depTime)),
+            style: TextStyle(color: colors.textSecondary)),
+        if (delayMin > 0)
+          TextSpan(
+              text:
+                  " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
+              style: const TextStyle(
+                  color: Colors.orange, fontWeight: FontWeight.bold)),
+      ])),
+      onTap: () => widget.onSelected(journey, depTime),
+    );
+
+    // Still tappable: the traveller may know something the plan does not.
+    return reachable ? tile : Opacity(opacity: 0.45, child: tile);
   }
 }

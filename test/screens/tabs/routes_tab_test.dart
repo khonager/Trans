@@ -40,6 +40,389 @@ void main() {
     expect(combined, 'Gl. 24');
   });
 
+  group('earlier alternative hints', () {
+    JourneyStep ride(String line, DateTime departure, DateTime arrival) {
+      return JourneyStep(
+        type: 'ride',
+        line: line,
+        instruction: line,
+        duration: '10 min',
+        departureTime: '',
+        arrivalTime: '',
+        dateTime: departure,
+        plannedDeparture: departure,
+        plannedArrival: arrival,
+      );
+    }
+
+    JourneyStep walk(DateTime departure) {
+      return JourneyStep(
+        type: 'walk',
+        line: 'Transfer',
+        instruction: 'walk',
+        duration: '5 min',
+        departureTime: '',
+        arrivalTime: '',
+        isWalking: true,
+        dateTime: departure,
+      );
+    }
+
+    // Far enough ahead that "now" never overtakes the fixture.
+    final start = DateTime(2030, 8, 24, 9, 0);
+    final steps = <JourneyStep>[
+      walk(start),
+      ride('21', start.add(const Duration(minutes: 15)),
+          start.add(const Duration(minutes: 41))),
+      ride('RB75', start.add(const Duration(minutes: 50)),
+          start.add(const Duration(minutes: 80))),
+      ride('RB33', start.add(const Duration(minutes: 87)),
+          start.add(const Duration(minutes: 120))),
+    ];
+
+    test('checks the first two rides when a route is opened', () {
+      expect(earlierAlternativeScanTargets(steps, start), [1, 2]);
+    });
+
+    test('slides forward one ride at a time as rides depart', () {
+      expect(
+        earlierAlternativeScanTargets(
+          steps,
+          start.add(const Duration(minutes: 20)),
+        ),
+        [2, 3],
+      );
+      expect(
+        earlierAlternativeScanTargets(
+          steps,
+          start.add(const Duration(minutes: 55)),
+        ),
+        [3],
+      );
+      expect(
+        earlierAlternativeScanTargets(
+          steps,
+          start.add(const Duration(minutes: 90)),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('cannot board before the ride that brings you there arrives', () {
+      final state = RoutesTabState();
+      // Ride 3 is reached with ride 2, which arrives at start + 80 min.
+      expect(
+        state.earliestCatchableDeparture(steps, 3),
+        start.add(const Duration(minutes: 80)),
+      );
+    });
+
+    test('accepts an earlier departure that still arrives in time', () {
+      expect(
+        earlierAlternativeQualifies(
+          plannedDeparture: DateTime(2026, 8, 24, 10, 27),
+          alternativeDeparture: DateTime(2026, 8, 24, 10, 0),
+          alternativeArrival: DateTime(2026, 8, 24, 11, 9),
+          earliestCatchable: DateTime(2026, 8, 24, 9, 50),
+          latestArrival: DateTime(2026, 8, 24, 11, 9),
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects an alternative that cannot be reached in time', () {
+      expect(
+        earlierAlternativeQualifies(
+          plannedDeparture: DateTime(2026, 8, 24, 10, 27),
+          alternativeDeparture: DateTime(2026, 8, 24, 9, 45),
+          alternativeArrival: DateTime(2026, 8, 24, 11, 9),
+          earliestCatchable: DateTime(2026, 8, 24, 9, 50),
+          latestArrival: DateTime(2026, 8, 24, 11, 9),
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects an alternative that arrives later than the current plan', () {
+      expect(
+        earlierAlternativeQualifies(
+          plannedDeparture: DateTime(2026, 8, 24, 10, 27),
+          alternativeDeparture: DateTime(2026, 8, 24, 10, 0),
+          alternativeArrival: DateTime(2026, 8, 24, 11, 38),
+          earliestCatchable: DateTime(2026, 8, 24, 9, 50),
+          latestArrival: DateTime(2026, 8, 24, 11, 9),
+        ),
+        isFalse,
+      );
+    });
+
+    test('ignores a departure that is barely earlier', () {
+      expect(
+        earlierAlternativeQualifies(
+          plannedDeparture: DateTime(2026, 8, 24, 10, 27),
+          alternativeDeparture: DateTime(2026, 8, 24, 10, 26),
+          alternativeArrival: DateTime(2026, 8, 24, 11, 9),
+          earliestCatchable: DateTime(2026, 8, 24, 9, 50),
+          latestArrival: DateTime(2026, 8, 24, 11, 9),
+        ),
+        isFalse,
+      );
+    });
+
+    Map<String, dynamic> rawJourney({
+      required String walkStart,
+      required String rideStart,
+      required String arrival,
+      String? tripId,
+      String line = 'RB21',
+    }) {
+      return {
+        'legs': [
+          {'plannedDeparture': walkStart, 'walking': true},
+          {
+            'plannedDeparture': rideStart,
+            'plannedArrival': arrival,
+            'line': {'name': line, if (tripId != null) 'tripId': tripId},
+          },
+        ],
+      };
+    }
+
+    test('reads the boarding time, not the start of the leading walk', () {
+      final journey = rawJourney(
+        walkStart: '2030-08-24T11:10:00Z',
+        rideStart: '2030-08-24T11:11:00Z',
+        arrival: '2030-08-24T11:27:00Z',
+      );
+
+      expect(
+        alternativeJourneyBoardingLocal(journey),
+        DateTime.parse('2030-08-24T11:11:00Z').toLocal(),
+      );
+      expect(
+        alternativeJourneyDisplayDepartureLocal(journey),
+        DateTime.parse('2030-08-24T11:10:00Z').toLocal(),
+      );
+    });
+
+    test('recognises the ride the traveller is already on by trip id', () {
+      final journey = rawJourney(
+        walkStart: '2030-08-24T11:10:00Z',
+        rideStart: '2030-08-24T11:11:00Z',
+        arrival: '2030-08-24T11:27:00Z',
+        tripId: 'trip-24441',
+      );
+
+      expect(
+        alternativeIsSameRide(journey, tripId: 'trip-24441'),
+        isTrue,
+      );
+      expect(
+        alternativeIsSameRide(journey, tripId: 'trip-24439'),
+        isFalse,
+      );
+    });
+
+    test('a differing trip id still falls back to line and minute', () {
+      // MOTIS hands out opaque trip tokens that can differ for the same trip
+      // between two responses.
+      final journey = rawJourney(
+        walkStart: '2030-08-24T11:10:00Z',
+        rideStart: '2030-08-24T11:11:00Z',
+        arrival: '2030-08-24T11:27:00Z',
+        tripId: 'other-token',
+        line: 'RB21 (24441)',
+      );
+
+      expect(
+        alternativeIsSameRide(
+          journey,
+          tripId: 'trip-24441',
+          line: 'RB21',
+          departure: DateTime.parse('2030-08-24T11:11:00Z').toLocal(),
+        ),
+        isTrue,
+      );
+      expect(
+        alternativeIsSameRide(
+          journey,
+          tripId: 'trip-24441',
+          line: 'RB21',
+          departure: DateTime.parse('2030-08-24T11:41:00Z').toLocal(),
+        ),
+        isFalse,
+      );
+    });
+
+    test('falls back to line and boarding minute without a trip id', () {
+      final journey = rawJourney(
+        walkStart: '2030-08-24T11:10:00Z',
+        rideStart: '2030-08-24T11:11:00Z',
+        arrival: '2030-08-24T11:27:00Z',
+        line: 'RB21 (24441)',
+      );
+      final rideDeparture = DateTime.parse('2030-08-24T11:11:00Z').toLocal();
+
+      expect(
+        alternativeIsSameRide(journey, line: 'RB21', departure: rideDeparture),
+        isTrue,
+      );
+      // A different departure of the same line stays an alternative.
+      expect(
+        alternativeIsSameRide(
+          journey,
+          line: 'RB21',
+          departure: rideDeparture.add(const Duration(minutes: 30)),
+        ),
+        isFalse,
+      );
+      expect(
+        alternativeIsSameRide(journey, line: 'RB10', departure: rideDeparture),
+        isFalse,
+      );
+    });
+
+    test('lists a ride once, keeping the fastest continuation', () {
+      final early = rawJourney(
+        walkStart: '2030-08-24T12:09:00Z',
+        rideStart: '2030-08-24T12:10:00Z',
+        arrival: '2030-08-24T13:20:00Z',
+        tripId: 'trip-24443',
+      );
+      final late = rawJourney(
+        walkStart: '2030-08-24T12:09:00Z',
+        rideStart: '2030-08-24T12:10:00Z',
+        arrival: '2030-08-24T13:50:00Z',
+        tripId: 'trip-24443',
+      );
+      final other = rawJourney(
+        walkStart: '2030-08-24T12:39:00Z',
+        rideStart: '2030-08-24T12:40:00Z',
+        arrival: '2030-08-24T13:55:00Z',
+        tripId: 'trip-24445',
+      );
+
+      final collapsed = collapseAlternativesByRide([late, early, other]);
+      expect(collapsed, hasLength(2));
+      expect(collapsed.first, same(early));
+      expect(collapsed.last, same(other));
+    });
+
+    test('separates rides of the same line at different times', () {
+      final first = rawJourney(
+        walkStart: '2030-08-24T12:09:00Z',
+        rideStart: '2030-08-24T12:10:00Z',
+        arrival: '2030-08-24T13:20:00Z',
+      );
+      final second = rawJourney(
+        walkStart: '2030-08-24T12:39:00Z',
+        rideStart: '2030-08-24T12:40:00Z',
+        arrival: '2030-08-24T13:50:00Z',
+      );
+
+      expect(collapseAlternativesByRide([first, second]), hasLength(2));
+    });
+
+    test('a long stop keys off the departure, not the arrival', () {
+      // Same train, standing at the stop: boarding is possible earlier, but
+      // both results are keyed on the 05:36 departure.
+      final boarding = rawJourney(
+        walkStart: '2030-08-24T05:20:00Z',
+        rideStart: '2030-08-24T05:36:00Z',
+        arrival: '2030-08-24T06:10:00Z',
+      );
+      final sameTrain = rawJourney(
+        walkStart: '2030-08-24T05:25:00Z',
+        rideStart: '2030-08-24T05:36:00Z',
+        arrival: '2030-08-24T06:30:00Z',
+      );
+
+      expect(collapseAlternativesByRide([boarding, sameTrain]), hasLength(1));
+    });
+
+    test('keeps at most three earlier departures, the closest ones', () {
+      Map<String, dynamic> at(String time, String arrival) => rawJourney(
+            walkStart: time,
+            rideStart: time,
+            arrival: arrival,
+            tripId: 'trip-$time',
+          );
+      final planned = DateTime.parse('2030-08-24T12:00:00Z').toLocal();
+      final journeys = [
+        at('2030-08-24T10:00:00Z', '2030-08-24T11:00:00Z'),
+        at('2030-08-24T10:30:00Z', '2030-08-24T11:30:00Z'),
+        at('2030-08-24T11:00:00Z', '2030-08-24T12:00:00Z'),
+        at('2030-08-24T11:20:00Z', '2030-08-24T12:20:00Z'),
+        at('2030-08-24T11:40:00Z', '2030-08-24T12:40:00Z'),
+        at('2030-08-24T12:30:00Z', '2030-08-24T13:30:00Z'),
+      ];
+
+      final limited = limitEarlierAlternatives(journeys, reference: planned);
+      expect(limited, hasLength(4));
+      expect(
+        limited.map(alternativeJourneyBoardingLocal),
+        [
+          DateTime.parse('2030-08-24T11:00:00Z').toLocal(),
+          DateTime.parse('2030-08-24T11:20:00Z').toLocal(),
+          DateTime.parse('2030-08-24T11:40:00Z').toLocal(),
+          DateTime.parse('2030-08-24T12:30:00Z').toLocal(),
+        ],
+      );
+    });
+
+    test('leaves the list alone when there are few earlier departures', () {
+      final planned = DateTime.parse('2030-08-24T12:00:00Z').toLocal();
+      final journeys = [
+        rawJourney(
+          walkStart: '2030-08-24T11:40:00Z',
+          rideStart: '2030-08-24T11:40:00Z',
+          arrival: '2030-08-24T12:40:00Z',
+        ),
+        rawJourney(
+          walkStart: '2030-08-24T12:30:00Z',
+          rideStart: '2030-08-24T12:30:00Z',
+          arrival: '2030-08-24T13:30:00Z',
+        ),
+      ];
+
+      expect(
+        limitEarlierAlternatives(journeys, reference: planned),
+        same(journeys),
+      );
+    });
+
+    test('keys a raw journey by departure and arrival', () {
+      final journey = {
+        'legs': [
+          {'plannedDeparture': '2026-08-24T07:00:00Z'},
+          {'plannedArrival': '2026-08-24T09:09:00Z'},
+        ],
+      };
+      final departure = DateTime.parse('2026-08-24T07:00:00Z').toLocal();
+      final arrival = DateTime.parse('2026-08-24T09:09:00Z').toLocal();
+
+      expect(
+        alternativeJourneyKey(journey),
+        '${departure.millisecondsSinceEpoch}_'
+        '${arrival.millisecondsSinceEpoch}',
+      );
+      expect(alternativeJourneyKey({'legs': []}), isNull);
+    });
+
+    test('reads the arrival of a raw journey map', () {
+      expect(
+        alternativeJourneyArrivalLocal({
+          'legs': [
+            {'plannedArrival': '2026-08-24T09:00:00Z'},
+            {'plannedArrival': '2026-08-24T09:09:00Z'},
+          ],
+        }),
+        DateTime.parse('2026-08-24T09:09:00Z').toLocal(),
+      );
+      expect(alternativeJourneyArrivalLocal({'legs': []}), isNull);
+    });
+  });
+
   test('keeps the feed track when the label names a whole platform area', () {
     final combined = combinePlatformAndStopLabel(
       '11',
