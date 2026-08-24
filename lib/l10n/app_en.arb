@@ -349,6 +349,13 @@
   "wakeAlarmTitle": "Trans Wake Alarm",
   "wakeAlarmTracking": "Tracking your journey...",
   "alternative": "Alternative",
+  "backToOriginalRoute": "Back to {time} route",
+  "@backToOriginalRoute": {
+    "description": "Button between the original part of the trip and the alternative picked for the rest",
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
   "routeLabel": "Route",
   "destinationLabel": "Destination",
   "details": "Details",

@@ -544,6 +544,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get alternative => 'Alternative';
 
   @override
+  String backToOriginalRoute(String time) {
+    return 'Zurück zur Route $time';
+  }
+
+  @override
   String get routeLabel => 'Verbindung';
 
   @override

@@ -423,6 +423,152 @@ void main() {
     });
   });
 
+  group('tab strip selection', () {
+    Journey journey({
+      required DateTime departure,
+      required DateTime arrival,
+      int? branchStepIndex,
+    }) {
+      return Journey(
+        steps: [
+          JourneyStep(
+            type: 'ride',
+            line: 'RB21',
+            instruction: 'RB21',
+            duration: '16 min',
+            departureTime: '',
+            arrivalTime: '',
+            dateTime: departure,
+            plannedDeparture: departure,
+            plannedArrival: arrival,
+          ),
+        ],
+        departure: departure,
+        arrival: arrival,
+        duration: arrival.difference(departure),
+        transferCount: 0,
+        totalWaitTime: Duration.zero,
+        rawSource: const {},
+        source: 'motis',
+        plannedDeparture: departure,
+        plannedArrival: arrival,
+        branchStepIndex: branchStepIndex,
+      );
+    }
+
+    final departure = DateTime(2030, 8, 24, 13, 28);
+    final arrival = DateTime(2030, 8, 24, 14, 24);
+
+    test('recognises the same entry after a realtime refresh', () {
+      // Same connection, rebuilt as a new object by the refresh.
+      expect(
+        isSameJourneyEntryForTesting(
+          journey(departure: departure, arrival: arrival),
+          journey(departure: departure, arrival: arrival),
+        ),
+        isTrue,
+      );
+    });
+
+    test('keeps a branch apart from the journey it came from', () {
+      expect(
+        isSameJourneyEntryForTesting(
+          journey(departure: departure, arrival: arrival),
+          journey(departure: departure, arrival: arrival, branchStepIndex: 2),
+        ),
+        isFalse,
+      );
+    });
+
+    test('keeps different connections apart', () {
+      expect(
+        isSameJourneyEntryForTesting(
+          journey(departure: departure, arrival: arrival),
+          journey(
+            departure: departure,
+            arrival: arrival.add(const Duration(minutes: 30)),
+          ),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('branching into an alternative', () {
+    Map<String, dynamic> walkLeg(String from, String to) => {
+          'departure': from,
+          'arrival': to,
+          'walking': true,
+        };
+    Map<String, dynamic> rideLeg(String line, String from, String to) => {
+          'departure': from,
+          'arrival': to,
+          'plannedDeparture': from,
+          'plannedArrival': to,
+          'line': {'name': line},
+        };
+
+    final original = {
+      'legs': [
+        walkLeg('2030-08-24T11:38:00Z', '2030-08-24T11:41:00Z'),
+        rideLeg('RB21', '2030-08-24T11:41:00Z', '2030-08-24T11:57:00Z'),
+        walkLeg('2030-08-24T11:57:00Z', '2030-08-24T11:58:00Z'),
+        rideLeg('RB10', '2030-08-24T12:02:00Z', '2030-08-24T12:09:00Z'),
+        rideLeg('6', '2030-08-24T12:17:00Z', '2030-08-24T12:20:00Z'),
+      ],
+    };
+
+    test('keeps the trip up to the ride being swapped', () {
+      // Leg 3 is the RB10; the walk before it belongs to the alternative.
+      expect(journeyPrefixLegCount(original['legs'] as List, 3), 2);
+    });
+
+    test('keeps nothing when the first ride is swapped', () {
+      expect(journeyPrefixLegCount(original['legs'] as List, 1), 0);
+      expect(journeyPrefixLegCount(original['legs'] as List, 0), 0);
+    });
+
+    test('splices the alternative onto the part already under way', () {
+      final alternative = {
+        'legs': [
+          walkLeg('2030-08-24T11:57:00Z', '2030-08-24T11:59:00Z'),
+          rideLeg('RB10', '2030-08-24T11:32:00Z', '2030-08-24T11:39:00Z'),
+        ],
+      };
+
+      final spliced = spliceAlternativeIntoJourney(
+        original: original,
+        alternative: alternative,
+        rideLegIndex: 3,
+      );
+      final legs = spliced['legs'] as List;
+
+      expect(legs, hasLength(4));
+      expect((legs[1] as Map)['line']['name'], 'RB21');
+      expect((legs[3] as Map)['line']['name'], 'RB10');
+      expect(spliced['departure'], '2030-08-24T11:38:00Z');
+      expect(spliced['arrival'], '2030-08-24T11:39:00Z');
+      expect(spliced.containsKey('duration'), isFalse);
+    });
+
+    test('returns the alternative untouched when nothing precedes it', () {
+      final alternative = {
+        'legs': [
+          rideLeg('RB21', '2030-08-24T11:11:00Z', '2030-08-24T11:27:00Z')
+        ],
+      };
+
+      expect(
+        spliceAlternativeIntoJourney(
+          original: original,
+          alternative: alternative,
+          rideLegIndex: 1,
+        ),
+        same(alternative),
+      );
+    });
+  });
+
   test('keeps the feed track when the label names a whole platform area', () {
     final combined = combinePlatformAndStopLabel(
       '11',

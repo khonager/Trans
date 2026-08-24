@@ -155,6 +155,7 @@
   "wakeAlarmTitle": "Trans-Weckalarm",
   "wakeAlarmTracking": "Deine Fahrt wird verfolgt...",
   "alternative": "Alternative",
+  "backToOriginalRoute": "Zurück zur Route {time}",
   "routeLabel": "Verbindung",
   "destinationLabel": "Ziel",
   "details": "Details",

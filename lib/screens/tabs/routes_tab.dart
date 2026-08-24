@@ -649,6 +649,54 @@ List<Map<String, dynamic>> limitEarlierAlternatives(
   return kept;
 }
 
+/// Number of legs of [original] that still belong to the trip when the ride at
+/// [rideLegIndex] is swapped for an alternative: everything before it, minus
+/// the walking legs that lead up to it - the alternative brings its own.
+@visibleForTesting
+int journeyPrefixLegCount(List<dynamic> original, int rideLegIndex) {
+  var prefix = rideLegIndex.clamp(0, original.length);
+  while (prefix > 0) {
+    final leg = original[prefix - 1];
+    final isRide = leg is Map && leg['line'] != null;
+    if (isRide) break;
+    prefix--;
+  }
+  return prefix;
+}
+
+/// Builds the full trip out of the part already travelled and the alternative
+/// picked for the rest, so a chosen alternative does not start mid-route.
+@visibleForTesting
+Map<String, dynamic> spliceAlternativeIntoJourney({
+  required Map<String, dynamic> original,
+  required Map<String, dynamic> alternative,
+  required int rideLegIndex,
+}) {
+  final originalLegs = (original['legs'] as List?) ?? const [];
+  final alternativeLegs = (alternative['legs'] as List?) ?? const [];
+  final prefix = journeyPrefixLegCount(originalLegs, rideLegIndex);
+  if (prefix <= 0 || alternativeLegs.isEmpty) return alternative;
+
+  final legs = [...originalLegs.take(prefix), ...alternativeLegs];
+  final spliced = Map<String, dynamic>.from(alternative)..['legs'] = legs;
+
+  final firstLeg = legs.first;
+  final lastLeg = legs.last;
+  if (firstLeg is Map) {
+    final departure = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
+    if (departure != null) spliced['departure'] = departure;
+  }
+  if (lastLeg is Map) {
+    final arrival = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
+    if (arrival != null) spliced['arrival'] = arrival;
+  }
+  // Recomputed from the legs; a stale value would describe the alternative
+  // alone, not the spliced trip.
+  spliced.remove('duration');
+  spliced.remove('transfers');
+  return spliced;
+}
+
 /// Identity of the ride a journey starts with. Two results that begin with the
 /// same ride are one choice for the traveller, however they continue.
 @visibleForTesting
@@ -821,6 +869,23 @@ String _firstRideLineKey(Journey journey) {
   }
   return '';
 }
+
+/// Whether two journey objects stand for the same entry in a tab's stack.
+///
+/// Object identity alone is not enough: a realtime refresh replaces the active
+/// journey with a fresh instance, and the tab strip would then highlight
+/// nothing at all.
+bool _isSameJourneyEntry(Journey a, Journey b) {
+  if (identical(a, b)) return true;
+  // A branch shares its start - and often its arrival - with the journey it
+  // came from, so the two must not collapse into one entry.
+  if (a.branchStepIndex != b.branchStepIndex) return false;
+  return _journeyListKey(a) == _journeyListKey(b);
+}
+
+@visibleForTesting
+bool isSameJourneyEntryForTesting(Journey a, Journey b) =>
+    _isSameJourneyEntry(a, b);
 
 bool _journeysLikelySameRoute(Journey a, Journey b) {
   final depA = a.plannedDeparture ?? a.departure;
@@ -4409,7 +4474,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       DateTime? earliestDeparture,
       String? currentTripId,
       String? currentLine,
-      List<Map<String, dynamic>>? initialResults}) {
+      List<Map<String, dynamic>>? initialResults,
+      Journey? branchFrom,
+      int? branchRideLegIndex}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -4446,9 +4513,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           initialResults: initialResults,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
-            final j = _createJourney(
+            final j = _journeyFromAlternative(
               journey,
-              destinationNameOverride: toDummy.name,
+              destinationName: toDummy.name,
+              branchFrom: branchFrom,
+              branchRideLegIndex: branchRideLegIndex,
             );
             setState(() {
               if (_activeTabId != null) {
@@ -4546,6 +4615,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       return aName == bName;
     }
+
+    // First leg of the block currently buffered, so the resulting step can be
+    // traced back to its place in the raw journey.
+    int? transferBufferLegIndex;
 
     void flushTransferBuffer(
         DateTime? nextRideDeparture,
@@ -4749,6 +4822,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       steps.add(JourneyStep(
         type: isWaitInstruction ? 'wait' : (isBikeTransfer ? 'bike' : 'walk'),
         line: isBikeTransfer ? 'Bike' : 'Transfer',
+        legIndex: transferBufferLegIndex,
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime:
@@ -4771,10 +4845,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
+      transferBufferLegIndex = null;
       isFirstStep = false; // After first flush, no longer first step
     }
 
-    for (var leg in legs) {
+    for (var legIndex = 0; legIndex < legs.length; legIndex++) {
+      final leg = legs[legIndex];
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
         DateTime? scheduledDep, scheduledArr;
@@ -4839,6 +4915,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
         steps.add(JourneyStep(
           type: 'ride',
+          legIndex: legIndex,
           line: leg['line']?['name']?.toString() ?? '?',
           // If cancelled, show as cancelled in instruction or just handle in UI
           instruction:
@@ -4881,11 +4958,88 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         lastStationId = leg['destination']?['id']?.toString();
         lastPlatform = leg['destination']?['platform']?.toString();
       } else {
+        transferBufferLegIndex ??= legIndex;
         transferBuffer.add(leg);
       }
     }
     flushTransferBuffer(null, null, null, null, null, null, isFinalWalk: true);
     return steps;
+  }
+
+  /// Turns a picked alternative into the full trip: the part of [branchFrom]
+  /// already under way, then the alternative. The result remembers where it
+  /// branched off, so the traveller can step back to the original.
+  Journey _journeyFromAlternative(
+    Map<String, dynamic> alternative, {
+    required String destinationName,
+    Journey? branchFrom,
+    int? branchRideLegIndex,
+  }) {
+    if (branchFrom == null || branchRideLegIndex == null) {
+      return _createJourney(alternative,
+          destinationNameOverride: destinationName);
+    }
+
+    final originalLegs = (branchFrom.rawSource['legs'] as List?) ?? const [];
+    final prefix = journeyPrefixLegCount(originalLegs, branchRideLegIndex);
+    if (prefix <= 0) {
+      return _createJourney(alternative,
+          destinationNameOverride: destinationName);
+    }
+
+    final spliced = spliceAlternativeIntoJourney(
+      original: branchFrom.rawSource,
+      alternative: alternative,
+      rideLegIndex: branchRideLegIndex,
+    );
+    final journey = _createJourney(
+      spliced,
+      destinationNameOverride: destinationName,
+    );
+    // The first ride of the alternative, not the walk or wait leading up to
+    // it: that gap still belongs to the original route.
+    final branchStepIndex = journey.steps.indexWhere(
+      (step) => step.type == 'ride' && (step.legIndex ?? -1) >= prefix,
+    );
+
+    return journey.copyWith(
+      parentJourney: branchFrom,
+      branchStepIndex: branchStepIndex == -1 ? null : branchStepIndex,
+    );
+  }
+
+  /// Puts the journey this one branched off from back on screen, adding it
+  /// back to the tab if it was closed in the meantime.
+  void _returnToParentJourney(RouteTab route, Journey child) {
+    final parent = child.parentJourney;
+    if (parent == null) return;
+
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx == -1) return;
+      final tab = _tabs[idx];
+      final stack = List<Journey>.from(tab.stack);
+      // A branch can look just like its parent - same start, often the same
+      // arrival - so only a non-branch entry counts as the original.
+      final alreadyThere =
+          stack.any((existing) => _isSameJourneyEntry(existing, parent));
+      if (!alreadyThere) stack.add(parent);
+      _tabs[idx] = tab.copyWith(
+        activeJourney: parent,
+        stack: stack,
+        steps: parent.steps,
+        totalDuration: FormatUtils.formatDuration(parent.duration.inMinutes),
+      );
+    });
+
+    _resetEarlierAlternativeScans(route.id);
+    final refreshed = _tabs.cast<RouteTab?>().firstWhere(
+          (tab) => tab?.id == route.id,
+          orElse: () => null,
+        );
+    if (refreshed != null) {
+      _scheduleEarlierAlternativeScans(refreshed, parent);
+    }
   }
 
   Journey _createJourney(
@@ -6031,7 +6185,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         separatorBuilder: (ctx, idx) => const SizedBox(width: 8),
         itemBuilder: (ctx, idx) {
           final journey = stack[idx];
-          final isSelected = tab.activeJourney == journey;
+          final active = tab.activeJourney;
+          final isSelected =
+              active != null && _isSameJourneyEntry(active, journey);
 
           final timeStr =
               "${DateFormat('HH:mm').format(journey.departure)} - ${DateFormat('HH:mm').format(journey.arrival)}";
@@ -6076,7 +6232,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             newStack.removeAt(idx);
 
                             Journey? newActive = tab.activeJourney;
-                            if (newActive == journey) {
+                            if (newActive != null &&
+                                _isSameJourneyEntry(newActive, journey)) {
                               // If we closed the active one, pick another (e.g. last or first)
                               newActive =
                                   newStack.isNotEmpty ? newStack.last : null;
@@ -8971,7 +9128,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     durationChip
                   ]);
                 })),
-            for (int i = 0; i < route.steps.length; i++)
+            for (int i = 0; i < route.steps.length; i++) ...[
+              if (route.activeJourney?.branchStepIndex == i &&
+                  route.activeJourney?.parentJourney != null)
+                _buildReturnToParentButton(context, route),
               _StepCard(
                   step: route.steps[i],
                   isFirst: i == 0,
@@ -9007,7 +9167,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           currentTripId: route.steps[i].tripId,
                           currentLine: route.steps[i].line,
                           initialResults: _preloadedAlternatives[
-                              _alternativeHintKey(route.id, i)]),
+                              _alternativeHintKey(route.id, i)],
+                          branchFrom: route.activeJourney,
+                          branchRideLegIndex: route.steps[i].legIndex),
                   onIntermediateAlarmLongPress: (stopName,
                           {required int stopIndex,
                           double? targetLat,
@@ -9028,8 +9190,41 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
                   onMapTap: () => _openMap(route, focusStep: route.steps[i]),
                   alarmStopsBefore: _alarmStopsBefore,
-                  showTrainNumbers: widget.showTrainNumbers)
+                  showTrainNumbers: widget.showTrainNumbers),
+            ],
           ]),
+    );
+  }
+
+  /// Sits between the part of the trip that is still the original route and the
+  /// alternative picked for the rest, and steps back out of the alternative.
+  Widget _buildReturnToParentButton(BuildContext context, RouteTab route) {
+    final journey = route.activeJourney;
+    final parent = journey?.parentJourney;
+    if (journey == null || parent == null) return const SizedBox.shrink();
+
+    final colors = TransColors.of(context);
+    final label = '${DateFormat('HH:mm').format(parent.departure)} - '
+        '${DateFormat('HH:mm').format(parent.arrival)}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Align(
+        alignment: Alignment.center,
+        child: TextButton.icon(
+          onPressed: () => _returnToParentJourney(route, journey),
+          style: TextButton.styleFrom(
+            foregroundColor: colors.effectiveSeed,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          icon: const Icon(Icons.undo, size: 16),
+          label: Text(
+            AppLocalizations.of(context)!.backToOriginalRoute(label),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
     );
   }
 }

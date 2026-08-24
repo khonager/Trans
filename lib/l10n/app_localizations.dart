@@ -1028,6 +1028,12 @@ abstract class AppLocalizations {
   /// **'Alternative'**
   String get alternative;
 
+  /// Button between the original part of the trip and the alternative picked for the rest
+  ///
+  /// In en, this message translates to:
+  /// **'Back to {time} route'**
+  String backToOriginalRoute(String time);
+
   /// No description provided for @routeLabel.
   ///
   /// In en, this message translates to:
