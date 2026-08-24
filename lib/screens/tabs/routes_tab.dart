@@ -291,6 +291,23 @@ bool _matchesSimpleStopLabel(
   return false;
 }
 
+/// Matches a label that names several tracks at once ("Gleis1/11", "Gleis 24-25").
+final RegExp _multiTrackLabelPattern = RegExp(r'\d+\s*[/&+-]\s*\d+');
+
+/// True when the only platform we have is a whole platform area: the label
+/// names several tracks and the feed pinned the trip to one of them, so the
+/// number is not trustworthy.
+bool platformLooksLikeTrackArea(String? platform, String? stopLabel) {
+  final normalizedPlatform = platform?.trim();
+  if (normalizedPlatform == null || normalizedPlatform.isEmpty) return false;
+  final label = stopLabel?.trim();
+  if (label == null || !_multiTrackLabelPattern.hasMatch(label)) return false;
+  return RegExp(r'[A-Za-z0-9]+')
+      .allMatches(label)
+      .map((match) => match.group(0)!.toLowerCase())
+      .contains(normalizedPlatform.toLowerCase());
+}
+
 String? _extractStopDetailCode(String label, {required bool isRail}) {
   final normalized = label.trim();
   if (normalized.isEmpty) return null;
@@ -298,6 +315,18 @@ String? _extractStopDetailCode(String label, {required bool isRail}) {
   final typeKeywords = isRail
       ? '(?:gleis|schiene|platform|track)'
       : '(?:bussteig|bussteige|steig|platz|haltestelle|bstg\\.?)';
+
+  // Keep every track of a combined platform area instead of silently picking
+  // the first one, which would name a track the trip does not use.
+  final multiTrack = RegExp(
+    '\\b$typeKeywords\\s*([A-Za-z0-9]+(?:\\s*[/&+-]\\s*[A-Za-z0-9]+)+)',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (multiTrack != null) {
+    return multiTrack
+        .group(1)!
+        .replaceAllMapped(RegExp(r'\s*([/&+-])\s*'), (m) => m.group(1)!);
+  }
 
   final afterType = RegExp(
     '\\b$typeKeywords\\s*([A-Za-z0-9]+)\\b',
@@ -337,7 +366,14 @@ String? combinePlatformAndStopLabel(
   final extractedCode = normalizedStopLabel == null
       ? null
       : _extractStopDetailCode(normalizedStopLabel, isRail: isRail);
-  if (extractedCode != null) {
+  // The structured track wins over anything parsed out of the free-text label:
+  // the label can describe the whole platform area ("Gleis1/11") and would
+  // otherwise announce a different track than the rest of the journey shows.
+  final hasPlatform =
+      normalizedPlatform != null && normalizedPlatform.isNotEmpty;
+  if (extractedCode != null &&
+      (!hasPlatform ||
+          extractedCode.toLowerCase() == normalizedPlatform.toLowerCase())) {
     return formatWithPrefix(extractedCode);
   }
 
@@ -554,8 +590,23 @@ String _journeyListKey(Journey journey) {
 int _journeyPlatformSignal(Journey journey) {
   var score = 0;
   for (final step in journey.steps.where((step) => step.type == 'ride')) {
-    if ((step.platform ?? '').trim().isNotEmpty) score += 2;
-    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) score += 1;
+    if ((step.platform ?? '').trim().isNotEmpty) {
+      score += 2;
+      // A track resolved to a single platform beats one that is still just the
+      // combined area from the feed, so a corrected track counts as progress.
+      if (!platformLooksLikeTrackArea(step.platform, step.departureStopLabel)) {
+        score += 1;
+      }
+    }
+    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) {
+      score += 1;
+      if (!platformLooksLikeTrackArea(
+        step.arrivalPlatform,
+        step.arrivalStopLabel,
+      )) {
+        score += 1;
+      }
+    }
     if ((step.departureStopLabel ?? '').trim().isNotEmpty) score += 1;
     if ((step.arrivalStopLabel ?? '').trim().isNotEmpty) score += 1;
   }
@@ -736,7 +787,12 @@ Journey _bestCurrentJourneyVersion(
 bool _journeyHasDeparturePlatformsForEveryRide(Journey journey) {
   final rideSteps = journey.steps.where((step) => step.type == 'ride').toList();
   if (rideSteps.isEmpty) return true;
-  return rideSteps.every((step) => (step.platform ?? '').trim().isNotEmpty);
+  // A platform that is only a combined area ("Gleis1/11") still needs a lookup.
+  return rideSteps.every(
+    (step) =>
+        (step.platform ?? '').trim().isNotEmpty &&
+        !platformLooksLikeTrackArea(step.platform, step.departureStopLabel),
+  );
 }
 
 class _SuggestionSection {

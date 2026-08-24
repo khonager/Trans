@@ -1880,6 +1880,26 @@ class TransportApi {
     return normalized;
   }
 
+  /// Matches a label that names several tracks at once ("Gleis1/11").
+  static final RegExp _multiTrackLabelPattern =
+      RegExp(r'\d+\s*[/&+-]\s*\d+');
+
+  /// Some feeds (DELFI at Mainz Hbf, for example) model a whole platform area
+  /// as one stop and pin every trip to it, so the track we get names one
+  /// arbitrary track of that area rather than the one the train uses. Such a
+  /// track is worth a second opinion.
+  static bool _platformLooksLikeTrackArea(Map<String, dynamic>? place) {
+    final platform = _platformFromPlace(place);
+    if (platform == null) return false;
+    final label = _stringOrNull(place?['description']) ??
+        _stringOrNull(place?['stopLabel']);
+    if (label == null || !_multiTrackLabelPattern.hasMatch(label)) return false;
+    return RegExp(r'[A-Za-z0-9]+')
+        .allMatches(label)
+        .map((match) => match.group(0)!.toLowerCase())
+        .contains(platform.toLowerCase());
+  }
+
   static String? _stopLabelFromPlace(Map<String, dynamic>? place) {
     final description = place?['description']?.toString().trim();
     if (description != null && description.isNotEmpty) {
@@ -2521,24 +2541,55 @@ class TransportApi {
     );
   }
 
+  /// bahn.de reports a live track change in `ezGleis`, falling back to the
+  /// planned `gleis`.
+  static String? _bahnBoardPlatform(Map<String, dynamic>? entry) {
+    if (entry == null) return null;
+    return _stringOrNull(entry['ezGleis']) ?? _stringOrNull(entry['gleis']);
+  }
+
+  static bool _bahnBoardDirectionMatches(
+    Map<String, dynamic> entry,
+    String headsign,
+  ) {
+    final legDirection = _normalizeTransitKey(headsign);
+    final entryDirection = _normalizeTransitKey(
+      entry['richtung'] ?? entry['terminus'],
+    );
+    if (legDirection.isEmpty || entryDirection.isEmpty) return false;
+    return legDirection.contains(entryDirection) ||
+        entryDirection.contains(legDirection);
+  }
+
   static String? _matchPlatformFromBahnBoardEvents(
     Iterable<Map<String, dynamic>> entries, {
     required Map<String, dynamic> leg,
     required DateTime expectedTime,
+    bool strict = false,
+    bool matchDirection = false,
   }) {
     final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final maxDistance =
+        strict ? const Duration(minutes: 4) : const Duration(minutes: 12);
     Map<String, dynamic>? best;
     Duration? bestDistance;
 
     for (final entry in entries) {
-      final platform = _stringOrNull(entry['gleis']);
+      final platform = _bahnBoardPlatform(entry);
       if (platform == null) continue;
 
       final entryLineKey = _bahnBoardLineKey(entry);
       if (!_transitLineKeysLikelyMatch(lineKey, entryLineKey)) continue;
 
+      // Overriding a track the feed already gave us is only safe on an
+      // unmistakable match, so require the direction to line up as well.
+      if (matchDirection &&
+          !_bahnBoardDirectionMatches(entry, _journeyLegHeadsign(leg))) {
+        continue;
+      }
+
       final distance = _bahnBoardTimeDistance(entry, expectedTime);
-      if (distance == null || distance > const Duration(minutes: 12)) continue;
+      if (distance == null || distance > maxDistance) continue;
 
       if (best == null || bestDistance == null || distance < bestDistance) {
         best = entry;
@@ -2546,7 +2597,7 @@ class TransportApi {
       }
     }
 
-    return _stringOrNull(best?['gleis']);
+    return _bahnBoardPlatform(best);
   }
 
   @visibleForTesting
@@ -2554,12 +2605,22 @@ class TransportApi {
     Iterable<Map<String, dynamic>> entries, {
     required Map<String, dynamic> leg,
     required DateTime expectedTime,
+    bool strict = false,
+    bool matchDirection = false,
   }) =>
       _matchPlatformFromBahnBoardEvents(
         entries,
         leg: leg,
         expectedTime: expectedTime,
+        strict: strict,
+        matchDirection: matchDirection,
       );
+
+  @visibleForTesting
+  static bool platformLooksLikeTrackAreaForTesting(
+    Map<String, dynamic>? place,
+  ) =>
+      _platformLooksLikeTrackArea(place);
 
   static Future<Map<String, dynamic>> debugLookupBahnPlatform({
     required String stationName,
@@ -2682,6 +2743,7 @@ class TransportApi {
     Map<String, dynamic> place, {
     required DateTime? expectedTime,
     required bool arrivals,
+    bool strict = false,
   }) async {
     if (expectedTime == null || !_journeyLegLooksRail(leg)) return null;
 
@@ -2707,6 +2769,10 @@ class TransportApi {
         events,
         leg: leg,
         expectedTime: expectedTime,
+        strict: strict,
+        // Arrival boards name the origin, not the direction of travel, so the
+        // direction check only applies to departures.
+        matchDirection: strict && !arrivals,
       );
       if (platform == null) {
         _syntheticLog(
@@ -2739,10 +2805,16 @@ class TransportApi {
     required String? stopLabel,
     required String? stopId,
     required String? parentId,
+    bool overwritePlatform = false,
   }) {
     if (platform != null && platform.isNotEmpty) {
-      _setIfBlankMapValue(place, 'platform', platform);
-      _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+      if (overwritePlatform) {
+        place['platform'] = platform;
+        place['scheduledPlatform'] = platform;
+      } else {
+        _setIfBlankMapValue(place, 'platform', platform);
+        _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+      }
     }
     if (stopLabel != null && stopLabel.isNotEmpty) {
       _setIfBlankMapValue(place, 'stopLabel', stopLabel);
@@ -2776,13 +2848,16 @@ class TransportApi {
         required DateTime? expectedTime,
         required bool arrivals,
       }) {
-        if (place == null || _platformFromPlace(place) != null) return;
+        if (place == null) return;
+        final isTrackArea = _platformLooksLikeTrackArea(place);
+        if (_platformFromPlace(place) != null && !isTrackArea) return;
         tasks.add(() async {
           final details = await _backfillStopDetailsFromBahnBoard(
             leg,
             place,
             expectedTime: expectedTime,
             arrivals: arrivals,
+            strict: isTrackArea,
           );
           if (details == null || details.platform == null) return;
           _applyBackfilledStopDetails(
@@ -2791,6 +2866,7 @@ class TransportApi {
             stopLabel: details.stopLabel,
             stopId: details.stopId,
             parentId: details.parentId,
+            overwritePlatform: isTrackArea,
           );
           onProgress?.call();
         }());
@@ -2863,9 +2939,30 @@ class TransportApi {
     final existingStopLabel = _stopLabelFromPlace(place);
     final existingStopId = _stringOrNull(place['exactStopId']);
     final existingParentId = _stringOrNull(place['parentId']);
-    if (existingPlatform != null) {
+    final existingIsTrackArea = _platformLooksLikeTrackArea(place);
+    if (existingPlatform != null && !existingIsTrackArea) {
       return (
         platform: existingPlatform,
+        stopLabel: existingStopLabel,
+        stopId: existingStopId,
+        parentId: existingParentId,
+      );
+    }
+
+    // The feed only knows the platform area, so ask bahn.de for the actual
+    // track and keep the area as a fallback if nothing matches exactly.
+    if (existingIsTrackArea) {
+      final bahnDetails = expectedTime == null || !_journeyLegLooksRail(leg)
+          ? null
+          : await _backfillStopDetailsFromBahnBoard(
+              leg,
+              place,
+              expectedTime: expectedTime,
+              arrivals: arrivals,
+              strict: true,
+            );
+      return (
+        platform: bahnDetails?.platform ?? existingPlatform,
         stopLabel: existingStopLabel,
         stopId: existingStopId,
         parentId: existingParentId,
@@ -3042,6 +3139,7 @@ class TransportApi {
             _journeyLegTimeLocal(leg, 'plannedArrival', 'arrival');
 
         if (origin != null) {
+          final originIsTrackArea = _platformLooksLikeTrackArea(origin);
           final details = await _backfillStopDetailsForLegPlace(
             leg,
             origin,
@@ -3056,12 +3154,15 @@ class TransportApi {
               stopLabel: details.stopLabel,
               stopId: details.stopId,
               parentId: details.parentId,
+              overwritePlatform: originIsTrackArea,
             );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }
 
         if (destination != null) {
+          final destinationIsTrackArea =
+              _platformLooksLikeTrackArea(destination);
           final details = await _backfillStopDetailsForLegPlace(
             leg,
             destination,
@@ -3076,6 +3177,7 @@ class TransportApi {
               stopLabel: details.stopLabel,
               stopId: details.stopId,
               parentId: details.parentId,
+              overwritePlatform: destinationIsTrackArea,
             );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }

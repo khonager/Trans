@@ -307,5 +307,97 @@ void main() {
       expect(place['stopLabel'], 'Gleis 2');
       expect(place['exactStopId'], 'existing-child');
     });
+
+    test('flags a track that only names a combined platform area', () {
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '11',
+          'description': 'Gleis1/11',
+        }),
+        isTrue,
+      );
+    });
+
+    test('keeps a track that names a single platform', () {
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '11',
+          'description': 'Gleis 11',
+        }),
+        isFalse,
+      );
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '5b',
+          'description': 'Gleis1/11',
+        }),
+        isFalse,
+      );
+    });
+
+    test('prefers the realtime track of a bahn board entry', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-08-22T10:27:00',
+            'gleis': '5',
+            'ezGleis': '5b',
+            'richtung': 'Idar-Oberstein',
+            'verkehrmittel': {'mittelText': 'RB33'},
+          },
+        ],
+        leg: {
+          'mode': 'REGIONAL_RAIL',
+          'line': {'name': 'RB33'},
+          'direction': 'Idar-Oberstein, Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-08-22T10:27:00').toLocal(),
+      );
+
+      expect(platform, '5b');
+    });
+
+    test('strict matching skips the same line in the other direction', () {
+      final entries = [
+        {
+          'zeit': '2026-08-22T10:25:00',
+          'gleis': '2',
+          'richtung': 'Mainz Hauptbahnhof',
+          'verkehrmittel': {'mittelText': 'RB33'},
+        },
+        {
+          'zeit': '2026-08-22T10:27:00',
+          'gleis': '5b',
+          'richtung': 'Idar-Oberstein',
+          'verkehrmittel': {'mittelText': 'RB33'},
+        },
+      ];
+      final leg = {
+        'mode': 'REGIONAL_RAIL',
+        'line': {'name': 'RB33'},
+        'direction': 'Idar-Oberstein, Bahnhof',
+      };
+
+      expect(
+        TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+          entries,
+          leg: leg,
+          expectedTime: DateTime.parse('2026-08-22T10:27:00').toLocal(),
+          strict: true,
+          matchDirection: true,
+        ),
+        '5b',
+      );
+      expect(
+        TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+          entries,
+          leg: leg,
+          expectedTime: DateTime.parse('2026-08-22T10:40:00').toLocal(),
+          strict: true,
+          matchDirection: true,
+        ),
+        isNull,
+      );
+    });
   });
 }

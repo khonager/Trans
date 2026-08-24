@@ -40,6 +40,33 @@ void main() {
     expect(combined, 'Gl. 24');
   });
 
+  test('keeps the feed track when the label names a whole platform area', () {
+    final combined = combinePlatformAndStopLabel(
+      '11',
+      'Gleis1/11',
+      stationName: 'Mainz, Hauptbahnhof',
+      isRail: true,
+    );
+    expect(combined, 'Gl. 11');
+  });
+
+  test('shows every track of a platform area when no track is known', () {
+    final combined = combinePlatformAndStopLabel(
+      null,
+      'Gleis1/11',
+      stationName: 'Mainz, Hauptbahnhof',
+      isRail: true,
+    );
+    expect(combined, 'Gl. 1/11');
+  });
+
+  test('recognises a track that is only a combined platform area', () {
+    expect(platformLooksLikeTrackArea('11', 'Gleis1/11'), isTrue);
+    expect(platformLooksLikeTrackArea('11', 'Gleis 11'), isFalse);
+    expect(platformLooksLikeTrackArea('5b', 'Gleis1/11'), isFalse);
+    expect(platformLooksLikeTrackArea(null, 'Gleis1/11'), isFalse);
+  });
+
   test('does not duplicate stop label when it only repeats the platform', () {
     final combined = combinePlatformAndStopLabel(
       '7',
