@@ -30,6 +30,32 @@ void main() {
     expect(formatted, 'RE29');
   });
 
+  group('station identity matching', () {
+    test('recognises Hbf and Hauptbahnhof as the same station', () {
+      expect(
+        sameTransitStationForTesting(
+          'provider:arrival:23',
+          'Frankfurt (Main) Hbf',
+          'provider:departure:15',
+          'Frankfurt (Main) Hauptbahnhof',
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not merge different stations just because ids differ', () {
+      expect(
+        sameTransitStationForTesting(
+          'station:frankfurt',
+          'Frankfurt (Main) Hbf',
+          'station:offenbach',
+          'Offenbach (Main) Hbf',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   test('combines train platform with richer stop label detail', () {
     final combined = combinePlatformAndStopLabel(
       '24',

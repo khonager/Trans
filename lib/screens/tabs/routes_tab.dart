@@ -233,6 +233,46 @@ String? _normalizeStopDetailLabel(String? label, {String? stationName}) {
   return normalized;
 }
 
+String _normalizeStationIdentityName(String name) {
+  return name
+      .trim()
+      .toLowerCase()
+      // Transit feeds commonly use these two forms interchangeably, including
+      // between a ride's destination and the following ride's origin.
+      .replaceAll('hauptbahnhof', 'hbf')
+      .replaceAll(RegExp(r'[^a-z0-9äöüß]+'), '');
+}
+
+bool _sameTransitStation(
+  String? leftId,
+  String? leftName,
+  String? rightId,
+  String? rightName,
+) {
+  final aId = leftId?.trim();
+  final bId = rightId?.trim();
+  if (aId != null && aId.isNotEmpty && bId != null && bId.isNotEmpty) {
+    if (aId == bId) return true;
+  }
+
+  final aName = leftName?.trim();
+  final bName = rightName?.trim();
+  if (aName == null || aName.isEmpty || bName == null || bName.isEmpty) {
+    return false;
+  }
+  return _normalizeStationIdentityName(aName) ==
+      _normalizeStationIdentityName(bName);
+}
+
+@visibleForTesting
+bool sameTransitStationForTesting(
+  String? leftId,
+  String? leftName,
+  String? rightId,
+  String? rightName,
+) =>
+    _sameTransitStation(leftId, leftName, rightId, rightName);
+
 bool _looksLikeOpaqueStopCode(String label) {
   final lower = label.toLowerCase();
   const userFacingKeywords = <String>[
@@ -4601,21 +4641,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return isGerman ? 'Fahrrad fahren' : 'Bike';
     }
 
-    bool sameStationByIdOrName(
-        String? leftId, String? leftName, String? rightId, String? rightName) {
-      final aId = leftId?.trim();
-      final bId = rightId?.trim();
-      if (aId != null && aId.isNotEmpty && bId != null && bId.isNotEmpty) {
-        return aId == bId;
-      }
-      final aName = leftName?.trim().toLowerCase();
-      final bName = rightName?.trim().toLowerCase();
-      if (aName == null || aName.isEmpty || bName == null || bName.isEmpty) {
-        return false;
-      }
-      return aName == bName;
-    }
-
     // First leg of the block currently buffered, so the resulting step can be
     // traced back to its place in the raw journey.
     int? transferBufferLegIndex;
@@ -4695,12 +4720,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       // Determine instruction text based on context
       String instruction;
       bool isWaitInstruction = false;
-      bool isAtSameStation = (lastStationId != null &&
-              nextStationId != null &&
-              lastStationId == nextStationId) ||
-          (lastStationName != null &&
-              destName != null &&
-              lastStationName == destName);
+      final isAtSameStation = _sameTransitStation(
+        lastStationId,
+        lastStationName,
+        nextStationId,
+        destName,
+      );
       String? nextPlat = nextPlatform;
 
       // Calculate distance if coordinates are available
@@ -4732,13 +4757,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nextRideDeparture != null) {
         final firstTransfer = transferBuffer.first;
         final lastTransfer = transferBuffer.last;
-        final startsAtNextRideStation = sameStationByIdOrName(
+        final startsAtNextRideStation = _sameTransitStation(
           stationId(firstTransfer['origin']),
           stationName(firstTransfer['origin']),
           nextStationId,
           nextStationName,
         );
-        final endsAtNextRideStation = sameStationByIdOrName(
+        final endsAtNextRideStation = _sameTransitStation(
           stationId(lastTransfer['destination']),
           stationName(lastTransfer['destination']),
           nextStationId,
@@ -4758,13 +4783,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               ? AppLocalizations.of(context)!.platformShort(p)
               : p);
 
-      if (isAtSameStation && !isSignificantWalk) {
-        isWaitInstruction = true;
+      if (isAtSameStation) {
+        isWaitInstruction = !isSignificantWalk;
         if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform != nextPlat) {
           instruction = AppLocalizations.of(context)!
               .switchPlatform(fmtPlat(lastPlatform), fmtPlat(nextPlat));
+        } else if (isSignificantWalk && nextPlat != null) {
+          instruction = '${AppLocalizations.of(context)!.walkLabel} '
+              '${AppLocalizations.of(context)!.toPlatform(fmtPlat(nextPlat))}';
+        } else if (isSignificantWalk) {
+          instruction = AppLocalizations.of(context)!.walkLabel;
         } else if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform == nextPlat) {
