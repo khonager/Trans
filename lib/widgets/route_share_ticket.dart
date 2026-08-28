@@ -340,7 +340,7 @@ class RouteShareTicket extends StatelessWidget {
 
     String lineName = step.line.trim();
     if (!showTrainNumbers) {
-      lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
+      lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)'), '').trim();
       if (step.tripId != null) {
         lineName = lineName.replaceAll(step.tripId!, "").trim();
       }

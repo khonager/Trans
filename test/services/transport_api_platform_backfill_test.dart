@@ -3,6 +3,92 @@ import 'package:trans/services/transport_api.dart';
 
 void main() {
   group('TransportApi platform backfill matching', () {
+    test('combines line names for portions of the same physical train', () {
+      final events = [
+        {
+          'displayName': 'RB13 (81020)',
+          'routeShortName': 'RB13',
+          'headsign': 'Leipzig Hbf',
+          'tripId': 'rb13-trip',
+          'agencyName': 'Erfurter Bahn',
+          'mode': 'REGIONAL_RAIL',
+          'tripFrom': {'name': 'Hof Hbf'},
+          'tripTo': {'name': 'Leipzig Hbf'},
+          'place': {
+            'scheduledArrival': '2026-08-29T10:56:00Z',
+            'scheduledDeparture': '2026-08-29T11:01:00Z',
+          },
+        },
+        {
+          'displayName': 'RB22 (80854)',
+          'routeShortName': 'RB22',
+          'headsign': 'Leipzig Hbf',
+          'tripId': 'rb22-trip',
+          'agencyName': 'Erfurter Bahn',
+          'mode': 'REGIONAL_RAIL',
+          'tripFrom': {'name': 'Saalfeld (Saale)'},
+          'tripTo': {'name': 'Leipzig Hbf'},
+          'place': {
+            'scheduledArrival': '2026-08-29T10:56:00Z',
+            'scheduledDeparture': '2026-08-29T11:01:00Z',
+          },
+        },
+      ];
+
+      final displayName =
+          TransportApi.coupledLineDisplayNameFromStopEventsForTesting(
+        events,
+        leg: {
+          'line': {'name': 'RB13 (81020)', 'tripId': 'rb13-trip'},
+          'direction': 'Leipzig Hbf',
+        },
+        expectedTime: DateTime.parse('2026-08-29T11:01:00Z').toLocal(),
+      );
+
+      expect(displayName, 'RB22 (80854) / RB13 (81020)');
+    });
+
+    test('does not combine trains going in different directions', () {
+      final displayName =
+          TransportApi.coupledLineDisplayNameFromStopEventsForTesting(
+        [
+          {
+            'displayName': 'RB13 (81017)',
+            'routeShortName': 'RB13',
+            'headsign': 'Hof Hbf',
+            'tripId': 'rb13-trip',
+            'agencyName': 'Erfurter Bahn',
+            'mode': 'REGIONAL_RAIL',
+            'tripTo': {'name': 'Hof Hbf'},
+            'place': {
+              'scheduledArrival': '2026-08-29T10:58:00Z',
+              'scheduledDeparture': '2026-08-29T11:02:00Z',
+            },
+          },
+          {
+            'displayName': 'RB22 (80849)',
+            'routeShortName': 'RB22',
+            'headsign': 'Saalfeld (Saale)',
+            'tripId': 'rb22-trip',
+            'agencyName': 'Erfurter Bahn',
+            'mode': 'REGIONAL_RAIL',
+            'tripTo': {'name': 'Saalfeld (Saale)'},
+            'place': {
+              'scheduledArrival': '2026-08-29T10:58:00Z',
+              'scheduledDeparture': '2026-08-29T11:02:00Z',
+            },
+          },
+        ],
+        leg: {
+          'line': {'name': 'RB13 (81017)', 'tripId': 'rb13-trip'},
+          'direction': 'Hof Hbf',
+        },
+        expectedTime: DateTime.parse('2026-08-29T11:02:00Z').toLocal(),
+      );
+
+      expect(displayName, isNull);
+    });
+
     test('prefers exact trip id platform match', () {
       final platform = TransportApi.matchPlatformFromStopEventsForTesting(
         [

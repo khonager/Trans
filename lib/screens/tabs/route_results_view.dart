@@ -1598,7 +1598,7 @@ class _JourneyCard extends StatelessWidget {
                                 : null;
                         // Clean train numbers if disabled
                         if (!showTrainNumbers) {
-                          final regexParens = RegExp(r'\s*\(\d+\)$');
+                          final regexParens = RegExp(r'\s*\(\d+\)');
                           displayLine =
                               displayLine.replaceAll(regexParens, '').trim();
                           if (step.tripId != null) {

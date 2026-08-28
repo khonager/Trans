@@ -30,6 +30,17 @@ void main() {
     expect(formatted, 'RE29');
   });
 
+  test('keeps both coupled line numbers but hides both train numbers', () {
+    final formatted = formatRideDisplayLine(
+      line: 'RB22 (80854) / RB13 (81020)',
+      platform: '4b',
+      arrivalPlatform: null,
+      tripId: 'opaque-trip-id',
+      showTrainNumbers: false,
+    );
+    expect(formatted, 'RB22 / RB13 (4b)');
+  });
+
   group('station identity matching', () {
     test('recognises Hbf and Hauptbahnhof as the same station', () {
       expect(

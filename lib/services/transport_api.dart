@@ -1974,6 +1974,160 @@ class TransportApi {
     return _stopDepartureDateTimeLocal(dep);
   }
 
+  static DateTime? _stopEventTime(
+    Map<String, dynamic> event, {
+    required bool arrival,
+  }) {
+    final place = (event['place'] as Map?)?.cast<String, dynamic>();
+    final timing = (event[arrival ? 'arrival' : 'departure'] as Map?)
+        ?.cast<String, dynamic>();
+    final candidates = arrival
+        ? <Object?>[
+            place?['scheduledArrival'],
+            place?['arrival'],
+            timing?['scheduledTime'],
+            timing?['time'],
+          ]
+        : <Object?>[
+            place?['scheduledDeparture'],
+            place?['departure'],
+            timing?['scheduledTime'],
+            timing?['time'],
+          ];
+    for (final candidate in candidates) {
+      final parsed = _parseJourneyTimeLocal(candidate);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  static String _stopEventLineName(Map<String, dynamic> event) {
+    final displayName = _stringOrNull(event['displayName']);
+    if (displayName != null) return displayName;
+    final routeShortName = _stringOrNull(event['routeShortName']);
+    if (routeShortName != null) return routeShortName;
+    return _stringOrNull(
+          (event['line'] as Map<String, dynamic>?)?['name'],
+        ) ??
+        '';
+  }
+
+  static String _stopEventRouteKey(Map<String, dynamic> event) {
+    final routeShortName = _stringOrNull(event['routeShortName']);
+    if (routeShortName != null) return _normalizeTransitKey(routeShortName);
+    return _normalizeTransitKey(
+      _stopEventLineName(event).replaceAll(RegExp(r'\s*\(\d+\)'), ''),
+    );
+  }
+
+  static String _namedPlaceKey(Object? value) {
+    if (value is! Map) return '';
+    final place = value.cast<dynamic, dynamic>();
+    final id = _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
+    if (id != null) return 'id:$id';
+    return _normalizeTransitKey(place['name']);
+  }
+
+  static bool _samePresentText(Object? left, Object? right) {
+    final a = _normalizeTransitKey(left);
+    final b = _normalizeTransitKey(right);
+    return a.isEmpty || b.isEmpty || a == b;
+  }
+
+  static String? _coupledLineDisplayNameFromStopEvents(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final eventList = events.toList();
+    final selected = _matchStopEventForLeg(
+      eventList,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+    if (selected == null) return null;
+
+    final selectedDeparture = _stopEventTime(selected, arrival: false);
+    if (selectedDeparture == null) return null;
+    final selectedArrival = _stopEventTime(selected, arrival: true);
+    final selectedRouteKey = _stopEventRouteKey(selected);
+    final selectedTripTo = _namedPlaceKey(selected['tripTo']);
+    final selectedTripFrom = _namedPlaceKey(selected['tripFrom']);
+    final selectedPlatform = _platformFromStopEvent(selected);
+
+    final companionNames = <String>[];
+    final seenRouteKeys = <String>{selectedRouteKey};
+    for (final candidate in eventList) {
+      if (identical(candidate, selected)) continue;
+      final candidateRouteKey = _stopEventRouteKey(candidate);
+      if (candidateRouteKey.isEmpty ||
+          seenRouteKeys.contains(candidateRouteKey)) {
+        continue;
+      }
+      if (_stopEventTime(candidate, arrival: false) != selectedDeparture) {
+        continue;
+      }
+      if (!_samePresentText(candidate['headsign'], selected['headsign']) ||
+          !_samePresentText(candidate['agencyName'], selected['agencyName']) ||
+          !_samePresentText(candidate['mode'], selected['mode'])) {
+        continue;
+      }
+
+      final candidateTripTo = _namedPlaceKey(candidate['tripTo']);
+      if (selectedTripTo.isEmpty ||
+          candidateTripTo.isEmpty ||
+          candidateTripTo != selectedTripTo) {
+        continue;
+      }
+
+      final candidateArrival = _stopEventTime(candidate, arrival: true);
+      if (selectedArrival != null) {
+        // Two service numbers arriving and departing together are the strong
+        // signal that they are portions of the same physical train.
+        if (candidateArrival != selectedArrival) continue;
+      } else {
+        final candidateTripFrom = _namedPlaceKey(candidate['tripFrom']);
+        if (selectedTripFrom.isEmpty ||
+            candidateTripFrom.isEmpty ||
+            candidateTripFrom != selectedTripFrom) {
+          continue;
+        }
+      }
+
+      final candidatePlatform = _platformFromStopEvent(candidate);
+      if (selectedPlatform != null &&
+          candidatePlatform != null &&
+          candidatePlatform != selectedPlatform) {
+        continue;
+      }
+
+      final candidateName = _stopEventLineName(candidate);
+      if (candidateName.isNotEmpty) {
+        seenRouteKeys.add(candidateRouteKey);
+        companionNames.add(candidateName);
+      }
+    }
+
+    if (companionNames.isEmpty) return null;
+    final selectedName = _stopEventLineName(selected);
+    if (selectedName.isEmpty) return null;
+    // Put the companion first: this is often the number shown on the front of
+    // the coupled train, while the selected journey uses the other portion.
+    return [...companionNames, selectedName].join(' / ');
+  }
+
+  @visibleForTesting
+  static String? coupledLineDisplayNameFromStopEventsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) =>
+      _coupledLineDisplayNameFromStopEvents(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
+
   static Duration? _eventTimeDistance(
     Map<String, dynamic> dep,
     DateTime? expectedTime,
@@ -2701,6 +2855,10 @@ class TransportApi {
     bool preferBahnForRail = false,
     bool fastBahnRailOnly = false,
   }) async {
+    await _enrichJourneyWithCoupledLineAliases(
+      journey,
+      onProgress: onProgress,
+    );
     final journeys = <Map<String, dynamic>>[journey];
     await _enrichJourneysWithPlatforms(
       journeys,
@@ -2711,6 +2869,61 @@ class TransportApi {
       fastBahnRailOnly: fastBahnRailOnly,
     );
     return journeys.first;
+  }
+
+  static Future<void> _enrichJourneyWithCoupledLineAliases(
+    Map<String, dynamic> journey, {
+    void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
+  }) async {
+    if (journey['source'] != 'motis') return;
+    final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+    if (legs == null) return;
+
+    for (final rawLeg in legs) {
+      final leg = rawLeg.cast<String, dynamic>();
+      if (leg['line'] == null || !_journeyLegLooksRail(leg)) continue;
+      final origin = (leg['origin'] as Map?)?.cast<String, dynamic>();
+      final stopId =
+          _stringOrNull(origin?['id']) ?? _stringOrNull(origin?['stopId']);
+      final departureTime =
+          _journeyLegTimeLocal(leg, 'plannedDeparture', 'departure');
+      if (stopId == null || departureTime == null) continue;
+
+      try {
+        final events = await _fetchMotisStopEvents(
+          stopId,
+          timeLocal: departureTime.subtract(const Duration(minutes: 3)),
+          direction: 'LATER',
+          maxResults: 40,
+        );
+        final combinedName = _coupledLineDisplayNameFromStopEvents(
+          events,
+          leg: leg,
+          expectedTime: departureTime,
+        );
+        if (combinedName == null) continue;
+        final line = (leg['line'] as Map).cast<String, dynamic>();
+        if (line['name']?.toString() == combinedName) continue;
+        line['primaryName'] ??= line['name'];
+        line['name'] = combinedName;
+        onProgress?.call(journey);
+      } catch (error) {
+        _syntheticLog(
+          'coupled line lookup failed: ${_journeyLegLineDisplayName(leg)} '
+          'at ${origin?['name'] ?? stopId}: $error',
+        );
+      }
+    }
+  }
+
+  static Future<void> _enrichJourneysWithCoupledLineAliases(
+    Iterable<Map<String, dynamic>> journeys,
+  ) async {
+    await Future.wait(
+      journeys.map(
+        (journey) => _enrichJourneyWithCoupledLineAliases(journey),
+      ),
+    );
   }
 
   static void _setIfBlankMapValue(
@@ -3568,6 +3781,13 @@ class TransportApi {
   static String _journeyLegLineName(Map<String, dynamic> leg) =>
       (leg['line'] as Map<String, dynamic>?)?['name']?.toString().trim() ?? '';
 
+  static String _journeyLegPrimaryLineName(Map<String, dynamic> leg) {
+    final line = leg['line'] as Map<String, dynamic>?;
+    return line?['primaryName']?.toString().trim() ??
+        line?['name']?.toString().trim() ??
+        '';
+  }
+
   static String? _journeyLegTripId(Map<String, dynamic> leg) {
     final line = leg['line'] as Map<String, dynamic>?;
     final candidates = <Object?>[
@@ -3656,7 +3876,7 @@ class TransportApi {
     final originStopId = _stringOrNull(origin['id']);
     if (originStopId == null) return null;
 
-    final lineKey = _normalizeTransitKey(_journeyLegLineName(firstRide));
+    final lineKey = _normalizeTransitKey(_journeyLegPrimaryLineName(firstRide));
     if (lineKey.isEmpty) return null;
 
     final directionKey = _normalizeTransitKey(firstRide['direction']);
@@ -3664,7 +3884,7 @@ class TransportApi {
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
     final secondLineKey =
-        _normalizeTransitKey(_journeyLegLineName(transferRide));
+        _normalizeTransitKey(_journeyLegPrimaryLineName(transferRide));
     final secondDirectionKey = _normalizeTransitKey(transferRide['direction']);
     final secondDestinationStopId =
         _stringOrNull(secondDestination?['id']) ?? '';
@@ -4932,9 +5152,11 @@ class TransportApi {
     Function(List<Map<String, dynamic>>)? onPartialResults,
     void Function(Set<String> activePhases)? onLoadStateChanged,
     bool Function()? shouldContinue,
-    /// Background callers that only need times can skip the per-stop platform
-    /// lookups, which cost one request per leg.
+
+    /// Callers that do not display platforms can skip the expensive per-stop
+    /// platform lookups. Coupled train names are controlled separately below.
     bool enrichPlatforms = true,
+    bool enrichCoupledLines = true,
   }) async {
     final activePhases = <String>{};
     void setPhase(String phase, bool active) {
@@ -4993,6 +5215,9 @@ class TransportApi {
           pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
           maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
         );
+        if (enrichCoupledLines) {
+          await _enrichJourneysWithCoupledLineAliases(res);
+        }
         if (onPartialResults != null) onPartialResults(res);
         List<Map<String, dynamic>> finalResults = res;
         if (isSyntheticTransitousEnabled) {
@@ -5054,7 +5279,12 @@ class TransportApi {
           pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
           maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
           allowDirectFallback: false,
-        ).then((res) => res).catchError((e) {
+        ).then((res) async {
+          if (enrichCoupledLines) {
+            await _enrichJourneysWithCoupledLineAliases(res);
+          }
+          return res;
+        }).catchError((e) {
           debugPrint('Hybrid: Transitous failed: $e');
           return <Map<String, dynamic>>[];
         }).whenComplete(() => setPhase(loadPhaseMotis, false));
@@ -5124,6 +5354,9 @@ class TransportApi {
             results: results,
           );
           if (baseResults.isNotEmpty) {
+            if (enrichCoupledLines) {
+              await _enrichJourneysWithCoupledLineAliases(baseResults);
+            }
             onPartialResults(baseResults);
           }
         }
@@ -5181,6 +5414,9 @@ class TransportApi {
             isArrival: isArrival,
             results: results,
           );
+          if (enrichCoupledLines && baseResults.isNotEmpty) {
+            await _enrichJourneysWithCoupledLineAliases(baseResults);
+          }
         }
 
         if (baseResults.isEmpty) {

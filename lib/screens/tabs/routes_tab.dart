@@ -910,6 +910,22 @@ String _firstRideLineKey(Journey journey) {
   return '';
 }
 
+String _firstRideTripId(Journey journey) {
+  for (final step in journey.steps) {
+    if (step.type != 'ride') continue;
+    return step.tripId?.trim() ?? '';
+  }
+  return '';
+}
+
+int _journeyLineDetailSignal(Journey journey) {
+  var score = 0;
+  for (final step in journey.steps.where((step) => step.type == 'ride')) {
+    score += step.line.split('/').length;
+  }
+  return score;
+}
+
 /// Whether two journey objects stand for the same entry in a tab's stack.
 ///
 /// Object identity alone is not enough: a realtime refresh replaces the active
@@ -938,6 +954,9 @@ bool _journeysLikelySameRoute(Journey a, Journey b) {
   if (arrA.difference(arrB).abs() > const Duration(minutes: 2)) {
     return false;
   }
+  final tripA = _firstRideTripId(a);
+  final tripB = _firstRideTripId(b);
+  if (tripA.isNotEmpty && tripB.isNotEmpty && tripA == tripB) return true;
   final lineA = _firstRideLineKey(a);
   final lineB = _firstRideLineKey(b);
   return lineA.isEmpty || lineB.isEmpty || lineA == lineB;
@@ -950,6 +969,10 @@ Journey _preferJourneyWithMorePlatformDetail(
   final incomingScore = _journeyPlatformSignal(incoming);
   final existingScore = _journeyPlatformSignal(existing);
   if (incomingScore > existingScore) return incoming;
+  if (incomingScore == existingScore &&
+      _journeyLineDetailSignal(incoming) > _journeyLineDetailSignal(existing)) {
+    return incoming;
+  }
   return existing;
 }
 
@@ -1084,17 +1107,6 @@ Journey _bestCurrentJourneyVersion(
     best = _mergeJourneyWithFreshRealtime(best, candidate);
   }
   return best;
-}
-
-bool _journeyHasDeparturePlatformsForEveryRide(Journey journey) {
-  final rideSteps = journey.steps.where((step) => step.type == 'ride').toList();
-  if (rideSteps.isEmpty) return true;
-  // A platform that is only a combined area ("Gleis1/11") still needs a lookup.
-  return rideSteps.every(
-    (step) =>
-        (step.platform ?? '').trim().isNotEmpty &&
-        !platformLooksLikeTrackArea(step.platform, step.departureStopLabel),
-  );
 }
 
 class _SuggestionSection {
@@ -1608,6 +1620,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       onPartialResults: onPartialResults,
       onLoadStateChanged: onLoadStateChanged,
       shouldContinue: shouldContinue,
+      // Result cards do not show platforms. The selected journey is enriched
+      // lazily, so doing this for every candidate only delays search completion.
+      enrichPlatforms: false,
     );
   }
 
@@ -8678,6 +8693,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       results: 8,
       // Only departure and arrival times decide the hint.
       enrichPlatforms: false,
+      enrichCoupledLines: false,
     );
 
     final earliestCatchable =
@@ -8743,6 +8759,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isArrival: false,
         results: 12,
         enrichPlatforms: false,
+        enrichCoupledLines: false,
       );
       _preloadedAlternatives[_alternativeHintKey(route.id, stepIndex)] =
           mergeAlternativeJourneys(earlier, forward);
@@ -8758,8 +8775,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     String tabId,
     Journey selectedJourney,
   ) async {
-    if (_journeyHasDeparturePlatformsForEveryRide(selectedJourney)) return;
-    final enrichmentKey = '$tabId|${_journeyListKey(selectedJourney)}';
+    final departure =
+        selectedJourney.plannedDeparture ?? selectedJourney.departure;
+    final arrival = selectedJourney.plannedArrival ?? selectedJourney.arrival;
+    final enrichmentKey = '$tabId|${departure.millisecondsSinceEpoch}|'
+        '${arrival.millisecondsSinceEpoch}|${_firstRideTripId(selectedJourney)}';
     if (_completedActivePlatformEnrichmentKeys.contains(enrichmentKey)) return;
     if (!_activePlatformEnrichmentKeys.add(enrichmentKey)) return;
 
@@ -9000,8 +9020,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final totalBikingDurationLabel =
         FormatUtils.formatDuration(totalBikingMinutes);
     final activeJourney = route.activeJourney;
-    if (activeJourney != null &&
-        !_journeyHasDeparturePlatformsForEveryRide(activeJourney)) {
+    if (activeJourney != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         unawaited(_enrichActiveJourneyPlatforms(route.id, activeJourney));
@@ -9593,6 +9612,7 @@ class _StepCardState extends State<_StepCard> {
                     tripId: step.tripId,
                     showTrainNumbers: widget.showTrainNumbers,
                   );
+                  final isCoupledService = displayLine.contains(' / ');
 
                   // Keep the line compact and let the destination use all
                   // remaining space. Giving both labels flex space leaves a
@@ -9613,10 +9633,12 @@ class _StepCardState extends State<_StepCard> {
                       ),
                       const SizedBox(width: 6),
                       ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 72),
+                        constraints: BoxConstraints(
+                          maxWidth: isCoupledService ? 132 : 72,
+                        ),
                         child: Text(
                           displayLine,
-                          maxLines: 1,
+                          maxLines: isCoupledService ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               fontWeight: FontWeight.bold,
