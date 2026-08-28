@@ -465,6 +465,8 @@ void main() {
       required DateTime departure,
       required DateTime arrival,
       int? branchStepIndex,
+      Journey? parentJourney,
+      String? platform,
     }) {
       return Journey(
         steps: [
@@ -478,6 +480,7 @@ void main() {
             dateTime: departure,
             plannedDeparture: departure,
             plannedArrival: arrival,
+            platform: platform,
           ),
         ],
         departure: departure,
@@ -489,6 +492,7 @@ void main() {
         source: 'motis',
         plannedDeparture: departure,
         plannedArrival: arrival,
+        parentJourney: parentJourney,
         branchStepIndex: branchStepIndex,
       );
     }
@@ -515,6 +519,30 @@ void main() {
         ),
         isFalse,
       );
+    });
+
+    test('platform enrichment preserves the route branch back link', () {
+      final parent = journey(departure: departure, arrival: arrival);
+      final branch = journey(
+        departure: departure,
+        arrival: arrival,
+        branchStepIndex: 2,
+        parentJourney: parent,
+      );
+      final enriched = journey(
+        departure: departure,
+        arrival: arrival,
+        platform: '4b',
+      );
+
+      final result = preferJourneyWithMorePlatformDetailForTesting(
+        branch,
+        enriched,
+      );
+
+      expect(result.steps.single.platform, '4b');
+      expect(result.parentJourney, same(parent));
+      expect(result.branchStepIndex, 2);
     });
 
     test('keeps different connections apart', () {
@@ -603,6 +631,12 @@ void main() {
         ),
         same(alternative),
       );
+    });
+
+    test('a transfer after the first ride is not treated as initial access',
+        () {
+      expect(isBeforeFirstJourneyStepForTesting(0), isTrue);
+      expect(isBeforeFirstJourneyStepForTesting(1), isFalse);
     });
   });
 

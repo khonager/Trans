@@ -737,6 +737,12 @@ Map<String, dynamic> spliceAlternativeIntoJourney({
   return spliced;
 }
 
+bool _isBeforeFirstJourneyStep(int builtStepCount) => builtStepCount == 0;
+
+@visibleForTesting
+bool isBeforeFirstJourneyStepForTesting(int builtStepCount) =>
+    _isBeforeFirstJourneyStep(builtStepCount);
+
 /// Identity of the ride a journey starts with. Two results that begin with the
 /// same ride are one choice for the traveller, however they continue.
 @visibleForTesting
@@ -968,13 +974,28 @@ Journey _preferJourneyWithMorePlatformDetail(
 ) {
   final incomingScore = _journeyPlatformSignal(incoming);
   final existingScore = _journeyPlatformSignal(existing);
-  if (incomingScore > existingScore) return incoming;
+  if (incomingScore > existingScore) {
+    return incoming.copyWith(
+      parentJourney: existing.parentJourney,
+      branchStepIndex: existing.branchStepIndex,
+    );
+  }
   if (incomingScore == existingScore &&
       _journeyLineDetailSignal(incoming) > _journeyLineDetailSignal(existing)) {
-    return incoming;
+    return incoming.copyWith(
+      parentJourney: existing.parentJourney,
+      branchStepIndex: existing.branchStepIndex,
+    );
   }
   return existing;
 }
+
+@visibleForTesting
+Journey preferJourneyWithMorePlatformDetailForTesting(
+  Journey existing,
+  Journey incoming,
+) =>
+    _preferJourneyWithMorePlatformDetail(existing, incoming);
 
 bool _sameRideForRealtimeRefresh(JourneyStep current, JourneyStep fresh) {
   final currentTripId = current.tripId?.trim();
@@ -4618,7 +4639,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     String? lastStationName;
     String? lastStationId;
     String? lastPlatform;
-    bool isFirstStep = true; // Track if this is the first step in the journey
     double? getLat(dynamic loc) => loc != null && loc['location'] != null
         ? loc['location']['latitude']
         : (loc != null ? loc['latitude'] : null);
@@ -4672,6 +4692,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           (lastArrival == null || nextRideDeparture == null)) {
         return;
       }
+      final isFirstStep = _isBeforeFirstJourneyStep(steps.length);
       DateTime blockStart = (lastArrival != null)
           ? lastArrival
           : (DateTime.tryParse(transferBuffer.first['departure'] ??
@@ -4787,7 +4808,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (isPhantomWalk &&
             (startsAtNextRideStation || endsAtNextRideStation)) {
           transferBuffer.clear();
-          isFirstStep = false;
           return;
         }
       }
@@ -4891,7 +4911,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       ));
       transferBuffer.clear();
       transferBufferLegIndex = null;
-      isFirstStep = false; // After first flush, no longer first step
     }
 
     for (var legIndex = 0; legIndex < legs.length; legIndex++) {
