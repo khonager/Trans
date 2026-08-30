@@ -623,6 +623,9 @@ class TransportApi {
     final data = json.decode(response.body);
     if (data['journeys'] != null) {
       var journeys = List<Map<String, dynamic>>.from(data['journeys']);
+      for (final journey in journeys) {
+        attachV6LegPaths(journey);
+      }
       // Post-filter: remove FlixBus/FlixTrain/IC Bus etc. when Deutschlandticket mode
       if (nahverkehrOnly) {
         journeys = _filterForDeutschlandticket(journeys);
@@ -630,6 +633,41 @@ class TransportApi {
       return journeys;
     }
     return [];
+  }
+
+  /// Decodes the GeoJSON polyline v6.db returns for a leg (already requested
+  /// via `polylines=true`, so this costs no extra round-trip) into the same
+  /// `[[lat, lng], ...]` shape the MOTIS adapter produces.
+  @visibleForTesting
+  static List<List<double>>? decodeV6LegPath(Map<String, dynamic> leg) {
+    final features = (leg['polyline'] as Map?)?['features'];
+    if (features is! List) return null;
+
+    final points = <List<double>>[];
+    for (final feature in features) {
+      if (feature is! Map) continue;
+      final coordinates = (feature['geometry'] as Map?)?['coordinates'];
+      if (coordinates is! List || coordinates.length < 2) continue;
+      final lng = coordinates[0];
+      final lat = coordinates[1];
+      if (lat is! num || lng is! num) continue;
+      points.add([lat.toDouble(), lng.toDouble()]);
+    }
+    return points.length < 2 ? null : points;
+  }
+
+  /// Adds `decodedPath` to every leg of a v6.db journey so the UI can read leg
+  /// geometry the same way it does for MOTIS journeys.
+  @visibleForTesting
+  static void attachV6LegPaths(Map<String, dynamic> journey) {
+    final legs = journey['legs'];
+    if (legs is! List) return;
+    for (final leg in legs) {
+      if (leg is! Map<String, dynamic>) continue;
+      if (leg['decodedPath'] != null) continue;
+      final path = decodeV6LegPath(leg);
+      if (path != null) leg['decodedPath'] = path;
+    }
   }
 
   // ============================================================
@@ -1881,8 +1919,7 @@ class TransportApi {
   }
 
   /// Matches a label that names several tracks at once ("Gleis1/11").
-  static final RegExp _multiTrackLabelPattern =
-      RegExp(r'\d+\s*[/&+-]\s*\d+');
+  static final RegExp _multiTrackLabelPattern = RegExp(r'\d+\s*[/&+-]\s*\d+');
 
   /// Some feeds (DELFI at Mainz Hbf, for example) model a whole platform area
   /// as one stop and pin every trip to it, so the track we get names one

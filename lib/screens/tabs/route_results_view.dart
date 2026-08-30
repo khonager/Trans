@@ -12,6 +12,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/widgets/route_shape_sketch.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
@@ -1394,147 +1395,153 @@ class _JourneyCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        if (journey.isCancelled) ...[
-                          Text(
-                            "$depStr - $arrStr",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textSecondary,
-                              decoration: TextDecoration.lineThrough,
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Text(
-                              AppLocalizations.of(context)!.cancelled,
-                              style: const TextStyle(
-                                color: Colors.red,
-                                fontSize: 14,
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (journey.isCancelled) ...[
+                            Text(
+                              "$depStr - $arrStr",
+                              style: TextStyle(
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                color: colors.textSecondary,
+                                decoration: TextDecoration.lineThrough,
                               ),
                             ),
-                          )
-                        ] else
-                          Text.rich(
-                            TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: depStr,
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: Text(
+                                AppLocalizations.of(context)!.cancelled,
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                if (journey.departureDelay != 0)
+                              ),
+                            )
+                          ] else
+                            Text.rich(
+                              TextSpan(
+                                children: [
                                   TextSpan(
-                                    text:
-                                        " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                    text: depStr,
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: journey.departureDelay > 0
-                                          ? Colors.red
-                                          : Colors.green,
-                                    ),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
                                   ),
-                                TextSpan(
-                                  text: " - ",
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
-                                ),
-                                TextSpan(
-                                  text: arrStr,
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
-                                ),
-                                if (journey.arrivalDelay != 0)
+                                  if (journey.departureDelay != 0)
+                                    TextSpan(
+                                      text:
+                                          " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.departureDelay > 0
+                                            ? Colors.red
+                                            : Colors.green,
+                                      ),
+                                    ),
                                   TextSpan(
-                                    text:
-                                        " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                    text: " - ",
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: journey.arrivalDelay > 0
-                                          ? Colors.red
-                                          : Colors.green,
-                                    ),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
                                   ),
-                              ],
+                                  TextSpan(
+                                    text: arrStr,
+                                    style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
+                                  ),
+                                  if (journey.arrivalDelay != 0)
+                                    TextSpan(
+                                      text:
+                                          " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.arrivalDelay > 0
+                                            ? Colors.red
+                                            : Colors.green,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          durStr,
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (hasWalkingSummary) ...[
-                          const SizedBox(width: 10),
-                          Container(
-                            width: 1,
-                            height: 14,
-                            color: Colors.white24,
-                          ),
-                          const SizedBox(width: 10),
-                          Icon(
-                            Icons.directions_walk,
-                            size: 14,
-                            color: colors.stepTransferText,
-                          ),
-                          const SizedBox(width: 4),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           Text(
-                            walkStr,
-                            style: TextStyle(
-                              color: colors.stepTransferText,
+                            durStr,
+                            style: const TextStyle(
+                              color: Colors.green,
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
                             ),
                           ),
-                        ],
-                        if (hasBikingSummary) ...[
-                          const SizedBox(width: 10),
-                          Container(
-                            width: 1,
-                            height: 14,
-                            color: Colors.white24,
-                          ),
-                          const SizedBox(width: 10),
-                          Icon(
-                            Icons.pedal_bike,
-                            size: 14,
-                            color: colors.stepTransferText,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            bikeStr,
-                            style: TextStyle(
-                              color: colors.stepTransferText,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                          if (hasWalkingSummary) ...[
+                            const SizedBox(width: 10),
+                            Container(
+                              width: 1,
+                              height: 14,
+                              color: Colors.white24,
                             ),
-                          ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.directions_walk,
+                              size: 14,
+                              color: colors.stepTransferText,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              walkStr,
+                              style: TextStyle(
+                                color: colors.stepTransferText,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                          if (hasBikingSummary) ...[
+                            const SizedBox(width: 10),
+                            Container(
+                              width: 1,
+                              height: 14,
+                              color: Colors.white24,
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.pedal_bike,
+                              size: 14,
+                              color: colors.stepTransferText,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              bikeStr,
+                              style: TextStyle(
+                                color: colors.stepTransferText,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: RouteShapeSketch(journey: journey),
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
