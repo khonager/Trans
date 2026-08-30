@@ -64,7 +64,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _qrRestoreArmed = false;
   bool _qrRestoreGestureActive = false;
   bool _qrRestoreCancelPending = false;
-  bool _qrRestoreEverMovedUp = false;
   double _qrRestoreProgress = 0;
   double _qrRestoreSheetExtent = 0.1;
   String? _qrRestoreOriginTabId;
@@ -525,7 +524,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _qrRestoreOriginTabId = originTabId;
       _qrRestoreArmed = true;
       _qrRestoreGestureActive = true;
-      _qrRestoreEverMovedUp = false;
       _qrRestoreProgress = 0;
       _qrRestoreSheetExtent = 0.1;
       _ticketDocked = false;
@@ -540,8 +538,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final extraDistance = (upwardDistance - 150).clamp(0.0, 1000.0);
     final availableHeight = MediaQuery.sizeOf(context).height * 0.72;
     final extent = (0.1 + (extraDistance / availableHeight)).clamp(0.1, 0.85);
+    if ((_qrRestoreProgress - progress).abs() < 0.001 &&
+        (_qrRestoreSheetExtent - extent).abs() < 0.001) {
+      return;
+    }
     setState(() {
-      if (upwardDistance > 8) _qrRestoreEverMovedUp = true;
       _qrRestoreProgress = progress;
       _qrRestoreSheetExtent = extent;
     });
@@ -549,12 +550,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _endQrRestore(LongPressEndDetails details) {
     if (!_qrRestoreGestureActive) return;
-    final shouldRestore = !_qrRestoreEverMovedUp ||
-        _qrRestoreProgress >= 0.22 ||
-        _qrRestoreSheetExtent > 0.105;
+    final shouldRestore = _qrRestoreProgress >= 0.5;
     if (shouldRestore) {
       unawaited(_commitInteractiveQrRestore());
     } else {
+      _cancelInteractiveQrRestore();
+    }
+  }
+
+  void _cancelQrRestore() {
+    if (_qrRestoreGestureActive) {
       _cancelInteractiveQrRestore();
     }
   }
@@ -610,6 +615,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       onLongPressStart: _startQrRestore,
       onLongPressMoveUpdate: _moveQrRestore,
       onLongPressEnd: _endQrRestore,
+      onLongPressCancel: _cancelQrRestore,
       child: SizedBox(
         width: 48,
         height: 36,
@@ -779,9 +785,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     _qrRestoreGestureActive ||
                     _qrRestoreCancelPending,
                 ticketPullProgress: _qrRestoreProgress,
-                dockGestureProgress: _ticketDockGestureProgress,
-                dockGestureInteractive:
-                    _ticketDockGestureArmed && !_ticketDockAnimationPending,
+                dockGestureProgress: _qrRestoreGestureActive
+                    ? 1 - _qrRestoreProgress
+                    : _ticketDockGestureProgress,
+                dockGestureInteractive: _qrRestoreGestureActive ||
+                    (_ticketDockGestureArmed && !_ticketDockAnimationPending),
                 currentTabId: _tabIdForIndex(_currentIndex),
                 routesLabel: AppLocalizations.of(context)!.routes,
                 friendsLabel: AppLocalizations.of(context)!.friends,

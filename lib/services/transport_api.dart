@@ -623,6 +623,9 @@ class TransportApi {
     final data = json.decode(response.body);
     if (data['journeys'] != null) {
       var journeys = List<Map<String, dynamic>>.from(data['journeys']);
+      for (final journey in journeys) {
+        attachV6LegPaths(journey);
+      }
       // Post-filter: remove FlixBus/FlixTrain/IC Bus etc. when Deutschlandticket mode
       if (nahverkehrOnly) {
         journeys = _filterForDeutschlandticket(journeys);
@@ -630,6 +633,41 @@ class TransportApi {
       return journeys;
     }
     return [];
+  }
+
+  /// Decodes the GeoJSON polyline v6.db returns for a leg (already requested
+  /// via `polylines=true`, so this costs no extra round-trip) into the same
+  /// `[[lat, lng], ...]` shape the MOTIS adapter produces.
+  @visibleForTesting
+  static List<List<double>>? decodeV6LegPath(Map<String, dynamic> leg) {
+    final features = (leg['polyline'] as Map?)?['features'];
+    if (features is! List) return null;
+
+    final points = <List<double>>[];
+    for (final feature in features) {
+      if (feature is! Map) continue;
+      final coordinates = (feature['geometry'] as Map?)?['coordinates'];
+      if (coordinates is! List || coordinates.length < 2) continue;
+      final lng = coordinates[0];
+      final lat = coordinates[1];
+      if (lat is! num || lng is! num) continue;
+      points.add([lat.toDouble(), lng.toDouble()]);
+    }
+    return points.length < 2 ? null : points;
+  }
+
+  /// Adds `decodedPath` to every leg of a v6.db journey so the UI can read leg
+  /// geometry the same way it does for MOTIS journeys.
+  @visibleForTesting
+  static void attachV6LegPaths(Map<String, dynamic> journey) {
+    final legs = journey['legs'];
+    if (legs is! List) return;
+    for (final leg in legs) {
+      if (leg is! Map<String, dynamic>) continue;
+      if (leg['decodedPath'] != null) continue;
+      final path = decodeV6LegPath(leg);
+      if (path != null) leg['decodedPath'] = path;
+    }
   }
 
   // ============================================================
@@ -1880,6 +1918,25 @@ class TransportApi {
     return normalized;
   }
 
+  /// Matches a label that names several tracks at once ("Gleis1/11").
+  static final RegExp _multiTrackLabelPattern = RegExp(r'\d+\s*[/&+-]\s*\d+');
+
+  /// Some feeds (DELFI at Mainz Hbf, for example) model a whole platform area
+  /// as one stop and pin every trip to it, so the track we get names one
+  /// arbitrary track of that area rather than the one the train uses. Such a
+  /// track is worth a second opinion.
+  static bool _platformLooksLikeTrackArea(Map<String, dynamic>? place) {
+    final platform = _platformFromPlace(place);
+    if (platform == null) return false;
+    final label = _stringOrNull(place?['description']) ??
+        _stringOrNull(place?['stopLabel']);
+    if (label == null || !_multiTrackLabelPattern.hasMatch(label)) return false;
+    return RegExp(r'[A-Za-z0-9]+')
+        .allMatches(label)
+        .map((match) => match.group(0)!.toLowerCase())
+        .contains(platform.toLowerCase());
+  }
+
   static String? _stopLabelFromPlace(Map<String, dynamic>? place) {
     final description = place?['description']?.toString().trim();
     if (description != null && description.isNotEmpty) {
@@ -1953,6 +2010,160 @@ class TransportApi {
 
     return _stopDepartureDateTimeLocal(dep);
   }
+
+  static DateTime? _stopEventTime(
+    Map<String, dynamic> event, {
+    required bool arrival,
+  }) {
+    final place = (event['place'] as Map?)?.cast<String, dynamic>();
+    final timing = (event[arrival ? 'arrival' : 'departure'] as Map?)
+        ?.cast<String, dynamic>();
+    final candidates = arrival
+        ? <Object?>[
+            place?['scheduledArrival'],
+            place?['arrival'],
+            timing?['scheduledTime'],
+            timing?['time'],
+          ]
+        : <Object?>[
+            place?['scheduledDeparture'],
+            place?['departure'],
+            timing?['scheduledTime'],
+            timing?['time'],
+          ];
+    for (final candidate in candidates) {
+      final parsed = _parseJourneyTimeLocal(candidate);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  static String _stopEventLineName(Map<String, dynamic> event) {
+    final displayName = _stringOrNull(event['displayName']);
+    if (displayName != null) return displayName;
+    final routeShortName = _stringOrNull(event['routeShortName']);
+    if (routeShortName != null) return routeShortName;
+    return _stringOrNull(
+          (event['line'] as Map<String, dynamic>?)?['name'],
+        ) ??
+        '';
+  }
+
+  static String _stopEventRouteKey(Map<String, dynamic> event) {
+    final routeShortName = _stringOrNull(event['routeShortName']);
+    if (routeShortName != null) return _normalizeTransitKey(routeShortName);
+    return _normalizeTransitKey(
+      _stopEventLineName(event).replaceAll(RegExp(r'\s*\(\d+\)'), ''),
+    );
+  }
+
+  static String _namedPlaceKey(Object? value) {
+    if (value is! Map) return '';
+    final place = value.cast<dynamic, dynamic>();
+    final id = _stringOrNull(place['stopId']) ?? _stringOrNull(place['id']);
+    if (id != null) return 'id:$id';
+    return _normalizeTransitKey(place['name']);
+  }
+
+  static bool _samePresentText(Object? left, Object? right) {
+    final a = _normalizeTransitKey(left);
+    final b = _normalizeTransitKey(right);
+    return a.isEmpty || b.isEmpty || a == b;
+  }
+
+  static String? _coupledLineDisplayNameFromStopEvents(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) {
+    final eventList = events.toList();
+    final selected = _matchStopEventForLeg(
+      eventList,
+      leg: leg,
+      expectedTime: expectedTime,
+    );
+    if (selected == null) return null;
+
+    final selectedDeparture = _stopEventTime(selected, arrival: false);
+    if (selectedDeparture == null) return null;
+    final selectedArrival = _stopEventTime(selected, arrival: true);
+    final selectedRouteKey = _stopEventRouteKey(selected);
+    final selectedTripTo = _namedPlaceKey(selected['tripTo']);
+    final selectedTripFrom = _namedPlaceKey(selected['tripFrom']);
+    final selectedPlatform = _platformFromStopEvent(selected);
+
+    final companionNames = <String>[];
+    final seenRouteKeys = <String>{selectedRouteKey};
+    for (final candidate in eventList) {
+      if (identical(candidate, selected)) continue;
+      final candidateRouteKey = _stopEventRouteKey(candidate);
+      if (candidateRouteKey.isEmpty ||
+          seenRouteKeys.contains(candidateRouteKey)) {
+        continue;
+      }
+      if (_stopEventTime(candidate, arrival: false) != selectedDeparture) {
+        continue;
+      }
+      if (!_samePresentText(candidate['headsign'], selected['headsign']) ||
+          !_samePresentText(candidate['agencyName'], selected['agencyName']) ||
+          !_samePresentText(candidate['mode'], selected['mode'])) {
+        continue;
+      }
+
+      final candidateTripTo = _namedPlaceKey(candidate['tripTo']);
+      if (selectedTripTo.isEmpty ||
+          candidateTripTo.isEmpty ||
+          candidateTripTo != selectedTripTo) {
+        continue;
+      }
+
+      final candidateArrival = _stopEventTime(candidate, arrival: true);
+      if (selectedArrival != null) {
+        // Two service numbers arriving and departing together are the strong
+        // signal that they are portions of the same physical train.
+        if (candidateArrival != selectedArrival) continue;
+      } else {
+        final candidateTripFrom = _namedPlaceKey(candidate['tripFrom']);
+        if (selectedTripFrom.isEmpty ||
+            candidateTripFrom.isEmpty ||
+            candidateTripFrom != selectedTripFrom) {
+          continue;
+        }
+      }
+
+      final candidatePlatform = _platformFromStopEvent(candidate);
+      if (selectedPlatform != null &&
+          candidatePlatform != null &&
+          candidatePlatform != selectedPlatform) {
+        continue;
+      }
+
+      final candidateName = _stopEventLineName(candidate);
+      if (candidateName.isNotEmpty) {
+        seenRouteKeys.add(candidateRouteKey);
+        companionNames.add(candidateName);
+      }
+    }
+
+    if (companionNames.isEmpty) return null;
+    final selectedName = _stopEventLineName(selected);
+    if (selectedName.isEmpty) return null;
+    // Put the companion first: this is often the number shown on the front of
+    // the coupled train, while the selected journey uses the other portion.
+    return [...companionNames, selectedName].join(' / ');
+  }
+
+  @visibleForTesting
+  static String? coupledLineDisplayNameFromStopEventsForTesting(
+    Iterable<Map<String, dynamic>> events, {
+    required Map<String, dynamic> leg,
+    required DateTime? expectedTime,
+  }) =>
+      _coupledLineDisplayNameFromStopEvents(
+        events,
+        leg: leg,
+        expectedTime: expectedTime,
+      );
 
   static Duration? _eventTimeDistance(
     Map<String, dynamic> dep,
@@ -2521,24 +2732,55 @@ class TransportApi {
     );
   }
 
+  /// bahn.de reports a live track change in `ezGleis`, falling back to the
+  /// planned `gleis`.
+  static String? _bahnBoardPlatform(Map<String, dynamic>? entry) {
+    if (entry == null) return null;
+    return _stringOrNull(entry['ezGleis']) ?? _stringOrNull(entry['gleis']);
+  }
+
+  static bool _bahnBoardDirectionMatches(
+    Map<String, dynamic> entry,
+    String headsign,
+  ) {
+    final legDirection = _normalizeTransitKey(headsign);
+    final entryDirection = _normalizeTransitKey(
+      entry['richtung'] ?? entry['terminus'],
+    );
+    if (legDirection.isEmpty || entryDirection.isEmpty) return false;
+    return legDirection.contains(entryDirection) ||
+        entryDirection.contains(legDirection);
+  }
+
   static String? _matchPlatformFromBahnBoardEvents(
     Iterable<Map<String, dynamic>> entries, {
     required Map<String, dynamic> leg,
     required DateTime expectedTime,
+    bool strict = false,
+    bool matchDirection = false,
   }) {
     final lineKey = _normalizeTransitKey(_journeyLegLineDisplayName(leg));
+    final maxDistance =
+        strict ? const Duration(minutes: 4) : const Duration(minutes: 12);
     Map<String, dynamic>? best;
     Duration? bestDistance;
 
     for (final entry in entries) {
-      final platform = _stringOrNull(entry['gleis']);
+      final platform = _bahnBoardPlatform(entry);
       if (platform == null) continue;
 
       final entryLineKey = _bahnBoardLineKey(entry);
       if (!_transitLineKeysLikelyMatch(lineKey, entryLineKey)) continue;
 
+      // Overriding a track the feed already gave us is only safe on an
+      // unmistakable match, so require the direction to line up as well.
+      if (matchDirection &&
+          !_bahnBoardDirectionMatches(entry, _journeyLegHeadsign(leg))) {
+        continue;
+      }
+
       final distance = _bahnBoardTimeDistance(entry, expectedTime);
-      if (distance == null || distance > const Duration(minutes: 12)) continue;
+      if (distance == null || distance > maxDistance) continue;
 
       if (best == null || bestDistance == null || distance < bestDistance) {
         best = entry;
@@ -2546,7 +2788,7 @@ class TransportApi {
       }
     }
 
-    return _stringOrNull(best?['gleis']);
+    return _bahnBoardPlatform(best);
   }
 
   @visibleForTesting
@@ -2554,12 +2796,22 @@ class TransportApi {
     Iterable<Map<String, dynamic>> entries, {
     required Map<String, dynamic> leg,
     required DateTime expectedTime,
+    bool strict = false,
+    bool matchDirection = false,
   }) =>
       _matchPlatformFromBahnBoardEvents(
         entries,
         leg: leg,
         expectedTime: expectedTime,
+        strict: strict,
+        matchDirection: matchDirection,
       );
+
+  @visibleForTesting
+  static bool platformLooksLikeTrackAreaForTesting(
+    Map<String, dynamic>? place,
+  ) =>
+      _platformLooksLikeTrackArea(place);
 
   static Future<Map<String, dynamic>> debugLookupBahnPlatform({
     required String stationName,
@@ -2640,6 +2892,10 @@ class TransportApi {
     bool preferBahnForRail = false,
     bool fastBahnRailOnly = false,
   }) async {
+    await _enrichJourneyWithCoupledLineAliases(
+      journey,
+      onProgress: onProgress,
+    );
     final journeys = <Map<String, dynamic>>[journey];
     await _enrichJourneysWithPlatforms(
       journeys,
@@ -2650,6 +2906,61 @@ class TransportApi {
       fastBahnRailOnly: fastBahnRailOnly,
     );
     return journeys.first;
+  }
+
+  static Future<void> _enrichJourneyWithCoupledLineAliases(
+    Map<String, dynamic> journey, {
+    void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
+  }) async {
+    if (journey['source'] != 'motis') return;
+    final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
+    if (legs == null) return;
+
+    for (final rawLeg in legs) {
+      final leg = rawLeg.cast<String, dynamic>();
+      if (leg['line'] == null || !_journeyLegLooksRail(leg)) continue;
+      final origin = (leg['origin'] as Map?)?.cast<String, dynamic>();
+      final stopId =
+          _stringOrNull(origin?['id']) ?? _stringOrNull(origin?['stopId']);
+      final departureTime =
+          _journeyLegTimeLocal(leg, 'plannedDeparture', 'departure');
+      if (stopId == null || departureTime == null) continue;
+
+      try {
+        final events = await _fetchMotisStopEvents(
+          stopId,
+          timeLocal: departureTime.subtract(const Duration(minutes: 3)),
+          direction: 'LATER',
+          maxResults: 40,
+        );
+        final combinedName = _coupledLineDisplayNameFromStopEvents(
+          events,
+          leg: leg,
+          expectedTime: departureTime,
+        );
+        if (combinedName == null) continue;
+        final line = (leg['line'] as Map).cast<String, dynamic>();
+        if (line['name']?.toString() == combinedName) continue;
+        line['primaryName'] ??= line['name'];
+        line['name'] = combinedName;
+        onProgress?.call(journey);
+      } catch (error) {
+        _syntheticLog(
+          'coupled line lookup failed: ${_journeyLegLineDisplayName(leg)} '
+          'at ${origin?['name'] ?? stopId}: $error',
+        );
+      }
+    }
+  }
+
+  static Future<void> _enrichJourneysWithCoupledLineAliases(
+    Iterable<Map<String, dynamic>> journeys,
+  ) async {
+    await Future.wait(
+      journeys.map(
+        (journey) => _enrichJourneyWithCoupledLineAliases(journey),
+      ),
+    );
   }
 
   static void _setIfBlankMapValue(
@@ -2682,6 +2993,7 @@ class TransportApi {
     Map<String, dynamic> place, {
     required DateTime? expectedTime,
     required bool arrivals,
+    bool strict = false,
   }) async {
     if (expectedTime == null || !_journeyLegLooksRail(leg)) return null;
 
@@ -2707,6 +3019,10 @@ class TransportApi {
         events,
         leg: leg,
         expectedTime: expectedTime,
+        strict: strict,
+        // Arrival boards name the origin, not the direction of travel, so the
+        // direction check only applies to departures.
+        matchDirection: strict && !arrivals,
       );
       if (platform == null) {
         _syntheticLog(
@@ -2739,10 +3055,16 @@ class TransportApi {
     required String? stopLabel,
     required String? stopId,
     required String? parentId,
+    bool overwritePlatform = false,
   }) {
     if (platform != null && platform.isNotEmpty) {
-      _setIfBlankMapValue(place, 'platform', platform);
-      _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+      if (overwritePlatform) {
+        place['platform'] = platform;
+        place['scheduledPlatform'] = platform;
+      } else {
+        _setIfBlankMapValue(place, 'platform', platform);
+        _setIfBlankMapValue(place, 'scheduledPlatform', platform);
+      }
     }
     if (stopLabel != null && stopLabel.isNotEmpty) {
       _setIfBlankMapValue(place, 'stopLabel', stopLabel);
@@ -2776,13 +3098,16 @@ class TransportApi {
         required DateTime? expectedTime,
         required bool arrivals,
       }) {
-        if (place == null || _platformFromPlace(place) != null) return;
+        if (place == null) return;
+        final isTrackArea = _platformLooksLikeTrackArea(place);
+        if (_platformFromPlace(place) != null && !isTrackArea) return;
         tasks.add(() async {
           final details = await _backfillStopDetailsFromBahnBoard(
             leg,
             place,
             expectedTime: expectedTime,
             arrivals: arrivals,
+            strict: isTrackArea,
           );
           if (details == null || details.platform == null) return;
           _applyBackfilledStopDetails(
@@ -2791,6 +3116,7 @@ class TransportApi {
             stopLabel: details.stopLabel,
             stopId: details.stopId,
             parentId: details.parentId,
+            overwritePlatform: isTrackArea,
           );
           onProgress?.call();
         }());
@@ -2863,9 +3189,30 @@ class TransportApi {
     final existingStopLabel = _stopLabelFromPlace(place);
     final existingStopId = _stringOrNull(place['exactStopId']);
     final existingParentId = _stringOrNull(place['parentId']);
-    if (existingPlatform != null) {
+    final existingIsTrackArea = _platformLooksLikeTrackArea(place);
+    if (existingPlatform != null && !existingIsTrackArea) {
       return (
         platform: existingPlatform,
+        stopLabel: existingStopLabel,
+        stopId: existingStopId,
+        parentId: existingParentId,
+      );
+    }
+
+    // The feed only knows the platform area, so ask bahn.de for the actual
+    // track and keep the area as a fallback if nothing matches exactly.
+    if (existingIsTrackArea) {
+      final bahnDetails = expectedTime == null || !_journeyLegLooksRail(leg)
+          ? null
+          : await _backfillStopDetailsFromBahnBoard(
+              leg,
+              place,
+              expectedTime: expectedTime,
+              arrivals: arrivals,
+              strict: true,
+            );
+      return (
+        platform: bahnDetails?.platform ?? existingPlatform,
         stopLabel: existingStopLabel,
         stopId: existingStopId,
         parentId: existingParentId,
@@ -3042,6 +3389,7 @@ class TransportApi {
             _journeyLegTimeLocal(leg, 'plannedArrival', 'arrival');
 
         if (origin != null) {
+          final originIsTrackArea = _platformLooksLikeTrackArea(origin);
           final details = await _backfillStopDetailsForLegPlace(
             leg,
             origin,
@@ -3056,12 +3404,15 @@ class TransportApi {
               stopLabel: details.stopLabel,
               stopId: details.stopId,
               parentId: details.parentId,
+              overwritePlatform: originIsTrackArea,
             );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
         }
 
         if (destination != null) {
+          final destinationIsTrackArea =
+              _platformLooksLikeTrackArea(destination);
           final details = await _backfillStopDetailsForLegPlace(
             leg,
             destination,
@@ -3076,6 +3427,7 @@ class TransportApi {
               stopLabel: details.stopLabel,
               stopId: details.stopId,
               parentId: details.parentId,
+              overwritePlatform: destinationIsTrackArea,
             );
             onProgress?.call(List<Map<String, dynamic>>.from(journeys));
           }
@@ -3362,6 +3714,37 @@ class TransportApi {
     return decodeJsonMap(response.body);
   }
 
+  /// Fetches one MOTIS trip without using the itinerary cache.
+  ///
+  /// Route searches are snapshots and can omit a selected service in busy
+  /// result windows. A trip id addresses that exact vehicle, so route-detail
+  /// refreshes use this as their realtime-first path and retain plan search as
+  /// a fallback for providers that do not expose MOTIS trip ids.
+  static Future<Map<String, dynamic>?> fetchLiveTripJourney(
+    String tripId,
+  ) async {
+    final normalizedTripId = tripId.trim();
+    if (normalizedTripId.isEmpty) return null;
+
+    try {
+      final itinerary = await fetchTripItinerary(
+        normalizedTripId,
+        withScheduledSkippedStops: true,
+        joinInterlinedLegs: true,
+      );
+      if (itinerary == null) return null;
+      final journey = journeyFromMotisItinerary(itinerary);
+      journey['source'] = 'motis';
+      return journey;
+    } catch (error) {
+      // A v6 trip id is not necessarily understood by MOTIS. Callers fall
+      // back to a route search in that case, rather than failing refresh.
+      _syntheticLog(
+          'live trip refresh unavailable trip=$normalizedTripId error=$error');
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> _fetchTripItineraryCached(
     String tripId,
   ) async {
@@ -3434,6 +3817,13 @@ class TransportApi {
 
   static String _journeyLegLineName(Map<String, dynamic> leg) =>
       (leg['line'] as Map<String, dynamic>?)?['name']?.toString().trim() ?? '';
+
+  static String _journeyLegPrimaryLineName(Map<String, dynamic> leg) {
+    final line = leg['line'] as Map<String, dynamic>?;
+    return line?['primaryName']?.toString().trim() ??
+        line?['name']?.toString().trim() ??
+        '';
+  }
 
   static String? _journeyLegTripId(Map<String, dynamic> leg) {
     final line = leg['line'] as Map<String, dynamic>?;
@@ -3523,7 +3913,7 @@ class TransportApi {
     final originStopId = _stringOrNull(origin['id']);
     if (originStopId == null) return null;
 
-    final lineKey = _normalizeTransitKey(_journeyLegLineName(firstRide));
+    final lineKey = _normalizeTransitKey(_journeyLegPrimaryLineName(firstRide));
     if (lineKey.isEmpty) return null;
 
     final directionKey = _normalizeTransitKey(firstRide['direction']);
@@ -3531,7 +3921,7 @@ class TransportApi {
     final transferStopName = _stringOrNull(transfer['name']) ?? '';
     if (transferStopId.isEmpty && transferStopName.isEmpty) return null;
     final secondLineKey =
-        _normalizeTransitKey(_journeyLegLineName(transferRide));
+        _normalizeTransitKey(_journeyLegPrimaryLineName(transferRide));
     final secondDirectionKey = _normalizeTransitKey(transferRide['direction']);
     final secondDestinationStopId =
         _stringOrNull(secondDestination?['id']) ?? '';
@@ -4799,6 +5189,11 @@ class TransportApi {
     Function(List<Map<String, dynamic>>)? onPartialResults,
     void Function(Set<String> activePhases)? onLoadStateChanged,
     bool Function()? shouldContinue,
+
+    /// Callers that do not display platforms can skip the expensive per-stop
+    /// platform lookups. Coupled train names are controlled separately below.
+    bool enrichPlatforms = true,
+    bool enrichCoupledLines = true,
   }) async {
     final activePhases = <String>{};
     void setPhase(String phase, bool active) {
@@ -4857,6 +5252,9 @@ class TransportApi {
           pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
           maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
         );
+        if (enrichCoupledLines) {
+          await _enrichJourneysWithCoupledLineAliases(res);
+        }
         if (onPartialResults != null) onPartialResults(res);
         List<Map<String, dynamic>> finalResults = res;
         if (isSyntheticTransitousEnabled) {
@@ -4876,10 +5274,12 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: transitous-only base=${res.length} final=${finalResults.length}',
         );
@@ -4916,7 +5316,12 @@ class TransportApi {
           pedestrianSpeedKmhOverride: pedestrianSpeedKmhOverride,
           maxWalkingTimeMinutesOverride: maxWalkingTimeMinutesOverride,
           allowDirectFallback: false,
-        ).then((res) => res).catchError((e) {
+        ).then((res) async {
+          if (enrichCoupledLines) {
+            await _enrichJourneysWithCoupledLineAliases(res);
+          }
+          return res;
+        }).catchError((e) {
           debugPrint('Hybrid: Transitous failed: $e');
           return <Map<String, dynamic>>[];
         }).whenComplete(() => setPhase(loadPhaseMotis, false));
@@ -4986,6 +5391,9 @@ class TransportApi {
             results: results,
           );
           if (baseResults.isNotEmpty) {
+            if (enrichCoupledLines) {
+              await _enrichJourneysWithCoupledLineAliases(baseResults);
+            }
             onPartialResults(baseResults);
           }
         }
@@ -5009,10 +5417,12 @@ class TransportApi {
             onPartialResults(finalResults);
           }
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: hybrid(partial) motis=${resultsList[0].length} '
           'v6=${resultsList[1].length} base=${baseResults.length} final=${finalResults.length}',
@@ -5041,6 +5451,9 @@ class TransportApi {
             isArrival: isArrival,
             results: results,
           );
+          if (enrichCoupledLines && baseResults.isNotEmpty) {
+            await _enrichJourneysWithCoupledLineAliases(baseResults);
+          }
         }
 
         if (baseResults.isEmpty) {
@@ -5062,10 +5475,12 @@ class TransportApi {
             shouldContinue: shouldContinue,
           );
         }
-        finalResults = await _enrichJourneysWithPlatforms(
-          finalResults,
-          onProgress: onPartialResults,
-        );
+        if (enrichPlatforms) {
+          finalResults = await _enrichJourneysWithPlatforms(
+            finalResults,
+            onProgress: onPartialResults,
+          );
+        }
         _syntheticLog(
           'search done: hybrid motis=${motisResults.length} v6=${v6Results.length} '
           'base=${baseResults.length} final=${finalResults.length}',

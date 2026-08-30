@@ -3,6 +3,92 @@ import 'package:trans/services/transport_api.dart';
 
 void main() {
   group('TransportApi platform backfill matching', () {
+    test('combines line names for portions of the same physical train', () {
+      final events = [
+        {
+          'displayName': 'RB13 (81020)',
+          'routeShortName': 'RB13',
+          'headsign': 'Leipzig Hbf',
+          'tripId': 'rb13-trip',
+          'agencyName': 'Erfurter Bahn',
+          'mode': 'REGIONAL_RAIL',
+          'tripFrom': {'name': 'Hof Hbf'},
+          'tripTo': {'name': 'Leipzig Hbf'},
+          'place': {
+            'scheduledArrival': '2026-08-29T10:56:00Z',
+            'scheduledDeparture': '2026-08-29T11:01:00Z',
+          },
+        },
+        {
+          'displayName': 'RB22 (80854)',
+          'routeShortName': 'RB22',
+          'headsign': 'Leipzig Hbf',
+          'tripId': 'rb22-trip',
+          'agencyName': 'Erfurter Bahn',
+          'mode': 'REGIONAL_RAIL',
+          'tripFrom': {'name': 'Saalfeld (Saale)'},
+          'tripTo': {'name': 'Leipzig Hbf'},
+          'place': {
+            'scheduledArrival': '2026-08-29T10:56:00Z',
+            'scheduledDeparture': '2026-08-29T11:01:00Z',
+          },
+        },
+      ];
+
+      final displayName =
+          TransportApi.coupledLineDisplayNameFromStopEventsForTesting(
+        events,
+        leg: {
+          'line': {'name': 'RB13 (81020)', 'tripId': 'rb13-trip'},
+          'direction': 'Leipzig Hbf',
+        },
+        expectedTime: DateTime.parse('2026-08-29T11:01:00Z').toLocal(),
+      );
+
+      expect(displayName, 'RB22 (80854) / RB13 (81020)');
+    });
+
+    test('does not combine trains going in different directions', () {
+      final displayName =
+          TransportApi.coupledLineDisplayNameFromStopEventsForTesting(
+        [
+          {
+            'displayName': 'RB13 (81017)',
+            'routeShortName': 'RB13',
+            'headsign': 'Hof Hbf',
+            'tripId': 'rb13-trip',
+            'agencyName': 'Erfurter Bahn',
+            'mode': 'REGIONAL_RAIL',
+            'tripTo': {'name': 'Hof Hbf'},
+            'place': {
+              'scheduledArrival': '2026-08-29T10:58:00Z',
+              'scheduledDeparture': '2026-08-29T11:02:00Z',
+            },
+          },
+          {
+            'displayName': 'RB22 (80849)',
+            'routeShortName': 'RB22',
+            'headsign': 'Saalfeld (Saale)',
+            'tripId': 'rb22-trip',
+            'agencyName': 'Erfurter Bahn',
+            'mode': 'REGIONAL_RAIL',
+            'tripTo': {'name': 'Saalfeld (Saale)'},
+            'place': {
+              'scheduledArrival': '2026-08-29T10:58:00Z',
+              'scheduledDeparture': '2026-08-29T11:02:00Z',
+            },
+          },
+        ],
+        leg: {
+          'line': {'name': 'RB13 (81017)', 'tripId': 'rb13-trip'},
+          'direction': 'Hof Hbf',
+        },
+        expectedTime: DateTime.parse('2026-08-29T11:02:00Z').toLocal(),
+      );
+
+      expect(displayName, isNull);
+    });
+
     test('prefers exact trip id platform match', () {
       final platform = TransportApi.matchPlatformFromStopEventsForTesting(
         [
@@ -306,6 +392,98 @@ void main() {
       expect(place['scheduledPlatform'], '2');
       expect(place['stopLabel'], 'Gleis 2');
       expect(place['exactStopId'], 'existing-child');
+    });
+
+    test('flags a track that only names a combined platform area', () {
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '11',
+          'description': 'Gleis1/11',
+        }),
+        isTrue,
+      );
+    });
+
+    test('keeps a track that names a single platform', () {
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '11',
+          'description': 'Gleis 11',
+        }),
+        isFalse,
+      );
+      expect(
+        TransportApi.platformLooksLikeTrackAreaForTesting({
+          'platform': '5b',
+          'description': 'Gleis1/11',
+        }),
+        isFalse,
+      );
+    });
+
+    test('prefers the realtime track of a bahn board entry', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-08-22T10:27:00',
+            'gleis': '5',
+            'ezGleis': '5b',
+            'richtung': 'Idar-Oberstein',
+            'verkehrmittel': {'mittelText': 'RB33'},
+          },
+        ],
+        leg: {
+          'mode': 'REGIONAL_RAIL',
+          'line': {'name': 'RB33'},
+          'direction': 'Idar-Oberstein, Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-08-22T10:27:00').toLocal(),
+      );
+
+      expect(platform, '5b');
+    });
+
+    test('strict matching skips the same line in the other direction', () {
+      final entries = [
+        {
+          'zeit': '2026-08-22T10:25:00',
+          'gleis': '2',
+          'richtung': 'Mainz Hauptbahnhof',
+          'verkehrmittel': {'mittelText': 'RB33'},
+        },
+        {
+          'zeit': '2026-08-22T10:27:00',
+          'gleis': '5b',
+          'richtung': 'Idar-Oberstein',
+          'verkehrmittel': {'mittelText': 'RB33'},
+        },
+      ];
+      final leg = {
+        'mode': 'REGIONAL_RAIL',
+        'line': {'name': 'RB33'},
+        'direction': 'Idar-Oberstein, Bahnhof',
+      };
+
+      expect(
+        TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+          entries,
+          leg: leg,
+          expectedTime: DateTime.parse('2026-08-22T10:27:00').toLocal(),
+          strict: true,
+          matchDirection: true,
+        ),
+        '5b',
+      );
+      expect(
+        TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+          entries,
+          leg: leg,
+          expectedTime: DateTime.parse('2026-08-22T10:40:00').toLocal(),
+          strict: true,
+          matchDirection: true,
+        ),
+        isNull,
+      );
     });
   });
 }

@@ -11,7 +11,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'package:trans/models/station.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/models/joint_journey.dart';
 import 'package:trans/models/favorite.dart';
+import 'package:trans/services/joint_journey_planner.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/services/community_safety_service.dart';
 import 'package:trans/services/supabase_service.dart';
@@ -26,11 +28,13 @@ import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/utils/favorite_icons.dart';
 import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
+import 'package:trans/widgets/running_border.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
+import '../joint_route_results_screen.dart';
 import 'route_results_view.dart';
 
 // A route detail refresh needs enough of a window to find the selected
@@ -56,6 +60,20 @@ class _RouteSearchDefaults {
     required this.transferTimeFactor,
     required this.pedestrianSpeedKmh,
     required this.maxWalkingTimeMinutes,
+  });
+}
+
+class _JointRouteContext {
+  final List<JointJourneyOption> options;
+  final String friendId;
+  final String friendName;
+  final String destinationName;
+
+  const _JointRouteContext({
+    required this.options,
+    required this.friendId,
+    required this.friendName,
+    required this.destinationName,
   });
 }
 
@@ -85,6 +103,29 @@ String formatRideLineWithPlatform(String line, String? platform) {
       ? '${_lineLooksRailForPlatformLabel(normalizedLine) ? 'Gl.' : 'Pl.'} $normalizedPlatform'
       : normalizedPlatform;
   return '$normalizedLine ($formattedPlatform)';
+}
+
+@visibleForTesting
+String formatRealtimeDelay(int minutes) {
+  final sign = minutes > 0 ? '+' : (minutes < 0 ? '-' : '');
+  final absoluteMinutes = minutes.abs();
+  if (absoluteMinutes < 60) return '$sign$absoluteMinutes min';
+
+  final hours = absoluteMinutes ~/ 60;
+  final remainingMinutes = absoluteMinutes % 60;
+  return remainingMinutes == 0
+      ? '$sign${hours}h'
+      : '$sign${hours}h ${remainingMinutes}min';
+}
+
+@visibleForTesting
+int realtimeChangedSuffixStart(String plannedTime, String actualTime) {
+  final limit = min(plannedTime.length, actualTime.length);
+  var index = 0;
+  while (index < limit && plannedTime[index] == actualTime[index]) {
+    index++;
+  }
+  return index;
 }
 
 bool _lineLooksRailForPlatformLabel(String line) {
@@ -192,6 +233,46 @@ String? _normalizeStopDetailLabel(String? label, {String? stationName}) {
   return normalized;
 }
 
+String _normalizeStationIdentityName(String name) {
+  return name
+      .trim()
+      .toLowerCase()
+      // Transit feeds commonly use these two forms interchangeably, including
+      // between a ride's destination and the following ride's origin.
+      .replaceAll('hauptbahnhof', 'hbf')
+      .replaceAll(RegExp(r'[^a-z0-9äöüß]+'), '');
+}
+
+bool _sameTransitStation(
+  String? leftId,
+  String? leftName,
+  String? rightId,
+  String? rightName,
+) {
+  final aId = leftId?.trim();
+  final bId = rightId?.trim();
+  if (aId != null && aId.isNotEmpty && bId != null && bId.isNotEmpty) {
+    if (aId == bId) return true;
+  }
+
+  final aName = leftName?.trim();
+  final bName = rightName?.trim();
+  if (aName == null || aName.isEmpty || bName == null || bName.isEmpty) {
+    return false;
+  }
+  return _normalizeStationIdentityName(aName) ==
+      _normalizeStationIdentityName(bName);
+}
+
+@visibleForTesting
+bool sameTransitStationForTesting(
+  String? leftId,
+  String? leftName,
+  String? rightId,
+  String? rightName,
+) =>
+    _sameTransitStation(leftId, leftName, rightId, rightName);
+
 bool _looksLikeOpaqueStopCode(String label) {
   final lower = label.toLowerCase();
   const userFacingKeywords = <String>[
@@ -251,6 +332,23 @@ bool _matchesSimpleStopLabel(
   return false;
 }
 
+/// Matches a label that names several tracks at once ("Gleis1/11", "Gleis 24-25").
+final RegExp _multiTrackLabelPattern = RegExp(r'\d+\s*[/&+-]\s*\d+');
+
+/// True when the only platform we have is a whole platform area: the label
+/// names several tracks and the feed pinned the trip to one of them, so the
+/// number is not trustworthy.
+bool platformLooksLikeTrackArea(String? platform, String? stopLabel) {
+  final normalizedPlatform = platform?.trim();
+  if (normalizedPlatform == null || normalizedPlatform.isEmpty) return false;
+  final label = stopLabel?.trim();
+  if (label == null || !_multiTrackLabelPattern.hasMatch(label)) return false;
+  return RegExp(r'[A-Za-z0-9]+')
+      .allMatches(label)
+      .map((match) => match.group(0)!.toLowerCase())
+      .contains(normalizedPlatform.toLowerCase());
+}
+
 String? _extractStopDetailCode(String label, {required bool isRail}) {
   final normalized = label.trim();
   if (normalized.isEmpty) return null;
@@ -258,6 +356,18 @@ String? _extractStopDetailCode(String label, {required bool isRail}) {
   final typeKeywords = isRail
       ? '(?:gleis|schiene|platform|track)'
       : '(?:bussteig|bussteige|steig|platz|haltestelle|bstg\\.?)';
+
+  // Keep every track of a combined platform area instead of silently picking
+  // the first one, which would name a track the trip does not use.
+  final multiTrack = RegExp(
+    '\\b$typeKeywords\\s*([A-Za-z0-9]+(?:\\s*[/&+-]\\s*[A-Za-z0-9]+)+)',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (multiTrack != null) {
+    return multiTrack
+        .group(1)!
+        .replaceAllMapped(RegExp(r'\s*([/&+-])\s*'), (m) => m.group(1)!);
+  }
 
   final afterType = RegExp(
     '\\b$typeKeywords\\s*([A-Za-z0-9]+)\\b',
@@ -297,7 +407,14 @@ String? combinePlatformAndStopLabel(
   final extractedCode = normalizedStopLabel == null
       ? null
       : _extractStopDetailCode(normalizedStopLabel, isRail: isRail);
-  if (extractedCode != null) {
+  // The structured track wins over anything parsed out of the free-text label:
+  // the label can describe the whole platform area ("Gleis1/11") and would
+  // otherwise announce a different track than the rest of the journey shows.
+  final hasPlatform =
+      normalizedPlatform != null && normalizedPlatform.isNotEmpty;
+  if (extractedCode != null &&
+      (!hasPlatform ||
+          extractedCode.toLowerCase() == normalizedPlatform.toLowerCase())) {
     return formatWithPrefix(extractedCode);
   }
 
@@ -427,6 +544,277 @@ DateTime? alternativeJourneyDisplayDepartureLocal(
   }
 }
 
+/// Ride steps that should be checked for an earlier departure right now.
+///
+/// Opening a route checks the first two upcoming rides; as rides depart the
+/// window slides forward, so the ride after them gets its turn one at a time.
+@visibleForTesting
+List<int> earlierAlternativeScanTargets(
+  List<JourneyStep> steps,
+  DateTime now, {
+  int lookahead = 2,
+}) {
+  final targets = <int>[];
+  for (var i = 0; i < steps.length && targets.length < lookahead; i++) {
+    final step = steps[i];
+    if (step.type != 'ride') continue;
+    final departure = step.plannedDeparture ?? step.dateTime;
+    if (departure == null || !departure.isAfter(now)) continue;
+    targets.add(i);
+  }
+  return targets;
+}
+
+/// Whether an alternative departure is worth pointing at: meaningfully
+/// earlier, still catchable, and not arriving later than the current plan.
+@visibleForTesting
+bool earlierAlternativeQualifies({
+  required DateTime plannedDeparture,
+  required DateTime alternativeDeparture,
+  required DateTime alternativeArrival,
+  required DateTime earliestCatchable,
+  required DateTime latestArrival,
+  Duration minGain = const Duration(minutes: 3),
+}) {
+  if (alternativeDeparture.isAfter(plannedDeparture.subtract(minGain))) {
+    return false;
+  }
+  if (alternativeDeparture.isBefore(earliestCatchable)) return false;
+  if (alternativeArrival.isAfter(latestArrival)) return false;
+  return true;
+}
+
+/// First transit leg of a raw journey map, if it has one.
+Map<String, dynamic>? _firstRideLegOf(Map<String, dynamic> journey) {
+  final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+  if (legs == null || legs.isEmpty) return null;
+  for (final leg in legs) {
+    if (leg['line'] != null) return leg;
+  }
+  return null;
+}
+
+/// When the traveller actually boards: a leading walk leg makes the journey
+/// start earlier than the ride, which is what the route view shows.
+@visibleForTesting
+DateTime? alternativeJourneyBoardingLocal(Map<String, dynamic> journey) {
+  final ride = _firstRideLegOf(journey);
+  final rawTime = ride?['plannedDeparture'] ?? ride?['departure'];
+  if (rawTime == null) return alternativeJourneyDisplayDepartureLocal(journey);
+  try {
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return alternativeJourneyDisplayDepartureLocal(journey);
+  }
+}
+
+@visibleForTesting
+String? alternativeJourneyTripId(Map<String, dynamic> journey) {
+  final ride = _firstRideLegOf(journey);
+  final tripId = (ride?['line'] as Map?)?['tripId'] ?? ride?['tripId'];
+  final normalized = tripId?.toString().trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  return normalized;
+}
+
+/// Line label without the train number, for comparing two rides.
+@visibleForTesting
+String normalizeRideLineKey(String line) {
+  return line
+      .toUpperCase()
+      .replaceAll(RegExp(r'\s*\(\d+\)'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+/// True when a listed journey starts with the very ride the traveller is
+/// already on - the same trip is not an alternative to itself.
+@visibleForTesting
+bool alternativeIsSameRide(
+  Map<String, dynamic> journey, {
+  String? tripId,
+  String? line,
+  DateTime? departure,
+}) {
+  final journeyTripId = alternativeJourneyTripId(journey);
+  if (tripId != null && tripId.isNotEmpty && journeyTripId == tripId) {
+    return true;
+  }
+
+  // Trip ids that differ prove nothing: MOTIS hands out opaque tokens that can
+  // come back different for the same trip in another response. So fall through
+  // instead of trusting the mismatch - the same line leaving at the same minute
+  // is the same ride. Compare boarding times, since a leading walk shifts the
+  // start of the journey.
+  if (departure == null) return false;
+  final boarding = alternativeJourneyBoardingLocal(journey);
+  if (boarding == null) return false;
+  if (boarding.difference(departure).abs() > const Duration(minutes: 1)) {
+    return false;
+  }
+  if (line == null || line.isEmpty) return true;
+  final ride = _firstRideLegOf(journey);
+  final journeyLine = (ride?['line'] as Map?)?['name']?.toString();
+  if (journeyLine == null) return true;
+  return normalizeRideLineKey(journeyLine) == normalizeRideLineKey(line);
+}
+
+/// Keeps the earlier departures short: at most [maxEarlier] of the ones
+/// closest to [reference], everything from [reference] on stays untouched.
+@visibleForTesting
+List<Map<String, dynamic>> limitEarlierAlternatives(
+  List<Map<String, dynamic>> journeys, {
+  required DateTime reference,
+  int maxEarlier = 3,
+}) {
+  bool isEarlier(Map<String, dynamic> journey) {
+    final boarding = alternativeJourneyBoardingLocal(journey);
+    return boarding != null && boarding.isBefore(reference);
+  }
+
+  final earlierCount = journeys.where(isEarlier).length;
+  if (earlierCount <= maxEarlier) return journeys;
+
+  // The list runs from early to late, so dropping from the front keeps the
+  // departures closest to the planned one.
+  var skip = earlierCount - maxEarlier;
+  final kept = <Map<String, dynamic>>[];
+  for (final journey in journeys) {
+    if (skip > 0 && isEarlier(journey)) {
+      skip--;
+      continue;
+    }
+    kept.add(journey);
+  }
+  return kept;
+}
+
+/// Number of legs of [original] that still belong to the trip when the ride at
+/// [rideLegIndex] is swapped for an alternative: everything before it, minus
+/// the walking legs that lead up to it - the alternative brings its own.
+@visibleForTesting
+int journeyPrefixLegCount(List<dynamic> original, int rideLegIndex) {
+  var prefix = rideLegIndex.clamp(0, original.length);
+  while (prefix > 0) {
+    final leg = original[prefix - 1];
+    final isRide = leg is Map && leg['line'] != null;
+    if (isRide) break;
+    prefix--;
+  }
+  return prefix;
+}
+
+/// Builds the full trip out of the part already travelled and the alternative
+/// picked for the rest, so a chosen alternative does not start mid-route.
+@visibleForTesting
+Map<String, dynamic> spliceAlternativeIntoJourney({
+  required Map<String, dynamic> original,
+  required Map<String, dynamic> alternative,
+  required int rideLegIndex,
+}) {
+  final originalLegs = (original['legs'] as List?) ?? const [];
+  final alternativeLegs = (alternative['legs'] as List?) ?? const [];
+  final prefix = journeyPrefixLegCount(originalLegs, rideLegIndex);
+  if (prefix <= 0 || alternativeLegs.isEmpty) return alternative;
+
+  final legs = [...originalLegs.take(prefix), ...alternativeLegs];
+  final spliced = Map<String, dynamic>.from(alternative)..['legs'] = legs;
+
+  final firstLeg = legs.first;
+  final lastLeg = legs.last;
+  if (firstLeg is Map) {
+    final departure = firstLeg['departure'] ?? firstLeg['plannedDeparture'];
+    if (departure != null) spliced['departure'] = departure;
+  }
+  if (lastLeg is Map) {
+    final arrival = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
+    if (arrival != null) spliced['arrival'] = arrival;
+  }
+  // Recomputed from the legs; a stale value would describe the alternative
+  // alone, not the spliced trip.
+  spliced.remove('duration');
+  spliced.remove('transfers');
+  return spliced;
+}
+
+bool _isBeforeFirstJourneyStep(int builtStepCount) => builtStepCount == 0;
+
+@visibleForTesting
+bool isBeforeFirstJourneyStepForTesting(int builtStepCount) =>
+    _isBeforeFirstJourneyStep(builtStepCount);
+
+/// Identity of the ride a journey starts with. Two results that begin with the
+/// same ride are one choice for the traveller, however they continue.
+@visibleForTesting
+String? alternativeRideKey(Map<String, dynamic> journey) {
+  final tripId = alternativeJourneyTripId(journey);
+  if (tripId != null) return 'trip:$tripId';
+
+  final boarding = alternativeJourneyBoardingLocal(journey);
+  if (boarding == null) return null;
+  final ride = _firstRideLegOf(journey);
+  final line = (ride?['line'] as Map?)?['name']?.toString() ?? '';
+  return '${normalizeRideLineKey(line)}@${boarding.millisecondsSinceEpoch}';
+}
+
+/// Keeps one entry per ride, the one that reaches the destination first, in
+/// the order the rides depart.
+@visibleForTesting
+List<Map<String, dynamic>> collapseAlternativesByRide(
+  Iterable<Map<String, dynamic>> journeys,
+) {
+  final collapsed = <Map<String, dynamic>>[];
+  final indexByRide = <String, int>{};
+
+  for (final journey in journeys) {
+    final key = alternativeRideKey(journey);
+    if (key == null) {
+      collapsed.add(journey);
+      continue;
+    }
+    final index = indexByRide[key];
+    if (index == null) {
+      indexByRide[key] = collapsed.length;
+      collapsed.add(journey);
+      continue;
+    }
+
+    final keptArrival = alternativeJourneyArrivalLocal(collapsed[index]);
+    final arrival = alternativeJourneyArrivalLocal(journey);
+    if (keptArrival == null ||
+        (arrival != null && arrival.isBefore(keptArrival))) {
+      collapsed[index] = journey;
+    }
+  }
+
+  return collapsed;
+}
+
+/// Identity of a raw journey map: departure and arrival pin one connection.
+@visibleForTesting
+String? alternativeJourneyKey(Map<String, dynamic> journey) {
+  final departure = alternativeJourneyDisplayDepartureLocal(journey);
+  final arrival = alternativeJourneyArrivalLocal(journey);
+  if (departure == null || arrival == null) return null;
+  return '${departure.millisecondsSinceEpoch}_'
+      '${arrival.millisecondsSinceEpoch}';
+}
+
+/// Arrival of a raw journey map at its final stop.
+@visibleForTesting
+DateTime? alternativeJourneyArrivalLocal(Map<String, dynamic> journey) {
+  try {
+    final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
+    if (legs == null || legs.isEmpty) return null;
+    final lastLeg = legs.last;
+    final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
+    if (rawTime == null) return null;
+    return DateTime.parse(rawTime.toString()).toLocal();
+  } catch (_) {
+    return null;
+  }
+}
+
 @visibleForTesting
 List<Map<String, dynamic>> mergeAlternativeJourneys(
   Iterable<Map<String, dynamic>> existing,
@@ -436,25 +824,8 @@ List<Map<String, dynamic>> mergeAlternativeJourneys(
   final seenIds = <String>{};
 
   void addJourney(Map<String, dynamic> journey) {
-    final departure = alternativeJourneyDisplayDepartureLocal(journey);
-    if (departure == null) return;
-
-    final arrival = (() {
-      try {
-        final legs = (journey['legs'] as List?)?.cast<Map<String, dynamic>>();
-        if (legs == null || legs.isEmpty) return null;
-        final lastLeg = legs.last;
-        final rawTime = lastLeg['plannedArrival'] ?? lastLeg['arrival'];
-        if (rawTime == null) return null;
-        return DateTime.parse(rawTime.toString()).toLocal();
-      } catch (_) {
-        return null;
-      }
-    })();
-    if (arrival == null) return;
-
-    final id =
-        '${departure.millisecondsSinceEpoch}_${arrival.millisecondsSinceEpoch}';
+    final id = alternativeJourneyKey(journey);
+    if (id == null) return;
     if (!seenIds.add(id)) return;
     merged.add(journey);
   }
@@ -478,10 +849,21 @@ List<Map<String, dynamic>> mergeAlternativeJourneys(
 }
 
 String _journeyRefreshSignature(Iterable<Journey> journeys) {
-  return journeys
-      .map((j) =>
-          "${j.plannedDeparture ?? j.departure}_${j.plannedArrival ?? j.arrival}_${j.steps.length}")
-      .join("||");
+  return journeys.map((journey) {
+    final realtime = journey.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => [
+              step.tripId?.trim() ?? '',
+              step.departureTime,
+              step.arrivalTime,
+              step.departureDelay?.toString() ?? '',
+              step.arrivalDelay?.toString() ?? '',
+              step.isCancelled ? '1' : '0',
+            ].join('|'))
+        .join('||');
+    return '${journey.plannedDeparture ?? journey.departure}_'
+        '${journey.plannedArrival ?? journey.arrival}_$realtime';
+  }).join("||");
 }
 
 String _journeyListKey(Journey journey) {
@@ -503,8 +885,23 @@ String _journeyListKey(Journey journey) {
 int _journeyPlatformSignal(Journey journey) {
   var score = 0;
   for (final step in journey.steps.where((step) => step.type == 'ride')) {
-    if ((step.platform ?? '').trim().isNotEmpty) score += 2;
-    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) score += 1;
+    if ((step.platform ?? '').trim().isNotEmpty) {
+      score += 2;
+      // A track resolved to a single platform beats one that is still just the
+      // combined area from the feed, so a corrected track counts as progress.
+      if (!platformLooksLikeTrackArea(step.platform, step.departureStopLabel)) {
+        score += 1;
+      }
+    }
+    if ((step.arrivalPlatform ?? '').trim().isNotEmpty) {
+      score += 1;
+      if (!platformLooksLikeTrackArea(
+        step.arrivalPlatform,
+        step.arrivalStopLabel,
+      )) {
+        score += 1;
+      }
+    }
     if ((step.departureStopLabel ?? '').trim().isNotEmpty) score += 1;
     if ((step.arrivalStopLabel ?? '').trim().isNotEmpty) score += 1;
   }
@@ -514,14 +911,43 @@ int _journeyPlatformSignal(Journey journey) {
 String _firstRideLineKey(Journey journey) {
   for (final step in journey.steps) {
     if (step.type != 'ride') continue;
-    return step.line
-        .toUpperCase()
-        .replaceAll(RegExp(r'\s*\(\d+\)'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    return normalizeRideLineKey(step.line);
   }
   return '';
 }
+
+String _firstRideTripId(Journey journey) {
+  for (final step in journey.steps) {
+    if (step.type != 'ride') continue;
+    return step.tripId?.trim() ?? '';
+  }
+  return '';
+}
+
+int _journeyLineDetailSignal(Journey journey) {
+  var score = 0;
+  for (final step in journey.steps.where((step) => step.type == 'ride')) {
+    score += step.line.split('/').length;
+  }
+  return score;
+}
+
+/// Whether two journey objects stand for the same entry in a tab's stack.
+///
+/// Object identity alone is not enough: a realtime refresh replaces the active
+/// journey with a fresh instance, and the tab strip would then highlight
+/// nothing at all.
+bool _isSameJourneyEntry(Journey a, Journey b) {
+  if (identical(a, b)) return true;
+  // A branch shares its start - and often its arrival - with the journey it
+  // came from, so the two must not collapse into one entry.
+  if (a.branchStepIndex != b.branchStepIndex) return false;
+  return _journeyListKey(a) == _journeyListKey(b);
+}
+
+@visibleForTesting
+bool isSameJourneyEntryForTesting(Journey a, Journey b) =>
+    _isSameJourneyEntry(a, b);
 
 bool _journeysLikelySameRoute(Journey a, Journey b) {
   final depA = a.plannedDeparture ?? a.departure;
@@ -534,6 +960,9 @@ bool _journeysLikelySameRoute(Journey a, Journey b) {
   if (arrA.difference(arrB).abs() > const Duration(minutes: 2)) {
     return false;
   }
+  final tripA = _firstRideTripId(a);
+  final tripB = _firstRideTripId(b);
+  if (tripA.isNotEmpty && tripB.isNotEmpty && tripA == tripB) return true;
   final lineA = _firstRideLineKey(a);
   final lineB = _firstRideLineKey(b);
   return lineA.isEmpty || lineB.isEmpty || lineA == lineB;
@@ -545,11 +974,122 @@ Journey _preferJourneyWithMorePlatformDetail(
 ) {
   final incomingScore = _journeyPlatformSignal(incoming);
   final existingScore = _journeyPlatformSignal(existing);
-  if (incomingScore > existingScore) return incoming;
+  if (incomingScore > existingScore) {
+    return incoming.copyWith(
+      parentJourney: existing.parentJourney,
+      branchStepIndex: existing.branchStepIndex,
+    );
+  }
+  if (incomingScore == existingScore &&
+      _journeyLineDetailSignal(incoming) > _journeyLineDetailSignal(existing)) {
+    return incoming.copyWith(
+      parentJourney: existing.parentJourney,
+      branchStepIndex: existing.branchStepIndex,
+    );
+  }
   return existing;
 }
 
-List<Journey> _mergeJourneyCandidates(
+@visibleForTesting
+Journey preferJourneyWithMorePlatformDetailForTesting(
+  Journey existing,
+  Journey incoming,
+) =>
+    _preferJourneyWithMorePlatformDetail(existing, incoming);
+
+bool _sameRideForRealtimeRefresh(JourneyStep current, JourneyStep fresh) {
+  final currentTripId = current.tripId?.trim();
+  final freshTripId = fresh.tripId?.trim();
+  if ((currentTripId?.isNotEmpty ?? false) &&
+      (freshTripId?.isNotEmpty ?? false)) {
+    return currentTripId == freshTripId;
+  }
+
+  if (current.plannedDeparture != null &&
+      fresh.plannedDeparture != null &&
+      current.plannedArrival != null &&
+      fresh.plannedArrival != null) {
+    return current.plannedDeparture == fresh.plannedDeparture &&
+        current.plannedArrival == fresh.plannedArrival &&
+        current.startStationName == fresh.startStationName &&
+        current.destinationName == fresh.destinationName;
+  }
+
+  return current.line.trim().toLowerCase() == fresh.line.trim().toLowerCase() &&
+      current.startStationName == fresh.startStationName &&
+      current.destinationName == fresh.destinationName;
+}
+
+/// Retains local route-only state (walk legs, alarms and richer platform
+/// labels) while treating the incoming provider result as the newest source
+/// for every matched vehicle's live fields.
+Journey _mergeJourneyWithFreshRealtime(
+  Journey existing,
+  Journey incoming, {
+  bool updateJourneyBounds = true,
+  bool replaceRawSource = true,
+}) {
+  final freshRideSteps =
+      incoming.steps.where((step) => step.type == 'ride').toList();
+  var matchedRide = false;
+
+  final mergedSteps = existing.steps.map((step) {
+    if (step.type != 'ride') return step;
+
+    JourneyStep? fresh;
+    for (final candidate in freshRideSteps) {
+      if (_sameRideForRealtimeRefresh(step, candidate)) {
+        fresh = candidate;
+        break;
+      }
+    }
+    if (fresh == null) return step;
+    matchedRide = true;
+
+    return step.copyWith(
+      departureTime: fresh.departureTime,
+      arrivalTime: fresh.arrivalTime,
+      dateTime: fresh.dateTime,
+      startStationId: fresh.startStationId ?? step.startStationId,
+      destinationStationId:
+          fresh.destinationStationId ?? step.destinationStationId,
+      platform: fresh.platform ?? step.platform,
+      arrivalPlatform: fresh.arrivalPlatform ?? step.arrivalPlatform,
+      departureStopLabel: fresh.departureStopLabel ?? step.departureStopLabel,
+      arrivalStopLabel: fresh.arrivalStopLabel ?? step.arrivalStopLabel,
+      stopovers: fresh.stopovers ?? step.stopovers,
+      departureDelay: fresh.departureDelay,
+      arrivalDelay: fresh.arrivalDelay,
+      clearDepartureDelay: fresh.departureDelay == null,
+      clearArrivalDelay: fresh.arrivalDelay == null,
+      isCancelled: fresh.isCancelled,
+      plannedDeparture: fresh.plannedDeparture ?? step.plannedDeparture,
+      plannedArrival: fresh.plannedArrival ?? step.plannedArrival,
+      headsign: fresh.headsign ?? step.headsign,
+      tripId: fresh.tripId ?? step.tripId,
+    );
+  }).toList();
+
+  // Do not replace an itinerary merely because a same-key provider result has
+  // an unexpected shape. This can happen when a transfer is no longer offered.
+  if (!matchedRide && existing.steps.any((step) => step.type == 'ride')) {
+    return _preferJourneyWithMorePlatformDetail(existing, incoming);
+  }
+
+  return existing.copyWith(
+    steps: mergedSteps,
+    departure: updateJourneyBounds ? incoming.departure : existing.departure,
+    arrival: updateJourneyBounds ? incoming.arrival : existing.arrival,
+    duration: updateJourneyBounds ? incoming.duration : existing.duration,
+    rawSource: replaceRawSource ? incoming.rawSource : existing.rawSource,
+    source: replaceRawSource ? incoming.source : existing.source,
+    plannedDeparture: incoming.plannedDeparture ?? existing.plannedDeparture,
+    plannedArrival: incoming.plannedArrival ?? existing.plannedArrival,
+  );
+}
+
+@visibleForTesting
+List<Journey> mergeRefreshedJourneyCandidates(
   Iterable<Journey> existing,
   Iterable<Journey> incoming,
 ) {
@@ -562,12 +1102,18 @@ List<Journey> _mergeJourneyCandidates(
     final previous = byKey[key];
     byKey[key] = previous == null
         ? journey
-        : _preferJourneyWithMorePlatformDetail(previous, journey);
+        : _mergeJourneyWithFreshRealtime(previous, journey);
   }
 
   return byKey.values.toList()
     ..sort((a, b) => a.departure.compareTo(b.departure));
 }
+
+List<Journey> _mergeJourneyCandidates(
+  Iterable<Journey> existing,
+  Iterable<Journey> incoming,
+) =>
+    mergeRefreshedJourneyCandidates(existing, incoming);
 
 Journey _bestCurrentJourneyVersion(
   Journey target,
@@ -579,15 +1125,9 @@ Journey _bestCurrentJourneyVersion(
         !_journeysLikelySameRoute(candidate, target)) {
       continue;
     }
-    best = _preferJourneyWithMorePlatformDetail(best, candidate);
+    best = _mergeJourneyWithFreshRealtime(best, candidate);
   }
   return best;
-}
-
-bool _journeyHasDeparturePlatformsForEveryRide(Journey journey) {
-  final rideSteps = journey.steps.where((step) => step.type == 'ride').toList();
-  if (rideSteps.isEmpty) return true;
-  return rideSteps.every((step) => (step.platform ?? '').trim().isNotEmpty);
 }
 
 class _SuggestionSection {
@@ -630,6 +1170,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final FocusNode _toFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final ScrollController _suggestionsScrollController = ScrollController();
+  final GlobalKey _fromFieldKey = GlobalKey();
+  final GlobalKey _toFieldKey = GlobalKey();
 
   Station? _fromStation;
   Station? _toStation;
@@ -646,6 +1188,25 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Set<int> _cancelledRouteSearchTokens = <int>{};
   final Set<String> _activePlatformEnrichmentKeys = <String>{};
   final Set<String> _completedActivePlatformEnrichmentKeys = <String>{};
+
+  /// Per tab: step index of a ride that can be swapped for an earlier
+  /// departure, pointing at the ride key of that suggestion. Keyed by ride and
+  /// not by connection, because the sheet may keep a different continuation of
+  /// the same ride than the check happened to see.
+  final Map<String, Map<int, String>> _earlierAlternativeSteps =
+      <String, Map<int, String>>{};
+
+  /// Rides already looked up, so each one costs at most one search.
+  final Set<String> _earlierAlternativeScanKeys = <String>{};
+
+  /// Rides whose alternatives the traveller has opened; the border stops
+  /// circling for those.
+  final Set<String> _seenAlternativeHints = <String>{};
+
+  /// Results the background check already fetched, so the sheet has something
+  /// to show the moment it opens.
+  final Map<String, List<Map<String, dynamic>>> _preloadedAlternatives =
+      <String, List<Map<String, dynamic>>>{};
   Set<String> _activeRouteLoadPhases = <String>{};
   bool _isSuggestionsLoading = false;
 
@@ -699,11 +1260,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
+  final Map<String, _JointRouteContext> _jointRouteContexts =
+      <String, _JointRouteContext>{};
   List<RouteSortOption> _routeResultsSortOrder =
       List<RouteSortOption>.from(defaultRouteSortOrder);
   bool _isCheckingSavedJourneyStatuses = false;
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
+  bool _jointPlanningEnabled = false;
+  double _jointHeaderProgress = 0;
+  bool _isJointHeaderDragging = false;
+  List<Map<String, dynamic>> _jointPlanningFriends = [];
+  String? _selectedJointFriendId;
+  JointJourneyIntent _jointJourneyIntent = JointJourneyIntent.balanced;
 
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
@@ -720,6 +1289,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     FocusScope.of(context).unfocus();
   }
 
+  AppLocalizations? _reminderL10n;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Reminder notifications are built after awaits, where `context` may already
+    // be defunct, so keep a live copy of the current localizations here.
+    _reminderL10n = AppLocalizations.of(context);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -734,6 +1313,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _toFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
     _loadHistoryData();
+    _loadJointPlanningFriends();
     _refreshJourneySharingConfiguration();
     _journeyDetectionTimer = Timer.periodic(
       const Duration(minutes: 1),
@@ -742,6 +1322,173 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     _activeJourneyRefreshTimer = Timer.periodic(
       const Duration(minutes: 3),
       (_) => _refreshVisibleActiveJourneyIfDue(),
+    );
+  }
+
+  Future<void> _loadJointPlanningFriends() async {
+    try {
+      final friends = await SupabaseService.getFriends();
+      final available = friends
+          .where((friend) =>
+              (friend['visible_privacy_level'] as int? ?? 0) >= 7 &&
+              friend['latitude'] is num &&
+              friend['longitude'] is num)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _jointPlanningFriends = available;
+        if (_selectedJointFriendId == null && available.isNotEmpty) {
+          _selectedJointFriendId = available.first['id']?.toString();
+        } else if (!available.any(
+            (friend) => friend['id']?.toString() == _selectedJointFriendId)) {
+          _selectedJointFriendId =
+              available.isEmpty ? null : available.first['id']?.toString();
+        }
+      });
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'RoutesTab._loadJointPlanningFriends',
+      );
+    }
+  }
+
+  JointJourneyPreferences get _jointJourneyPreferences =>
+      switch (_jointJourneyIntent) {
+        JointJourneyIntent.fast => const JointJourneyPreferences.fast(),
+        JointJourneyIntent.balanced => const JointJourneyPreferences.balanced(),
+        JointJourneyIntent.together => const JointJourneyPreferences.together(),
+      };
+
+  void _setJointPlanningEnabled(bool enabled) {
+    setState(() {
+      _jointPlanningEnabled = enabled;
+      _jointHeaderProgress = enabled ? 1 : 0;
+      _isJointHeaderDragging = false;
+    });
+    if (enabled) unawaited(_loadJointPlanningFriends());
+  }
+
+  Widget _buildPlanModeHeader(TransColors colors, {required bool isGerman}) {
+    Widget glass({required bool moving, double progress = 0}) {
+      final icon = Container(
+        width: 40,
+        height: 40,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: colors.searchHeaderIconBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(Icons.search, color: colors.searchHeaderIcon),
+      );
+      if (!moving) return icon;
+      return Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()
+          ..setEntry(3, 2, 0.001)
+          ..rotateY(pi * progress),
+        child: icon,
+      );
+    }
+
+    return SizedBox(
+      key: const ValueKey('joint-plan-swipe-header'),
+      height: 42,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final travel = max(1.0, constraints.maxWidth - 40);
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: _jointHeaderProgress),
+          duration: Duration(
+            milliseconds: _isJointHeaderDragging ? 35 : 240,
+          ),
+          curve: _isJointHeaderDragging ? Curves.linear : Curves.easeOutCubic,
+          builder: (context, progress, _) => Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(left: 0, top: 1, child: glass(moving: false)),
+              Positioned(
+                left: 52,
+                top: 0,
+                bottom: 0,
+                right: 44,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          AppLocalizations.of(context)!.planJourney,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        ClipRect(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: progress,
+                            child: Opacity(
+                              opacity: progress,
+                              child: Text(
+                                isGerman ? ' zusammen' : ' Together',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.effectiveSeed,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: travel * progress,
+                top: 1,
+                child: Semantics(
+                  button: true,
+                  label: _jointPlanningEnabled
+                      ? (isGerman
+                          ? 'Zur normalen Reiseplanung wechseln'
+                          : 'Switch to normal journey planning')
+                      : (isGerman
+                          ? 'Zur gemeinsamen Reiseplanung wischen'
+                          : 'Swipe to plan a journey together'),
+                  child: GestureDetector(
+                    key: const ValueKey('joint-plan-swipe-handle'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () =>
+                        _setJointPlanningEnabled(!_jointPlanningEnabled),
+                    onHorizontalDragStart: (_) =>
+                        setState(() => _isJointHeaderDragging = true),
+                    onHorizontalDragUpdate: (details) {
+                      setState(() {
+                        _jointHeaderProgress =
+                            (_jointHeaderProgress + details.delta.dx / travel)
+                                .clamp(0.0, 1.0);
+                      });
+                    },
+                    onHorizontalDragEnd: (_) => _setJointPlanningEnabled(
+                      _jointHeaderProgress >= 0.45,
+                    ),
+                    onHorizontalDragCancel: () =>
+                        _setJointPlanningEnabled(_jointPlanningEnabled),
+                    child: glass(moving: true, progress: progress),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
     );
   }
 
@@ -798,6 +1545,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
       _routeSortOrderPreferenceKey,
+      normalized.map((option) => option.name).toList(),
+    );
+    await SupabaseService.updateRouteResultsSortOrder(
       normalized.map((option) => option.name).toList(),
     );
   }
@@ -891,6 +1641,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       onPartialResults: onPartialResults,
       onLoadStateChanged: onLoadStateChanged,
       shouldContinue: shouldContinue,
+      // Result cards do not show platforms. The selected journey is enriched
+      // lazily, so doing this for every candidate only delays search completion.
+      enrichPlatforms: false,
     );
   }
 
@@ -987,6 +1740,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         );
     final journey = route?.activeJourney;
     if (route == null || journey == null) return;
+
+    // Rides that have meanwhile departed free up the lookahead window, so the
+    // ride after them gets checked for an earlier departure.
+    _scheduleEarlierAlternativeScans(route, journey);
 
     final now = DateTime.now();
     final departure = journey.plannedDeparture ?? journey.departure;
@@ -1144,7 +1901,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _activeSearchField = 'from';
           _fetchSuggestions(forceHistory: _fromController.text.isEmpty);
         });
-        _scrollToTop();
+        _scrollFocusedFieldIntoViewIfNeeded();
       }
     } else if (_toFocusNode.hasFocus) {
       _focusDebounce?.cancel();
@@ -1153,6 +1910,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _activeSearchField = 'to';
           _fetchSuggestions(forceHistory: _toController.text.isEmpty);
         });
+        _scrollFocusedFieldIntoViewIfNeeded();
       }
     } else {
       // We no longer clear suggestions on focus loss so users can interact with them after dismissing the keyboard.
@@ -1409,11 +2167,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     // Check if search suggestions are open, maybe close them?
     // For now, let's say if suggestions are open, we just close them.
     if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
-      setState(() {
-        _activeSearchField = '';
-        _suggestions = [];
-        FocusScope.of(context).unfocus();
-      });
+      _collapseSearchSuggestions();
       return true;
     }
 
@@ -1429,7 +2183,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         isVisible &&
         _activeTabId == null &&
         _activeSearchField.isNotEmpty) {
-      _scrollToTop();
+      _scrollFocusedFieldIntoViewIfNeeded();
     }
     if (_wasKeyboardVisible && !isVisible) {
       // Keyboard JUST closed
@@ -1441,6 +2195,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _scrollToTop() {
+    if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+      _scrollFocusedFieldIntoViewIfNeeded();
+      return;
+    }
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(0.0,
@@ -1448,6 +2206,60 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             curve: Curves.easeInOut);
       }
     });
+  }
+
+  /// Gives the focused field room for its suggestion list on compact screens.
+  /// Large viewports already have that room, so their scroll position is left
+  /// untouched.
+  void _scrollFocusedFieldIntoViewIfNeeded() {
+    final fieldKey = _fromFocusNode.hasFocus ? _fromFieldKey : _toFieldKey;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (!_fromFocusNode.hasFocus && !_toFocusNode.hasFocus) return;
+
+      final fieldContext = fieldKey.currentContext;
+      final viewportContext = _scrollController.position.context.storageContext;
+      if (fieldContext == null) return;
+
+      final fieldBox = fieldContext.findRenderObject() as RenderBox?;
+      final viewportBox = viewportContext.findRenderObject() as RenderBox?;
+      if (fieldBox == null || viewportBox == null) return;
+
+      final fieldBottom = fieldBox
+          .localToGlobal(
+            Offset(0, fieldBox.size.height),
+          )
+          .dy;
+      final viewportBottom = viewportBox
+          .localToGlobal(
+            Offset(0, viewportBox.size.height),
+          )
+          .dy;
+
+      // Suggestions are capped at 250 px; reserve that space below the
+      // field so the user can type and choose a result without extra scrolls.
+      const suggestionRoom = 250.0;
+      if (viewportBottom - fieldBottom >= suggestionRoom) return;
+
+      Scrollable.ensureVisible(
+        fieldContext,
+        alignment: 0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _collapseSearchSuggestions() {
+    _suggestionRequestToken++;
+    _debounce?.cancel();
+    setState(() {
+      _activeSearchField = '';
+      _suggestions = [];
+      _isSuggestionsLoading = false;
+    });
+    FocusScope.of(context).unfocus();
   }
 
   void _scrollSuggestionsToTop() {
@@ -1937,7 +2749,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Wake alert set for $stopName')),
+      SnackBar(
+          content:
+              Text(AppLocalizations.of(context)!.wakeAlertSetFor(stopName))),
     );
   }
 
@@ -2605,6 +3419,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     controller?.dispose();
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
+    _jointRouteContexts.remove(id);
+    _resetEarlierAlternativeScans(id);
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -2683,9 +3499,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       await _loadHistoryData();
 
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              saved ? 'Connection saved' : 'Connection removed from saved')));
+          content:
+              Text(saved ? l10n.connectionSaved : l10n.connectionUnsaved)));
     } finally {
       if (mounted) {
         setState(() {
@@ -3402,9 +4219,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final departure = _savedJourneyDepartureLocal(item);
     final departureLabel =
         departure != null ? DateFormat('HH:mm').format(departure) : '--:--';
+    final l10n = _reminderL10n ?? AppLocalizations.of(context)!;
     return (
-      title: 'Leave soon',
-      body: '$minutes min left for $fromName -> $toName ($departureLabel)',
+      title: l10n.leaveSoonTitle,
+      body: l10n.leaveSoonBody('$minutes', fromName, toName, departureLabel),
     );
   }
 
@@ -3521,10 +4339,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (showedExactAlarmWarning && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Android blocked exact alarms for this reminder. Open "Alarms & reminders" for Trans to make leave alerts reliable.',
-          ),
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.exactAlarmsBlocked),
         ),
       );
     }
@@ -3598,7 +4414,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Leave in $minutes min for $toName')),
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!
+            .leaveInMinutesFor('$minutes', toName)),
+      ),
     );
   }
 
@@ -3669,11 +4488,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
 
     if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
     final selectedSummary = normalizedNextMinutes.isEmpty
-        ? 'none'
+        ? l10n.leaveRemindersNone
         : normalizedNextMinutes.map((value) => '${value}m').join(', ');
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Leave reminders: $selectedSummary')),
+      SnackBar(content: Text(l10n.leaveRemindersSummary(selectedSummary))),
     );
   }
 
@@ -3684,7 +4504,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await _loadHistoryData();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saved route deleted')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.savedRouteDeleted)),
     );
   }
 
@@ -3723,7 +4543,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   // FIX: Accept full Station object
   void _showAlternatives(BuildContext context, String stationId,
       Station destination, DateTime referenceTime,
-      {double? lat, double? lng, String? stationName}) {
+      {double? lat,
+      double? lng,
+      String? stationName,
+      String? highlightKey,
+      DateTime? earliestDeparture,
+      String? currentTripId,
+      String? currentLine,
+      List<Map<String, dynamic>>? initialResults,
+      Journey? branchFrom,
+      int? branchRideLegIndex}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -3753,11 +4582,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           to: toDummy,
           initialTime: referenceTime,
           nahverkehrOnly: widget.onlyNahverkehr,
+          highlightKey: highlightKey,
+          earliestDeparture: earliestDeparture,
+          currentTripId: currentTripId,
+          currentLine: currentLine,
+          initialResults: initialResults,
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
-            final j = _createJourney(
+            final j = _journeyFromAlternative(
               journey,
-              destinationNameOverride: toDummy.name,
+              destinationName: toDummy.name,
+              branchFrom: branchFrom,
+              branchRideLegIndex: branchRideLegIndex,
             );
             setState(() {
               if (_activeTabId != null) {
@@ -3803,7 +4639,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     String? lastStationName;
     String? lastStationId;
     String? lastPlatform;
-    bool isFirstStep = true; // Track if this is the first step in the journey
     double? getLat(dynamic loc) => loc != null && loc['location'] != null
         ? loc['location']['latitude']
         : (loc != null ? loc['latitude'] : null);
@@ -3841,20 +4676,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return isGerman ? 'Fahrrad fahren' : 'Bike';
     }
 
-    bool sameStationByIdOrName(
-        String? leftId, String? leftName, String? rightId, String? rightName) {
-      final aId = leftId?.trim();
-      final bId = rightId?.trim();
-      if (aId != null && aId.isNotEmpty && bId != null && bId.isNotEmpty) {
-        return aId == bId;
-      }
-      final aName = leftName?.trim().toLowerCase();
-      final bName = rightName?.trim().toLowerCase();
-      if (aName == null || aName.isEmpty || bName == null || bName.isEmpty) {
-        return false;
-      }
-      return aName == bName;
-    }
+    // First leg of the block currently buffered, so the resulting step can be
+    // traced back to its place in the raw journey.
+    int? transferBufferLegIndex;
 
     void flushTransferBuffer(
         DateTime? nextRideDeparture,
@@ -3868,6 +4692,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           (lastArrival == null || nextRideDeparture == null)) {
         return;
       }
+      final isFirstStep = _isBeforeFirstJourneyStep(steps.length);
       DateTime blockStart = (lastArrival != null)
           ? lastArrival
           : (DateTime.tryParse(transferBuffer.first['departure'] ??
@@ -3931,12 +4756,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       // Determine instruction text based on context
       String instruction;
       bool isWaitInstruction = false;
-      bool isAtSameStation = (lastStationId != null &&
-              nextStationId != null &&
-              lastStationId == nextStationId) ||
-          (lastStationName != null &&
-              destName != null &&
-              lastStationName == destName);
+      final isAtSameStation = _sameTransitStation(
+        lastStationId,
+        lastStationName,
+        nextStationId,
+        destName,
+      );
       String? nextPlat = nextPlatform;
 
       // Calculate distance if coordinates are available
@@ -3968,13 +4793,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           nextRideDeparture != null) {
         final firstTransfer = transferBuffer.first;
         final lastTransfer = transferBuffer.last;
-        final startsAtNextRideStation = sameStationByIdOrName(
+        final startsAtNextRideStation = _sameTransitStation(
           stationId(firstTransfer['origin']),
           stationName(firstTransfer['origin']),
           nextStationId,
           nextStationName,
         );
-        final endsAtNextRideStation = sameStationByIdOrName(
+        final endsAtNextRideStation = _sameTransitStation(
           stationId(lastTransfer['destination']),
           stationName(lastTransfer['destination']),
           nextStationId,
@@ -3983,21 +4808,28 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         if (isPhantomWalk &&
             (startsAtNextRideStation || endsAtNextRideStation)) {
           transferBuffer.clear();
-          isFirstStep = false;
           return;
         }
       }
 
-      String fmtPlat(String? p) =>
-          p == null ? '' : (int.tryParse(p) != null ? 'Pl. $p' : p);
+      String fmtPlat(String? p) => p == null
+          ? ''
+          : (int.tryParse(p) != null
+              ? AppLocalizations.of(context)!.platformShort(p)
+              : p);
 
-      if (isAtSameStation && !isSignificantWalk) {
-        isWaitInstruction = true;
+      if (isAtSameStation) {
+        isWaitInstruction = !isSignificantWalk;
         if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform != nextPlat) {
           instruction = AppLocalizations.of(context)!
               .switchPlatform(fmtPlat(lastPlatform), fmtPlat(nextPlat));
+        } else if (isSignificantWalk && nextPlat != null) {
+          instruction = '${AppLocalizations.of(context)!.walkLabel} '
+              '${AppLocalizations.of(context)!.toPlatform(fmtPlat(nextPlat))}';
+        } else if (isSignificantWalk) {
+          instruction = AppLocalizations.of(context)!.walkLabel;
         } else if (lastPlatform != null &&
             nextPlat != null &&
             lastPlatform == nextPlat) {
@@ -4055,6 +4887,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       steps.add(JourneyStep(
         type: isWaitInstruction ? 'wait' : (isBikeTransfer ? 'bike' : 'walk'),
         line: isBikeTransfer ? 'Bike' : 'Transfer',
+        legIndex: transferBufferLegIndex,
         instruction: instruction,
         duration: FormatUtils.formatDuration(totalGapMinutes),
         departureTime:
@@ -4077,10 +4910,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         waitDuration: Duration(minutes: waitMinutes > 0 ? waitMinutes : 0),
       ));
       transferBuffer.clear();
-      isFirstStep = false; // After first flush, no longer first step
+      transferBufferLegIndex = null;
     }
 
-    for (var leg in legs) {
+    for (var legIndex = 0; legIndex < legs.length; legIndex++) {
+      final leg = legs[legIndex];
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
         DateTime? scheduledDep, scheduledArr;
@@ -4145,6 +4979,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
         steps.add(JourneyStep(
           type: 'ride',
+          legIndex: legIndex,
           line: leg['line']?['name']?.toString() ?? '?',
           // If cancelled, show as cancelled in instruction or just handle in UI
           instruction:
@@ -4187,11 +5022,88 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         lastStationId = leg['destination']?['id']?.toString();
         lastPlatform = leg['destination']?['platform']?.toString();
       } else {
+        transferBufferLegIndex ??= legIndex;
         transferBuffer.add(leg);
       }
     }
     flushTransferBuffer(null, null, null, null, null, null, isFinalWalk: true);
     return steps;
+  }
+
+  /// Turns a picked alternative into the full trip: the part of [branchFrom]
+  /// already under way, then the alternative. The result remembers where it
+  /// branched off, so the traveller can step back to the original.
+  Journey _journeyFromAlternative(
+    Map<String, dynamic> alternative, {
+    required String destinationName,
+    Journey? branchFrom,
+    int? branchRideLegIndex,
+  }) {
+    if (branchFrom == null || branchRideLegIndex == null) {
+      return _createJourney(alternative,
+          destinationNameOverride: destinationName);
+    }
+
+    final originalLegs = (branchFrom.rawSource['legs'] as List?) ?? const [];
+    final prefix = journeyPrefixLegCount(originalLegs, branchRideLegIndex);
+    if (prefix <= 0) {
+      return _createJourney(alternative,
+          destinationNameOverride: destinationName);
+    }
+
+    final spliced = spliceAlternativeIntoJourney(
+      original: branchFrom.rawSource,
+      alternative: alternative,
+      rideLegIndex: branchRideLegIndex,
+    );
+    final journey = _createJourney(
+      spliced,
+      destinationNameOverride: destinationName,
+    );
+    // The first ride of the alternative, not the walk or wait leading up to
+    // it: that gap still belongs to the original route.
+    final branchStepIndex = journey.steps.indexWhere(
+      (step) => step.type == 'ride' && (step.legIndex ?? -1) >= prefix,
+    );
+
+    return journey.copyWith(
+      parentJourney: branchFrom,
+      branchStepIndex: branchStepIndex == -1 ? null : branchStepIndex,
+    );
+  }
+
+  /// Puts the journey this one branched off from back on screen, adding it
+  /// back to the tab if it was closed in the meantime.
+  void _returnToParentJourney(RouteTab route, Journey child) {
+    final parent = child.parentJourney;
+    if (parent == null) return;
+
+    setState(() {
+      final idx = _tabs.indexWhere((t) => t.id == route.id);
+      if (idx == -1) return;
+      final tab = _tabs[idx];
+      final stack = List<Journey>.from(tab.stack);
+      // A branch can look just like its parent - same start, often the same
+      // arrival - so only a non-branch entry counts as the original.
+      final alreadyThere =
+          stack.any((existing) => _isSameJourneyEntry(existing, parent));
+      if (!alreadyThere) stack.add(parent);
+      _tabs[idx] = tab.copyWith(
+        activeJourney: parent,
+        stack: stack,
+        steps: parent.steps,
+        totalDuration: FormatUtils.formatDuration(parent.duration.inMinutes),
+      );
+    });
+
+    _resetEarlierAlternativeScans(route.id);
+    final refreshed = _tabs.cast<RouteTab?>().firstWhere(
+          (tab) => tab?.id == route.id,
+          orElse: () => null,
+        );
+    if (refreshed != null) {
+      _scheduleEarlierAlternativeScans(refreshed, parent);
+    }
   }
 
   Journey _createJourney(
@@ -4724,6 +5636,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       );
       final searchSettings =
           _routeSearchSettingsForRequest(when, isArrival: _isArrival);
+      if (_jointPlanningEnabled) {
+        await _findJointRoutes(
+          myOrigin: resolvedFrom,
+          destination: _toStation!,
+          settings: searchSettings,
+          searchToken: searchToken,
+        );
+        return;
+      }
       void handlePartialResults(List<Map<String, dynamic>> partial) {
         if (!mounted || _isRouteSearchCancelled(searchToken)) {
           TransportApi.addSyntheticDebugLog(
@@ -4866,6 +5787,205 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _findJointRoutes({
+    required Station myOrigin,
+    required Station destination,
+    required RouteSearchSettings settings,
+    required int searchToken,
+  }) async {
+    final german = Localizations.localeOf(context).languageCode == 'de';
+    Map<String, dynamic>? friend;
+    for (final candidate in _jointPlanningFriends) {
+      if (candidate['id']?.toString() == _selectedJointFriendId) {
+        friend = candidate;
+        break;
+      }
+    }
+    if (friend == null ||
+        friend['latitude'] is! num ||
+        friend['longitude'] is! num) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(german
+              ? 'Wähle zuerst eine Person mit freigegebenem Standort.'
+              : 'Choose a friend who currently shares their location.'),
+        ));
+      }
+      return;
+    }
+
+    final updatedAt = DateTime.tryParse(friend['updated_at']?.toString() ?? '');
+    final locationIsStale = updatedAt == null ||
+        DateTime.now().toUtc().difference(updatedAt.toUtc()) >
+            const Duration(minutes: 30);
+    if (locationIsStale) {
+      final useStaleLocation = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(german ? 'Standort ist älter' : 'Location may be stale'),
+          content: Text(german
+              ? 'Der letzte freigegebene Standort ist älter als 30 Minuten. Soll er trotzdem als Start verwendet werden?'
+              : 'The last shared location is more than 30 minutes old. Use it as the starting point anyway?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(german ? 'Abbrechen' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(german ? 'Trotzdem verwenden' : 'Use anyway'),
+            ),
+          ],
+        ),
+      );
+      if (useStaleLocation != true || !mounted) return;
+    }
+
+    final friendName = friend['username']?.toString() ??
+        (german ? 'deine Begleitung' : 'your friend');
+    final friendOrigin = Station(
+      id: 'joint-friend:${friend['id']}',
+      name: friendName,
+      type: 'location',
+      latitude: (friend['latitude'] as num).toDouble(),
+      longitude: (friend['longitude'] as num).toDouble(),
+    );
+
+    try {
+      final searches = await Future.wait([
+        _searchJourneysForSettings(
+          myOrigin,
+          destination,
+          settings: settings,
+          results: 20,
+          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+        ),
+        _searchJourneysForSettings(
+          friendOrigin,
+          destination,
+          settings: settings,
+          results: 20,
+          shouldContinue: () => !_isRouteSearchCancelled(searchToken),
+        ),
+      ]).timeout(const Duration(seconds: 35));
+      if (!mounted || _isRouteSearchCancelled(searchToken)) return;
+
+      final mine = <Journey>[];
+      final theirs = <Journey>[];
+      for (final raw in searches[0]) {
+        try {
+          mine.add(_createJourney(
+            raw,
+            destinationNameOverride: destination.name,
+          ));
+        } catch (_) {
+          // A malformed provider alternative should not abort joint ranking.
+        }
+      }
+      for (final raw in searches[1]) {
+        try {
+          theirs.add(_createJourney(
+            raw,
+            destinationNameOverride: destination.name,
+          ));
+        } catch (_) {
+          // A malformed provider alternative should not abort joint ranking.
+        }
+      }
+
+      final options = JointJourneyPlanner.rank(
+        myJourneys: mine,
+        friendJourneys: theirs,
+        preferences: _jointJourneyPreferences,
+        isArrival: settings.isArrival,
+      );
+      _releaseBlockingRouteLoad(searchToken);
+      _addJointJourneyTab(
+        options: options,
+        friendId: friend['id'].toString(),
+        friendName: friendName,
+        origin: myOrigin,
+        destination: destination,
+        searchSettings: settings,
+      );
+    } on TimeoutException {
+      if (mounted && !_isRouteSearchCancelled(searchToken)) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(german
+              ? 'Die gemeinsame Routensuche hat zu lange gedauert.'
+              : 'The joint route search took too long.'),
+        ));
+      }
+    }
+  }
+
+  void _addJointJourneyTab({
+    required List<JointJourneyOption> options,
+    required String friendId,
+    required String friendName,
+    required Station origin,
+    required Station destination,
+    required RouteSearchSettings searchSettings,
+  }) {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final candidates = <Journey>[];
+    final seen = <String>{};
+    for (final option in options) {
+      if (seen.add(_journeyListKey(option.myJourney))) {
+        candidates.add(option.myJourney);
+      }
+    }
+    setState(() {
+      _jointRouteContexts[id] = _JointRouteContext(
+        options: options,
+        friendId: friendId,
+        friendName: friendName,
+        destinationName: destination.name,
+      );
+      _tabs.add(RouteTab(
+        id: id,
+        title: destination.name,
+        subtitle: friendName,
+        eta: '--:--',
+        totalDuration: '',
+        destination: destination,
+        origin: origin,
+        steps: const [],
+        candidates: candidates,
+        stack: const [],
+        searchSettings: searchSettings,
+      ));
+      _activeTabId = id;
+    });
+  }
+
+  String _jointPlanMessage(
+    JointJourneyOption option, {
+    required String friendName,
+    required String destinationName,
+    required bool german,
+  }) {
+    final format = DateFormat('HH:mm');
+    final friendRides = option.friendJourney.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => step.line.trim())
+        .where((line) => line.isNotEmpty)
+        .join(' → ');
+    final shared = option.sharedDuration.inMinutes;
+    final friendDeparture = format.format(option.friendJourney.departure);
+    final friendArrival = format.format(option.friendJourney.arrival);
+    if (german) {
+      return 'Gemeinsamer Routenvorschlag nach $destinationName: '
+          '$shared Min. zusammen. Deine Route: $friendDeparture–$friendArrival'
+          '${friendRides.isEmpty ? '' : ' · $friendRides'}. '
+          'Bitte prüfe die Verbindung vor der Abfahrt noch einmal in Trans.';
+    }
+    return 'Shared route suggestion to $destinationName: '
+        '$shared min together. Your route: $friendDeparture–$friendArrival'
+        '${friendRides.isEmpty ? '' : ' · $friendRides'}. '
+        'Please check the connection in Trans again before departure.';
+  }
+
   Future<void> _triggerVibration() async {
     if (kIsWeb) return;
     if (!await ForegroundHaptics.hasVibrator()) return;
@@ -4959,7 +6079,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final bool canSearch = (_fromStation != null ||
             _fromUsesCurrentLocation ||
             _fromController.text.trim().isNotEmpty) &&
-        (_toStation != null || _toController.text.trim().isNotEmpty);
+        (_toStation != null || _toController.text.trim().isNotEmpty) &&
+        (!_jointPlanningEnabled || _selectedJointFriendId != null);
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -5049,8 +6170,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                // Left padding is intentionally omitted here: it is part of the
+                // close button's tap target instead, so taps next to the small
+                // "x" still close the tab.
+                padding: const EdgeInsets.only(right: 12),
                 decoration: BoxDecoration(
                   color: isActive ? colors.navBarSelected : colors.cardBg,
                   borderRadius: BorderRadius.circular(20),
@@ -5060,9 +6183,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   children: [
                     // Close Button (Left)
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => _closeTab(tab.id),
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
                         child: Icon(Icons.close,
                             size: 14,
                             color: isActive ? Colors.white70 : Colors.grey),
@@ -5125,7 +6249,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         separatorBuilder: (ctx, idx) => const SizedBox(width: 8),
         itemBuilder: (ctx, idx) {
           final journey = stack[idx];
-          final isSelected = tab.activeJourney == journey;
+          final active = tab.activeJourney;
+          final isSelected =
+              active != null && _isSameJourneyEntry(active, journey);
 
           final timeStr =
               "${DateFormat('HH:mm').format(journey.departure)} - ${DateFormat('HH:mm').format(journey.arrival)}";
@@ -5143,10 +6269,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     );
                   }
                 });
+                // Step indices belong to one journey, so the hints start over.
+                _resetEarlierAlternativeScans(tab.id);
+                _scheduleEarlierAlternativeScans(tab, journey);
               },
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                // Left padding lives inside the close button's tap target so
+                // taps near the small "x" still remove the alternative.
+                padding: const EdgeInsets.only(right: 12),
                 decoration: BoxDecoration(
                   color: isSelected ? colors.navBarSelected : colors.cardBg,
                   borderRadius: BorderRadius.circular(20),
@@ -5156,6 +6286,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   children: [
                     // Subtabs also have Close button?
                     GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
                         // Remove this journey from stack
                         setState(() {
@@ -5165,7 +6296,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             newStack.removeAt(idx);
 
                             Journey? newActive = tab.activeJourney;
-                            if (newActive == journey) {
+                            if (newActive != null &&
+                                _isSameJourneyEntry(newActive, journey)) {
                               // If we closed the active one, pick another (e.g. last or first)
                               newActive =
                                   newStack.isNotEmpty ? newStack.last : null;
@@ -5191,7 +6323,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                         });
                       },
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
                         child: Icon(Icons.close,
                             size: 14,
                             color: isSelected ? Colors.white70 : Colors.grey),
@@ -5218,7 +6350,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final isGerman = Localizations.localeOf(context).languageCode == 'de';
     return GestureDetector(
       onTap: () {
-        FocusScope.of(context).unfocus();
+        // Tapping the surrounding page is an explicit way to leave search.
+        // Keep taps inside fields and suggestion rows handled by their own
+        // controls, as users would expect.
+        if (_activeSearchField.isNotEmpty || _suggestions.isNotEmpty) {
+          _collapseSearchSuggestions();
+        } else {
+          FocusScope.of(context).unfocus();
+        }
       },
       behavior: HitTestBehavior.translucent,
       child: SingleChildScrollView(
@@ -5237,33 +6376,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color: colors.searchHeaderIconBg,
-                              borderRadius: BorderRadius.circular(8)),
-                          child: Icon(Icons.search,
-                              color: colors.searchHeaderIcon)),
-                      const SizedBox(width: 12),
-                      Text(AppLocalizations.of(context)!.planJourney,
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textPrimary))
-                    ]),
+                    _buildPlanModeHeader(colors, isGerman: isGerman),
                     const SizedBox(height: 20),
-                    _buildTextField(
-                        AppLocalizations.of(context)!.fromLabel,
-                        _fromController,
-                        _fromFocusNode,
-                        _fromStation != null,
-                        'from',
-                        hint: (_fromStation == null &&
-                                _effectiveCurrentPosition != null)
-                            ? AppLocalizations.of(context)!.currentLocation
-                            : AppLocalizations.of(context)!
-                                .fromStationOrAddress),
+                    KeyedSubtree(
+                      key: _fromFieldKey,
+                      child: _buildTextField(
+                          AppLocalizations.of(context)!.fromLabel,
+                          _fromController,
+                          _fromFocusNode,
+                          _fromStation != null,
+                          'from',
+                          hint: (_fromStation == null &&
+                                  _effectiveCurrentPosition != null)
+                              ? AppLocalizations.of(context)!.currentLocation
+                              : AppLocalizations.of(context)!
+                                  .fromStationOrAddress),
+                    ),
                     if (_activeSearchField == 'from') _buildSuggestionsList(),
                     Stack(
                       clipBehavior: Clip.none,
@@ -5272,14 +6400,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 12),
-                            _buildTextField(
-                                AppLocalizations.of(context)!.toLabel,
-                                _toController,
-                                _toFocusNode,
-                                _toStation != null,
-                                'to',
-                                hint: AppLocalizations.of(context)!
-                                    .toStationOrAddress),
+                            KeyedSubtree(
+                              key: _toFieldKey,
+                              child: _buildTextField(
+                                  AppLocalizations.of(context)!.toLabel,
+                                  _toController,
+                                  _toFocusNode,
+                                  _toStation != null,
+                                  'to',
+                                  hint: AppLocalizations.of(context)!
+                                      .toStationOrAddress),
+                            ),
                           ],
                         ),
                         Positioned(
@@ -5326,6 +6457,127 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ],
                     ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
+                    if (_jointPlanningEnabled) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        key: const ValueKey('joint-plan-options'),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.effectiveSeed.withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: colors.effectiveSeed.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.group_outlined,
+                                    size: 18, color: colors.effectiveSeed),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    isGerman
+                                        ? 'Fahren, Warten und Laufen zählen als gemeinsame Zeit.'
+                                        : 'Riding, waiting, and walking all count as time together.',
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (_jointPlanningFriends.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                                child: Text(
+                                  isGerman
+                                      ? 'Niemand teilt gerade einen Standort für Freundes-Routing.'
+                                      : 'No friend currently shares a location for friend routing.',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              )
+                            else
+                              DropdownButtonFormField<String>(
+                                initialValue: _selectedJointFriendId,
+                                isExpanded: true,
+                                decoration: InputDecoration(
+                                  labelText: isGerman ? 'Person' : 'Friend',
+                                  filled: true,
+                                  fillColor: colors.searchInputFill,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                                dropdownColor: colors.cardBg,
+                                items: _jointPlanningFriends
+                                    .map((friend) => DropdownMenuItem<String>(
+                                          value: friend['id']?.toString(),
+                                          child: Text(
+                                            friend['username']?.toString() ??
+                                                (isGerman
+                                                    ? 'Unbekannt'
+                                                    : 'Unknown'),
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                                color: colors.textPrimary),
+                                          ),
+                                        ))
+                                    .toList(),
+                                onChanged: (value) => setState(
+                                    () => _selectedJointFriendId = value),
+                              ),
+                            const SizedBox(height: 10),
+                            SegmentedButton<JointJourneyIntent>(
+                              segments: [
+                                ButtonSegment(
+                                  value: JointJourneyIntent.fast,
+                                  icon: const Icon(Icons.bolt, size: 16),
+                                  label: Text(isGerman ? 'Schnell' : 'Fast'),
+                                ),
+                                ButtonSegment(
+                                  value: JointJourneyIntent.balanced,
+                                  icon: const Icon(Icons.balance, size: 16),
+                                  label:
+                                      Text(isGerman ? 'Balance' : 'Balanced'),
+                                ),
+                                ButtonSegment(
+                                  value: JointJourneyIntent.together,
+                                  icon: const Icon(Icons.group, size: 16),
+                                  label:
+                                      Text(isGerman ? 'Zusammen' : 'Together'),
+                                ),
+                              ],
+                              selected: {_jointJourneyIntent},
+                              onSelectionChanged: (selection) => setState(
+                                () => _jointJourneyIntent = selection.first,
+                              ),
+                              showSelectedIcon: false,
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                isGerman
+                                    ? 'Max. ${_jointJourneyPreferences.maxExtraTravelMinutes} Min. und ${_jointJourneyPreferences.maxExtraTransfers} zusätzliche Umstiege pro Person'
+                                    : 'Up to ${_jointJourneyPreferences.maxExtraTravelMinutes} extra minutes and ${_jointJourneyPreferences.maxExtraTransfers} extra transfers per person',
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
                         style: TextStyle(
@@ -5492,7 +6744,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                                       ],
                                     )
                                   : Text(
-                                      AppLocalizations.of(context)!.findRoutes,
+                                      _jointPlanningEnabled
+                                          ? (isGerman
+                                              ? 'Gemeinsame Route finden'
+                                              : 'Find a shared route')
+                                          : AppLocalizations.of(context)!
+                                              .findRoutes,
                                       style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold)));
@@ -5657,7 +6914,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   color: colors.cardBg,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white10)),
-              child: Text('No recent routes yet',
+              child: Text(AppLocalizations.of(context)!.noRecentRoutesYet,
                   style: TextStyle(color: colors.searchHintText)),
             )
           else
@@ -5698,13 +6955,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Row(
               children: [
-                Text('Saved routes',
+                Text(AppLocalizations.of(context)!.savedRoutesTitle,
                     style: TextStyle(
                         color: colors.sectionHeader,
                         fontWeight: FontWeight.bold,
                         fontSize: 12)),
                 const SizedBox(width: 8),
-                Text('(auto-delete 24h after arrival)',
+                Text(AppLocalizations.of(context)!.savedRoutesAutoDelete,
                     style:
                         TextStyle(color: colors.searchHintText, fontSize: 11)),
               ],
@@ -5875,9 +7132,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           color: colors.iconDelete,
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Text(
-                          'Delete',
-                          style: TextStyle(
+                        child: Text(
+                          AppLocalizations.of(context)!.delete,
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -6593,43 +7850,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Journey _mergeRealtimeIntoJourney(Journey existing, Journey fresh) {
-    final freshRideSteps =
-        fresh.steps.where((step) => step.type == 'ride').toList();
-
-    final mergedSteps = existing.steps.map((step) {
-      if (step.type != 'ride') return step;
-
-      final match = _findRealtimeMatchForStep(step, freshRideSteps);
-      if (match == null) return step;
-
-      return step.copyWith(
-        departureTime: match.departureTime,
-        arrivalTime: match.arrivalTime,
-        dateTime: match.dateTime,
-        startStationId: match.startStationId ?? step.startStationId,
-        destinationStationId:
-            match.destinationStationId ?? step.destinationStationId,
-        platform: match.platform ?? step.platform,
-        arrivalPlatform: match.arrivalPlatform ?? step.arrivalPlatform,
-        departureStopLabel: match.departureStopLabel ?? step.departureStopLabel,
-        arrivalStopLabel: match.arrivalStopLabel ?? step.arrivalStopLabel,
-        departureDelay: match.departureDelay,
-        arrivalDelay: match.arrivalDelay,
-        isCancelled: match.isCancelled,
-        plannedDeparture: match.plannedDeparture ?? step.plannedDeparture,
-        plannedArrival: match.plannedArrival ?? step.plannedArrival,
-      );
-    }).toList();
-
-    return existing.copyWith(
-      steps: mergedSteps,
-      departure: fresh.departure,
-      arrival: fresh.arrival,
-      duration: fresh.duration,
-      plannedDeparture: fresh.plannedDeparture ?? existing.plannedDeparture,
-      plannedArrival: fresh.plannedArrival ?? existing.plannedArrival,
-      rawSource: fresh.rawSource,
-    );
+    return _mergeJourneyWithFreshRealtime(existing, fresh);
   }
 
   bool _sameRideIdentity(JourneyStep current, JourneyStep candidate) {
@@ -6733,6 +7954,177 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return null;
   }
 
+  /// Refresh the selected vehicle directly when it has a MOTIS trip id. This
+  /// does not depend on the service appearing in a limited route-search page.
+  /// The route-search refresh below remains the fallback for v6-only trips and
+  /// also refreshes walking/transfer alternatives.
+  bool _liveTripStopMatches(
+    Map<String, dynamic> stop,
+    String? targetId,
+    String? targetName,
+  ) {
+    final stopId = stop['id']?.toString();
+    if (targetId != null && targetId.isNotEmpty && stopId == targetId) {
+      return true;
+    }
+    final stopName = stop['name']?.toString().trim().toLowerCase();
+    return targetName != null &&
+        targetName.isNotEmpty &&
+        stopName == targetName.trim().toLowerCase();
+  }
+
+  /// Narrows a whole-trip response to the selected ride's boarding and
+  /// alighting stops. MOTIS `/trip` reports the vehicle's complete run, while
+  /// a route step can begin at any intermediate stop.
+  Journey? _journeyForStepFromLiveTrip(
+    Map<String, dynamic> liveTrip,
+    JourneyStep selectedStep, {
+    required String destinationName,
+  }) {
+    final selectedTripId = selectedStep.tripId?.trim();
+    if (selectedTripId == null || selectedTripId.isEmpty) return null;
+
+    final rawLegs = liveTrip['legs'];
+    if (rawLegs is! List) return null;
+    for (final rawLeg in rawLegs.whereType<Map>()) {
+      final leg = Map<String, dynamic>.from(rawLeg);
+      final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+      final tripId = line?['tripId']?.toString().trim();
+      if (tripId != selectedTripId) continue;
+
+      final stopovers = leg['stopovers'];
+      if (stopovers is! List) continue;
+      final events = <Map<String, dynamic>>[
+        {
+          'stop': leg['origin'],
+          'departure': leg['departure'],
+          'arrival': leg['arrival'],
+          'plannedDeparture': leg['plannedDeparture'],
+          'plannedArrival': leg['plannedArrival'],
+        },
+        ...stopovers.whereType<Map>().map(Map<String, dynamic>.from),
+        {
+          'stop': leg['destination'],
+          'departure': leg['departure'],
+          'arrival': leg['arrival'],
+          'plannedDeparture': leg['plannedDeparture'],
+          'plannedArrival': leg['plannedArrival'],
+        },
+      ];
+
+      int? fromIndex;
+      int? toIndex;
+      for (var index = 0; index < events.length; index++) {
+        final event = events[index];
+        final stop = (event['stop'] as Map?)?.cast<String, dynamic>();
+        if (stop == null) continue;
+        if (fromIndex == null &&
+            _liveTripStopMatches(
+              stop,
+              selectedStep.startStationId,
+              selectedStep.startStationName,
+            )) {
+          fromIndex = index;
+          continue;
+        }
+        if (fromIndex != null &&
+            _liveTripStopMatches(
+              stop,
+              selectedStep.destinationStationId,
+              selectedStep.destinationName,
+            )) {
+          toIndex = index;
+          break;
+        }
+      }
+      // A `/trip` response includes every stop on the vehicle's run. Only use
+      // it when both ends of this specific ride can be located in order; using
+      // the untrimmed response would show stops before boarding and after
+      // alighting.
+      if (fromIndex == null || toIndex == null || toIndex <= fromIndex) {
+        continue;
+      }
+
+      final fromEvent = events[fromIndex];
+      final toEvent = events[toIndex];
+
+      final fromStop =
+          (fromEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
+      leg['origin'] = Map<String, dynamic>.from(fromStop);
+      leg['departure'] = fromEvent['departure'] ?? fromEvent['arrival'];
+      leg['plannedDeparture'] =
+          fromEvent['plannedDeparture'] ?? fromEvent['plannedArrival'];
+
+      final toStop =
+          (toEvent['stop'] as Map?)?.cast<String, dynamic>() ?? const {};
+      leg['destination'] = Map<String, dynamic>.from(toStop);
+      leg['arrival'] = toEvent['arrival'] ?? toEvent['departure'];
+      leg['plannedArrival'] =
+          toEvent['plannedArrival'] ?? toEvent['plannedDeparture'];
+      leg['stopovers'] = events.sublist(fromIndex + 1, toIndex);
+
+      return _createJourney(
+        {
+          'legs': [leg],
+          'source': liveTrip['source'] ?? 'motis',
+        },
+        destinationNameOverride: destinationName,
+      );
+    }
+    return null;
+  }
+
+  Future<Journey?> _refreshActiveJourneyFromLiveTrips(
+    Journey journey, {
+    required String destinationName,
+  }) async {
+    if (journey.source != 'motis' && journey.source != 'motis_synthetic') {
+      return null;
+    }
+
+    final tripIds = journey.steps
+        .where((step) => step.type == 'ride')
+        .map((step) => step.tripId?.trim() ?? '')
+        .where((tripId) => tripId.isNotEmpty)
+        .toSet();
+    if (tripIds.isEmpty) return null;
+
+    var updated = journey;
+    var foundMatchingVehicle = false;
+    final liveTrips = await Future.wait(
+      tripIds.map(TransportApi.fetchLiveTripJourney),
+    );
+    for (final liveTrip in liveTrips) {
+      if (liveTrip == null) continue;
+      try {
+        for (final selectedStep
+            in updated.steps.where((step) => step.type == 'ride')) {
+          final freshTrip = _journeyForStepFromLiveTrip(
+            liveTrip,
+            selectedStep,
+            destinationName: destinationName,
+          );
+          if (freshTrip == null) continue;
+          final merged = _mergeJourneyWithFreshRealtime(
+            updated,
+            freshTrip,
+            // A trip response covers the vehicle's full run, not necessarily
+            // the user's complete door-to-door itinerary.
+            updateJourneyBounds: false,
+            replaceRawSource: false,
+          );
+          if (!identical(merged, updated)) {
+            foundMatchingVehicle = true;
+            updated = merged;
+          }
+        }
+      } catch (_) {
+        // A malformed trip response must not prevent the plan-search fallback.
+      }
+    }
+    return foundMatchingVehicle ? updated : null;
+  }
+
   Future<void> _refreshActiveJourney(
     RouteTab route, {
     bool showCompletionFeedback = true,
@@ -6757,6 +8149,62 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final previousSignature = _savedJourneyRealtimeSignature(previousJourney);
       bool hasMatchedUpdate = false;
       String? completionMessage;
+
+      final directTripUpdate = await _refreshActiveJourneyFromLiveTrips(
+        previousJourney,
+        destinationName: route.destination.name,
+      );
+      if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
+      if (directTripUpdate != null) {
+        final directSignature =
+            _savedJourneyRealtimeSignature(directTripUpdate);
+        setState(() {
+          final idx = _tabs.indexWhere((t) => t.id == route.id);
+          if (idx == -1 || _tabs[idx].activeJourney == null) return;
+          final latest = _tabs[idx];
+          final currentActive = latest.activeJourney!;
+          final refreshedActive = _mergeJourneyWithFreshRealtime(
+            currentActive,
+            directTripUpdate,
+            updateJourneyBounds: false,
+            replaceRawSource: false,
+          );
+          _tabs[idx] = latest.copyWith(
+            activeJourney: refreshedActive,
+            steps: refreshedActive.steps,
+            candidates: latest.candidates
+                ?.map((candidate) => _journeysLikelySameRoute(
+                      candidate,
+                      currentActive,
+                    )
+                        ? _mergeJourneyWithFreshRealtime(
+                            candidate,
+                            directTripUpdate,
+                            updateJourneyBounds: false,
+                            replaceRawSource: false,
+                          )
+                        : candidate)
+                .toList(),
+            stack: latest.stack
+                .map((stackedJourney) => _journeysLikelySameRoute(
+                      stackedJourney,
+                      currentActive,
+                    )
+                        ? _mergeJourneyWithFreshRealtime(
+                            stackedJourney,
+                            directTripUpdate,
+                            updateJourneyBounds: false,
+                            replaceRawSource: false,
+                          )
+                        : stackedJourney)
+                .toList(),
+          );
+        });
+        hasMatchedUpdate = true;
+        completionMessage = directSignature != previousSignature
+            ? 'Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: directTripUpdate)}.'
+            : 'Route refresh finished: no changes.';
+      }
 
       // Use planned departure time as the anchor for refresh
       final DateTime refDate =
@@ -6889,31 +8337,27 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     switch (sort) {
       case RouteSortOption.earliestDeparture:
         title = l10n.earliestDep;
-        subtitle = 'Change the departure time for this route tab only.';
+        subtitle = l10n.sortSheetEarliestDepHint;
         break;
       case RouteSortOption.earliestArrival:
         title = l10n.earliestArr;
-        subtitle = 'Change the arrival time for this route tab only.';
+        subtitle = l10n.sortSheetEarliestArrHint;
         break;
       case RouteSortOption.shortestDuration:
         title = l10n.fastest;
-        subtitle =
-            'Tune walking speed to favor faster overall connections in this tab.';
+        subtitle = l10n.sortSheetFastestHint;
         break;
       case RouteSortOption.leastTransfers:
         title = l10n.leastTransfers;
-        subtitle =
-            'Add transfer buffer so this tab favors routes with easier changes.';
+        subtitle = l10n.sortSheetLeastTransfersHint;
         break;
       case RouteSortOption.shortestWait:
         title = l10n.leastWait;
-        subtitle =
-            'Adjust transfer padding so this tab can favor tighter or looser waits.';
+        subtitle = l10n.sortSheetLeastWaitHint;
         break;
       case RouteSortOption.leastWalking:
         title = l10n.leastWalking;
-        subtitle =
-            'Limit maximum walking time for this tab without changing app settings.';
+        subtitle = l10n.sortSheetLeastWalkingHint;
         break;
     }
 
@@ -6984,7 +8428,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: onReset,
-                      child: const Text('Use app default'),
+                      child: Text(l10n.useAppDefault),
                     ),
                   ),
                 ],
@@ -6996,7 +8440,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               case RouteSortOption.earliestDeparture:
                 editor = ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Departure time'),
+                  title: Text(l10n.departureTimeLabel),
                   subtitle: Text(
                     DateFormat('EEE, MMM d • HH:mm').format(draft.when),
                   ),
@@ -7007,7 +8451,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               case RouteSortOption.earliestArrival:
                 editor = ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Arrival time'),
+                  title: Text(l10n.arrivalTimeLabel),
                   subtitle: Text(
                     DateFormat('EEE, MMM d • HH:mm').format(draft.when),
                   ),
@@ -7019,7 +8463,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveSpeed =
                     draft.pedestrianSpeedKmh ?? defaults.pedestrianSpeedKmh;
                 editor = buildSliderTile(
-                  label: 'Walking speed',
+                  label: l10n.walkingSpeedLabel,
                   valueText: '${effectiveSpeed.toStringAsFixed(1)} km/h',
                   value: effectiveSpeed,
                   min: 2,
@@ -7039,7 +8483,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveMinTransfer = draft.minTransferTimeMinutes ??
                     defaults.minTransferTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Minimum transfer time',
+                  label: l10n.minimumTransferTimeLabel,
                   valueText: '$effectiveMinTransfer min',
                   value: effectiveMinTransfer.toDouble(),
                   min: 0,
@@ -7059,7 +8503,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectivePadding = draft.additionalTransferTimeMinutes ??
                     defaults.additionalTransferTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Transfer padding',
+                  label: l10n.transferPaddingLabel,
                   valueText: '$effectivePadding min',
                   value: effectivePadding.toDouble(),
                   min: 0,
@@ -7081,7 +8525,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final effectiveMaxWalking = draft.maxWalkingTimeMinutes ??
                     defaults.maxWalkingTimeMinutes;
                 editor = buildSliderTile(
-                  label: 'Maximum walking time',
+                  label: l10n.maximumWalkingTimeLabel,
                   valueText: '$effectiveMaxWalking min',
                   value: effectiveMaxWalking.toDouble(),
                   min: 5,
@@ -7131,7 +8575,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       width: double.infinity,
                       child: FilledButton(
                         onPressed: () => Navigator.of(sheetContext).pop(draft),
-                        child: const Text('Apply to this routes view'),
+                        child: Text(l10n.applyToThisRoutesView),
                       ),
                     ),
                   ],
@@ -7151,12 +8595,210 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  /// How many upcoming rides are checked for an earlier departure: two when a
+  /// route is opened, and the window then slides forward one ride at a time.
+  static const int _earlierAlternativeLookahead = 2;
+
+  /// An alternative has to be at least this much earlier to be worth a hint.
+  static const Duration _earlierAlternativeMinGain = Duration(minutes: 3);
+
+  static const Duration _earlierAlternativeSearchWindow = Duration(minutes: 60);
+
+  void _resetEarlierAlternativeScans(String tabId) {
+    _earlierAlternativeScanKeys.removeWhere((key) => key.startsWith('$tabId|'));
+    _earlierAlternativeSteps.remove(tabId);
+    _seenAlternativeHints.removeWhere((key) => key.startsWith('$tabId|'));
+    _preloadedAlternatives.removeWhere((key, _) => key.startsWith('$tabId|'));
+  }
+
+  String _alternativeHintKey(String tabId, int stepIndex) =>
+      '$tabId|$stepIndex';
+
+  void _markAlternativeHintSeen(String tabId, int stepIndex) {
+    if (!mounted) return;
+    setState(() {
+      _seenAlternativeHints.add(_alternativeHintKey(tabId, stepIndex));
+    });
+  }
+
+  /// Earliest departure that is still reachable: the arrival of the ride that
+  /// brings the traveller to this stop, or now for the first ride. Walking time
+  /// at the transfer is deliberately not deducted.
+  DateTime earliestCatchableDeparture(List<JourneyStep> steps, int stepIndex) {
+    final now = DateTime.now();
+    for (var i = stepIndex - 1; i >= 0; i--) {
+      if (steps[i].type != 'ride') continue;
+      final previousArrival = steps[i].plannedArrival;
+      if (previousArrival == null) return now;
+      return previousArrival.isAfter(now) ? previousArrival : now;
+    }
+    return now;
+  }
+
+  /// Keeps the next few upcoming rides checked. Called when a route is opened
+  /// and on every active-journey tick, so once a ride has departed the ride
+  /// after it gets its turn.
+  void _scheduleEarlierAlternativeScans(RouteTab route, Journey journey) {
+    final targets = earlierAlternativeScanTargets(
+      journey.steps,
+      DateTime.now(),
+      lookahead: _earlierAlternativeLookahead,
+    );
+    for (final stepIndex in targets) {
+      final key = '${route.id}|${_journeyListKey(journey)}|$stepIndex';
+      if (!_earlierAlternativeScanKeys.add(key)) continue;
+      unawaited(_scanEarlierAlternativeForStep(route, journey, stepIndex));
+    }
+  }
+
+  Future<void> _scanEarlierAlternativeForStep(
+    RouteTab route,
+    Journey journey,
+    int stepIndex,
+  ) async {
+    try {
+      final found = await _findEarlierCatchableRide(route, journey, stepIndex);
+      if (found == null || !mounted) return;
+      setState(() {
+        (_earlierAlternativeSteps[route.id] ??= <int, String>{})[stepIndex] =
+            found;
+      });
+      TransportApi.addSyntheticDebugLog(
+        'ui: earlier alternative tab=${route.id} step=$stepIndex '
+        'line=${journey.steps[stepIndex].line} key=$found',
+      );
+    } catch (error) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: earlier alternative scan failed tab=${route.id} '
+        'step=$stepIndex error=$error',
+      );
+    }
+  }
+
+  /// Ride key of the earliest departure that is still catchable and arrives no
+  /// later than the current plan - the one that buys the most buffer. Null when
+  /// switching would not help. The results are kept for the sheet.
+  Future<String?> _findEarlierCatchableRide(
+    RouteTab route,
+    Journey journey,
+    int stepIndex,
+  ) async {
+    final step = journey.steps[stepIndex];
+    final departure = step.plannedDeparture ?? step.dateTime;
+    if (departure == null) return null;
+
+    final stationId = step.startStationId;
+    final hasCoordinates = step.startLat != null && step.startLng != null;
+    if ((stationId == null || stationId.isEmpty) && !hasCoordinates) {
+      return null;
+    }
+
+    // Mirrors what the Alt sheet searches, so a lit-up button always has
+    // something behind it when it is tapped.
+    final from = Station(
+      id: stationId ?? '',
+      name: step.startStationName ?? 'Origin',
+      type: hasCoordinates ? 'location' : 'station',
+      latitude: step.startLat,
+      longitude: step.startLng,
+    );
+
+    final results = await TransportApi.searchJourneys(
+      from,
+      route.destination,
+      nahverkehrOnly: widget.onlyNahverkehr,
+      when: departure.subtract(_earlierAlternativeSearchWindow),
+      isArrival: false,
+      results: 8,
+      // Only departure and arrival times decide the hint.
+      enrichPlatforms: false,
+      enrichCoupledLines: false,
+    );
+
+    final earliestCatchable =
+        earliestCatchableDeparture(journey.steps, stepIndex);
+    final latestArrival = journey.plannedArrival ?? journey.arrival;
+
+    String? bestKey;
+    DateTime? bestDeparture;
+    for (final raw in results) {
+      if (alternativeIsSameRide(
+        raw,
+        tripId: step.tripId,
+        line: step.line,
+        departure: departure,
+      )) {
+        continue;
+      }
+      final alternativeDeparture = alternativeJourneyBoardingLocal(raw);
+      final alternativeArrival = alternativeJourneyArrivalLocal(raw);
+      if (alternativeDeparture == null || alternativeArrival == null) continue;
+      if (!earlierAlternativeQualifies(
+        plannedDeparture: departure,
+        alternativeDeparture: alternativeDeparture,
+        alternativeArrival: alternativeArrival,
+        earliestCatchable: earliestCatchable,
+        latestArrival: latestArrival,
+        minGain: _earlierAlternativeMinGain,
+      )) {
+        continue;
+      }
+      if (bestDeparture != null &&
+          !alternativeDeparture.isBefore(bestDeparture)) {
+        continue;
+      }
+      bestKey = alternativeRideKey(raw);
+      bestDeparture = alternativeDeparture;
+    }
+
+    if (bestKey != null) {
+      // The button will invite a tap, so have the whole sheet ready: the
+      // backward search above plus the departures from here on.
+      unawaited(_preloadAlternatives(route, stepIndex, from, departure,
+          earlier: results));
+    }
+    return bestKey;
+  }
+
+  /// Fills the sheet's list ahead of time, so opening it shows something at
+  /// once instead of a spinner.
+  Future<void> _preloadAlternatives(
+    RouteTab route,
+    int stepIndex,
+    Station from,
+    DateTime departure, {
+    required List<Map<String, dynamic>> earlier,
+  }) async {
+    try {
+      final forward = await TransportApi.searchJourneys(
+        from,
+        route.destination,
+        nahverkehrOnly: widget.onlyNahverkehr,
+        when: departure,
+        isArrival: false,
+        results: 12,
+        enrichPlatforms: false,
+        enrichCoupledLines: false,
+      );
+      _preloadedAlternatives[_alternativeHintKey(route.id, stepIndex)] =
+          mergeAlternativeJourneys(earlier, forward);
+    } catch (error) {
+      TransportApi.addSyntheticDebugLog(
+        'ui: alternatives preload failed tab=${route.id} '
+        'step=$stepIndex error=$error',
+      );
+    }
+  }
+
   Future<void> _enrichActiveJourneyPlatforms(
     String tabId,
     Journey selectedJourney,
   ) async {
-    if (_journeyHasDeparturePlatformsForEveryRide(selectedJourney)) return;
-    final enrichmentKey = '$tabId|${_journeyListKey(selectedJourney)}';
+    final departure =
+        selectedJourney.plannedDeparture ?? selectedJourney.departure;
+    final arrival = selectedJourney.plannedArrival ?? selectedJourney.arrival;
+    final enrichmentKey = '$tabId|${departure.millisecondsSinceEpoch}|'
+        '${arrival.millisecondsSinceEpoch}|${_firstRideTripId(selectedJourney)}';
     if (_completedActivePlatformEnrichmentKeys.contains(enrichmentKey)) return;
     if (!_activePlatformEnrichmentKeys.add(enrichmentKey)) return;
 
@@ -7268,6 +8910,50 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Widget _buildActiveRouteView(RouteTab route) {
+    final jointContext = _jointRouteContexts[route.id];
+    if (route.activeJourney == null && jointContext != null) {
+      return JointRouteResultsView(
+        key: ValueKey<String>('joint-route-results-${route.id}'),
+        friendName: jointContext.friendName,
+        destinationName: jointContext.destinationName,
+        options: jointContext.options,
+        onBack: () => _closeTab(route.id),
+        onSelect: (option) {
+          setState(() {
+            final index = _tabs.indexWhere((tab) => tab.id == route.id);
+            if (index == -1) return;
+            final current = _tabs[index];
+            final stack = List<Journey>.from(current.stack);
+            if (!stack.any((journey) =>
+                _journeysLikelySameRoute(journey, option.myJourney))) {
+              stack.add(option.myJourney);
+            }
+            _tabs[index] = current.copyWith(
+              activeJourney: option.myJourney,
+              steps: option.myJourney.steps,
+              stack: stack,
+              subtitle:
+                  '${option.sharedDuration.inMinutes} min · ${jointContext.friendName}',
+              totalDuration: FormatUtils.formatDuration(
+                  option.myJourney.duration.inMinutes),
+            );
+          });
+          unawaited(_enrichActiveJourneyPlatforms(
+            route.id,
+            option.myJourney,
+          ));
+        },
+        onShare: (option) => SupabaseService.sendPrivateMessage(
+          jointContext.friendId,
+          _jointPlanMessage(
+            option,
+            friendName: jointContext.friendName,
+            destinationName: jointContext.destinationName,
+            german: Localizations.localeOf(context).languageCode == 'de',
+          ),
+        ),
+      );
+    }
     if (route.activeJourney == null &&
         route.candidates != null &&
         route.candidates!.isNotEmpty) {
@@ -7313,6 +8999,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
               route.id,
               selectedJourneyForEnrichment!,
             ));
+            _resetEarlierAlternativeScans(route.id);
+            _scheduleEarlierAlternativeScans(
+              route,
+              selectedJourneyForEnrichment!,
+            );
           }
         },
         onBack: () => _closeTab(route.id),
@@ -7348,8 +9039,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final totalBikingDurationLabel =
         FormatUtils.formatDuration(totalBikingMinutes);
     final activeJourney = route.activeJourney;
-    if (activeJourney != null &&
-        !_journeyHasDeparturePlatformsForEveryRide(activeJourney)) {
+    if (activeJourney != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         unawaited(_enrichActiveJourneyPlatforms(route.id, activeJourney));
@@ -7364,8 +9054,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: LayoutBuilder(builder: (context, constraints) {
-                  final showBackButton =
-                      route.candidates != null && route.candidates!.length > 1;
+                  final showBackButton = jointContext != null ||
+                      (route.candidates != null &&
+                          route.candidates!.length > 1);
                   final isCompactHeader = constraints.maxWidth < 430;
                   final timeLabel = route.activeJourney != null
                       ? "${DateFormat('HH:mm').format(route.activeJourney!.departure)} - ${DateFormat('HH:mm').format(route.activeJourney!.arrival)}"
@@ -7505,10 +9196,20 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     durationChip
                   ]);
                 })),
-            for (int i = 0; i < route.steps.length; i++)
+            for (int i = 0; i < route.steps.length; i++) ...[
+              if (route.activeJourney?.branchStepIndex == i &&
+                  route.activeJourney?.parentJourney != null)
+                _buildReturnToParentButton(context, route),
               _StepCard(
                   step: route.steps[i],
                   isFirst: i == 0,
+                  hasEarlierAlternative:
+                      _earlierAlternativeSteps[route.id]?.containsKey(i) ??
+                          false,
+                  alternativeHintSeen: _seenAlternativeHints
+                      .contains(_alternativeHintKey(route.id, i)),
+                  onAlternativeHintSeen: () =>
+                      _markAlternativeHintSeen(route.id, i),
                   finalDestinationId: route.destination.id,
                   onShowStopDepartures: ({
                     required String stopId,
@@ -7524,9 +9225,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ),
                   onOpenAlternatives: (stationId, time,
                           {double? lat, double? lng, String? name}) =>
-                      _showAlternatives(
-                          context, stationId, route.destination, time,
-                          lat: lat, lng: lng, stationName: name),
+                      _showAlternatives(context, stationId, route.destination, time,
+                          lat: lat,
+                          lng: lng,
+                          stationName: name,
+                          highlightKey: _earlierAlternativeSteps[route.id]?[i],
+                          earliestDeparture:
+                              earliestCatchableDeparture(route.steps, i),
+                          currentTripId: route.steps[i].tripId,
+                          currentLine: route.steps[i].line,
+                          initialResults: _preloadedAlternatives[
+                              _alternativeHintKey(route.id, i)],
+                          branchFrom: route.activeJourney,
+                          branchRideLegIndex: route.steps[i].legIndex),
                   onIntermediateAlarmLongPress: (stopName,
                           {required int stopIndex,
                           double? targetLat,
@@ -7547,15 +9258,68 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
                   onMapTap: () => _openMap(route, focusStep: route.steps[i]),
                   alarmStopsBefore: _alarmStopsBefore,
-                  showTrainNumbers: widget.showTrainNumbers)
+                  showTrainNumbers: widget.showTrainNumbers),
+            ],
           ]),
+    );
+  }
+
+  /// Sits between the part of the trip that is still the original route and the
+  /// alternative picked for the rest, and steps back out of the alternative.
+  Widget _buildReturnToParentButton(BuildContext context, RouteTab route) {
+    final journey = route.activeJourney;
+    final parent = journey?.parentJourney;
+    if (journey == null || parent == null) return const SizedBox.shrink();
+
+    final colors = TransColors.of(context);
+    final label = '${DateFormat('HH:mm').format(parent.departure)} - '
+        '${DateFormat('HH:mm').format(parent.arrival)}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Align(
+        alignment: Alignment.center,
+        child: TextButton.icon(
+          onPressed: () => _returnToParentJourney(route, journey),
+          style: TextButton.styleFrom(
+            foregroundColor: colors.effectiveSeed,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          icon: const Icon(Icons.undo, size: 16),
+          label: Text(
+            AppLocalizations.of(context)!.backToOriginalRoute(label),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
     );
   }
 }
 
+/// Preview switch for the sheet: with no real suggestion, the first
+/// alternative is marked so the highlight can be looked at on any route.
+/// Off - the sheet only marks what the check actually found.
+const bool kPreviewHighlightSuggestedAlternative = false;
+
+/// Preview switch for the running border: every Alt button animates, whether
+/// or not something was found. Off - only rides with an earlier, still
+/// catchable alternative are marked.
+const bool kPreviewAnimateEveryAltButton = false;
+
 class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
+
+  /// An earlier departure for this ride exists that still reaches the
+  /// destination in time, so switching buys transfer buffer.
+  final bool hasEarlierAlternative;
+
+  /// The traveller has already opened the alternatives for this ride.
+  final bool alternativeHintSeen;
+
+  /// Called when they open them, so the hint stops asking for attention.
+  final VoidCallback? onAlternativeHintSeen;
   final String finalDestinationId;
   final Future<void> Function({
     required String stopId,
@@ -7582,6 +9346,9 @@ class _StepCard extends StatefulWidget {
   const _StepCard({
     required this.step,
     this.isFirst = false,
+    this.hasEarlierAlternative = false,
+    this.alternativeHintSeen = false,
+    this.onAlternativeHintSeen,
     required this.finalDestinationId,
     required this.onShowStopDepartures,
     required this.onOpenAlternatives,
@@ -7683,10 +9450,9 @@ class _StepCardState extends State<_StepCard> {
     );
   }
 
-  Widget _buildTrailingTimeAndStopDetail(
+  Widget _buildTrailingTimeAndStopDetailWidget(
     BuildContext context, {
-    required String timeText,
-    required TextStyle timeStyle,
+    required Widget timeWidget,
     String? stopDetail,
   }) {
     return Row(
@@ -7699,12 +9465,57 @@ class _StepCardState extends State<_StepCard> {
           ),
           const SizedBox(width: 8),
         ],
-        Text(
-          timeText,
-          textAlign: TextAlign.right,
-          style: timeStyle,
-        ),
+        timeWidget,
       ],
+    );
+  }
+
+  Widget _buildRealtimeTime(
+    BuildContext context, {
+    required String actualTime,
+    required DateTime? plannedTime,
+    required int? delayMinutes,
+    required TextStyle style,
+    bool includeDelayLabel = true,
+  }) {
+    final colors = TransColors.of(context);
+    final plannedLabel =
+        plannedTime == null ? null : DateFormat('HH:mm').format(plannedTime);
+    final hasDelay = delayMinutes != null && delayMinutes != 0;
+    final actualStyle = style.copyWith(
+      // Green suggested that a displayed time was a special “on-time” state.
+      // Keep ordinary times neutral; only changed realtime digits are red.
+      color: colors.textPrimary,
+    );
+
+    if (!hasDelay || plannedLabel == null) {
+      return Text(
+        actualTime,
+        textAlign: TextAlign.right,
+        style: actualStyle,
+      );
+    }
+
+    final changedStart = realtimeChangedSuffixStart(plannedLabel, actualTime);
+    final unchangedPrefix = actualTime.substring(0, changedStart);
+    final changedSuffix = actualTime.substring(changedStart);
+    return Text.rich(
+      TextSpan(
+        style: actualStyle,
+        children: [
+          if (unchangedPrefix.isNotEmpty) TextSpan(text: unchangedPrefix),
+          TextSpan(
+            text: changedSuffix,
+            style: style.copyWith(color: colors.delayLate),
+          ),
+          if (includeDelayLabel)
+            TextSpan(
+              text: ' (${formatRealtimeDelay(delayMinutes)})',
+              style: style.copyWith(color: colors.delayLate),
+            ),
+        ],
+      ),
+      textAlign: TextAlign.right,
     );
   }
 
@@ -7820,21 +9631,33 @@ class _StepCardState extends State<_StepCard> {
                     tripId: step.tripId,
                     showTrainNumbers: widget.showTrainNumbers,
                   );
+                  final isCoupledService = displayLine.contains(' / ');
 
-                  // Keep the line compact and give the destination the
-                  // remaining width. An unconstrained destination can shrink
-                  // to one character per line on narrow screens.
+                  // Keep the line compact and let the destination use all
+                  // remaining space. Giving both labels flex space leaves a
+                  // short line number with an unused half of the row.
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(_rideModeIconForLine(step.line),
-                          size: 18, color: colors.textSecondary),
+                      // Icons use a geometric rather than typographic
+                      // baseline, so nudge the vehicle glyph down to sit on
+                      // the same visual line as the route number.
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Icon(
+                          _rideModeIconForLine(step.line),
+                          size: 18,
+                          color: colors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(width: 6),
-                      Flexible(
-                        fit: FlexFit.loose,
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: isCoupledService ? 132 : 72,
+                        ),
                         child: Text(
                           displayLine,
-                          maxLines: 1,
+                          maxLines: isCoupledService ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               fontWeight: FontWeight.bold,
@@ -7858,13 +9681,17 @@ class _StepCardState extends State<_StepCard> {
                       ),
                       const SizedBox(width: 8),
                       // Manual Arrow on Top Line with Rotation
-                      AnimatedRotation(
-                          turns: _isExpanded ? 0.5 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(Icons.keyboard_arrow_down,
-                              color: _isExpanded
-                                  ? colors.effectiveSeed
-                                  : colors.textSecondary)),
+                      Baseline(
+                        baseline: 16,
+                        baselineType: TextBaseline.alphabetic,
+                        child: AnimatedRotation(
+                            turns: _isExpanded ? 0.5 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(Icons.keyboard_arrow_down,
+                                color: _isExpanded
+                                    ? colors.effectiveSeed
+                                    : colors.textSecondary)),
+                      ),
                     ],
                   );
                 }),
@@ -7886,8 +9713,6 @@ class _StepCardState extends State<_StepCard> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // The actions scroll independently; the journey
-                          // time stays fixed at the trailing edge.
                           Expanded(
                             child: SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
@@ -7900,12 +9725,24 @@ class _StepCardState extends State<_StepCard> {
                                       context,
                                       Icons.alt_route,
                                       AppLocalizations.of(context)!.altShort,
-                                      onTap: () => widget.onOpenAlternatives(
-                                        step.startStationId!,
-                                        step.dateTime!,
-                                        lat: step.startLat,
-                                        lng: step.startLng,
-                                      ),
+                                      highlighted:
+                                          kPreviewAnimateEveryAltButton ||
+                                              widget.hasEarlierAlternative,
+                                      // The line stops circling once the
+                                      // traveller has looked; the tint stays as
+                                      // a reminder that an option is there.
+                                      animated: kPreviewAnimateEveryAltButton ||
+                                          (widget.hasEarlierAlternative &&
+                                              !widget.alternativeHintSeen),
+                                      onTap: () {
+                                        widget.onAlternativeHintSeen?.call();
+                                        widget.onOpenAlternatives(
+                                          step.startStationId!,
+                                          step.dateTime!,
+                                          lat: step.startLat,
+                                          lng: step.startLng,
+                                        );
+                                      },
                                     ),
                                     const SizedBox(width: 8),
                                   ],
@@ -7949,36 +9786,45 @@ class _StepCardState extends State<_StepCard> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                  "${step.departureTime} - ${step.arrivalTime}",
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: step.isCancelled
-                                          ? colors.textSecondary
-                                          : colors.textPrimary,
-                                      decoration: step.isCancelled
-                                          ? TextDecoration.lineThrough
-                                          : null)),
-                              if (step.isCancelled)
-                                Text(
-                                    AppLocalizations.of(context)!.cancelledL10n,
-                                    style: TextStyle(
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: step.isCancelled
+                                  ? Text(
+                                      '${step.departureTime} - ${step.arrivalTime} ${AppLocalizations.of(context)!.cancelledL10n}',
+                                      style: TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        color: Colors.red,
-                                        fontSize: 12))
-                              else if (step.departureDelay != null &&
-                                  step.departureDelay != 0)
-                                Text(
-                                    " (${step.departureDelay! > 0 ? '+' : ''}${step.departureDelay})",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: step.departureDelay! > 0
-                                            ? colors.delayLate
-                                            : colors.delayOnTime))
-                            ],
+                                        color: colors.textSecondary,
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _buildRealtimeTime(
+                                          context,
+                                          actualTime: step.departureTime,
+                                          plannedTime: step.plannedDeparture,
+                                          delayMinutes: step.departureDelay,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const Text(' - '),
+                                        _buildRealtimeTime(
+                                          context,
+                                          actualTime: step.arrivalTime,
+                                          plannedTime: step.plannedArrival,
+                                          delayMinutes: step.arrivalDelay,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                            ),
                           ),
                         ],
                       )
@@ -8020,13 +9866,17 @@ class _StepCardState extends State<_StepCard> {
                                         color: colors.textPrimary,
                                         fontSize: 14,
                                         fontWeight: FontWeight.bold)),
-                                trailing: _buildTrailingTimeAndStopDetail(
+                                trailing: _buildTrailingTimeAndStopDetailWidget(
                                   context,
-                                  timeText: step.departureTime,
-                                  timeStyle: TextStyle(
-                                    color: colors.delayOnTime,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
+                                  timeWidget: _buildRealtimeTime(
+                                    context,
+                                    actualTime: step.departureTime,
+                                    plannedTime: step.plannedDeparture,
+                                    delayMinutes: step.departureDelay,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                   stopDetail: combinePlatformAndStopLabel(
                                     step.platform,
@@ -8086,24 +9936,22 @@ class _StepCardState extends State<_StepCard> {
                                         ?['location']?['longitude']) ??
                                     previousLng;
                               }
-                              String timeStr = "--:--";
-                              Color timeColor = Colors.grey;
+                              String actualTimeText = "--:--";
+                              DateTime? plannedTime;
+                              int? delayMinutes;
                               DateTime? exactStopDate;
 
                               if (plannedDep != null) {
                                 final p = DateTime.parse(plannedDep).toLocal();
+                                plannedTime = p;
                                 exactStopDate = p;
-                                timeStr =
+                                actualTimeText =
                                     "${p.hour.toString().padLeft(2, '0')}:${p.minute.toString().padLeft(2, '0')}";
                                 if (actualDep != null) {
                                   final a = DateTime.parse(actualDep).toLocal();
-                                  final delay = a.difference(p).inMinutes;
-                                  if (delay > 2) {
-                                    timeStr += " (+$delay')";
-                                    timeColor = colors.delayLate;
-                                  } else {
-                                    timeColor = colors.delayOnTime;
-                                  }
+                                  actualTimeText =
+                                      "${a.hour.toString().padLeft(2, '0')}:${a.minute.toString().padLeft(2, '0')}";
+                                  delayMinutes = a.difference(p).inMinutes;
                                 }
                               }
                               final isAlarmSelected =
@@ -8142,12 +9990,16 @@ class _StepCardState extends State<_StepCard> {
                                       trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            _buildTrailingTimeAndStopDetail(
+                                            _buildTrailingTimeAndStopDetailWidget(
                                               context,
-                                              timeText: timeStr,
-                                              timeStyle: TextStyle(
-                                                color: timeColor,
-                                                fontSize: 12,
+                                              timeWidget: _buildRealtimeTime(
+                                                context,
+                                                actualTime: actualTimeText,
+                                                plannedTime: plannedTime,
+                                                delayMinutes: delayMinutes,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
                                               ),
                                               stopDetail:
                                                   combinePlatformAndStopLabel(
@@ -8266,32 +10118,27 @@ class _StepCardState extends State<_StepCard> {
                                     color: colors.textPrimary,
                                     fontSize: 14,
                                     fontWeight: FontWeight.bold)),
-                            trailing: Builder(builder: (context) {
-                              String timeStr = step.arrivalTime;
-                              Color timeColor = colors.delayOnTime;
-                              if (step.arrivalDelay != null &&
-                                  step.arrivalDelay! > 0) {
-                                timeColor = colors.delayLate;
-                                timeStr += " (+${step.arrivalDelay})";
-                              }
-                              return _buildTrailingTimeAndStopDetail(
+                            trailing: _buildTrailingTimeAndStopDetailWidget(
+                              context,
+                              timeWidget: _buildRealtimeTime(
                                 context,
-                                timeText: timeStr,
-                                timeStyle: TextStyle(
-                                  color: timeColor,
+                                actualTime: step.arrivalTime,
+                                plannedTime: step.plannedArrival,
+                                delayMinutes: step.arrivalDelay,
+                                style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,
                                 ),
-                                stopDetail: combinePlatformAndStopLabel(
-                                  step.arrivalPlatform,
-                                  step.arrivalStopLabel,
-                                  stationName: step.destinationName,
-                                  isRail: _lineLooksRailForPlatformLabel(
-                                    step.line,
-                                  ),
+                              ),
+                              stopDetail: combinePlatformAndStopLabel(
+                                step.arrivalPlatform,
+                                step.arrivalStopLabel,
+                                stationName: step.destinationName,
+                                isRail: _lineLooksRailForPlatformLabel(
+                                  step.line,
                                 ),
-                              );
-                            }),
+                              ),
+                            ),
                           )))
                 ])));
   }
@@ -8299,28 +10146,41 @@ class _StepCardState extends State<_StepCard> {
   Widget _buildActionChip(BuildContext context, IconData icon, String label,
       {bool isActive = false,
       bool outlined = false,
+      bool highlighted = false,
+      bool animated = false,
       required VoidCallback onTap}) {
     final colors = TransColors.of(context);
+    // A highlighted chip keeps a faint wash of the theme colour so it reads as
+    // marked even while the running border is on the far side of the button.
+    final background = isActive
+        ? colors.chipActiveBg
+        : (highlighted
+            ? colors.effectiveSeed.withValues(alpha: 0.25)
+            : colors.chipBg);
     return GestureDetector(
         onTap: onTap,
-        child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-                color: isActive ? colors.chipActiveBg : colors.chipBg,
-                borderRadius: BorderRadius.circular(20),
-                border: outlined
-                    ? Border.all(color: colors.chipActiveBg, width: 1.4)
-                    : null),
-            child: Row(children: [
-              Icon(icon,
-                  size: 14,
-                  color: isActive ? colors.chipActiveFg : colors.chipFg),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: TextStyle(
-                      color: isActive ? colors.chipActiveFg : colors.chipFg,
-                      fontSize: 12))
-            ])));
+        child: RunningBorder(
+            active: animated,
+            color: colors.effectiveSeed,
+            child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                    color: background,
+                    borderRadius: BorderRadius.circular(20),
+                    border: outlined
+                        ? Border.all(color: colors.chipActiveBg, width: 1.4)
+                        : null),
+                child: Row(children: [
+                  Icon(icon,
+                      size: 14,
+                      color: isActive ? colors.chipActiveFg : colors.chipFg),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: TextStyle(
+                          color: isActive ? colors.chipActiveFg : colors.chipFg,
+                          fontSize: 12))
+                ]))));
   }
 }
 
@@ -8552,6 +10412,25 @@ class _AlternativesSheet extends StatefulWidget {
   final Station to;
   final DateTime initialTime;
   final bool nahverkehrOnly;
+
+  /// Ride key of the earlier connection that made the Alt button light up; it
+  /// is marked where it sits in the list.
+  final String? highlightKey;
+
+  /// Departure before which the traveller cannot be at the stop, because the
+  /// ride that brings them there has not arrived yet. Those connections stay
+  /// in the list - knowing how often the line runs is worth something - they
+  /// are only dimmed and never recommended.
+  final DateTime? earliestDeparture;
+
+  /// The ride this sheet was opened from. It is filtered out, because the trip
+  /// the traveller is already on is not an alternative to itself.
+  final String? currentTripId;
+  final String? currentLine;
+
+  /// Results the background check already fetched. They are shown right away
+  /// and replaced as soon as the fresh search comes back.
+  final List<Map<String, dynamic>>? initialResults;
   final Function(Map<String, dynamic> journeyData, DateTime depTime) onSelected;
 
   const _AlternativesSheet({
@@ -8560,6 +10439,11 @@ class _AlternativesSheet extends StatefulWidget {
     required this.initialTime,
     required this.nahverkehrOnly,
     required this.onSelected,
+    this.highlightKey,
+    this.earliestDeparture,
+    this.currentTripId,
+    this.currentLine,
+    this.initialResults,
   });
 
   @override
@@ -8567,6 +10451,10 @@ class _AlternativesSheet extends StatefulWidget {
 }
 
 class _AlternativesSheetState extends State<_AlternativesSheet> {
+  /// Set once the traveller asked for the earlier departures that the cap
+  /// keeps out of the way.
+  bool _showAllEarlier = false;
+
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
   bool _isMoreLoading = false;
@@ -8575,16 +10463,25 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   @override
   void initState() {
     super.initState();
+    final preloaded = widget.initialResults;
+    if (preloaded != null && preloaded.isNotEmpty) {
+      // Straight to the list; the refresh below fills in what the background
+      // check left out.
+      _results.addAll(mergeAlternativeJourneys(const [], preloaded));
+      _isLoading = false;
+      _isMoreLoading = true;
+    }
     _fetchInitial();
   }
 
   Future<void> _fetchInitial() async {
-    if (mounted) setState(() => _isLoading = true);
+    // Preloaded rows stay on screen while the fresh search runs behind them.
+    if (mounted && _results.isEmpty) setState(() => _isLoading = true);
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
         setState(() {
-          final merged = mergeAlternativeJourneys(const [], res);
+          final merged = mergeAlternativeJourneys(_results, res);
           _results
             ..clear()
             ..addAll(merged);
@@ -8593,23 +10490,35 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         });
       }
 
-      // We want to see the "Next" connections AND exactly one before it.
-      // We'll search starting from 1 hour ago first.
-      List<Map<String, dynamic>> results = await TransportApi.searchJourneys(
+      // What can still be taken comes first. A search anchored an hour back
+      // spends its itineraries on that hour and can stop before it ever
+      // reaches the planned departure.
+      final forward = await TransportApi.searchJourneys(
+        widget.from,
+        widget.to,
+        nahverkehrOnly: widget.nahverkehrOnly,
+        when: widget.initialTime,
+        isArrival: false,
+        results: 12,
+        onPartialResults: processResults,
+      );
+      processResults(forward);
+
+      // Then the ones before it, for the sense of how often the line runs.
+      List<Map<String, dynamic>> earlier = await TransportApi.searchJourneys(
         widget.from,
         widget.to,
         nahverkehrOnly: widget.nahverkehrOnly,
         when: widget.initialTime.subtract(const Duration(hours: 1)),
         isArrival: false,
-        results: 12,
+        results: 8,
         onPartialResults: processResults,
       );
+      processResults(earlier);
 
-      processResults(results);
-
-      // If no preceding found (infrequent line), try 4 hours back.
-      if (results.isEmpty || !_hasPreceding(results)) {
-        results = await TransportApi.searchJourneys(
+      // Nothing preceding at all (infrequent line): reach further back.
+      if (!_hasPreceding(_results)) {
+        earlier = await TransportApi.searchJourneys(
           widget.from,
           widget.to,
           nahverkehrOnly: widget.nahverkehrOnly,
@@ -8618,7 +10527,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           results: 15,
           onPartialResults: processResults,
         );
-        processResults(results);
+        processResults(earlier);
       }
     } catch (e, st) {
       AppError.log(e,
@@ -8629,6 +10538,8 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           _isLoading = false;
         });
       }
+    } finally {
+      if (mounted) setState(() => _isMoreLoading = false);
     }
   }
 
@@ -8676,12 +10587,25 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
     }
   }
 
+  /// Boarding time of the first ride - the same time the route view shows, so
+  /// the two do not disagree by the minute a leading walk leg costs.
   DateTime _getDepTime(Map<String, dynamic> j) {
-    return alternativeJourneyDisplayDepartureLocal(j) ?? DateTime.now();
+    return alternativeJourneyBoardingLocal(j) ?? DateTime.now();
   }
 
   void _loadEarlier() {
     if (_results.isEmpty) return;
+    final selectable = _selectableResults();
+    final capped = limitEarlierAlternatives(
+      selectable,
+      reference: widget.initialTime,
+    ).length;
+    if (!_showAllEarlier && capped < selectable.length) {
+      setState(() => _showAllEarlier = true);
+      return;
+    }
+    // Everything loaded from here on is earlier, so the cap stays lifted.
+    _showAllEarlier = true;
     _fetch(
         _getDepTime(_results.first).subtract(const Duration(seconds: 1)), true);
   }
@@ -8740,104 +10664,165 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
           Expanded(child: Center(child: Text(l10n.noRoutesFound)))
         else
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _results.length + 2,
-              itemBuilder: (ctx, idx) {
-                if (idx == 0) {
-                  return TextButton.icon(
-                      style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12)),
-                      onPressed: _isMoreLoading ? null : _loadEarlier,
-                      icon: const Icon(Icons.history, size: 18),
-                      label: Text(l10n.loadEarlier));
-                }
-                if (idx == _results.length + 1) {
-                  return TextButton.icon(
-                      style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12)),
-                      onPressed: _isMoreLoading ? null : _loadLater,
-                      icon: const Icon(Icons.update, size: 18),
-                      label: Text(l10n.loadLater));
-                }
+            child: Builder(builder: (ctx) {
+              final selectable = _selectableResults();
+              // At most three earlier departures up front; "Frühere
+              // Verbindungen" reveals the rest and then keeps loading back.
+              final visible = _showAllEarlier
+                  ? selectable
+                  : limitEarlierAlternatives(
+                      selectable,
+                      reference: widget.initialTime,
+                    );
+              const leadingCount = 1;
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: visible.length + leadingCount + 1,
+                itemBuilder: (ctx, idx) {
+                  if (idx == 0) {
+                    return TextButton.icon(
+                        style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12)),
+                        onPressed: _isMoreLoading ? null : _loadEarlier,
+                        icon: const Icon(Icons.history, size: 18),
+                        label: Text(l10n.loadEarlier));
+                  }
+                  if (idx == visible.length + leadingCount) {
+                    return TextButton.icon(
+                        style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12)),
+                        onPressed: _isMoreLoading ? null : _loadLater,
+                        icon: const Icon(Icons.update, size: 18),
+                        label: Text(l10n.loadLater));
+                  }
 
-                final journey = _results[idx - 1];
-                final legs =
-                    (journey['legs'] as List).cast<Map<String, dynamic>>();
-                if (legs.isEmpty) return const SizedBox.shrink();
-                final firstRide = legs.firstWhere((l) => l['line'] != null,
-                    orElse: () => legs.first);
-                final line = firstRide['line'] != null
-                    ? firstRide['line']['name']
-                    : 'Walk/Transfer';
-                final dir = firstRide['direction'] ?? 'Destination';
-                final depTime = _getDepTime(journey);
-
-                int delayMin = 0;
-                if (firstRide['departureDelay'] != null) {
-                  delayMin =
-                      ((firstRide['departureDelay'] as num) / 60).round();
-                } else if (firstRide['plannedDeparture'] != null &&
-                    firstRide['departure'] != null) {
-                  final planned =
-                      DateTime.parse(firstRide['plannedDeparture']).toLocal();
-                  final actual =
-                      DateTime.parse(firstRide['departure']).toLocal();
-                  delayMin = actual.difference(planned).inMinutes;
-                }
-
-                return ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  leading: CircleAvatar(
-                    backgroundColor: colors.chipBg,
-                    child:
-                        Icon(Icons.alt_route, color: colors.chipFg, size: 20),
-                  ),
-                  title: Row(
-                    children: [
-                      Expanded(
-                          child: Text(
-                              AppLocalizations.of(context)!
-                                  .toDirection(line, dir),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold))),
-                      if (depTime.isBefore(widget.initialTime
-                          .subtract(const Duration(minutes: 1))))
-                        Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(4)),
-                            child: Text(AppLocalizations.of(context)!.previous,
-                                style: TextStyle(
-                                    color: Colors.blue,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold)))
-                    ],
-                  ),
-                  subtitle: Text.rich(TextSpan(children: [
-                    TextSpan(
-                        text: AppLocalizations.of(context)!
-                            .departsAt(DateFormat('HH:mm').format(depTime)),
-                        style: TextStyle(color: colors.textSecondary)),
-                    if (delayMin > 0)
-                      TextSpan(
-                          text:
-                              " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
-                          style: const TextStyle(
-                              color: Colors.orange,
-                              fontWeight: FontWeight.bold)),
-                  ])),
-                  onTap: () => widget.onSelected(journey, depTime),
-                );
-              },
-            ),
+                  final journey = visible[idx - leadingCount];
+                  return _buildJourneyTile(
+                    context,
+                    journey,
+                    highlighted:
+                        alternativeRideKey(journey) == _highlightedKey(),
+                    reachable: _isReachable(journey),
+                  );
+                },
+              );
+            }),
           ),
         if (_isMoreLoading && _results.isNotEmpty)
           const LinearProgressIndicator(),
       ],
     );
+  }
+
+  /// The suggested connection is the one the automatic check found; while the
+  /// preview switch is on, the first result stands in for it so the styling
+  /// can be looked at on any route.
+  /// A connection that leaves before the traveller can be at the stop is shown
+  /// for orientation, but greyed out.
+  bool _isReachable(Map<String, dynamic> journey) {
+    final cutoff = widget.earliestDeparture;
+    if (cutoff == null) return true;
+    return !_getDepTime(journey).isBefore(cutoff);
+  }
+
+  String? _highlightedKey() {
+    if (widget.highlightKey != null) return widget.highlightKey;
+    if (!kPreviewHighlightSuggestedAlternative) return null;
+    final reachable = _selectableResults().where(_isReachable);
+    if (reachable.isEmpty) return null;
+    return alternativeRideKey(reachable.first);
+  }
+
+  /// Results worth offering: only the ride the traveller is already on drops
+  /// out, and each remaining ride appears once even if it continues in several
+  /// ways.
+  List<Map<String, dynamic>> _selectableResults() {
+    final offered = _results.where((journey) => !alternativeIsSameRide(
+          journey,
+          tripId: widget.currentTripId,
+          line: widget.currentLine,
+          departure: widget.initialTime,
+        ));
+
+    // Sorted by boarding time, which is what the rows show. The raw results
+    // are ordered by journey start, so a leading walk leg would otherwise put
+    // rows out of order.
+    final collapsed = collapseAlternativesByRide(offered)
+      ..sort((a, b) => _getDepTime(a).compareTo(_getDepTime(b)));
+    return collapsed;
+  }
+
+  Widget _buildJourneyTile(
+    BuildContext context,
+    Map<String, dynamic> journey, {
+    required bool highlighted,
+    bool reachable = true,
+  }) {
+    final colors = TransColors.of(context);
+    final legs = (journey['legs'] as List).cast<Map<String, dynamic>>();
+    if (legs.isEmpty) return const SizedBox.shrink();
+    final firstRide =
+        legs.firstWhere((l) => l['line'] != null, orElse: () => legs.first);
+    final line =
+        firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
+    final dir = firstRide['direction'] ?? 'Destination';
+    final depTime = _getDepTime(journey);
+
+    int delayMin = 0;
+    if (firstRide['departureDelay'] != null) {
+      delayMin = ((firstRide['departureDelay'] as num) / 60).round();
+    } else if (firstRide['plannedDeparture'] != null &&
+        firstRide['departure'] != null) {
+      final planned = DateTime.parse(firstRide['plannedDeparture']).toLocal();
+      final actual = DateTime.parse(firstRide['departure']).toLocal();
+      delayMin = actual.difference(planned).inMinutes;
+    }
+
+    final tile = ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      leading: CircleAvatar(
+        backgroundColor: highlighted
+            ? colors.effectiveSeed.withValues(alpha: 0.25)
+            : colors.chipBg,
+        child: Icon(Icons.alt_route,
+            color: highlighted ? colors.effectiveSeed : colors.chipFg,
+            size: 20),
+      ),
+      title: Row(
+        children: [
+          Expanded(
+              child: Text(AppLocalizations.of(context)!.toDirection(line, dir),
+                  style: const TextStyle(fontWeight: FontWeight.bold))),
+          if (depTime.isBefore(
+              widget.initialTime.subtract(const Duration(minutes: 1))))
+            Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4)),
+                child: Text(AppLocalizations.of(context)!.previous,
+                    style: TextStyle(
+                        color: Colors.blue,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold)))
+        ],
+      ),
+      subtitle: Text.rich(TextSpan(children: [
+        TextSpan(
+            text: AppLocalizations.of(context)!
+                .departsAt(DateFormat('HH:mm').format(depTime)),
+            style: TextStyle(color: colors.textSecondary)),
+        if (delayMin > 0)
+          TextSpan(
+              text:
+                  " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
+              style: const TextStyle(
+                  color: Colors.orange, fontWeight: FontWeight.bold)),
+      ])),
+      onTap: () => widget.onSelected(journey, depTime),
+    );
+
+    // Still tappable: the traveller may know something the plan does not.
+    return reachable ? tile : Opacity(opacity: 0.45, child: tile);
   }
 }

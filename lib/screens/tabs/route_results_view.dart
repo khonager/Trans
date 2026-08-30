@@ -12,6 +12,7 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/widgets/route_shape_sketch.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
@@ -564,7 +565,8 @@ class _RouteResultsViewState extends State<RouteResultsView> {
     );
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $label.')),
+        SnackBar(
+            content: Text(AppLocalizations.of(context)!.couldNotOpen(label))),
       );
     }
   }
@@ -967,7 +969,7 @@ class _ExternalPlannerActions extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            'Search this connection in',
+            AppLocalizations.of(context)!.searchThisConnectionIn,
             style: TextStyle(
               color: colors.textSecondary,
               fontSize: 12,
@@ -1393,147 +1395,153 @@ class _JourneyCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        if (journey.isCancelled) ...[
-                          Text(
-                            "$depStr - $arrStr",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textSecondary,
-                              decoration: TextDecoration.lineThrough,
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Text(
-                              AppLocalizations.of(context)!.cancelled,
-                              style: const TextStyle(
-                                color: Colors.red,
-                                fontSize: 14,
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (journey.isCancelled) ...[
+                            Text(
+                              "$depStr - $arrStr",
+                              style: TextStyle(
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
+                                color: colors.textSecondary,
+                                decoration: TextDecoration.lineThrough,
                               ),
                             ),
-                          )
-                        ] else
-                          Text.rich(
-                            TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: depStr,
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: Text(
+                                AppLocalizations.of(context)!.cancelled,
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                if (journey.departureDelay != 0)
+                              ),
+                            )
+                          ] else
+                            Text.rich(
+                              TextSpan(
+                                children: [
                                   TextSpan(
-                                    text:
-                                        " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                    text: depStr,
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: journey.departureDelay > 0
-                                          ? Colors.red
-                                          : Colors.green,
-                                    ),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
                                   ),
-                                TextSpan(
-                                  text: " - ",
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
-                                ),
-                                TextSpan(
-                                  text: arrStr,
-                                  style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: colors.textPrimary),
-                                ),
-                                if (journey.arrivalDelay != 0)
+                                  if (journey.departureDelay != 0)
+                                    TextSpan(
+                                      text:
+                                          " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.departureDelay > 0
+                                            ? Colors.red
+                                            : Colors.green,
+                                      ),
+                                    ),
                                   TextSpan(
-                                    text:
-                                        " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                    text: " - ",
                                     style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: journey.arrivalDelay > 0
-                                          ? Colors.red
-                                          : Colors.green,
-                                    ),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
                                   ),
-                              ],
+                                  TextSpan(
+                                    text: arrStr,
+                                    style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: colors.textPrimary),
+                                  ),
+                                  if (journey.arrivalDelay != 0)
+                                    TextSpan(
+                                      text:
+                                          " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: journey.arrivalDelay > 0
+                                            ? Colors.red
+                                            : Colors.green,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          durStr,
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (hasWalkingSummary) ...[
-                          const SizedBox(width: 10),
-                          Container(
-                            width: 1,
-                            height: 14,
-                            color: Colors.white24,
-                          ),
-                          const SizedBox(width: 10),
-                          Icon(
-                            Icons.directions_walk,
-                            size: 14,
-                            color: colors.stepTransferText,
-                          ),
-                          const SizedBox(width: 4),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           Text(
-                            walkStr,
-                            style: TextStyle(
-                              color: colors.stepTransferText,
+                            durStr,
+                            style: const TextStyle(
+                              color: Colors.green,
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
                             ),
                           ),
-                        ],
-                        if (hasBikingSummary) ...[
-                          const SizedBox(width: 10),
-                          Container(
-                            width: 1,
-                            height: 14,
-                            color: Colors.white24,
-                          ),
-                          const SizedBox(width: 10),
-                          Icon(
-                            Icons.pedal_bike,
-                            size: 14,
-                            color: colors.stepTransferText,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            bikeStr,
-                            style: TextStyle(
-                              color: colors.stepTransferText,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                          if (hasWalkingSummary) ...[
+                            const SizedBox(width: 10),
+                            Container(
+                              width: 1,
+                              height: 14,
+                              color: Colors.white24,
                             ),
-                          ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.directions_walk,
+                              size: 14,
+                              color: colors.stepTransferText,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              walkStr,
+                              style: TextStyle(
+                                color: colors.stepTransferText,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                          if (hasBikingSummary) ...[
+                            const SizedBox(width: 10),
+                            Container(
+                              width: 1,
+                              height: 14,
+                              color: Colors.white24,
+                            ),
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.pedal_bike,
+                              size: 14,
+                              color: colors.stepTransferText,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              bikeStr,
+                              style: TextStyle(
+                                color: colors.stepTransferText,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: RouteShapeSketch(journey: journey),
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -1580,45 +1588,50 @@ class _JourneyCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            // Line Summary (first 3 lines)
+            // Line summary. Keep the card height stable while allowing every
+            // vehicle in a longer journey to remain accessible.
             Align(
               alignment: Alignment.centerLeft,
-              child: Wrap(
-                alignment: WrapAlignment.start,
-                spacing: 6,
-                runSpacing: 6,
-                children: journey.steps
-                    .where((s) => s.type == 'ride')
-                    .take(4)
-                    .map((step) {
-                  String displayLine = step.line.trim();
-                  final displayableTripId =
-                      _shouldDisplaySummaryTripId(step.tripId)
-                          ? step.tripId!.trim()
-                          : null;
-                  // Clean train numbers if disabled
-                  if (!showTrainNumbers) {
-                    final regexParens = RegExp(r'\s*\(\d+\)$');
-                    displayLine =
-                        displayLine.replaceAll(regexParens, '').trim();
-                    if (step.tripId != null) {
-                      displayLine =
-                          displayLine.replaceAll(step.tripId!, "").trim();
-                    }
-                  } else {
-                    // Ensure it's there if enabled
-                    if (displayableTripId != null &&
-                        !displayLine.contains(displayableTripId)) {
-                      displayLine += " ($displayableTripId)";
-                    }
-                  }
-                  displayLine = _stripSummaryPlatformText(displayLine);
-                  return _buildRideChip(
-                    context,
-                    icon: _summaryRideModeIcon(step.line),
-                    label: displayLine,
-                  );
-                }).toList(),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: journey.steps
+                      .where((s) => s.type == 'ride')
+                      .map((step) {
+                        String displayLine = step.line.trim();
+                        final displayableTripId =
+                            _shouldDisplaySummaryTripId(step.tripId)
+                                ? step.tripId!.trim()
+                                : null;
+                        // Clean train numbers if disabled
+                        if (!showTrainNumbers) {
+                          final regexParens = RegExp(r'\s*\(\d+\)');
+                          displayLine =
+                              displayLine.replaceAll(regexParens, '').trim();
+                          if (step.tripId != null) {
+                            displayLine =
+                                displayLine.replaceAll(step.tripId!, "").trim();
+                          }
+                        } else {
+                          // Ensure it's there if enabled
+                          if (displayableTripId != null &&
+                              !displayLine.contains(displayableTripId)) {
+                            displayLine += " ($displayableTripId)";
+                          }
+                        }
+                        displayLine = _stripSummaryPlatformText(displayLine);
+                        return _buildRideChip(
+                          context,
+                          icon: _summaryRideModeIcon(step.line),
+                          label: displayLine,
+                        );
+                      })
+                      .expand((chip) => [
+                            chip,
+                            const SizedBox(width: 6),
+                          ])
+                      .toList(),
+                ),
               ),
             ),
           ],

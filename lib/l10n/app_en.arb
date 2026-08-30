@@ -59,6 +59,17 @@
   "offline": "Offline",
   "noFriendsYet": "No friends yet.",
   "sentFriendRequest": "Sent a friend request",
+  "sentRequests": "Sent Requests",
+  "requestPending": "Waiting for a response",
+  "cancelRequest": "Cancel request",
+  "requestCancelledFor": "Request to @{username} cancelled",
+  "@requestCancelledFor": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
   "friendRequestAccepted": "Friend request accepted!",
   "friendRequestDenied": "Friend request denied.",
   "inactive": "Inactive",
@@ -338,6 +349,13 @@
   "wakeAlarmTitle": "Trans Wake Alarm",
   "wakeAlarmTracking": "Tracking your journey...",
   "alternative": "Alternative",
+  "backToOriginalRoute": "Back to {time} route",
+  "@backToOriginalRoute": {
+    "description": "Button between the original part of the trip and the alternative picked for the rest",
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
   "routeLabel": "Route",
   "destinationLabel": "Destination",
   "details": "Details",
@@ -443,11 +461,19 @@
   "journeySignal": "Privacy Level",
   "signalLevel": "Level {level}",
   "@signalLevel": {
-    "placeholders": {"level": {"type": "int"}}
+    "placeholders": {
+      "level": {
+        "type": "int"
+      }
+    }
   },
   "signalSharingWith": "Privacy Level for {username}",
   "@signalSharingWith": {
-    "placeholders": {"username": {"type": "String"}}
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
   },
   "signalOverrideExplanation": "This overrides your global level only for this friend.",
   "useGlobalSignal": "Use global level",
@@ -579,5 +605,129 @@
   "loadingDepartures": "Loading departures...",
   "stopDeparturesJumpToTop": "Go to top",
   "stopDeparturesJumpToBottom": "Go to bottom",
-  "longPressForDepartures": "Long-press any stop to see all departures for that day."
+  "longPressForDepartures": "Long-press any stop to see all departures for that day.",
+  "connectionSaved": "Connection saved",
+  "connectionUnsaved": "Connection removed from saved",
+  "savedRouteDeleted": "Saved route deleted",
+  "savedRoutesTitle": "Saved routes",
+  "savedRoutesAutoDelete": "(auto-delete 24h after arrival)",
+  "noRecentRoutesYet": "No recent routes yet",
+  "wakeAlertSetFor": "Wake alert set for {stop}",
+  "@wakeAlertSetFor": {
+    "placeholders": {
+      "stop": {
+        "type": "String"
+      }
+    }
+  },
+  "leaveInMinutesFor": "Leave in {minutes} min for {destination}",
+  "@leaveInMinutesFor": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      },
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "leaveRemindersSummary": "Leave reminders: {summary}",
+  "@leaveRemindersSummary": {
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "leaveRemindersNone": "none",
+  "leaveSoonTitle": "Leave soon",
+  "leaveSoonBody": "{minutes} min left for {from} -> {to} ({time})",
+  "@leaveSoonBody": {
+    "placeholders": {
+      "minutes": {
+        "type": "String"
+      },
+      "from": {
+        "type": "String"
+      },
+      "to": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "exactAlarmsBlocked": "Android blocked exact alarms for this reminder. Open \"Alarms & reminders\" for Trans to make leave alerts reliable.",
+  "couldNotOpen": "Could not open {label}.",
+  "@couldNotOpen": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "searchThisConnectionIn": "Search this connection in",
+  "platformShort": "Pl. {platform}",
+  "@platformShort": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "customSoundSet": "Custom alarm sound set to \"{label}\". Tap the trash icon in the picker to remove it.",
+  "@customSoundSet": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "customSoundRemoved": "Custom alarm sound removed.",
+  "couldNotRemoveCustomSound": "Could not remove the custom sound: {error}",
+  "@couldNotRemoveCustomSound": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotImportAudioReason": "Could not import that audio file: {error}",
+  "@couldNotImportAudioReason": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotImportAudio": "Could not import that audio file.",
+  "addCustomAudio": "Add custom audio...",
+  "couldNotSaveThemeColor": "Could not save that theme color: {error}",
+  "@couldNotSaveThemeColor": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "liveBuses": "Live Buses",
+  "refresh": "Refresh",
+  "compass": "Compass",
+  "recenter": "Recenter",
+  "bike": "BIKE",
+  "useAppDefault": "Use app default",
+  "departureTimeLabel": "Departure time",
+  "arrivalTimeLabel": "Arrival time",
+  "applyToThisRoutesView": "Apply to this routes view",
+  "walkingSpeedLabel": "Walking speed",
+  "minimumTransferTimeLabel": "Minimum transfer time",
+  "transferPaddingLabel": "Transfer padding",
+  "maximumWalkingTimeLabel": "Maximum walking time",
+  "sortSheetEarliestDepHint": "Change the departure time for this route tab only.",
+  "sortSheetEarliestArrHint": "Change the arrival time for this route tab only.",
+  "sortSheetFastestHint": "Tune walking speed to favor faster overall connections in this tab.",
+  "sortSheetLeastTransfersHint": "Add transfer buffer so this tab favors routes with easier changes.",
+  "sortSheetLeastWaitHint": "Adjust transfer padding so this tab can favor tighter or looser waits.",
+  "sortSheetLeastWalkingHint": "Limit maximum walking time for this tab without changing app settings."
 }

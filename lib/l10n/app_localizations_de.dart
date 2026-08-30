@@ -16,11 +16,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get resetPasswordMessage =>
-      'Sie haben sich sicher über den Link zum Zurücksetzen des Passworts angemeldet. Bitte legen Sie nun ein neues Passwort fest.';
+      'Du bist sicher über den Link zum Zurücksetzen des Passworts angemeldet. Lege jetzt bitte ein neues Passwort fest.';
 
   @override
   String get resetPasswordSnackbar =>
-      'Tippen Sie auf das \'Bearbeiten\'-Symbol in Ihrem Profil, um ein neues Passwort festzulegen.';
+      'Tippe in deinem Profil auf das Bearbeiten-Symbol, um ein neues Passwort festzulegen.';
 
   @override
   String get ok => 'OK';
@@ -29,7 +29,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get quitAppTitle => 'App beenden?';
 
   @override
-  String get quitAppMessage => 'Möchten Sie die Anwendung wirklich beenden?';
+  String get quitAppMessage => 'Möchtest du die App wirklich beenden?';
 
   @override
   String get no => 'Nein';
@@ -38,7 +38,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get yes => 'Ja';
 
   @override
-  String get routes => 'Routen';
+  String get routes => 'Verbindungen';
 
   @override
   String get friends => 'Freunde';
@@ -47,20 +47,20 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings => 'Einstellungen';
 
   @override
-  String get changelogTitle => 'Änderungsprotokoll';
+  String get changelogTitle => 'Neuerungen';
 
   @override
   String failedToLoadReleases(String statusCode) {
-    return 'Fehler beim Laden von Versionen: $statusCode';
+    return 'Versionen konnten nicht geladen werden: $statusCode';
   }
 
   @override
   String errorLoadingReleases(String error) {
-    return 'Fehler beim Laden von Versionen: $error';
+    return 'Fehler beim Laden der Versionen: $error';
   }
 
   @override
-  String get retry => 'Wiederholen';
+  String get retry => 'Erneut versuchen';
 
   @override
   String get unknownVersion => 'Unbekannte Version';
@@ -70,25 +70,25 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String currentVersionLabel(String tagName) {
-    return '$tagName (Aktuell)';
+    return '$tagName (aktuell)';
   }
 
   @override
-  String get addNewFriend => 'Neuen Freund hinzufügen';
+  String get addNewFriend => 'Freund hinzufügen';
 
   @override
   String get searchByUsername => 'Nach Benutzernamen suchen...';
 
   @override
   String requestSentTo(String username) {
-    return 'Anfrage gesendet an @$username';
+    return 'Anfrage an @$username gesendet';
   }
 
   @override
   String get friendsTitle => 'Freunde';
 
   @override
-  String get activeNow => 'Jetzt aktiv';
+  String get activeNow => 'Gerade aktiv';
 
   @override
   String get requests => 'Anfragen';
@@ -103,7 +103,21 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sentFriendRequest => 'Freundschaftsanfrage gesendet';
 
   @override
-  String get friendRequestAccepted => 'Freundschaftsanfrage akzeptiert!';
+  String get sentRequests => 'Gesendete Anfragen';
+
+  @override
+  String get requestPending => 'Wartet auf Antwort';
+
+  @override
+  String get cancelRequest => 'Anfrage zurückziehen';
+
+  @override
+  String requestCancelledFor(String username) {
+    return 'Anfrage an @$username zurückgezogen';
+  }
+
+  @override
+  String get friendRequestAccepted => 'Freundschaftsanfrage angenommen!';
 
   @override
   String get friendRequestDenied => 'Freundschaftsanfrage abgelehnt.';
@@ -116,16 +130,16 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String onLine(String line) {
-    return 'In $line';
+    return 'Unterwegs mit $line';
   }
 
   @override
   String lastOnLine(String line) {
-    return 'Zuletzt in $line';
+    return 'Zuletzt mit $line';
   }
 
   @override
-  String get activeRecentlyGhost => 'Kürzlich aktiv (Geist-Modus)';
+  String get activeRecentlyGhost => 'Kürzlich aktiv (Ghost-Modus)';
 
   @override
   String get unknown => 'Unbekannt';
@@ -143,7 +157,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get removeFriendMessage =>
-      'Sie werden aus Ihrer Freundesliste entfernt.';
+      'Die Person wird aus deiner Freundesliste entfernt.';
 
   @override
   String get cancel => 'Abbrechen';
@@ -168,7 +182,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String routesFound(String count) {
-    return '$count Routen gefunden';
+    return '$count Verbindungen gefunden';
   }
 
   @override
@@ -181,22 +195,22 @@ class AppLocalizationsDe extends AppLocalizations {
   String get fastest => 'Schnellste';
 
   @override
-  String get leastTransfers => 'Wenigste Umst.';
+  String get leastTransfers => 'Wenig Umstiege';
 
   @override
-  String get leastWait => 'Wenigste Wartezeit';
+  String get leastWait => 'Kurze Wartezeit';
 
   @override
-  String get leastWalking => 'Wenigster Fußweg';
+  String get leastWalking => 'Kurzer Fußweg';
 
   @override
-  String get loadEarlier => 'Frühere laden';
+  String get loadEarlier => 'Frühere Verbindungen';
 
   @override
-  String get loadLater => 'Spätere laden';
+  String get loadLater => 'Spätere Verbindungen';
 
   @override
-  String get routeTicketCopied => 'Routenticket in die Zwischenablage kopiert!';
+  String get routeTicketCopied => 'Ticket in die Zwischenablage kopiert!';
 
   @override
   String failedToCopy(String error) {
@@ -213,7 +227,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get locationPermissionDenied =>
-      'Standortberechtigung verweigert. Alarm funktioniert nicht.';
+      'Standortberechtigung verweigert. Der Alarm funktioniert so nicht.';
 
   @override
   String get locationPermissionPermanentlyDenied =>
@@ -221,47 +235,47 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get missingDestCoords =>
-      'Alarm kann nicht gestartet werden: Zielkoordinaten fehlen.';
+      'Alarm kann nicht starten: Es fehlen die Zielkoordinaten.';
 
   @override
   String wakeUpApproaching(String stop) {
-    return 'Aufwachen! Sie nähern sich $stop!';
+    return 'Aufwachen! Du bist gleich in $stop!';
   }
 
   @override
   String get serviceBusyTryAgain =>
-      'Dienst vorübergehend ausgelastet. Versuchen Sie es erneut oder geben Sie mehr Zeichen ein.';
+      'Der Dienst ist gerade ausgelastet. Versuch es noch einmal oder tippe mehr Zeichen ein.';
 
   @override
   String get serviceBusyPleaseTryAgain =>
-      'Dienst vorübergehend ausgelastet. Bitte versuchen Sie es erneut.';
+      'Der Dienst ist gerade ausgelastet. Bitte versuch es noch einmal.';
 
   @override
   String get locationNotAvailable => 'Standort nicht verfügbar.';
 
   @override
-  String get noRoutesFound => 'Keine Routen gefunden.';
+  String get noRoutesFound => 'Keine Verbindungen gefunden.';
 
   @override
   String get noRoutesFoundBusy =>
-      'Keine Routen gefunden. Der Dienst ist möglicherweise ausgelastet.';
+      'Keine Verbindungen gefunden. Der Dienst ist vielleicht gerade ausgelastet – bitte versuch es noch einmal.';
 
   @override
   String get requestTimedOut =>
-      'Zeitüberschreitung der Anfrage. Bitte versuchen Sie es erneut.';
+      'Zeitüberschreitung bei der Anfrage. Bitte versuch es noch einmal.';
 
   @override
   String get serviceBusyMoment =>
-      'Dienst ausgelastet. Bitte versuchen Sie es gleich noch einmal.';
+      'Der Dienst ist gerade ausgelastet. Bitte versuch es gleich noch einmal.';
 
   @override
   String get weakGps => '⚠️ Schwaches GPS';
 
   @override
-  String get planJourney => 'Reise planen';
+  String get planJourney => 'Fahrt planen';
 
   @override
-  String get tripTime => 'Reisezeit';
+  String get tripTime => 'Fahrtzeit';
 
   @override
   String get now => 'Jetzt';
@@ -270,13 +284,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get currentLocation => 'Aktueller Standort';
 
   @override
-  String get fromStationOrAddress => 'Startstation oder Adresse...';
+  String get fromStationOrAddress => 'Start: Haltestelle oder Adresse...';
 
   @override
-  String get toStationOrAddress => 'Zielstation oder Adresse...';
+  String get toStationOrAddress => 'Ziel: Haltestelle oder Adresse...';
 
   @override
-  String get stationOrAddress => 'Station oder Adresse...';
+  String get stationOrAddress => 'Haltestelle oder Adresse...';
 
   @override
   String get fromLabel => 'Von';
@@ -294,7 +308,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get refreshLocation => 'Standort aktualisieren';
 
   @override
-  String get findRoutes => 'Routen finden';
+  String get findRoutes => 'Verbindungen suchen';
 
   @override
   String get favorites => 'Favoriten';
@@ -303,21 +317,21 @@ class AppLocalizationsDe extends AppLocalizations {
   String get add => 'Hinzufügen';
 
   @override
-  String get frequentJourneys => 'Häufige Reisen';
+  String get frequentJourneys => 'Häufige Fahrten';
 
   @override
   String fromStation(String station) {
-    return 'Von $station';
+    return 'Ab $station';
   }
 
   @override
   String couldNotLoadMoreRoutes(String error) {
-    return 'Weitere Routen konnten nicht geladen werden: $error';
+    return 'Weitere Verbindungen konnten nicht geladen werden: $error';
   }
 
   @override
   String couldNotRefreshRoutes(String error) {
-    return 'Routen konnten nicht aktualisiert werden: $error';
+    return 'Verbindungen konnten nicht aktualisiert werden: $error';
   }
 
   @override
@@ -339,7 +353,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get noIntermediateStops => 'Keine Zwischenhalte-Infos.';
+  String get noIntermediateStops => 'Keine Infos zu Zwischenhalten.';
 
   @override
   String getOffAtPlatform(String station, String platform) {
@@ -352,7 +366,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get station => 'Station';
+  String get station => 'Haltestelle';
 
   @override
   String get friend => 'Freund';
@@ -380,7 +394,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get previous => 'Frühere';
+  String get previous => 'FRÜHERE';
 
   @override
   String get dep => 'ABF';
@@ -392,7 +406,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get passenger => 'FAHRGAST';
 
   @override
-  String get walk => 'GEHEN';
+  String get walk => 'ZU FUSS';
 
   @override
   String get transfer => 'UMSTIEG';
@@ -412,13 +426,13 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get noSecureMessagesYet => 'Keine sicheren Nachrichten bisher.';
+  String get noSecureMessagesYet => 'Noch keine sicheren Nachrichten.';
 
   @override
   String get useImage => 'Bild verwenden';
 
   @override
-  String get saySomething => 'Nachricht schreiben...';
+  String get saySomething => 'Schreib etwas...';
 
   @override
   String get qrCodeDetected => 'QR-Code erkannt';
@@ -458,23 +472,23 @@ class AppLocalizationsDe extends AppLocalizations {
   String get errorLoadingTicket => 'Fehler beim Laden des Tickets';
 
   @override
-  String get changeTicket => 'Ticket ändern';
+  String get changeTicket => 'Ticket wechseln';
 
   @override
   String get addTicket => 'Ticket hinzufügen';
 
   @override
-  String get selectImageFromGallery => 'Bild aus Galerie wählen';
+  String get selectImageFromGallery => 'Bild aus der Galerie wählen';
 
   @override
-  String get previousSearches => 'Vorherige Suchen';
+  String get previousSearches => 'Letzte Suchen';
 
   @override
   String get clearHistory => 'Verlauf löschen';
 
   @override
   String get confirmClearHistory =>
-      'Sind Sie sicher, dass Sie Ihren Suchverlauf löschen möchten?';
+      'Möchtest du deinen bisherigen Suchverlauf wirklich löschen?';
 
   @override
   String get searchHistoryCleared => 'Suchverlauf gelöscht.';
@@ -487,14 +501,14 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get styledFromOriginalTicketQrPattern =>
-      'Aus dem QR-Muster des Originaltickets erstellt';
+      'Erstellt aus dem QR-Muster deines Originaltickets';
 
   @override
-  String get tapForFullscreen => 'Tippen für Vollbild';
+  String get tapForFullscreen => 'Für Vollbild tippen';
 
   @override
   String get tapForFullscreenHoldForHistory =>
-      'Tippen für Vollbild • Halten für Verlauf';
+      'Für Vollbild tippen • Für Verlauf gedrückt halten';
 
   @override
   String get showOriginalTicket => 'Originalticket anzeigen';
@@ -504,11 +518,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get savedLocallyCloudUploadFailed =>
-      'Lokal gespeichert. Cloud-Upload fehlgeschlagen.';
+      'Lokal gespeichert. Der Cloud-Upload ist fehlgeschlagen.';
 
   @override
   String get couldNotIsolateQrBounds =>
-      'QR-Bereich konnte nicht sauber erkannt werden. Stattdessen wird das ganze Bild stilisiert.';
+      'Der QR-Bereich ließ sich nicht abgrenzen. Stattdessen wird das ganze Bild stilisiert.';
 
   @override
   String get couldNotRecolorQrCode =>
@@ -524,13 +538,18 @@ class AppLocalizationsDe extends AppLocalizations {
   String get wakeAlarmTitle => 'Trans-Weckalarm';
 
   @override
-  String get wakeAlarmTracking => 'Ihre Reise wird verfolgt...';
+  String get wakeAlarmTracking => 'Deine Fahrt wird verfolgt...';
 
   @override
   String get alternative => 'Alternative';
 
   @override
-  String get routeLabel => 'Route';
+  String backToOriginalRoute(String time) {
+    return 'Zurück zur Route $time';
+  }
+
+  @override
+  String get routeLabel => 'Verbindung';
 
   @override
   String get destinationLabel => 'Ziel';
@@ -551,17 +570,17 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String lateByMinutes(String minutes) {
-    return '(+$minutes Min. verspätet)';
+    return '(+$minutes Min.)';
   }
 
   @override
   String switchPlatform(String fromPlatform, String toPlatform) {
-    return 'Wechsel von $fromPlatform zu $toPlatform';
+    return 'Von $fromPlatform zu $toPlatform wechseln';
   }
 
   @override
   String waitAt(String place) {
-    return 'Warten bei $place';
+    return 'Warten an $place';
   }
 
   @override
@@ -570,22 +589,22 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get waitForConnection => 'Auf Anschluss warten';
+  String get waitForConnection => 'Auf den Anschluss warten';
 
   @override
   String walkTo(String destination) {
-    return 'Zu $destination laufen';
+    return 'Zu Fuß nach $destination';
   }
 
   @override
-  String get walkToDestination => 'Zum Ziel laufen';
+  String get walkToDestination => 'Zu Fuß zum Ziel';
 
   @override
-  String get walkLabel => 'Laufen';
+  String get walkLabel => 'Fußweg';
 
   @override
   String atPlatform(String platform) {
-    return 'bei $platform';
+    return 'an $platform';
   }
 
   @override
@@ -603,10 +622,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get favoriteLabelHint => 'Bezeichnung (z. B. Zuhause, Bestie)';
 
   @override
-  String get searchStationName => 'Stationsnamen suchen';
+  String get searchStationName => 'Haltestelle suchen';
 
   @override
-  String get searchFriendUsername => 'Freundes-Benutzernamen suchen';
+  String get searchFriendUsername => 'Benutzernamen suchen';
 
   @override
   String get alarmOn => 'Alarm an';
@@ -636,14 +655,14 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get deleteAccountWarning =>
-      'Diese Aktion ist unwiderruflich. Alle Ihre Daten werden dauerhaft gelöscht.';
+      'Diese Aktion lässt sich nicht rückgängig machen. Alle deine Daten werden dauerhaft gelöscht.';
 
   @override
   String get enterPasswordToConfirm =>
-      'Bitte geben Sie Ihr Passwort zur Bestätigung ein:';
+      'Gib zur Bestätigung bitte dein Passwort ein:';
 
   @override
-  String get deleteForever => 'Dauerhaft löschen';
+  String get deleteForever => 'Endgültig löschen';
 
   @override
   String get appName => 'Trans';
@@ -652,7 +671,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get privacy => 'Datenschutz';
 
   @override
-  String get ghostMode => 'Geist-Modus';
+  String get ghostMode => 'Ghost-Modus';
 
   @override
   String get hideLocation => 'Standort vor allen verbergen';
@@ -672,7 +691,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get signalOverrideExplanation =>
-      'Dies überschreibt deine globale Stufe nur für diesen Freund.';
+      'Das überschreibt deine globale Stufe nur für diesen Freund.';
 
   @override
   String get useGlobalSignal => 'Globale Stufe verwenden';
@@ -684,11 +703,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get darkMode => 'Dunkelmodus';
 
   @override
-  String get syncedWithSystem => 'Mit System synchronisiert';
+  String get syncedWithSystem => 'Mit dem System synchronisiert';
 
   @override
   String get systemSyncActive =>
-      'System-Sync aktiv. Gedrückt halten zum Deaktivieren.';
+      'System-Sync aktiv. Zum Deaktivieren gedrückt halten.';
 
   @override
   String get systemSyncEnabled => 'System-Sync aktiviert';
@@ -700,32 +719,32 @@ class AppLocalizationsDe extends AppLocalizations {
   String get deutschlandTicketMode => 'Deutschlandticket-Modus';
 
   @override
-  String get onlyLocalTransport => 'Nur Nahverkehr';
+  String get onlyLocalTransport => 'Nur Nah- und Regionalverkehr';
 
   @override
   String get appearance => 'Erscheinungsbild';
 
   @override
-  String get themeColor => 'Designfarbe';
+  String get themeColor => 'Akzentfarbe';
 
   @override
   String get showTrainNumbers => 'Zugnummern anzeigen';
 
   @override
-  String get displayTripIds => 'Fahrt-IDs anzeigen (z.B. RE1 (12345))';
+  String get displayTripIds => 'Fahrt-IDs anzeigen (z. B. RE1 (12345))';
 
   @override
   String get notificationsAndHaptics => 'Benachrichtigungen & Haptik';
 
   @override
-  String get alarmTrigger => 'Alarm-Auslöser';
+  String get alarmTrigger => 'Alarm auslösen';
 
   @override
-  String get alertAtDestination => 'Alarm am Ziel';
+  String get alertAtDestination => 'Am Ziel alarmieren';
 
   @override
   String alertStopsBefore(String count) {
-    return 'Alarm $count Haltestellen vorher';
+    return '$count Haltestellen vorher alarmieren';
   }
 
   @override
@@ -745,14 +764,14 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String notifyAtThreshold(String threshold, String remaining) {
-    return 'Benachrichtigung bei $threshold $remaining';
+    return 'Benachrichtigen bei $threshold $remaining';
   }
 
   @override
   String get alarmSound => 'Alarmton';
 
   @override
-  String get previewSound => 'Ton testen';
+  String get previewSound => 'Ton anhören';
 
   @override
   String get wakeAlarmPreviewTitle => 'Weckalarm-Vorschau';
@@ -761,40 +780,41 @@ class AppLocalizationsDe extends AppLocalizations {
   String get wakeAlarmPreviewBody => 'So wird dein Weckalarm klingen.';
 
   @override
-  String get alarmPattern => 'Alarm-Muster';
+  String get alarmPattern => 'Alarmmuster';
 
   @override
-  String get ofLegCovered => 'der Strecke geschafft';
+  String get ofLegCovered => 'der Strecke zurückgelegt';
 
   @override
   String get fromTarget => 'bis zum Ziel';
 
   @override
-  String get fivePercentRemaining => '5 % verbleibend';
+  String get fivePercentRemaining => '5 % übrig';
 
   @override
-  String get tenPercentRemaining => '10 % verbleibend';
+  String get tenPercentRemaining => '10 % übrig';
 
   @override
   String get fixed500m => 'Feste 500 m';
 
   @override
-  String get vibrationIntensity => 'Vibrationsintensität';
+  String get vibrationIntensity => 'Vibrationsstärke';
 
   @override
   String get alwaysWakeMe => 'Immer wecken';
 
   @override
-  String get turnOnAlarmDefault => 'Alarm immer standardmäßig aktivieren';
+  String get turnOnAlarmDefault =>
+      'Alarm für jede Fahrt automatisch aktivieren';
 
   @override
   String get dataAndPrivacy => 'Daten & Datenschutz';
 
   @override
-  String get clearSearchHistory => 'Suchverlauf leeren';
+  String get clearSearchHistory => 'Suchverlauf löschen';
 
   @override
-  String get dataSourceAdvanced => 'Datenquelle (Erweitert)';
+  String get dataSourceAdvanced => 'Datenquelle (erweitert)';
 
   @override
   String get transportApi => 'Transport-API';
@@ -805,7 +825,7 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get autoRecommended => 'Auto (Empfohlen)';
+  String get autoRecommended => 'Automatisch (empfohlen)';
 
   @override
   String get transitousOpenSource => 'Transitous (Open Source)';
@@ -836,7 +856,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get profileUpdated =>
-      'Profil aktualisiert! Bitte E-Mail auf Bestätigung prüfen (falls geändert).';
+      'Profil aktualisiert! Wenn du deine E-Mail geändert hast, prüfe bitte dein Postfach.';
 
   @override
   String get incorrectPasswordOrRpcMissing => 'Falsches Passwort.';
@@ -852,11 +872,10 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get emailChangeHint =>
-      'Beim Ändern der E-Mail wird zuerst ein Bestätigungslink gesendet.';
+      'Bevor die neue Adresse aktiv wird, schicken wir dir einen Bestätigungslink.';
 
   @override
-  String get passwordChangeHint =>
-      'Wählen Sie ein neues Passwort für Ihr Konto.';
+  String get passwordChangeHint => 'Wähle ein neues Passwort für dein Konto.';
 
   @override
   String get confirmPassword => 'Passwort bestätigen';
@@ -865,18 +884,17 @@ class AppLocalizationsDe extends AppLocalizations {
   String get passwordsDoNotMatch => 'Die Passwörter stimmen nicht überein.';
 
   @override
-  String get enterValidEmail => 'Geben Sie eine gültige E-Mail-Adresse ein.';
+  String get enterValidEmail => 'Gib eine gültige E-Mail-Adresse ein.';
 
   @override
-  String get fillRequiredFields =>
-      'Bitte füllen Sie die erforderlichen Felder aus.';
+  String get fillRequiredFields => 'Bitte fülle die erforderlichen Felder aus.';
 
   @override
   String get usernameUpdated => 'Benutzername aktualisiert.';
 
   @override
   String get emailUpdateSent =>
-      'Bitte prüfen Sie Ihre E-Mails, um die Adressänderung zu bestätigen.';
+      'Prüfe deine E-Mails, um die Adressänderung zu bestätigen.';
 
   @override
   String get passwordUpdated => 'Passwort aktualisiert.';
@@ -907,11 +925,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get enterEmailReset =>
-      'Geben Sie Ihre E-Mail ein, um einen Zurücksetzen-Link zu erhalten.';
+      'Gib deine E-Mail-Adresse ein, um einen Link zum Zurücksetzen des Passworts zu erhalten.';
 
   @override
   String get passwordResetEmailSent =>
-      'E-Mail zum Zurücksetzen gesendet (falls Konto existiert).';
+      'E-Mail zum Zurücksetzen gesendet (falls ein Konto existiert).';
 
   @override
   String get send => 'Senden';
@@ -927,7 +945,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String stopDeparturesTitle(String stopName) {
-    return 'Abfahrten an $stopName';
+    return 'Abfahrten ab $stopName';
   }
 
   @override
@@ -969,5 +987,159 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get longPressForDepartures =>
-      'Haltestelle lang drücken, um alle Abfahrten des Tages zu sehen.';
+      'Halte eine Haltestelle gedrückt, um alle Abfahrten des Tages zu sehen.';
+
+  @override
+  String get connectionSaved => 'Verbindung gespeichert';
+
+  @override
+  String get connectionUnsaved => 'Verbindung nicht mehr gespeichert';
+
+  @override
+  String get savedRouteDeleted => 'Gespeicherte Verbindung gelöscht';
+
+  @override
+  String get savedRoutesTitle => 'Gespeicherte Verbindungen';
+
+  @override
+  String get savedRoutesAutoDelete => '(werden 24 Std. nach Ankunft gelöscht)';
+
+  @override
+  String get noRecentRoutesYet => 'Noch keine letzten Verbindungen';
+
+  @override
+  String wakeAlertSetFor(String stop) {
+    return 'Weckalarm für $stop gesetzt';
+  }
+
+  @override
+  String leaveInMinutesFor(String minutes, String destination) {
+    return 'In $minutes Min. losgehen Richtung $destination';
+  }
+
+  @override
+  String leaveRemindersSummary(String summary) {
+    return 'Erinnerungen zum Losgehen: $summary';
+  }
+
+  @override
+  String get leaveRemindersNone => 'keine';
+
+  @override
+  String get leaveSoonTitle => 'Bald losgehen';
+
+  @override
+  String leaveSoonBody(String minutes, String from, String to, String time) {
+    return 'Noch $minutes Min. bis $from → $to ($time)';
+  }
+
+  @override
+  String get exactAlarmsBlocked =>
+      'Android hat exakte Alarme für diese Erinnerung blockiert. Aktiviere für Trans die Berechtigung „Wecker und Erinnerungen“, damit die Erinnerungen zuverlässig kommen.';
+
+  @override
+  String couldNotOpen(String label) {
+    return '$label konnte nicht geöffnet werden.';
+  }
+
+  @override
+  String get searchThisConnectionIn => 'Diese Verbindung suchen in';
+
+  @override
+  String platformShort(String platform) {
+    return 'Gl. $platform';
+  }
+
+  @override
+  String customSoundSet(String label) {
+    return 'Eigener Alarmton auf „$label“ gesetzt. Tippe in der Auswahl auf das Papierkorb-Symbol, um ihn zu entfernen.';
+  }
+
+  @override
+  String get customSoundRemoved => 'Eigener Alarmton entfernt.';
+
+  @override
+  String couldNotRemoveCustomSound(String error) {
+    return 'Der eigene Ton konnte nicht entfernt werden: $error';
+  }
+
+  @override
+  String couldNotImportAudioReason(String error) {
+    return 'Diese Audiodatei konnte nicht importiert werden: $error';
+  }
+
+  @override
+  String get couldNotImportAudio =>
+      'Diese Audiodatei konnte nicht importiert werden.';
+
+  @override
+  String get addCustomAudio => 'Eigenen Ton hinzufügen...';
+
+  @override
+  String couldNotSaveThemeColor(String error) {
+    return 'Diese Akzentfarbe konnte nicht gespeichert werden: $error';
+  }
+
+  @override
+  String get liveBuses => 'Busse live';
+
+  @override
+  String get refresh => 'Aktualisieren';
+
+  @override
+  String get compass => 'Kompass';
+
+  @override
+  String get recenter => 'Zentrieren';
+
+  @override
+  String get bike => 'RAD';
+
+  @override
+  String get useAppDefault => 'App-Standard verwenden';
+
+  @override
+  String get departureTimeLabel => 'Abfahrtszeit';
+
+  @override
+  String get arrivalTimeLabel => 'Ankunftszeit';
+
+  @override
+  String get applyToThisRoutesView => 'Auf diesen Tab anwenden';
+
+  @override
+  String get walkingSpeedLabel => 'Gehgeschwindigkeit';
+
+  @override
+  String get minimumTransferTimeLabel => 'Mindestumsteigezeit';
+
+  @override
+  String get transferPaddingLabel => 'Umsteigepuffer';
+
+  @override
+  String get maximumWalkingTimeLabel => 'Maximale Gehzeit';
+
+  @override
+  String get sortSheetEarliestDepHint =>
+      'Ändert die Abfahrtszeit nur für diesen Tab.';
+
+  @override
+  String get sortSheetEarliestArrHint =>
+      'Ändert die Ankunftszeit nur für diesen Tab.';
+
+  @override
+  String get sortSheetFastestHint =>
+      'Passe die Gehgeschwindigkeit an, damit dieser Tab insgesamt schnellere Verbindungen bevorzugt.';
+
+  @override
+  String get sortSheetLeastTransfersHint =>
+      'Mehr Umsteigepuffer, damit dieser Tab Verbindungen mit entspannteren Umstiegen bevorzugt.';
+
+  @override
+  String get sortSheetLeastWaitHint =>
+      'Passe den Umsteigepuffer an, damit dieser Tab kürzere oder längere Wartezeiten bevorzugt.';
+
+  @override
+  String get sortSheetLeastWalkingHint =>
+      'Begrenze die Gehzeit nur für diesen Tab, ohne die App-Einstellungen zu ändern.';
 }

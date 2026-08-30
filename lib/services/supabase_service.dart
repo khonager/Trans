@@ -57,6 +57,7 @@ class SupabaseService {
     'recent_journeys',
     'saved_journeys',
     'saved_favorites',
+    'route_results_sort_order',
   };
   static SupabaseClient get client => Supabase.instance.client;
 
@@ -742,6 +743,11 @@ class SupabaseService {
     await updateSettings({'saved_journeys': journeys});
   }
 
+  static Future<void> updateRouteResultsSortOrder(
+      List<String> sortOrder) async {
+    await updateSettings({'route_results_sort_order': sortOrder});
+  }
+
   static Future<void> _syncBoolSetting(
     SharedPreferences prefs,
     Map<String, dynamic> settings,
@@ -796,6 +802,18 @@ class SupabaseService {
     if (raw is List) {
       final encoded = raw.map((item) => json.encode(item)).toList();
       await prefs.setStringList(localKey, encoded);
+    }
+  }
+
+  static Future<void> _syncStringListSetting(
+    SharedPreferences prefs,
+    Map<String, dynamic> settings, {
+    required String key,
+  }) async {
+    final raw = settings[key];
+    if (raw is List) {
+      final values = raw.whereType<String>().toList();
+      await prefs.setStringList(key, values);
     }
   }
 
@@ -881,6 +899,11 @@ class SupabaseService {
       settings,
       cloudKey: 'saved_journeys',
       localKey: 'saved_journeys',
+    );
+    await _syncStringListSetting(
+      prefs,
+      settings,
+      key: 'route_results_sort_order',
     );
   }
 
@@ -1254,6 +1277,57 @@ class SupabaseService {
         .stream(primaryKey: ['id'])
         .eq('receiver_id', user.id)
         .asyncMap((_) => getPendingRequests());
+  }
+
+  /// Friend requests the current user has sent that are still awaiting an
+  /// answer.  Declined requests are deleted by the receiver, so they simply
+  /// disappear from this list without notifying the sender.
+  static Future<List<Map<String, dynamic>>> getSentRequests() async {
+    final user = currentUser;
+    if (user == null) return [];
+
+    final data = await client
+        .from('friend_requests')
+        .select()
+        .eq('sender_id', user.id)
+        .eq('status', 'pending');
+
+    if (data.isEmpty) return [];
+
+    final receiverIds = (data as List).map((r) => r['receiver_id']).toList();
+    final profiles = await _getPublicProfiles(receiverIds);
+    final profileMap = {for (var p in profiles) p['id']: p};
+
+    return data.map((req) {
+      final receiver = profileMap[req['receiver_id']];
+      return {
+        ...req,
+        'receiver_username': receiver?['username'] ?? 'Unknown',
+        'receiver_avatar': receiver?['avatar_url'],
+        'receiver_emoji': receiver?['avatar_emoji'],
+        'theme_color': receiver?['theme_color'],
+      };
+    }).toList();
+  }
+
+  static Stream<List<Map<String, dynamic>>> streamSentRequests() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return client
+        .from('friend_requests')
+        .stream(primaryKey: ['id'])
+        .eq('sender_id', user.id)
+        .asyncMap((_) => getSentRequests());
+  }
+
+  /// Withdraws a pending request the current user sent to [receiverId].
+  static Future<void> cancelFriendRequest(String receiverId) async {
+    final user = currentUser;
+    if (user == null) throw "Not logged in";
+    await client
+        .from('friend_requests')
+        .delete()
+        .match({'sender_id': user.id, 'receiver_id': receiverId});
   }
 
   static Future<List<Map<String, dynamic>>> getFriends() async {

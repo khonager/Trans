@@ -22,6 +22,10 @@ class JourneyStep {
   final List<dynamic>? stopovers;
   final int? chatCount;
 
+  /// Index of the leg this step was built from, so a step can be traced back
+  /// to its place in the raw journey.
+  final int? legIndex;
+
   // NEW: Store exact time for alternatives search
   final DateTime? dateTime;
 
@@ -72,6 +76,7 @@ class JourneyStep {
     this.arrivalStopLabel,
     this.stopovers,
     this.chatCount,
+    this.legIndex,
     this.dateTime,
     this.departureDelay,
     this.arrivalDelay,
@@ -114,9 +119,12 @@ class JourneyStep {
     String? arrivalStopLabel,
     List<dynamic>? stopovers,
     int? chatCount,
+    int? legIndex,
     DateTime? dateTime,
     int? departureDelay,
     int? arrivalDelay,
+    bool clearDepartureDelay = false,
+    bool clearArrivalDelay = false,
     bool? isCancelled,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
@@ -156,9 +164,12 @@ class JourneyStep {
       arrivalStopLabel: arrivalStopLabel ?? this.arrivalStopLabel,
       stopovers: stopovers ?? this.stopovers,
       chatCount: chatCount ?? this.chatCount,
+      legIndex: legIndex ?? this.legIndex,
       dateTime: dateTime ?? this.dateTime,
-      departureDelay: departureDelay ?? this.departureDelay,
-      arrivalDelay: arrivalDelay ?? this.arrivalDelay,
+      departureDelay:
+          clearDepartureDelay ? null : (departureDelay ?? this.departureDelay),
+      arrivalDelay:
+          clearArrivalDelay ? null : (arrivalDelay ?? this.arrivalDelay),
       isCancelled: isCancelled ?? this.isCancelled,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
@@ -200,6 +211,14 @@ class Journey {
   final DateTime? plannedDeparture; // NEW
   final DateTime? plannedArrival; // NEW
 
+  /// The journey this one was branched off from by picking an alternative,
+  /// so the traveller can step back out of it.
+  final Journey? parentJourney;
+
+  /// Index of the alternative's first ride. Everything before it - including
+  /// the walk and wait leading to it - is still the original route.
+  final int? branchStepIndex;
+
   Journey({
     required this.steps,
     required this.departure,
@@ -213,6 +232,8 @@ class Journey {
     this.totalBikingDuration = Duration.zero,
     this.plannedDeparture,
     this.plannedArrival,
+    this.parentJourney,
+    this.branchStepIndex,
   });
 
   Journey copyWith({
@@ -228,6 +249,8 @@ class Journey {
     Duration? totalBikingDuration,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
+    Journey? parentJourney,
+    int? branchStepIndex,
   }) {
     return Journey(
       steps: steps ?? this.steps,
@@ -242,6 +265,8 @@ class Journey {
       totalBikingDuration: totalBikingDuration ?? this.totalBikingDuration,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
+      parentJourney: parentJourney ?? this.parentJourney,
+      branchStepIndex: branchStepIndex ?? this.branchStepIndex,
     );
   }
 

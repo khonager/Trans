@@ -53,12 +53,14 @@ class FriendsTab extends StatefulWidget {
 class _FriendsTabState extends State<FriendsTab> {
   List<Map<String, dynamic>> _friends = [];
   List<Map<String, dynamic>> _requests = [];
+  List<Map<String, dynamic>> _sentRequests = [];
   bool _isLoading = true;
   String? _expandedFriendId;
   int _globalSignalLevel = JourneySignalLevel.defaultForNewUsers;
 
   StreamSubscription? _friendsSub;
   StreamSubscription? _requestsSub;
+  StreamSubscription? _sentRequestsSub;
 
   @override
   void initState() {
@@ -77,6 +79,8 @@ class _FriendsTabState extends State<FriendsTab> {
       _friendsSub = null;
       _requestsSub?.cancel();
       _requestsSub = null;
+      _sentRequestsSub?.cancel();
+      _sentRequestsSub = null;
     }
   }
 
@@ -84,6 +88,7 @@ class _FriendsTabState extends State<FriendsTab> {
   void dispose() {
     _friendsSub?.cancel();
     _requestsSub?.cancel();
+    _sentRequestsSub?.cancel();
     SupabaseService.friendsListRefresh.removeListener(_initData);
     super.dispose();
   }
@@ -93,11 +98,13 @@ class _FriendsTabState extends State<FriendsTab> {
     try {
       final friends = await SupabaseService.getFriends();
       final requests = await SupabaseService.getPendingRequests();
+      final sentRequests = await SupabaseService.getSentRequests();
       final globalSignalLevel = await SupabaseService.getMySignalLevel();
       if (mounted && widget.isActive) {
         setState(() {
           _friends = friends;
           _requests = requests;
+          _sentRequests = sentRequests;
           _isLoading = false;
           _globalSignalLevel = globalSignalLevel;
         });
@@ -118,6 +125,48 @@ class _FriendsTabState extends State<FriendsTab> {
     _requestsSub = SupabaseService.streamPendingRequests().listen((data) {
       if (mounted) setState(() => _requests = data);
     });
+
+    _sentRequestsSub?.cancel();
+    _sentRequestsSub = SupabaseService.streamSentRequests().listen((data) {
+      if (mounted) setState(() => _sentRequests = data);
+    });
+  }
+
+  /// Re-reads the outgoing requests so the pending entry shows up (or vanishes)
+  /// straight away instead of waiting for the realtime stream.
+  Future<void> _refreshSentRequests() async {
+    try {
+      final sent = await SupabaseService.getSentRequests();
+      if (mounted) setState(() => _sentRequests = sent);
+    } catch (e) {
+      debugPrint("Sent requests refresh error: $e");
+    }
+  }
+
+  void _showToast(String message,
+      {IconData icon = Icons.check_circle_outline, Color? iconColor}) {
+    if (!mounted) return;
+    final colors = TransColors.of(context);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: colors.cardBg,
+        elevation: 6,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        content: Row(
+          children: [
+            Icon(icon, color: iconColor ?? Colors.blue, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(message,
+                  style: TextStyle(color: colors.textPrimary)),
+            ),
+          ],
+        ),
+      ));
   }
 
   void _showAddFriendSheet(BuildContext context) {
@@ -201,14 +250,11 @@ class _FriendsTabState extends State<FriendsTab> {
                             try {
                               await SupabaseService.sendFriendRequest(
                                   user['id']);
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(AppLocalizations.of(
-                                                context)!
-                                            .requestSentTo(user['username']))));
-                              }
+                              if (context.mounted) Navigator.pop(context);
+                              if (!mounted) return;
+                              _showToast(AppLocalizations.of(this.context)!
+                                  .requestSentTo(user['username']));
+                              await _refreshSentRequests();
                             } catch (e, st) {
                               if (context.mounted) {
                                 AppError.showSnackBar(
@@ -350,6 +396,8 @@ class _FriendsTabState extends State<FriendsTab> {
     activeFriends.sort(_usernameComparator);
     _requests.sort((a, b) =>
         (b['created_at'] as String).compareTo(a['created_at'] as String));
+    _sentRequests.sort((a, b) =>
+        (b['created_at'] as String).compareTo(a['created_at'] as String));
     inactiveFriends.sort(_usernameComparator);
     autoAddedFriends.sort(_usernameComparator);
 
@@ -393,6 +441,12 @@ class _FriendsTabState extends State<FriendsTab> {
                           AppLocalizations.of(context)!.requests, colors),
                       ..._requests.map((r) => _buildRequestCard(context, r)),
                     ],
+                    if (_sentRequests.isNotEmpty) ...[
+                      _buildSectionHeader(
+                          AppLocalizations.of(context)!.sentRequests, colors),
+                      ..._sentRequests
+                          .map((r) => _buildSentRequestCard(context, r)),
+                    ],
                     if (inactiveFriends.isNotEmpty) ...[
                       _buildSectionHeader(
                           AppLocalizations.of(context)!.offline, colors),
@@ -411,6 +465,7 @@ class _FriendsTabState extends State<FriendsTab> {
                     ],
                     if (activeFriends.isEmpty &&
                         _requests.isEmpty &&
+                        _sentRequests.isEmpty &&
                         inactiveFriends.isEmpty &&
                         autoAddedFriends.isEmpty)
                       Padding(
@@ -443,9 +498,16 @@ class _FriendsTabState extends State<FriendsTab> {
 
   Widget _buildAvatarHelper(Map<String, dynamic> userData,
       {double radius = 20}) {
-    final emoji = userData['avatar_emoji'] ?? userData['sender_emoji'];
-    final url = userData['avatar_url'] ?? userData['sender_avatar'];
-    final username = userData['username'] ?? userData['sender_username'] ?? "?";
+    final emoji = userData['avatar_emoji'] ??
+        userData['sender_emoji'] ??
+        userData['receiver_emoji'];
+    final url = userData['avatar_url'] ??
+        userData['sender_avatar'] ??
+        userData['receiver_avatar'];
+    final username = userData['username'] ??
+        userData['sender_username'] ??
+        userData['receiver_username'] ??
+        "?";
 
     final colorVal = userData['theme_color'];
     final Color bgColor = colorVal != null ? Color(colorVal) : Colors.indigo;
@@ -543,6 +605,73 @@ class _FriendsTabState extends State<FriendsTab> {
                     error: e,
                     stackTrace: st,
                     source: 'reject friend request',
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSentRequestCard(BuildContext context, Map<String, dynamic> req) {
+    final colors = TransColors.of(context);
+    final username = req['receiver_username'] as String? ??
+        AppLocalizations.of(context)!.unknown;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+          color: colors.cardBg,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.divider)),
+      child: Row(
+        children: [
+          Opacity(opacity: 0.6, child: _buildAvatarHelper(req)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(username,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary)),
+                Row(
+                  children: [
+                    Icon(Icons.hourglass_empty,
+                        size: 12, color: colors.textSecondary),
+                    const SizedBox(width: 4),
+                    Text(AppLocalizations.of(context)!.requestPending,
+                        style: TextStyle(
+                            fontSize: 12, color: colors.textSecondary)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, color: colors.textSecondary),
+            tooltip: AppLocalizations.of(context)!.cancelRequest,
+            onPressed: () async {
+              try {
+                await SupabaseService.cancelFriendRequest(req['receiver_id']);
+                if (!mounted) return;
+                setState(() {
+                  _sentRequests.removeWhere((r) => r['id'] == req['id']);
+                });
+                _showToast(
+                    AppLocalizations.of(this.context)!
+                        .requestCancelledFor(username),
+                    icon: Icons.undo);
+              } catch (e, st) {
+                if (context.mounted) {
+                  AppError.showSnackBar(
+                    context,
+                    error: e,
+                    stackTrace: st,
+                    source: 'cancel friend request',
                   );
                 }
               }

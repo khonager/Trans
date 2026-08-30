@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/app_theme.dart';
+import '../l10n/app_localizations.dart';
 import '../services/favorites_manager.dart';
 import '../services/supabase_service.dart';
 import '../services/transport_api.dart';
@@ -1418,7 +1419,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     if (_isLoadingInitialView) {
       return Scaffold(
         backgroundColor: colors.scaffoldBg,
-        appBar: AppBar(title: const Text('Live Buses')),
+        appBar: AppBar(
+            title: Text(AppLocalizations.of(context)!.liveBuses)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -1426,10 +1428,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     return Scaffold(
       backgroundColor: colors.scaffoldBg,
       appBar: AppBar(
-        title: const Text('Live Buses'),
+        title: Text(AppLocalizations.of(context)!.liveBuses),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: AppLocalizations.of(context)!.refresh,
             onPressed: () => _scheduleFetch(force: true),
             icon: _isFetchingTrips
                 ? const SizedBox(
@@ -1449,7 +1451,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
             FloatingActionButton(
               heroTag: 'live-map-compass',
               mini: true,
-              tooltip: 'Compass',
+              tooltip: AppLocalizations.of(context)!.compass,
               backgroundColor:
                   _isCompassMode ? colors.navBarSelected : Colors.white,
               foregroundColor: _isCompassMode ? Colors.white : Colors.black,
@@ -1464,7 +1466,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
           if (userPosition != null) const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: 'live-map-center',
-            tooltip: 'Recenter',
+            tooltip: AppLocalizations.of(context)!.recenter,
             onPressed: () {
               _clearSelection();
               if (!_isMapReady) return;

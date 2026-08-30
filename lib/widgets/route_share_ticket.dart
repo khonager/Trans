@@ -309,7 +309,7 @@ class RouteShareTicket extends StatelessWidget {
         children: [
           const Icon(Icons.pedal_bike, size: 14, color: Colors.orange),
           const SizedBox(width: 8),
-          Text('BIKE',
+          Text(AppLocalizations.of(context)!.bike,
               style: TextStyle(
                   color: Colors.orange,
                   fontWeight: FontWeight.w900,
@@ -340,7 +340,7 @@ class RouteShareTicket extends StatelessWidget {
 
     String lineName = step.line.trim();
     if (!showTrainNumbers) {
-      lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)$'), '').trim();
+      lineName = lineName.replaceAll(RegExp(r'\s*\(\d+\)'), '').trim();
       if (step.tripId != null) {
         lineName = lineName.replaceAll(step.tripId!, "").trim();
       }

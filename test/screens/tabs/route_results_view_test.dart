@@ -10,7 +10,7 @@ import 'package:trans/screens/tabs/route_results_view.dart';
 
 final _destination = Station(id: 'destination', name: 'Destination');
 
-Journey _journey(int minute, {int rideCount = 1}) {
+Journey _journey(int minute, {int rideCount = 1, String? firstLine}) {
   final departure = DateTime(2026, 8, 1, 10).add(Duration(minutes: minute));
   final arrival = departure.add(const Duration(minutes: 25));
   return Journey(
@@ -19,7 +19,7 @@ Journey _journey(int minute, {int rideCount = 1}) {
       (index) => JourneyStep(
         type: 'ride',
         line: index == 0
-            ? 'route-$minute'
+            ? firstLine ?? 'route-$minute'
             : 'connection-$minute-$index-express-service',
         instruction: '',
         duration: '25 min',
@@ -125,8 +125,9 @@ class _RouteResultsHarnessState extends State<_RouteResultsHarness> {
 
 Future<_RouteResultsHarnessState> _pumpHarness(
   WidgetTester tester,
-  GlobalKey<_RouteResultsHarnessState> key,
-) async {
+  GlobalKey<_RouteResultsHarnessState> key, {
+  List<Journey>? candidates,
+}) async {
   await tester.binding.setSurfaceSize(const Size(500, 844));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
@@ -139,7 +140,8 @@ Future<_RouteResultsHarnessState> _pumpHarness(
       home: Scaffold(
         body: _RouteResultsHarness(
           key: key,
-          initialCandidates: List.generate(10, (index) => _journey(index * 10)),
+          initialCandidates:
+              candidates ?? List.generate(10, (index) => _journey(index * 10)),
         ),
       ),
     ),
@@ -166,6 +168,23 @@ Future<_RouteResultsHarnessState> _pumpHarness(
 }
 
 void main() {
+  testWidgets('shows both coupled lines in the initial route results',
+      (tester) async {
+    final key = GlobalKey<_RouteResultsHarnessState>();
+    await _pumpHarness(
+      tester,
+      key,
+      candidates: [
+        _journey(
+          0,
+          firstLine: 'RB22 (80854) / RB13 (81020)',
+        ),
+      ],
+    );
+
+    expect(find.text('RB22 / RB13'), findsOneWidget);
+  });
+
   testWidgets(
       'delayed earlier batches preserve the route visible after the user scrolls',
       (tester) async {

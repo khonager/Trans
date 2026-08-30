@@ -103,6 +103,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sentFriendRequest => 'Sent a friend request';
 
   @override
+  String get sentRequests => 'Sent Requests';
+
+  @override
+  String get requestPending => 'Waiting for a response';
+
+  @override
+  String get cancelRequest => 'Cancel request';
+
+  @override
+  String requestCancelledFor(String username) {
+    return 'Request to @$username cancelled';
+  }
+
+  @override
   String get friendRequestAccepted => 'Friend request accepted!';
 
   @override
@@ -525,6 +539,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alternative => 'Alternative';
+
+  @override
+  String backToOriginalRoute(String time) {
+    return 'Back to $time route';
+  }
 
   @override
   String get routeLabel => 'Route';
@@ -962,4 +981,157 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get longPressForDepartures =>
       'Long-press any stop to see all departures for that day.';
+
+  @override
+  String get connectionSaved => 'Connection saved';
+
+  @override
+  String get connectionUnsaved => 'Connection removed from saved';
+
+  @override
+  String get savedRouteDeleted => 'Saved route deleted';
+
+  @override
+  String get savedRoutesTitle => 'Saved routes';
+
+  @override
+  String get savedRoutesAutoDelete => '(auto-delete 24h after arrival)';
+
+  @override
+  String get noRecentRoutesYet => 'No recent routes yet';
+
+  @override
+  String wakeAlertSetFor(String stop) {
+    return 'Wake alert set for $stop';
+  }
+
+  @override
+  String leaveInMinutesFor(String minutes, String destination) {
+    return 'Leave in $minutes min for $destination';
+  }
+
+  @override
+  String leaveRemindersSummary(String summary) {
+    return 'Leave reminders: $summary';
+  }
+
+  @override
+  String get leaveRemindersNone => 'none';
+
+  @override
+  String get leaveSoonTitle => 'Leave soon';
+
+  @override
+  String leaveSoonBody(String minutes, String from, String to, String time) {
+    return '$minutes min left for $from -> $to ($time)';
+  }
+
+  @override
+  String get exactAlarmsBlocked =>
+      'Android blocked exact alarms for this reminder. Open \"Alarms & reminders\" for Trans to make leave alerts reliable.';
+
+  @override
+  String couldNotOpen(String label) {
+    return 'Could not open $label.';
+  }
+
+  @override
+  String get searchThisConnectionIn => 'Search this connection in';
+
+  @override
+  String platformShort(String platform) {
+    return 'Pl. $platform';
+  }
+
+  @override
+  String customSoundSet(String label) {
+    return 'Custom alarm sound set to \"$label\". Tap the trash icon in the picker to remove it.';
+  }
+
+  @override
+  String get customSoundRemoved => 'Custom alarm sound removed.';
+
+  @override
+  String couldNotRemoveCustomSound(String error) {
+    return 'Could not remove the custom sound: $error';
+  }
+
+  @override
+  String couldNotImportAudioReason(String error) {
+    return 'Could not import that audio file: $error';
+  }
+
+  @override
+  String get couldNotImportAudio => 'Could not import that audio file.';
+
+  @override
+  String get addCustomAudio => 'Add custom audio...';
+
+  @override
+  String couldNotSaveThemeColor(String error) {
+    return 'Could not save that theme color: $error';
+  }
+
+  @override
+  String get liveBuses => 'Live Buses';
+
+  @override
+  String get refresh => 'Refresh';
+
+  @override
+  String get compass => 'Compass';
+
+  @override
+  String get recenter => 'Recenter';
+
+  @override
+  String get bike => 'BIKE';
+
+  @override
+  String get useAppDefault => 'Use app default';
+
+  @override
+  String get departureTimeLabel => 'Departure time';
+
+  @override
+  String get arrivalTimeLabel => 'Arrival time';
+
+  @override
+  String get applyToThisRoutesView => 'Apply to this routes view';
+
+  @override
+  String get walkingSpeedLabel => 'Walking speed';
+
+  @override
+  String get minimumTransferTimeLabel => 'Minimum transfer time';
+
+  @override
+  String get transferPaddingLabel => 'Transfer padding';
+
+  @override
+  String get maximumWalkingTimeLabel => 'Maximum walking time';
+
+  @override
+  String get sortSheetEarliestDepHint =>
+      'Change the departure time for this route tab only.';
+
+  @override
+  String get sortSheetEarliestArrHint =>
+      'Change the arrival time for this route tab only.';
+
+  @override
+  String get sortSheetFastestHint =>
+      'Tune walking speed to favor faster overall connections in this tab.';
+
+  @override
+  String get sortSheetLeastTransfersHint =>
+      'Add transfer buffer so this tab favors routes with easier changes.';
+
+  @override
+  String get sortSheetLeastWaitHint =>
+      'Adjust transfer padding so this tab can favor tighter or looser waits.';
+
+  @override
+  String get sortSheetLeastWalkingHint =>
+      'Limit maximum walking time for this tab without changing app settings.';
 }

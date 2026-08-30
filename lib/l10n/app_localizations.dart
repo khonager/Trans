@@ -266,6 +266,30 @@ abstract class AppLocalizations {
   /// **'Sent a friend request'**
   String get sentFriendRequest;
 
+  /// No description provided for @sentRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent Requests'**
+  String get sentRequests;
+
+  /// No description provided for @requestPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for a response'**
+  String get requestPending;
+
+  /// No description provided for @cancelRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get cancelRequest;
+
+  /// No description provided for @requestCancelledFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Request to @{username} cancelled'**
+  String requestCancelledFor(String username);
+
   /// No description provided for @friendRequestAccepted.
   ///
   /// In en, this message translates to:
@@ -1003,6 +1027,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Alternative'**
   String get alternative;
+
+  /// Button between the original part of the trip and the alternative picked for the rest
+  ///
+  /// In en, this message translates to:
+  /// **'Back to {time} route'**
+  String backToOriginalRoute(String time);
 
   /// No description provided for @routeLabel.
   ///
@@ -1795,6 +1825,258 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Long-press any stop to see all departures for that day.'**
   String get longPressForDepartures;
+
+  /// No description provided for @connectionSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection saved'**
+  String get connectionSaved;
+
+  /// No description provided for @connectionUnsaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection removed from saved'**
+  String get connectionUnsaved;
+
+  /// No description provided for @savedRouteDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved route deleted'**
+  String get savedRouteDeleted;
+
+  /// No description provided for @savedRoutesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved routes'**
+  String get savedRoutesTitle;
+
+  /// No description provided for @savedRoutesAutoDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'(auto-delete 24h after arrival)'**
+  String get savedRoutesAutoDelete;
+
+  /// No description provided for @noRecentRoutesYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No recent routes yet'**
+  String get noRecentRoutesYet;
+
+  /// No description provided for @wakeAlertSetFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Wake alert set for {stop}'**
+  String wakeAlertSetFor(String stop);
+
+  /// No description provided for @leaveInMinutesFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave in {minutes} min for {destination}'**
+  String leaveInMinutesFor(String minutes, String destination);
+
+  /// No description provided for @leaveRemindersSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave reminders: {summary}'**
+  String leaveRemindersSummary(String summary);
+
+  /// No description provided for @leaveRemindersNone.
+  ///
+  /// In en, this message translates to:
+  /// **'none'**
+  String get leaveRemindersNone;
+
+  /// No description provided for @leaveSoonTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave soon'**
+  String get leaveSoonTitle;
+
+  /// No description provided for @leaveSoonBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min left for {from} -> {to} ({time})'**
+  String leaveSoonBody(String minutes, String from, String to, String time);
+
+  /// No description provided for @exactAlarmsBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Android blocked exact alarms for this reminder. Open \"Alarms & reminders\" for Trans to make leave alerts reliable.'**
+  String get exactAlarmsBlocked;
+
+  /// No description provided for @couldNotOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open {label}.'**
+  String couldNotOpen(String label);
+
+  /// No description provided for @searchThisConnectionIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Search this connection in'**
+  String get searchThisConnectionIn;
+
+  /// No description provided for @platformShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Pl. {platform}'**
+  String platformShort(String platform);
+
+  /// No description provided for @customSoundSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom alarm sound set to \"{label}\". Tap the trash icon in the picker to remove it.'**
+  String customSoundSet(String label);
+
+  /// No description provided for @customSoundRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom alarm sound removed.'**
+  String get customSoundRemoved;
+
+  /// No description provided for @couldNotRemoveCustomSound.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not remove the custom sound: {error}'**
+  String couldNotRemoveCustomSound(String error);
+
+  /// No description provided for @couldNotImportAudioReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not import that audio file: {error}'**
+  String couldNotImportAudioReason(String error);
+
+  /// No description provided for @couldNotImportAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not import that audio file.'**
+  String get couldNotImportAudio;
+
+  /// No description provided for @addCustomAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Add custom audio...'**
+  String get addCustomAudio;
+
+  /// No description provided for @couldNotSaveThemeColor.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save that theme color: {error}'**
+  String couldNotSaveThemeColor(String error);
+
+  /// No description provided for @liveBuses.
+  ///
+  /// In en, this message translates to:
+  /// **'Live Buses'**
+  String get liveBuses;
+
+  /// No description provided for @refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get refresh;
+
+  /// No description provided for @compass.
+  ///
+  /// In en, this message translates to:
+  /// **'Compass'**
+  String get compass;
+
+  /// No description provided for @recenter.
+  ///
+  /// In en, this message translates to:
+  /// **'Recenter'**
+  String get recenter;
+
+  /// No description provided for @bike.
+  ///
+  /// In en, this message translates to:
+  /// **'BIKE'**
+  String get bike;
+
+  /// No description provided for @useAppDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Use app default'**
+  String get useAppDefault;
+
+  /// No description provided for @departureTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Departure time'**
+  String get departureTimeLabel;
+
+  /// No description provided for @arrivalTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Arrival time'**
+  String get arrivalTimeLabel;
+
+  /// No description provided for @applyToThisRoutesView.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply to this routes view'**
+  String get applyToThisRoutesView;
+
+  /// No description provided for @walkingSpeedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Walking speed'**
+  String get walkingSpeedLabel;
+
+  /// No description provided for @minimumTransferTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimum transfer time'**
+  String get minimumTransferTimeLabel;
+
+  /// No description provided for @transferPaddingLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Transfer padding'**
+  String get transferPaddingLabel;
+
+  /// No description provided for @maximumWalkingTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Maximum walking time'**
+  String get maximumWalkingTimeLabel;
+
+  /// No description provided for @sortSheetEarliestDepHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Change the departure time for this route tab only.'**
+  String get sortSheetEarliestDepHint;
+
+  /// No description provided for @sortSheetEarliestArrHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Change the arrival time for this route tab only.'**
+  String get sortSheetEarliestArrHint;
+
+  /// No description provided for @sortSheetFastestHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tune walking speed to favor faster overall connections in this tab.'**
+  String get sortSheetFastestHint;
+
+  /// No description provided for @sortSheetLeastTransfersHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add transfer buffer so this tab favors routes with easier changes.'**
+  String get sortSheetLeastTransfersHint;
+
+  /// No description provided for @sortSheetLeastWaitHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Adjust transfer padding so this tab can favor tighter or looser waits.'**
+  String get sortSheetLeastWaitHint;
+
+  /// No description provided for @sortSheetLeastWalkingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Limit maximum walking time for this tab without changing app settings.'**
+  String get sortSheetLeastWalkingHint;
 }
 
 class _AppLocalizationsDelegate
