@@ -21,6 +21,11 @@ import 'package:image/image.dart' as img;
 import 'package:zxing_lib/zxing.dart' as zxing;
 import 'package:zxing_lib/common.dart' as zxing;
 import 'package:trans/widgets/manual_crop_wrapper.dart';
+import 'package:trans/widgets/ticket_dock_geometry.dart';
+
+/// Identifies the transform that slides the whole sheet towards the navigation
+/// bar during a dock transition.
+const Key dockSlideKey = ValueKey('ticket-dock-slide');
 
 class TicketPanel extends StatefulWidget {
   final bool fullPage;
@@ -54,10 +59,13 @@ class TicketPanel extends StatefulWidget {
 
 class _TicketPanelState extends State<TicketPanel>
     with SingleTickerProviderStateMixin {
+  static const Duration _dockSettleDuration = Duration(milliseconds: 360);
+  static const Curve _dockSettleCurve = Curves.easeInOutCubic;
+  static const double _dockDragDistance = 120;
+
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
   late final AnimationController _dockTransitionController;
-  late final Animation<Offset> _dockSlideAnimation;
 
   File? _mobileFile;
   Uint8List? _webBytes;
@@ -75,6 +83,7 @@ class _TicketPanelState extends State<TicketPanel>
   bool _sheetPointerIsDown = false;
   bool _isSettlingDockGesture = false;
   double _interactiveDockProgress = 0;
+  double _dockProgressAnchor = 0;
   double? _latestSheetPointerY;
   double? _dockDragOriginY;
   int _dockGestureEpoch = 0;
@@ -83,20 +92,15 @@ class _TicketPanelState extends State<TicketPanel>
   @override
   void initState() {
     super.initState();
+    // Deliberately uncurved: the controller value *is* the dock progress, so
+    // the sheet tracks the finger 1:1 and stays locked to the flight pill,
+    // which is driven from the very same value. Curves are applied per settle
+    // animation below instead of globally.
     _dockTransitionController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 360),
+      duration: _dockSettleDuration,
       value: widget.fullPage ? 1 : 0,
     );
-    final dockCurve = CurvedAnimation(
-      parent: _dockTransitionController,
-      curve: Curves.easeInCubic,
-      reverseCurve: Curves.easeOutCubic,
-    );
-    _dockSlideAnimation = Tween<Offset>(
-      begin: Offset.zero,
-      end: const Offset(0, 0.18),
-    ).animate(dockCurve);
     _sheetController.addListener(_handleSheetExtentChanged);
     _initTicket();
   }
@@ -121,7 +125,7 @@ class _TicketPanelState extends State<TicketPanel>
       if (widget.settleRestoreBackToNavigation) {
         unawaited(_settleRestoreBackToNavigation());
       } else {
-        _dockTransitionController.reverse();
+        _dockTransitionController.animateBack(0, curve: _dockSettleCurve);
       }
       return;
     }
@@ -129,7 +133,7 @@ class _TicketPanelState extends State<TicketPanel>
       _dockTransitionController.value = 1;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !widget.fullPage) {
-          _dockTransitionController.reverse();
+          _dockTransitionController.animateBack(0, curve: _dockSettleCurve);
         }
       });
     }
@@ -180,10 +184,11 @@ class _TicketPanelState extends State<TicketPanel>
     _dockHoldTimer?.cancel();
     _dockHoldTimer = null;
     _isDockLongPressTracking = true;
-    if (!_isDockGestureActive || _isSettlingDockGesture) {
-      _beginInteractiveDockDrag();
-    }
+    final shouldRestart = !_isDockGestureActive || _isSettlingDockGesture;
+    // Arm first: the parent drops progress reports while disarmed, and it
+    // resets progress on arming, which would swallow a resumed drag.
     _setDockGestureActive(true);
+    if (shouldRestart) _beginInteractiveDockDrag();
   }
 
   void _handleSheetPointerDown(PointerDownEvent event) {
@@ -225,8 +230,8 @@ class _TicketPanelState extends State<TicketPanel>
       _dockHoldTimer ??= Timer(const Duration(milliseconds: 550), () {
         _dockHoldTimer = null;
         if (_sheetPointerIsDown && mounted) {
-          _beginInteractiveDockDrag();
           _setDockGestureActive(true);
+          _beginInteractiveDockDrag();
           HapticFeedback.selectionClick();
         }
       });
@@ -240,14 +245,10 @@ class _TicketPanelState extends State<TicketPanel>
     if (!_isDockLongPressTracking || !_sheetController.isAttached) {
       return;
     }
-    final downwardDistance = details.offsetFromOrigin.dy;
-    if (downwardDistance >= 0) {
-      _sheetController.jumpTo(0.1);
-      _updateInteractiveDockProgress(downwardDistance);
-      return;
-    }
     _sheetController.jumpTo(0.1);
-    _updateInteractiveDockProgress(0);
+    // Negative offsets are clamped inside, so dragging back up unwinds the
+    // dock progress instead of parking it at the last downward value.
+    _updateInteractiveDockProgress(details.offsetFromOrigin.dy);
   }
 
   void _endDockGesture(LongPressEndDetails details) {
@@ -270,17 +271,24 @@ class _TicketPanelState extends State<TicketPanel>
 
   void _beginInteractiveDockDrag() {
     _dockGestureEpoch += 1;
+    // Grabbing the handle again mid-settle picks the animation up where it is
+    // instead of snapping back to zero, so repeated back-and-forth never jumps.
+    final resume = _isSettlingDockGesture
+        ? _dockTransitionController.value.clamp(0.0, 1.0)
+        : 0.0;
     _isSettlingDockGesture = false;
-    _interactiveDockProgress = 0;
+    _dockProgressAnchor = resume;
+    _interactiveDockProgress = resume;
     _dockDragOriginY = _latestSheetPointerY;
     _dockTransitionController
       ..stop()
-      ..value = 0;
-    widget.onDockGestureProgressChanged?.call(0);
+      ..value = resume;
+    widget.onDockGestureProgressChanged?.call(resume);
   }
 
   void _updateInteractiveDockProgress(double downwardDistance) {
-    final progress = (downwardDistance / 120).clamp(0.0, 1.0);
+    final progress = (_dockProgressAnchor + downwardDistance / _dockDragDistance)
+        .clamp(0.0, 1.0);
     if ((progress - _interactiveDockProgress).abs() < 0.001) return;
     _interactiveDockProgress = progress;
     _dockTransitionController.value = progress;
@@ -310,7 +318,9 @@ class _TicketPanelState extends State<TicketPanel>
 
     _dockTransitionController.addListener(reportProgress);
     try {
-      await _dockTransitionController.reverse().orCancel;
+      await _dockTransitionController
+          .animateBack(0, curve: _dockSettleCurve)
+          .orCancel;
     } on TickerCanceled {
       return;
     } finally {
@@ -344,9 +354,19 @@ class _TicketPanelState extends State<TicketPanel>
   }
 
   Future<void> _animateDockAndRequest() async {
-    if (_dockTransitionController.isAnimating || widget.fullPage) return;
+    if (widget.fullPage) return;
     widget.onDockAnimationStarted?.call();
-    await _dockTransitionController.forward();
+    try {
+      // Matches the flight pill's own animateTo: same curve, and a null
+      // duration scales both by the distance that is actually left.
+      await _dockTransitionController
+          .animateTo(1, curve: _dockSettleCurve)
+          .orCancel;
+    } on TickerCanceled {
+      // A cancelled ticker never completes its future, so never await the
+      // plain one here: the dock still has to be committed or the parent is
+      // stuck with a pending dock animation forever.
+    }
     if (mounted && !widget.fullPage) {
       widget.onDockRequested?.call();
     }
@@ -354,7 +374,9 @@ class _TicketPanelState extends State<TicketPanel>
 
   Future<void> _settleRestoreBackToNavigation() async {
     try {
-      await _dockTransitionController.forward().orCancel;
+      await _dockTransitionController
+          .animateTo(1, curve: _dockSettleCurve)
+          .orCancel;
     } on TickerCanceled {
       // The parent callback below still restores the single docked state.
     } finally {
@@ -909,9 +931,23 @@ class _TicketPanelState extends State<TicketPanel>
       );
     }
 
+    final dockGeometry = TicketDockGeometry.of(context);
+
     return ClipRect(
-      child: SlideTransition(
-        position: _dockSlideAnimation,
+      child: AnimatedBuilder(
+        animation: _dockTransitionController,
+        builder: (context, child) {
+          // Slide by exactly the handle's flight distance, so the pill drawn
+          // on top of the handle never separates from the card it sits on.
+          return Transform.translate(
+            key: dockSlideKey,
+            offset: Offset(
+              0,
+              dockGeometry.travel.dy * _dockTransitionController.value,
+            ),
+            child: child,
+          );
+        },
         child: DraggableScrollableSheet(
           controller: _sheetController,
           initialChildSize: 0.1,
@@ -956,9 +992,7 @@ class _TicketPanelState extends State<TicketPanel>
                                   _dockTransitionController.value;
                               return Transform.translate(
                                 offset: Offset(
-                                  MediaQuery.sizeOf(context).width *
-                                      0.125 *
-                                      transition,
+                                  dockGeometry.travel.dx * transition,
                                   0,
                                 ),
                                 child: Opacity(
