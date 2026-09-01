@@ -467,6 +467,82 @@ void main() {
       expect(ranked.first.id, 'helgolander-address');
     });
 
+    test('tolerates two slipped keystrokes in a long city name', () {
+      // "wiesbdne" is two edits from "wiesbaden" (a dropped letter plus a
+      // transposition), and the query carries no usable location. Transitous
+      // still ranks the address first, by a margin of 0.15.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'gifhorn-stop',
+            name: 'Gifhorn, Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.465546,
+            longitude: 10.569263,
+            city: 'Gifhorn',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -19.35,
+            searchImportance: 0.0000062,
+          ),
+          Station(
+            id: 'syke-stop',
+            name: 'Ristedt(Syke) Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.94754,
+            longitude: 8.75603,
+            city: 'Syke',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -18.35,
+            searchImportance: 0.0000017,
+          ),
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -19.50,
+          ),
+        ],
+        'helgölander straße wiesbdne',
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
+
+    test('keeps the edit budget tight for mid-length tokens', () {
+      // "kasel" is two edits from "kassel", but at five characters the budget
+      // is one, so the unrelated exact match must stay ahead.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'exact-city',
+            name: 'Kasel Bahnhof',
+            type: 'stop',
+            city: 'Kasel',
+            country: 'DE',
+            searchScore: -20.0,
+          ),
+          Station(
+            id: 'two-edits-away',
+            name: 'Kassel Hauptbahnhof',
+            type: 'stop',
+            city: 'Kassel',
+            country: 'DE',
+            searchScore: -20.0,
+          ),
+        ],
+        'kasel',
+      );
+
+      expect(ranked.first.id, 'exact-city');
+    });
+
     test('does not treat short tokens as typos of each other', () {
       final ranked = TransportApi.rankStationsForQuery(
         [

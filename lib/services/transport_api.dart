@@ -1691,21 +1691,27 @@ class TransportApi {
     };
   }
 
-  /// Whether two tokens are the same word with one slipped keystroke.
+  /// Whether two tokens are the same word typed with a slipped keystroke.
   ///
-  /// Short tokens are excluded because at four characters or fewer a single
-  /// edit turns plenty of unrelated names into each other ("mainz"/"main").
+  /// The edit budget scales with token length rather than being fixed: two
+  /// slips in a nine-letter city name still identify it, while the same budget
+  /// on a five-letter one collides with unrelated places. Below five characters
+  /// nothing is tolerated at all, since a single edit already turns plenty of
+  /// distinct names into each other ("mainz"/"main").
   static bool _tokensDifferByTypo(String a, String b) {
     if (a == b) return true;
-    if (a.length < 5 || b.length < 5) return false;
-    if ((a.length - b.length).abs() > 1) return false;
-    return _isWithinOneEdit(a, b);
+    final shortest = math.min(a.length, b.length);
+    if (shortest < 5) return false;
+    final budget = shortest >= 8 ? 2 : 1;
+    if ((a.length - b.length).abs() > budget) return false;
+    return _isWithinEditBudget(a, b, budget);
   }
 
-  /// Optimal string alignment distance, answering only "is it at most one
-  /// edit?" so the table collapses to two rolling rows. Adjacent transpositions
-  /// count as one edit, since swapped letters are a common typing slip.
-  static bool _isWithinOneEdit(String a, String b) {
+  /// Optimal string alignment distance, answering only "does it fit the
+  /// budget?" so the table collapses to rolling rows and bails as soon as a
+  /// whole row exceeds it. Adjacent transpositions count as one edit, since
+  /// swapped letters are a common typing slip.
+  static bool _isWithinEditBudget(String a, String b, int budget) {
     final lengthA = a.length;
     final lengthB = b.length;
     var beforePrevious = <int>[];
@@ -1733,12 +1739,12 @@ class TransportApi {
         if (best < rowMinimum) rowMinimum = best;
       }
 
-      if (rowMinimum > 1) return false;
+      if (rowMinimum > budget) return false;
       beforePrevious = previous;
       previous = current;
     }
 
-    return previous[lengthB] <= 1;
+    return previous[lengthB] <= budget;
   }
 
   static Set<String> _stationEquivalentTokens(String token) {
