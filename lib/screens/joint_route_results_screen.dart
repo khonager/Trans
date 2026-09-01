@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/models/joint_journey.dart';
+import 'package:trans/widgets/togetherness_slider.dart';
 
 class JointRouteResultsScreen extends StatelessWidget {
   final String friendName;
   final String destinationName;
   final List<JointJourneyOption> options;
+  final JointSearchWindow window;
   final Future<void> Function(JointJourneyOption option)? onShare;
 
   const JointRouteResultsScreen({
@@ -14,6 +16,7 @@ class JointRouteResultsScreen extends StatelessWidget {
     required this.friendName,
     required this.destinationName,
     required this.options,
+    this.window = const JointSearchWindow(baseTogetherness: 0.5),
     this.onShare,
   });
 
@@ -35,6 +38,7 @@ class JointRouteResultsScreen extends StatelessWidget {
         friendName: friendName,
         destinationName: destinationName,
         options: options,
+        window: window,
         onSelect: (option) => Navigator.of(context).pop(option),
         onShare: onShare,
         showHeader: false,
@@ -47,9 +51,14 @@ class JointRouteResultsView extends StatelessWidget {
   final String friendName;
   final String destinationName;
   final List<JointJourneyOption> options;
+  final JointSearchWindow window;
   final ValueChanged<JointJourneyOption> onSelect;
   final Future<void> Function(JointJourneyOption option)? onShare;
   final VoidCallback? onBack;
+
+  /// Widens the search by one step. Null when nothing more can be found.
+  final VoidCallback? onExpand;
+  final bool isExpanding;
   final bool showHeader;
 
   const JointRouteResultsView({
@@ -58,35 +67,60 @@ class JointRouteResultsView extends StatelessWidget {
     required this.destinationName,
     required this.options,
     required this.onSelect,
+    this.window = const JointSearchWindow(baseTogetherness: 0.5),
     this.onShare,
     this.onBack,
+    this.onExpand,
+    this.isExpanding = false,
     this.showHeader = true,
   });
+
+  JointJourneyPreferences get preferences => window.preferences;
 
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final german = Localizations.localeOf(context).languageCode == 'de';
+    final expandControl = _ExpandControl(
+      onExpand: onExpand,
+      isExpanding: isExpanding,
+      window: window,
+      german: german,
+    );
     final list = options.isEmpty
-        ? _EmptyState(friendName: friendName)
+        ? _EmptyState(
+            friendName: friendName,
+            window: window,
+            expandControl: expandControl,
+          )
         : ListView.builder(
             key: const ValueKey('joint-route-results-list'),
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-            itemCount: options.length,
-            itemBuilder: (context, index) => _OptionCard(
-              option: options[index],
-              friendName: friendName,
-              destinationName: destinationName,
-              rank: index,
-              onSelect: () => onSelect(options[index]),
-              onShare: onShare == null
-                  ? null
-                  : () => _share(
-                        context,
-                        option: options[index],
-                        german: german,
-                      ),
-            ),
+            // One extra row keeps "look further" at the end of the list, the
+            // place users reach after ruling the shown options out.
+            itemCount: options.length + 1,
+            itemBuilder: (context, index) {
+              if (index == options.length) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: expandControl,
+                );
+              }
+              return _OptionCard(
+                option: options[index],
+                friendName: friendName,
+                destinationName: destinationName,
+                rank: index,
+                onSelect: () => onSelect(options[index]),
+                onShare: onShare == null
+                    ? null
+                    : () => _share(
+                          context,
+                          option: options[index],
+                          german: german,
+                        ),
+              );
+            },
           );
     if (!showHeader) return list;
     return Column(
@@ -102,15 +136,29 @@ class JointRouteResultsView extends StatelessWidget {
                 color: colors.textPrimary,
               ),
               Expanded(
-                child: Text(
-                  german
-                      ? '${options.length} gemeinsame Routen'
-                      : '${options.length} shared routes',
-                  style: TextStyle(
-                    color: colors.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      german
+                          ? '${options.length} gemeinsame Routen'
+                          : '${options.length} shared routes',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      german
+                          ? 'mit $friendName · ${TogethernessSlider.stopLabel(preferences.nearestIntent, german: true)}${window.isWidened ? ' · erweitert' : ''}'
+                          : 'with $friendName · ${TogethernessSlider.stopLabel(preferences.nearestIntent, german: false)}${window.isWidened ? ' · widened' : ''}',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -147,44 +195,136 @@ class JointRouteResultsView extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final String friendName;
+  final JointSearchWindow window;
+  final Widget expandControl;
 
-  const _EmptyState({required this.friendName});
+  const _EmptyState({
+    required this.friendName,
+    required this.window,
+    required this.expandControl,
+  });
 
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final german = Localizations.localeOf(context).languageCode == 'de';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.group_off_outlined,
-                size: 52, color: colors.textSecondary),
-            const SizedBox(height: 16),
-            Text(
-              german
-                  ? 'Keine sinnvolle gemeinsame Route gefunden'
-                  : 'No worthwhile shared route found',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+    final canAllowMore = window.preferences.togetherness < 1;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 40, 24, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.group_off_outlined, size: 52, color: colors.textSecondary),
+          const SizedBox(height: 16),
+          Text(
+            german
+                ? 'Keine sinnvolle gemeinsame Route gefunden'
+                : 'No worthwhile shared route found',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(height: 8),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            german
+                ? 'Jede Route mit $friendName kostet mehr zusätzliche Fahrzeit, als sie an gemeinsamer Zeit bringt.'
+                : 'Every route with $friendName costs more extra travel time than it adds time together.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colors.textSecondary),
+          ),
+          if (canAllowMore) ...[
+            const SizedBox(height: 10),
             Text(
               german
-                  ? 'Innerhalb eurer Grenzen gibt es gerade keine Route mit $friendName, auf der ihr gemeinsam fahrt, wartet oder lauft.'
-                  : 'Within your limits, there is currently no route where you and $friendName ride, wait, or walk together.',
+                  ? 'Schiebe den Regler Richtung „Zusammen“, um größere Umwege zuzulassen.'
+                  : 'Move the slider towards “Together” to allow bigger detours.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: colors.textSecondary),
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
             ),
           ],
-        ),
+          const SizedBox(height: 18),
+          expandControl,
+        ],
       ),
+    );
+  }
+}
+
+/// Widens the search one step at a time, the way "load later" extends a
+/// regular result list.
+class _ExpandControl extends StatelessWidget {
+  final VoidCallback? onExpand;
+  final bool isExpanding;
+  final JointSearchWindow window;
+  final bool german;
+
+  const _ExpandControl({
+    required this.onExpand,
+    required this.isExpanding,
+    required this.window,
+    required this.german,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    if (onExpand == null && !isExpanding) {
+      return Padding(
+        key: const ValueKey('joint-expand-exhausted'),
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          german
+              ? 'Mehr gemeinsame Zeit ist in diesem Zeitraum nicht zu holen.'
+              : 'There is no more time together to find around this time.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colors.textSecondary, fontSize: 12),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            key: const ValueKey('joint-expand-button'),
+            onPressed: isExpanding ? null : onExpand,
+            icon: isExpanding
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.effectiveSeed,
+                    ),
+                  )
+                : const Icon(Icons.unfold_more),
+            label: Text(
+              isExpanding
+                  ? (german ? 'Suche weiter …' : 'Looking further…')
+                  : (german
+                      ? 'Mehr gemeinsame Zeit suchen'
+                      : 'Look for more time together'),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colors.effectiveSeed,
+              side: BorderSide(color: colors.effectiveSeed),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          german
+              ? 'Erlaubt mehr Umweg und, wenn nötig, weitere Abfahrten.'
+              : 'Allows more detour and, if needed, more departures.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colors.textSecondary, fontSize: 11),
+        ),
+      ],
     );
   }
 }
@@ -212,6 +352,10 @@ class _OptionCard extends StatelessWidget {
     final german = Localizations.localeOf(context).languageCode == 'de';
     final format = DateFormat('HH:mm');
     final sharedMinutes = option.sharedDuration.inMinutes;
+    final gainMinutes = option.sharedGainMinutes.round();
+    final detourMinutes = option.detourMinutes.round();
+    final baselineMinutes = option.baselineSharedDuration.inMinutes;
+    final rate = option.detourPerSharedMinute;
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
       color: rank == 0
@@ -238,7 +382,7 @@ class _OptionCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     rank == 0
-                        ? (german ? 'Beste Balance' : 'Best balance')
+                        ? (german ? 'Bester Vorschlag' : 'Best match')
                         : (german ? 'Weitere Möglichkeit' : 'Another option'),
                     style: TextStyle(
                       color: colors.textPrimary,
@@ -265,6 +409,57 @@ class _OptionCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            // What this option is actually worth: what it adds compared to
+            // both travelling alone, and what that costs.
+            Container(
+              key: const ValueKey('joint-option-value'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: colors.effectiveSeed.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    option.isFree
+                        ? (german
+                            ? '+$gainMinutes Min. zusammen ohne Umweg'
+                            : '+$gainMinutes min together at no cost')
+                        : (german
+                            ? '+$gainMinutes Min. zusammen für +$detourMinutes Min. Reisezeit'
+                            : '+$gainMinutes min together for +$detourMinutes min of travel'),
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (rate != null && rate.isFinite) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      german
+                          ? '${NumberFormat('0.0', 'de').format(rate)} Min. Reisezeit je gemeinsamer Minute'
+                          : '${NumberFormat('0.0', 'en').format(rate)} min of travel per minute together',
+                      style:
+                          TextStyle(color: colors.textSecondary, fontSize: 11),
+                    ),
+                  ],
+                  if (baselineMinutes > 0) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      german
+                          ? 'Davon wärt ihr $baselineMinutes Min. ohnehin zusammen unterwegs.'
+                          : 'You would already travel $baselineMinutes min of that together anyway.',
+                      style:
+                          TextStyle(color: colors.textSecondary, fontSize: 11),
+                    ),
+                  ],
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             _PersonRouteRow(

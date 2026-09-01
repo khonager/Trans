@@ -41,6 +41,71 @@ void main() {
     expect(formatted, 'RB22 / RB13 (4b)');
   });
 
+  group('starting a search', () {
+    test('needs both ends of the journey', () {
+      expect(
+        canStartRouteSearch(
+          hasOrigin: false,
+          hasDestination: true,
+          jointPlanningEnabled: false,
+          hasCompanionOrigin: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canStartRouteSearch(
+          hasOrigin: true,
+          hasDestination: false,
+          jointPlanningEnabled: false,
+          hasCompanionOrigin: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canStartRouteSearch(
+          hasOrigin: true,
+          hasDestination: true,
+          jointPlanningEnabled: false,
+          hasCompanionOrigin: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('planning together also needs where the companion starts', () {
+      expect(
+        canStartRouteSearch(
+          hasOrigin: true,
+          hasDestination: true,
+          jointPlanningEnabled: true,
+          hasCompanionOrigin: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canStartRouteSearch(
+          hasOrigin: true,
+          hasDestination: true,
+          jointPlanningEnabled: true,
+          hasCompanionOrigin: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a companion start alone is not enough', () {
+      expect(
+        canStartRouteSearch(
+          hasOrigin: true,
+          hasDestination: false,
+          jointPlanningEnabled: true,
+          hasCompanionOrigin: true,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('station identity matching', () {
     test('recognises Hbf and Hauptbahnhof as the same station', () {
       expect(

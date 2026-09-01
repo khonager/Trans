@@ -362,6 +362,12 @@ class RouteTab {
   final bool isStackExpanded;
   final RouteSearchSettings searchSettings;
 
+  /// Set when the tab holds somebody else's route: the companion's half of a
+  /// joint plan, or a route a friend shared. Such a tab is never treated as a
+  /// journey the user is travelling on, so it stays out of journey detection
+  /// and out of published presence.
+  final String? companionName;
+
   RouteTab({
     required this.id,
     required this.title,
@@ -377,7 +383,10 @@ class RouteTab {
     this.activeJourney,
     this.isStackExpanded = true, // Default open
     required this.searchSettings,
+    this.companionName,
   });
+
+  bool get isCompanionRoute => companionName != null;
 
   RouteTab copyWith({
     String? id,
@@ -395,6 +404,7 @@ class RouteTab {
     bool clearActiveJourney = false,
     bool? isStackExpanded,
     RouteSearchSettings? searchSettings,
+    String? companionName,
   }) {
     return RouteTab(
       id: id ?? this.id,
@@ -412,6 +422,7 @@ class RouteTab {
           clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
       isStackExpanded: isStackExpanded ?? this.isStackExpanded,
       searchSettings: searchSettings ?? this.searchSettings,
+      companionName: companionName ?? this.companionName,
     );
   }
 }
