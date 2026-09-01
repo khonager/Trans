@@ -418,5 +418,80 @@ void main() {
 
       expect(ranked.first.id, 'helgolander-address');
     });
+
+    test('tolerates a single slipped keystroke in the city name', () {
+      // "wiesbden" misses the 'a'. Transitous still ranks the address first;
+      // without typo tolerance the token matched nothing here, so far-away
+      // stops carrying the street name outscored it.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'gifhorn-stop',
+            name: 'Gifhorn, Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.4875,
+            longitude: 10.5501,
+            city: 'Gifhorn',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -20.35,
+            searchImportance: 0.0000062,
+          ),
+          Station(
+            id: 'syke-stop',
+            name: 'Ristedt(Syke) Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.9163,
+            longitude: 8.8221,
+            city: 'Syke',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -19.35,
+            searchImportance: 0.0000017,
+          ),
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -24.50,
+          ),
+        ],
+        'Helgoländer Straße wiesbden',
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
+
+    test('does not treat short tokens as typos of each other', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'mainz-hbf',
+            name: 'Mainz Hbf',
+            type: 'stop',
+            city: 'Mainz',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+          Station(
+            id: 'unrelated-main',
+            name: 'Main Tower',
+            type: 'location',
+            city: 'Frankfurt am Main',
+            country: 'DE',
+            searchScore: -30.9,
+          ),
+        ],
+        'mainz',
+      );
+
+      expect(ranked.first.id, 'mainz-hbf');
+    });
   });
 }

@@ -1402,6 +1402,18 @@ class TransportApi {
           equivalentTokens.any(typeTokens.contains) ||
           equivalentTokens.any(countryTokens.contains);
       final weakRegionMatch = equivalentTokens.any(regionTokens.contains);
+      // Only consulted once the exact tiers miss, so a clean query never pays
+      // for the edit-distance walk.
+      bool typoNameMatch() => equivalentTokens.any(
+            (variant) => nameTokens.any(
+              (nameToken) => _tokensDifferByTypo(nameToken, variant),
+            ),
+          );
+      bool typoCityMatch() => equivalentTokens.any(
+            (variant) => cityTokens.any(
+              (cityToken) => _tokensDifferByTypo(cityToken, variant),
+            ),
+          );
 
       if (exactNameMatch) {
         matchedQueryTokens++;
@@ -1415,6 +1427,12 @@ class TransportApi {
       } else if (prefixCityMatch) {
         matchedQueryTokens++;
         score += 18;
+      } else if (typoNameMatch()) {
+        matchedQueryTokens++;
+        score += 38;
+      } else if (typoCityMatch()) {
+        matchedQueryTokens++;
+        score += 28;
       } else if (categoryMatch) {
         matchedQueryTokens++;
         score += 10;
@@ -1671,6 +1689,56 @@ class TransportApi {
     return {
       for (final token in tokens) token: _stationEquivalentTokens(token),
     };
+  }
+
+  /// Whether two tokens are the same word with one slipped keystroke.
+  ///
+  /// Short tokens are excluded because at four characters or fewer a single
+  /// edit turns plenty of unrelated names into each other ("mainz"/"main").
+  static bool _tokensDifferByTypo(String a, String b) {
+    if (a == b) return true;
+    if (a.length < 5 || b.length < 5) return false;
+    if ((a.length - b.length).abs() > 1) return false;
+    return _isWithinOneEdit(a, b);
+  }
+
+  /// Optimal string alignment distance, answering only "is it at most one
+  /// edit?" so the table collapses to two rolling rows. Adjacent transpositions
+  /// count as one edit, since swapped letters are a common typing slip.
+  static bool _isWithinOneEdit(String a, String b) {
+    final lengthA = a.length;
+    final lengthB = b.length;
+    var beforePrevious = <int>[];
+    var previous = List<int>.generate(lengthB + 1, (index) => index);
+
+    for (var i = 1; i <= lengthA; i++) {
+      final current = List<int>.filled(lengthB + 1, 0);
+      current[0] = i;
+      var rowMinimum = current[0];
+
+      for (var j = 1; j <= lengthB; j++) {
+        final substitution =
+            a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+        var best = math.min(
+          math.min(current[j - 1] + 1, previous[j] + 1),
+          previous[j - 1] + substitution,
+        );
+        if (i > 1 &&
+            j > 1 &&
+            a.codeUnitAt(i - 1) == b.codeUnitAt(j - 2) &&
+            a.codeUnitAt(i - 2) == b.codeUnitAt(j - 1)) {
+          best = math.min(best, beforePrevious[j - 2] + 1);
+        }
+        current[j] = best;
+        if (best < rowMinimum) rowMinimum = best;
+      }
+
+      if (rowMinimum > 1) return false;
+      beforePrevious = previous;
+      previous = current;
+    }
+
+    return previous[lengthB] <= 1;
   }
 
   static Set<String> _stationEquivalentTokens(String token) {
