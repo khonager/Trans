@@ -358,5 +358,65 @@ void main() {
 
       expect(ranked.first.id, 'stop');
     });
+
+    test('keeps an exact address ahead of city-named street stops', () {
+      // Real api.transitous.org/api/v1/geocode payload for the query below,
+      // which the prefilled "from" field produces from a reverse-geocoded
+      // current location. Transitous ranks the address first; the app used to
+      // sort it last behind nine near-tied "Wiesbaden <X>-Straße" bus stops.
+      Station stop(String name, double lat, double lng, double score,
+              double importance) =>
+          Station(
+            id: name,
+            name: name,
+            type: 'stop',
+            latitude: lat,
+            longitude: lng,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: score,
+            searchImportance: importance,
+          );
+
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -42.95,
+          ),
+          stop('Wiesbaden Berliner Straße', 50.072205, 8.256731, -30.55,
+              0.000143),
+          stop('Wiesbaden Carl-von-Linde-Straße', 50.076176, 8.208654, -30.55,
+              0.000105),
+          stop('Wiesbaden Wilhelm-Hauff-Straße', 50.069366, 8.232805, -30.55,
+              0.00000079),
+          stop('Wiesbaden Hans-Bredow-Straße', 50.076977, 8.258082, -30.05,
+              0.0000092),
+          stop('Wiesbaden-Biebrich Faaker Straße', 50.055847, 8.224544, -30.05,
+              0.0000284),
+          stop('Wiesbaden A.-Schlüter-Straße', 50.064552, 8.265466, -29.80,
+              0.0000282),
+          stop('Wiesbaden-Dotzheim Juister Straße', 50.062110, 8.209416, -29.80,
+              0.0000414),
+          stop('Wiesbaden Gustav-Mahler-Straße', 50.087326, 8.256986, -29.55,
+              0.0000304),
+          stop('Wiesbaden Klarenthaler Straße', 50.078125, 8.227440, -29.55,
+              0.000125),
+        ],
+        'Helgoländer Straße Wiesbaden Hessen',
+        lat: 50.0660486,
+        lng: 8.2058587,
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
   });
 }

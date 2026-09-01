@@ -1427,12 +1427,16 @@ class TransportApi {
       score += 75;
     }
 
+    // The type bonus stays modest unless the query actually asks for a stop.
+    // A full-strength boost outweighs matching an extra query token, so street
+    // stops named after their city ("Wiesbaden <X>-Straße") used to bury the
+    // address a query spelled out in full.
     if (isTransitStop) {
-      score += 105;
+      score += queryLooksLikeStation ? 105 : 40;
       if (queryLooksLikeStation) score += 55;
     } else {
       if (station.type == 'location') score -= 25;
-      if (station.type == 'address') score -= 55;
+      if (station.type == 'address') score -= queryLooksLikeStation ? 55 : 10;
       if (queryLooksLikeStation) {
         if (station.type == 'location') score -= 95;
         if (station.type == 'address') score -= 120;
