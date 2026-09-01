@@ -123,8 +123,7 @@ void main() {
   testWidgets('states what an option adds and what it costs', (tester) async {
     await _pumpResults(tester, options: [_option()]);
 
-    expect(find.text('+40 min together for +11 min of travel'),
-        findsOneWidget);
+    expect(find.text('+40 min together for +11 min of travel'), findsOneWidget);
     expect(find.text('0.3 min of travel per minute together'), findsOneWidget);
     expect(find.text('40 min together'), findsOneWidget);
   });
@@ -133,7 +132,10 @@ void main() {
     await _pumpResults(
       tester,
       options: [
-        _option(detourMinutes: 0, gainMinutes: 12, myExtraMinutes: 0,
+        _option(
+            detourMinutes: 0,
+            gainMinutes: 12,
+            myExtraMinutes: 0,
             myExtraTransfers: 0)
       ],
     );
@@ -157,8 +159,7 @@ void main() {
     );
   });
 
-  testWidgets('names the setting the results were ranked with',
-      (tester) async {
+  testWidgets('names the setting the results were ranked with', (tester) async {
     await _pumpResults(
       tester,
       options: [_option()],
@@ -198,8 +199,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('The plan could not be sent.'), findsOneWidget);
-    expect(find.byKey(const ValueKey('joint-route-results-list')),
-        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('joint-route-results-list')), findsOneWidget);
   });
 
   testWidgets('empty results point at the slider when it can still move',
@@ -248,8 +249,7 @@ void main() {
       expect(presses, 1);
     });
 
-    testWidgets('offers the same step when nothing was found',
-        (tester) async {
+    testWidgets('offers the same step when nothing was found', (tester) async {
       var presses = 0;
       await _pumpResults(
         tester,
@@ -321,8 +321,8 @@ void main() {
       ),
     ));
 
-    expect(find.text('+40 Min. zusammen für +11 Min. Reisezeit'),
-        findsOneWidget);
+    expect(
+        find.text('+40 Min. zusammen für +11 Min. Reisezeit'), findsOneWidget);
     expect(find.text('40 Min. zusammen'), findsOneWidget);
   });
 }

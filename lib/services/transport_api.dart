@@ -1723,8 +1723,7 @@ class TransportApi {
       var rowMinimum = current[0];
 
       for (var j = 1; j <= lengthB; j++) {
-        final substitution =
-            a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+        final substitution = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
         var best = math.min(
           math.min(current[j - 1] + 1, previous[j] + 1),
           previous[j - 1] + substitution,

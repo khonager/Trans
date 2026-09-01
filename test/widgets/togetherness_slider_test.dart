@@ -144,8 +144,7 @@ void main() {
     }
   });
 
-  testWidgets('the summary spells out what the setting allows',
-      (tester) async {
+  testWidgets('the summary spells out what the setting allows', (tester) async {
     await _pumpSlider(tester, value: 0);
     const fast = JointJourneyPreferences.fast();
     expect(

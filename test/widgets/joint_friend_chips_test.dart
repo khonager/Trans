@@ -44,8 +44,7 @@ Future<JointPlanFriend?> _pumpChips(
 }
 
 void main() {
-  testWidgets('shows nothing when no friend shares a location',
-      (tester) async {
+  testWidgets('shows nothing when no friend shares a location', (tester) async {
     await _pumpChips(tester, friends: const []);
 
     expect(find.byKey(const ValueKey('joint-friend-chips')), findsNothing);
@@ -90,7 +89,9 @@ void main() {
   testWidgets('marks the selected friend', (tester) async {
     await _pumpChips(
       tester,
-      friends: [_friend(id: 'a', name: 'Mara', age: const Duration(minutes: 3))],
+      friends: [
+        _friend(id: 'a', name: 'Mara', age: const Duration(minutes: 3))
+      ],
       selectedId: 'a',
     );
 

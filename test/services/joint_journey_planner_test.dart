@@ -335,8 +335,8 @@ void main() {
         previousOptions: first.options,
       );
 
-      expect(second.window.togetherness,
-          greaterThan(first.window.togetherness));
+      expect(
+          second.window.togetherness, greaterThan(first.window.togetherness));
       expect(second.options.length, greaterThan(first.options.length));
       expect(
         second.options

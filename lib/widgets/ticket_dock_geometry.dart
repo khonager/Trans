@@ -30,8 +30,9 @@ class TicketDockGeometry {
 
   factory TicketDockGeometry.of(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final bodyHeight =
-        size.height - navigationBarHeight - MediaQuery.paddingOf(context).bottom;
+    final bodyHeight = size.height -
+        navigationBarHeight -
+        MediaQuery.paddingOf(context).bottom;
     return TicketDockGeometry._(
       start: Offset(
         size.width / 2,

@@ -287,8 +287,9 @@ class _TicketPanelState extends State<TicketPanel>
   }
 
   void _updateInteractiveDockProgress(double downwardDistance) {
-    final progress = (_dockProgressAnchor + downwardDistance / _dockDragDistance)
-        .clamp(0.0, 1.0);
+    final progress =
+        (_dockProgressAnchor + downwardDistance / _dockDragDistance)
+            .clamp(0.0, 1.0);
     if ((progress - _interactiveDockProgress).abs() < 0.001) return;
     _interactiveDockProgress = progress;
     _dockTransitionController.value = progress;
