@@ -1305,6 +1305,24 @@ bool _isSameJourneyEntry(Journey a, Journey b) {
 bool isSameJourneyEntryForTesting(Journey a, Journey b) =>
     _isSameJourneyEntry(a, b);
 
+List<Journey> _stackWithJourneyEntry(
+  Iterable<Journey> stack,
+  Journey journey,
+) {
+  final updated = List<Journey>.from(stack);
+  if (!updated.any((existing) => _isSameJourneyEntry(existing, journey))) {
+    updated.add(journey);
+  }
+  return updated;
+}
+
+@visibleForTesting
+List<Journey> stackWithJourneyEntryForTesting(
+  Iterable<Journey> stack,
+  Journey journey,
+) =>
+    _stackWithJourneyEntry(stack, journey);
+
 bool _journeysLikelySameRoute(Journey a, Journey b) {
   final depA = a.plannedDeparture ?? a.departure;
   final depB = b.plannedDeparture ?? b.departure;
@@ -5483,11 +5501,7 @@ class RoutesTabState extends State<RoutesTab>
                 final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
                 if (idx != -1) {
                   final currentTab = _tabs[idx];
-                  final newStack = List<Journey>.from(currentTab.stack);
-                  if (!newStack.any((e) =>
-                      e.departure == j.departure && e.arrival == j.arrival)) {
-                    newStack.add(j);
-                  }
+                  final newStack = _stackWithJourneyEntry(currentTab.stack, j);
                   _tabs[idx] = currentTab.copyWith(
                       activeJourney: j,
                       stack: newStack,

@@ -776,6 +776,42 @@ void main() {
       );
     });
 
+    test('adds a branch tab even when its overall times match its parent', () {
+      final parent = journey(departure: departure, arrival: arrival);
+      final branch = journey(
+        departure: departure,
+        arrival: arrival,
+        branchStepIndex: 2,
+        parentJourney: parent,
+      );
+
+      final stack = stackWithJourneyEntryForTesting([parent], branch);
+
+      expect(stack, [parent, branch]);
+      expect(
+        stack.any((entry) => isSameJourneyEntryForTesting(entry, branch)),
+        isTrue,
+      );
+    });
+
+    test('does not duplicate an existing alternative tab', () {
+      final branch = journey(
+        departure: departure,
+        arrival: arrival,
+        branchStepIndex: 2,
+      );
+      final refreshedBranch = journey(
+        departure: departure,
+        arrival: arrival,
+        branchStepIndex: 2,
+      );
+
+      expect(
+        stackWithJourneyEntryForTesting([branch], refreshedBranch),
+        [branch],
+      );
+    });
+
     test('platform enrichment preserves the route branch back link', () {
       final parent = journey(departure: departure, arrival: arrival);
       final branch = journey(
