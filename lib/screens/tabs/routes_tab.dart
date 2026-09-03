@@ -1460,7 +1460,13 @@ class RoutesTabState extends State<RoutesTab>
   final Set<String> _savingRouteIds = <String>{};
   final Map<String, ScrollController> _routeResultsScrollControllers =
       <String, ScrollController>{};
+  final Map<String, ScrollController> _activeJourneyScrollControllers =
+      <String, ScrollController>{};
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
+
+  /// Scroll position the fixed tab strip is currently pulling on, or null when
+  /// no header pull is in flight.
+  ScrollPosition? _tabBarPullPosition;
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
   final Map<String, _JointRouteContext> _jointRouteContexts =
@@ -2275,6 +2281,9 @@ class RoutesTabState extends State<RoutesTab>
     _scrollController.dispose();
     _suggestionsScrollController.dispose();
     for (final controller in _routeResultsScrollControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _activeJourneyScrollControllers.values) {
       controller.dispose();
     }
     _debounce?.cancel();
@@ -3831,6 +3840,7 @@ class RoutesTabState extends State<RoutesTab>
   void _closeTab(String id) {
     final controller = _routeResultsScrollControllers.remove(id);
     controller?.dispose();
+    _activeJourneyScrollControllers.remove(id)?.dispose();
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
     _jointRouteContexts.remove(id);
@@ -3846,6 +3856,135 @@ class RoutesTabState extends State<RoutesTab>
 
   bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  /// How often the active-journey refresh callback has been invoked.
+  @visibleForTesting
+  int debugActiveJourneyRefreshCount = 0;
+
+  /// How often the route-results refresh callback has been invoked.
+  @visibleForTesting
+  int debugRouteResultsRefreshCount = 0;
+
+  /// Replaces the open tabs with [tabs] and activates one of them, so tests can
+  /// reach the route views without driving a live search first.
+  @visibleForTesting
+  void debugOpenRouteTabs(List<RouteTab> tabs, {String? activeId}) {
+    setState(() {
+      _tabs
+        ..clear()
+        ..addAll(tabs);
+      _activeTabId = activeId ?? (tabs.isEmpty ? null : tabs.first.id);
+    });
+  }
+
+  ScrollController _activeJourneyScrollControllerFor(String routeId) {
+    return _activeJourneyScrollControllers.putIfAbsent(
+      routeId,
+      ScrollController.new,
+    );
+  }
+
+  /// The scroll position behind whichever route view is on screen right now.
+  ///
+  /// Only one of the two views is mounted for the active tab, so at most one of
+  /// these controllers ever has clients.
+  ScrollPosition? _activeRoutePullPosition() {
+    final routeId = _activeTabId;
+    if (routeId == null) return null;
+    for (final controllers in <Map<String, ScrollController>>[
+      _activeJourneyScrollControllers,
+      _routeResultsScrollControllers,
+    ]) {
+      final controller = controllers[routeId];
+      if (controller != null &&
+          controller.hasClients &&
+          controller.positions.length == 1) {
+        return controller.position;
+      }
+    }
+    return null;
+  }
+
+  /// Metrics that describe the journey as if it were parked at the very top.
+  ///
+  /// [RefreshIndicator] only arms while `extentBefore` is zero, and the whole
+  /// point of the header pull is to refresh without moving the journey, so the
+  /// pull reports `pixels: 0` instead of the real offset. Everything else
+  /// mirrors the live position, which keeps the indicator's arm distance
+  /// identical to the in-list gesture.
+  ScrollMetrics _tabBarPullMetrics(ScrollPosition position) {
+    return FixedScrollMetrics(
+      minScrollExtent: 0,
+      maxScrollExtent: position.maxScrollExtent,
+      pixels: 0,
+      viewportDimension: position.viewportDimension,
+      axisDirection: AxisDirection.down,
+      devicePixelRatio: position.devicePixelRatio,
+    );
+  }
+
+  // The fixed tab strip lives outside the journey's scroll view, so dragging it
+  // can never produce a real overscroll. Instead we hand the RefreshIndicator
+  // the same ScrollNotifications the in-list gesture would produce. That keeps
+  // the stock circular indicator, its arm/cancel thresholds and the existing
+  // onRefresh callback, and it never touches the journey's scroll offset.
+  void _handleTabBarVerticalDragStart(DragStartDetails details) {
+    // The pull only begins once the drag actually moves downwards, so taps and
+    // upward drags on the strip stay inert.
+    _tabBarPullPosition = null;
+  }
+
+  void _handleTabBarVerticalDragUpdate(DragUpdateDetails details) {
+    final delta = details.delta.dy;
+    if (delta == 0) return;
+
+    var position = _tabBarPullPosition;
+    if (position == null) {
+      if (delta <= 0) return;
+      position = _activeRoutePullPosition();
+      final notificationContext = position?.context.notificationContext;
+      if (position == null || notificationContext == null) return;
+      _tabBarPullPosition = position;
+      ScrollStartNotification(
+        metrics: _tabBarPullMetrics(position),
+        context: notificationContext,
+        dragDetails: DragStartDetails(
+          globalPosition: details.globalPosition,
+          localPosition: details.localPosition,
+          sourceTimeStamp: details.sourceTimeStamp,
+        ),
+      ).dispatch(notificationContext);
+    }
+
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    OverscrollNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+      dragDetails: details,
+      // Negative overscroll means "dragged past the top", which is exactly what
+      // pulling the strip downwards represents.
+      overscroll: -delta,
+    ).dispatch(notificationContext);
+  }
+
+  void _handleTabBarVerticalDragEnd(DragEndDetails details) => _endTabBarPull();
+
+  void _handleTabBarVerticalDragCancel() => _endTabBarPull();
+
+  /// Hands the release back to [RefreshIndicator]: a pull past its threshold
+  /// refreshes, anything shorter is cancelled. Same rule as the in-list pull.
+  void _endTabBarPull() {
+    final position = _tabBarPullPosition;
+    _tabBarPullPosition = null;
+    if (position == null) return;
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    ScrollEndNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+    ).dispatch(notificationContext);
   }
 
   ScrollController _routeResultsScrollControllerFor(String routeId) {
@@ -6763,23 +6902,34 @@ class RoutesTabState extends State<RoutesTab>
 
       // Main Tab Bar
       if (_tabs.isNotEmpty)
-        SizedBox(
-            height: 60,
-            child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _tabs.length + 1,
-                itemBuilder: (ctx, idx) {
-                  if (idx == _tabs.length) {
-                    return Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () =>
-                                setState(() => _activeTabId = null)));
-                  }
-                  return _buildTabItem(_tabs[idx], colors);
-                })),
+        // Pulling down on the strip refreshes the route below without asking
+        // the user to scroll the journey back to the top first. The vertical
+        // recogniser only claims the gesture once the drag beats the touch
+        // slop, so the strip keeps scrolling sideways and the chips, close
+        // buttons and "+" keep their taps.
+        GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: _handleTabBarVerticalDragStart,
+            onVerticalDragUpdate: _handleTabBarVerticalDragUpdate,
+            onVerticalDragEnd: _handleTabBarVerticalDragEnd,
+            onVerticalDragCancel: _handleTabBarVerticalDragCancel,
+            child: SizedBox(
+                height: 60,
+                child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _tabs.length + 1,
+                    itemBuilder: (ctx, idx) {
+                      if (idx == _tabs.length) {
+                        return Padding(
+                            padding: const EdgeInsets.only(bottom: 20),
+                            child: IconButton(
+                                icon: const Icon(Icons.add_circle_outline),
+                                onPressed: () =>
+                                    setState(() => _activeTabId = null)));
+                      }
+                      return _buildTabItem(_tabs[idx], colors);
+                    }))),
 
       // Secondary Tab Row (Alternatives)
       if (activeTab != null &&
@@ -8367,6 +8517,7 @@ class RoutesTabState extends State<RoutesTab>
   }
 
   Future<void> _refreshRoutes(RouteTab route) async {
+    debugRouteResultsRefreshCount += 1;
     if (_isLoadingRoute) return;
 
     // We want to reset pagination and reload the initial search window.
@@ -8773,6 +8924,7 @@ class RoutesTabState extends State<RoutesTab>
     RouteTab route, {
     bool showCompletionFeedback = true,
   }) async {
+    debugActiveJourneyRefreshCount += 1;
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
@@ -9702,6 +9854,7 @@ class RoutesTabState extends State<RoutesTab>
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
       child: ListView(
+          controller: _activeJourneyScrollControllerFor(route.id),
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
           children: [
             Padding(

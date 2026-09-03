@@ -1,7 +1,154 @@
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/config/app_theme.dart';
+import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/screens/tabs/routes_tab.dart';
+
+final _pullOrigin = Station(id: 'origin', name: 'Origin', type: 'station');
+
+JourneyStep _pullStep(int index) => JourneyStep(
+      type: 'ride',
+      line: 'RB$index',
+      instruction: 'Ride $index',
+      duration: '10 min',
+      departureTime: '10:0$index',
+      arrivalTime: '10:1$index',
+      startStationName: 'Stop $index',
+      destinationName: 'Stop ${index + 1}',
+    );
+
+Journey _pullJourney({int minute = 0, int steps = 24}) {
+  final departure = DateTime(2026, 9, 3, 10).add(Duration(minutes: minute));
+  return Journey(
+    steps: List.generate(steps, _pullStep),
+    departure: departure,
+    arrival: departure.add(const Duration(hours: 2)),
+    duration: const Duration(hours: 2),
+    transferCount: steps - 1,
+    totalWaitTime: Duration.zero,
+    rawSource: const {'legs': []},
+    source: 'test',
+  );
+}
+
+RouteTab _routeTab({
+  required int index,
+  Journey? activeJourney,
+  List<Journey>? candidates,
+}) {
+  final destination = Station(
+    id: 'destination-$index',
+    name: 'Destination $index',
+    type: 'station',
+  );
+  return RouteTab(
+    id: 'tab-$index',
+    title: 'Destination $index',
+    subtitle: '10:00 - 12:00',
+    eta: '12:00',
+    totalDuration: '2 h',
+    destination: destination,
+    origin: _pullOrigin,
+    steps: activeJourney?.steps ?? const <JourneyStep>[],
+    candidates: candidates,
+    stack: activeJourney == null ? const <Journey>[] : <Journey>[activeJourney],
+    activeJourney: activeJourney,
+    searchSettings: RouteSearchSettings(
+      when: DateTime(2026, 9, 3, 10),
+      isArrival: false,
+    ),
+  );
+}
+
+RouteTab _activeJourneyTab({int index = 0}) =>
+    _routeTab(index: index, activeJourney: _pullJourney());
+
+RouteTab _candidatesTab({int index = 0}) => _routeTab(
+      index: index,
+      candidates: List.generate(
+        8,
+        (i) => _pullJourney(minute: i * 15, steps: 2),
+      ),
+    );
+
+Future<RoutesTabState> _pumpRoutesTab(
+  WidgetTester tester, {
+  Size size = const Size(420, 760),
+}) async {
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  final key = GlobalKey<RoutesTabState>();
+  await tester.pumpWidget(MaterialApp(
+    theme: createTheme(const Color(0xFF4F46E5), Brightness.light)
+        .copyWith(platform: TargetPlatform.android),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: RoutesTab(
+        key: key,
+        currentPosition: null,
+        onlyNahverkehr: false,
+        alwaysWakeMe: false,
+        signalLevel: 0,
+        onHighAccuracyTrackingChanged: (_) {},
+      ),
+    ),
+  ));
+  await tester.pump();
+  return key.currentState!;
+}
+
+final Finder _tabStripFinder = find.byWidgetPredicate(
+  (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
+);
+
+ScrollableState _tabStripScrollable(WidgetTester tester) => tester.state(
+      find.descendant(of: _tabStripFinder, matching: find.byType(Scrollable)),
+    );
+
+/// The scrollable behind whichever route view is on screen: the opened journey
+/// or the route candidates list.
+ScrollController _routeViewScrollController(WidgetTester tester) => tester
+    .widget<ListView>(find.descendant(
+      of: find.byType(RefreshIndicator),
+      matching: find.byType(ListView),
+    ))
+    .controller!;
+
+/// Presses down on an empty stretch of the fixed tab strip, to the right of the
+/// "+" button, so no chip or icon is involved in the gesture.
+Future<TestGesture> _startHeaderPull(
+  WidgetTester tester, {
+  required PointerDeviceKind kind,
+}) async {
+  final strip = tester.getRect(_tabStripFinder);
+  final plusButton = tester.getRect(find.byIcon(Icons.add_circle_outline));
+  final x = (plusButton.right + strip.right) / 2;
+  expect(x, greaterThan(plusButton.right),
+      reason: 'the strip needs empty space to press on');
+  return tester.startGesture(Offset(x, strip.center.dy), kind: kind);
+}
+
+Future<void> _pullBy(
+  WidgetTester tester,
+  TestGesture gesture,
+  double distance,
+) async {
+  for (var moved = 0.0; moved < distance; moved += 20) {
+    await gesture.moveBy(const Offset(0, 20));
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+}
+
+/// Lets the indicator finish its snap animation, which is when
+/// [RefreshIndicator] invokes `onRefresh`.
+Future<void> _settleIndicator(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
 
 void main() {
   test('saved journey identity survives realtime provider changes', () {
@@ -1005,5 +1152,182 @@ void main() {
   test('highlights only the changed realtime suffix', () {
     expect(realtimeChangedSuffixStart('10:42', '10:49'), 4);
     expect(realtimeChangedSuffixStart('10:42', '10:50'), 3);
+  });
+
+  group('pulling down on the fixed tab strip', () {
+    testWidgets('a mouse pull refreshes the opened journey in place',
+        (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs([_activeJourneyTab()]);
+      await tester.pump();
+
+      final controller = _routeViewScrollController(tester);
+      controller.jumpTo(600);
+      await tester.pump();
+      expect(controller.offset, 600);
+
+      final gesture = await _startHeaderPull(
+        tester,
+        kind: PointerDeviceKind.mouse,
+      );
+      await _pullBy(tester, gesture, 260);
+
+      // The stock circular indicator follows the pull, exactly like the
+      // in-list gesture does.
+      expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+
+      await gesture.up();
+      await _settleIndicator(tester);
+
+      expect(state.debugActiveJourneyRefreshCount, 1);
+      expect(controller.offset, 600,
+          reason: 'refreshing must not move the journey');
+    });
+
+    testWidgets('a touch pull refreshes the opened journey in place',
+        (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs([_activeJourneyTab()]);
+      await tester.pump();
+
+      final controller = _routeViewScrollController(tester);
+      controller.jumpTo(600);
+      await tester.pump();
+
+      final gesture = await _startHeaderPull(
+        tester,
+        kind: PointerDeviceKind.touch,
+      );
+      await _pullBy(tester, gesture, 280);
+
+      expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+
+      await gesture.up();
+      await _settleIndicator(tester);
+
+      expect(state.debugActiveJourneyRefreshCount, 1);
+      expect(controller.offset, 600);
+    });
+
+    testWidgets('a short pull cancels without refreshing', (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs([_activeJourneyTab()]);
+      await tester.pump();
+
+      final controller = _routeViewScrollController(tester);
+      controller.jumpTo(600);
+      await tester.pump();
+
+      final gesture = await _startHeaderPull(
+        tester,
+        kind: PointerDeviceKind.mouse,
+      );
+      await _pullBy(tester, gesture, 60);
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(state.debugActiveJourneyRefreshCount, 0);
+      expect(find.byType(RefreshProgressIndicator), findsNothing);
+      expect(controller.offset, 600);
+    });
+
+    testWidgets('the pull refreshes the route candidates view too',
+        (tester) async {
+      // The results cards need the wider phone layout the route results view
+      // is designed for.
+      final state = await _pumpRoutesTab(tester, size: const Size(500, 844));
+      state.debugOpenRouteTabs([_candidatesTab()]);
+      await tester.pump();
+
+      final controller = _routeViewScrollController(tester);
+      controller.jumpTo(300);
+      await tester.pump();
+      expect(controller.offset, 300);
+
+      final gesture = await _startHeaderPull(
+        tester,
+        kind: PointerDeviceKind.mouse,
+      );
+      await _pullBy(tester, gesture, 300);
+
+      expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+
+      await gesture.up();
+      await _settleIndicator(tester);
+
+      expect(state.debugRouteResultsRefreshCount, 1);
+      expect(controller.offset, 300);
+    });
+
+    testWidgets('dragging the journey itself scrolls instead of refreshing',
+        (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs([_activeJourneyTab()]);
+      await tester.pump();
+
+      final controller = _routeViewScrollController(tester);
+      controller.jumpTo(600);
+      await tester.pump();
+
+      await tester.drag(find.byType(RefreshIndicator), const Offset(0, 240));
+      await tester.pumpAndSettle();
+
+      expect(controller.offset, lessThan(600));
+      expect(state.debugActiveJourneyRefreshCount, 0);
+      expect(find.byType(RefreshProgressIndicator), findsNothing);
+    });
+
+    testWidgets('the strip still scrolls sideways', (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs(
+        List.generate(6, (index) => _activeJourneyTab(index: index)),
+        activeId: 'tab-0',
+      );
+      await tester.pump();
+
+      final strip = _tabStripScrollable(tester);
+      expect(strip.position.maxScrollExtent, greaterThan(0));
+
+      await tester.drag(_tabStripFinder, const Offset(-160, 0));
+      await tester.pumpAndSettle();
+
+      expect(strip.position.pixels, greaterThan(0));
+      expect(state.debugActiveJourneyRefreshCount, 0);
+    });
+
+    testWidgets('selecting a chip and closing a tab still work',
+        (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs(
+        List.generate(2, (index) => _activeJourneyTab(index: index)),
+        activeId: 'tab-0',
+      );
+      await tester.pump();
+
+      // Selecting another chip switches the opened route.
+      await tester.tap(find.text('Destination 1').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Destination 1'), findsWidgets);
+
+      // Closing a tab removes its chip.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Destination 0'), findsNothing);
+
+      expect(state.debugActiveJourneyRefreshCount, 0);
+    });
+
+    testWidgets('the "+" button still opens the search view', (tester) async {
+      final state = await _pumpRoutesTab(tester);
+      state.debugOpenRouteTabs([_activeJourneyTab()]);
+      await tester.pump();
+      expect(find.byType(RefreshIndicator), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RefreshIndicator), findsNothing);
+      expect(state.debugActiveJourneyRefreshCount, 0);
+    });
   });
 }
