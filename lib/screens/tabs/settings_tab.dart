@@ -19,9 +19,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/transport_api.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
+import '../../models/joint_journey.dart';
 import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
 import '../../widgets/privacy_level_tutorial.dart';
+import '../../widgets/togetherness_slider.dart';
 
 @visibleForTesting
 String deleteAccountErrorMessage(
@@ -141,6 +143,8 @@ class _SettingsTabState extends State<SettingsTab> {
       Set<String>.from(TransportApi.defaultEnabledSources);
   String _alarmTriggerThreshold = '5%'; // NEW: '5%', '10%', or '500m'
   bool _advancedSettingsEnabledForDevice = false;
+  double _jointTogetherness =
+      JointJourneyPreferences.togethernessFor(JointJourneyIntent.balanced);
   int _advancedMinTransferTimeMinutes = _defaultAdvancedMinTransferTimeMinutes;
   int _advancedAdditionalTransferTimeMinutes =
       _defaultAdvancedAdditionalTransferTimeMinutes;
@@ -262,6 +266,13 @@ class _SettingsTabState extends State<SettingsTab> {
               TransportApi.advancedSettingsEnabledPreferenceKey,
             ) ??
             false;
+        _jointTogetherness = (prefs.getDouble(
+                  jointTogethernessPreferenceKey,
+                ) ??
+                JointJourneyPreferences.togethernessFor(
+                  JointJourneyIntent.balanced,
+                ))
+            .clamp(0.0, 1.0);
         final hasLegacyTransferComfort = prefs.containsKey(
           TransportApi.advancedTransferComfortPreferenceKey,
         );
@@ -456,8 +467,7 @@ class _SettingsTabState extends State<SettingsTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(AppLocalizations.of(context)!.customSoundRemoved)),
+            content: Text(AppLocalizations.of(context)!.customSoundRemoved)),
       );
     } catch (error) {
       if (!mounted) return;
@@ -598,6 +608,10 @@ class _SettingsTabState extends State<SettingsTab> {
 
   Future<void> _persistAdvancedSearchPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(
+      jointTogethernessPreferenceKey,
+      _jointTogetherness,
+    );
     await prefs.setInt(
       TransportApi.advancedMinTransferTimeMinutesPreferenceKey,
       _advancedMinTransferTimeMinutes,
@@ -659,6 +673,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
     if (SupabaseService.currentUser != null) {
       await SupabaseService.updateSettings({
+        jointTogethernessPreferenceKey: _jointTogetherness,
         TransportApi.advancedMinTransferTimeMinutesPreferenceKey:
             _advancedMinTransferTimeMinutes,
         TransportApi.advancedAdditionalTransferTimeMinutesPreferenceKey:
@@ -2540,8 +2555,7 @@ class _SettingsTabState extends State<SettingsTab> {
                                 .alertStopsBefore(_stopsBeforeAlarm.toString()),
                         style: TextStyle(
                             fontSize: 12, color: colors.textSecondary)),
-                    trailing: _buildSettingsDropdown<int>(
-                        context,
+                    trailing: _buildSettingsDropdown<int>(context,
                         value: _stopsBeforeAlarm,
                         items: [
                           DropdownMenuItem(
@@ -2574,8 +2588,7 @@ class _SettingsTabState extends State<SettingsTab> {
                                 : AppLocalizations.of(context)!.fromTarget),
                         style: TextStyle(
                             fontSize: 12, color: colors.textSecondary)),
-                    trailing: _buildSettingsDropdown<String>(
-                        context,
+                    trailing: _buildSettingsDropdown<String>(context,
                         value: _alarmTriggerThreshold,
                         items: [
                           DropdownMenuItem(
@@ -2726,8 +2739,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 ListTile(
                     title: Text(AppLocalizations.of(context)!.alarmPattern,
                         style: TextStyle(color: colors.textPrimary)),
-                    trailing: _buildSettingsDropdown<String>(
-                        context,
+                    trailing: _buildSettingsDropdown<String>(context,
                         value: _vibrationPattern,
                         items: const [
                           DropdownMenuItem(
@@ -2760,13 +2772,12 @@ class _SettingsTabState extends State<SettingsTab> {
                               value: 'titan', child: Text("Attack on Titan")),
                           DropdownMenuItem(
                               value: 'bebop', child: Text("Cowboy Bebop")),
-                        ],
-                        onChanged: (val) async {
-                          if (val == null) return;
-                          setState(() => _vibrationPattern = val);
-                          await _persistVibrationSettings();
-                          _testVibration();
-                        })),
+                        ], onChanged: (val) async {
+                      if (val == null) return;
+                      setState(() => _vibrationPattern = val);
+                      await _persistVibrationSettings();
+                      _testVibration();
+                    })),
                 if (defaultTargetPlatform != TargetPlatform.iOS)
                   ListTile(
                       title: Text(
@@ -3068,6 +3079,26 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 const SizedBox(height: 8),
                 _buildSection(context, [
+                  ListTile(
+                    key: const ValueKey('joint-togetherness-setting'),
+                    title: Text(
+                      AppLocalizations.of(context)!.planJourneyTogetherBalance,
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: TogethernessSlider(
+                      value: _jointTogetherness,
+                      german: isGerman,
+                      showSummary: false,
+                      onChanged: (value) {
+                        setState(() => _jointTogetherness = value);
+                      },
+                      onChangeEnd: (_) async {
+                        await _persistAdvancedSearchPreferences();
+                        SupabaseService.settingsRefreshNotifier.value++;
+                      },
+                    ),
+                  ),
+                  Divider(color: colors.divider),
                   ListTile(
                     title: Text(
                       isGerman

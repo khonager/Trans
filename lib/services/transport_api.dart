@@ -1402,6 +1402,18 @@ class TransportApi {
           equivalentTokens.any(typeTokens.contains) ||
           equivalentTokens.any(countryTokens.contains);
       final weakRegionMatch = equivalentTokens.any(regionTokens.contains);
+      // Only consulted once the exact tiers miss, so a clean query never pays
+      // for the edit-distance walk.
+      bool typoNameMatch() => equivalentTokens.any(
+            (variant) => nameTokens.any(
+              (nameToken) => _tokensDifferByTypo(nameToken, variant),
+            ),
+          );
+      bool typoCityMatch() => equivalentTokens.any(
+            (variant) => cityTokens.any(
+              (cityToken) => _tokensDifferByTypo(cityToken, variant),
+            ),
+          );
 
       if (exactNameMatch) {
         matchedQueryTokens++;
@@ -1415,6 +1427,12 @@ class TransportApi {
       } else if (prefixCityMatch) {
         matchedQueryTokens++;
         score += 18;
+      } else if (typoNameMatch()) {
+        matchedQueryTokens++;
+        score += 38;
+      } else if (typoCityMatch()) {
+        matchedQueryTokens++;
+        score += 28;
       } else if (categoryMatch) {
         matchedQueryTokens++;
         score += 10;
@@ -1427,12 +1445,16 @@ class TransportApi {
       score += 75;
     }
 
+    // The type bonus stays modest unless the query actually asks for a stop.
+    // A full-strength boost outweighs matching an extra query token, so street
+    // stops named after their city ("Wiesbaden <X>-Straße") used to bury the
+    // address a query spelled out in full.
     if (isTransitStop) {
-      score += 105;
+      score += queryLooksLikeStation ? 105 : 40;
       if (queryLooksLikeStation) score += 55;
     } else {
       if (station.type == 'location') score -= 25;
-      if (station.type == 'address') score -= 55;
+      if (station.type == 'address') score -= queryLooksLikeStation ? 55 : 10;
       if (queryLooksLikeStation) {
         if (station.type == 'location') score -= 95;
         if (station.type == 'address') score -= 120;
@@ -1667,6 +1689,61 @@ class TransportApi {
     return {
       for (final token in tokens) token: _stationEquivalentTokens(token),
     };
+  }
+
+  /// Whether two tokens are the same word typed with a slipped keystroke.
+  ///
+  /// The edit budget scales with token length rather than being fixed: two
+  /// slips in a nine-letter city name still identify it, while the same budget
+  /// on a five-letter one collides with unrelated places. Below five characters
+  /// nothing is tolerated at all, since a single edit already turns plenty of
+  /// distinct names into each other ("mainz"/"main").
+  static bool _tokensDifferByTypo(String a, String b) {
+    if (a == b) return true;
+    final shortest = math.min(a.length, b.length);
+    if (shortest < 5) return false;
+    final budget = shortest >= 8 ? 2 : 1;
+    if ((a.length - b.length).abs() > budget) return false;
+    return _isWithinEditBudget(a, b, budget);
+  }
+
+  /// Optimal string alignment distance, answering only "does it fit the
+  /// budget?" so the table collapses to rolling rows and bails as soon as a
+  /// whole row exceeds it. Adjacent transpositions count as one edit, since
+  /// swapped letters are a common typing slip.
+  static bool _isWithinEditBudget(String a, String b, int budget) {
+    final lengthA = a.length;
+    final lengthB = b.length;
+    var beforePrevious = <int>[];
+    var previous = List<int>.generate(lengthB + 1, (index) => index);
+
+    for (var i = 1; i <= lengthA; i++) {
+      final current = List<int>.filled(lengthB + 1, 0);
+      current[0] = i;
+      var rowMinimum = current[0];
+
+      for (var j = 1; j <= lengthB; j++) {
+        final substitution = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+        var best = math.min(
+          math.min(current[j - 1] + 1, previous[j] + 1),
+          previous[j - 1] + substitution,
+        );
+        if (i > 1 &&
+            j > 1 &&
+            a.codeUnitAt(i - 1) == b.codeUnitAt(j - 2) &&
+            a.codeUnitAt(i - 2) == b.codeUnitAt(j - 1)) {
+          best = math.min(best, beforePrevious[j - 2] + 1);
+        }
+        current[j] = best;
+        if (best < rowMinimum) rowMinimum = best;
+      }
+
+      if (rowMinimum > budget) return false;
+      beforePrevious = previous;
+      previous = current;
+    }
+
+    return previous[lengthB] <= budget;
   }
 
   static Set<String> _stationEquivalentTokens(String token) {
@@ -2537,6 +2614,17 @@ class TransportApi {
   static String _bahnTime(DateTime time) =>
       '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}:00';
 
+  static const List<String> _bahnBoardTransportModes = [
+    'ICE',
+    'INTERCITY',
+    'REGIONAL',
+    'SBAHN',
+  ];
+
+  @visibleForTesting
+  static List<String> get bahnBoardTransportModesForTesting =>
+      _bahnBoardTransportModes;
+
   static Uri _getBahnWebUri(
     String endpoint,
     Map<String, List<String>> queryParameters,
@@ -2693,7 +2781,10 @@ class TransportApi {
         'datum': [_bahnDate(queryTime)],
         'zeit': [_bahnTime(queryTime)],
         'ortExtId': [evaNumber],
-        'verkehrsMittel[]': ['ICE', 'INTERCITY', 'REGIONAL'],
+        // S-Bahn platforms at large stations are often distinct three-digit
+        // underground tracks (for example 101-104 at Frankfurt Hbf). Without
+        // this category the fallback board lookup can never see an S2 event.
+        'verkehrsMittel[]': _bahnBoardTransportModes,
       }),
     );
     final data = json.decode(response.body);

@@ -17,6 +17,14 @@ class JointJourneyPlanner {
 
     final myBaseline = _soloBaseline(myJourneys, isArrival: isArrival);
     final friendBaseline = _soloBaseline(friendJourneys, isArrival: isArrival);
+    // Time both would already spend together by simply taking their own best
+    // route. Only what an option adds on top of that is worth a detour, which
+    // is what keeps the ranking meaningful for short and long journeys alike.
+    final baselineShared = _unionDuration(
+      _sharedSegments(myBaseline, friendBaseline),
+    );
+    final baselineSharedMinutes = baselineShared.inSeconds / 60;
+    final budget = math.max(0.05, preferences.detourMinutesPerSharedMinute);
     final options = <JointJourneyOption>[];
 
     for (final mine in myJourneys) {
@@ -51,7 +59,8 @@ class JointJourneyPlanner {
 
         final shared = _sharedSegments(mine, friend);
         if (shared.isEmpty) continue;
-        final sharedMinutes = _unionDuration(shared).inSeconds / 60;
+        final sharedDuration = _unionDuration(shared);
+        final sharedMinutes = sharedDuration.inSeconds / 60;
         if (sharedMinutes < 1) continue;
 
         final ride = _unionDuration(
@@ -63,39 +72,49 @@ class JointJourneyPlanner {
         final wait = _unionDuration(
           shared.where((segment) => segment.mode == SharedJourneyMode.wait),
         );
-        final score = _score(
-          preferences.intent,
-          sharedMinutes: sharedMinutes,
-          myExtra: myExtra,
-          friendExtra: friendExtra,
-          myTransfers: myTransfers,
-          friendTransfers: friendTransfers,
-        );
+
+        // Everything both people give up, expressed in travel minutes.
+        final detourMinutes = myExtra +
+            friendExtra +
+            (myTransfers + friendTransfers) *
+                preferences.transferPenaltyMinutes;
+        // A plan where one person carries the whole detour is worth less than
+        // the same total split evenly.
+        final unfairness =
+            (myExtra - friendExtra).abs() * preferences.unfairnessPenaltyWeight;
+        final gain = sharedMinutes - baselineSharedMinutes;
+        final net = gain - (detourMinutes + unfairness) / budget;
+
+        // Options that cost nothing stay in the list even when they only match
+        // the baseline: they are what the pair gets for free.
+        if (detourMinutes > 0 && net <= 0) continue;
 
         options.add(JointJourneyOption(
           myJourney: mine,
           friendJourney: friend,
           sharedSegments: shared,
-          sharedDuration: _unionDuration(shared),
+          sharedDuration: sharedDuration,
           sharedRideDuration: ride,
           sharedWalkDuration: walk,
           sharedWaitDuration: wait,
+          baselineSharedDuration: baselineShared,
           myExtraMinutes: myExtra,
           friendExtraMinutes: friendExtra,
           myExtraTransfers: myTransfers,
           friendExtraTransfers: friendTransfers,
-          score: score,
+          detourMinutes: detourMinutes,
+          sharedGainMinutes: gain,
+          netTogetherMinutes: net,
         ));
       }
     }
 
     options.sort((a, b) {
-      final byScore = b.score.compareTo(a.score);
-      if (byScore != 0) return byScore;
+      final byNet = b.netTogetherMinutes.compareTo(a.netTogetherMinutes);
+      if (byNet != 0) return byNet;
       final byShared = b.sharedDuration.compareTo(a.sharedDuration);
       if (byShared != 0) return byShared;
-      return (a.myExtraMinutes + a.friendExtraMinutes)
-          .compareTo(b.myExtraMinutes + b.friendExtraMinutes);
+      return a.detourMinutes.compareTo(b.detourMinutes);
     });
 
     final deduped = <JointJourneyOption>[];
@@ -109,6 +128,79 @@ class JointJourneyPlanner {
     }
     return deduped;
   }
+
+  /// Ranks at the given window and, when that shows nothing new, keeps
+  /// stretching the budget over the same journeys until it does.
+  ///
+  /// Nothing here touches the network: it only re-scores journeys that were
+  /// already fetched. When even the widest budget cannot improve on
+  /// [previousOptions], the outcome says more departures are needed.
+  static JointSearchOutcome rankProgressively({
+    required List<Journey> myJourneys,
+    required List<Journey> friendJourneys,
+    required JointSearchWindow window,
+    List<JointJourneyOption> previousOptions = const [],
+    bool isArrival = false,
+    int limit = 12,
+  }) {
+    var current = window;
+    var options = rank(
+      myJourneys: myJourneys,
+      friendJourneys: friendJourneys,
+      preferences: current.preferences,
+      isArrival: isArrival,
+      limit: limit,
+    );
+    if (_improvesOn(options, previousOptions)) {
+      return JointSearchOutcome(
+        options: options,
+        window: current,
+        needsMoreDepartures: false,
+      );
+    }
+
+    while (current.canWidenBudget) {
+      current = current.widened();
+      final widened = rank(
+        myJourneys: myJourneys,
+        friendJourneys: friendJourneys,
+        preferences: current.preferences,
+        isArrival: isArrival,
+        limit: limit,
+      );
+      if (widened.length >= options.length) options = widened;
+      if (_improvesOn(widened, previousOptions)) {
+        return JointSearchOutcome(
+          options: widened,
+          window: current,
+          needsMoreDepartures: false,
+        );
+      }
+    }
+
+    return JointSearchOutcome(
+      options: options,
+      window: current,
+      needsMoreDepartures: true,
+    );
+  }
+
+  /// More options, or more time together than before, counts as progress.
+  static bool _improvesOn(
+    List<JointJourneyOption> candidates,
+    List<JointJourneyOption> previous,
+  ) {
+    if (candidates.isEmpty) return false;
+    if (previous.isEmpty) return true;
+    if (candidates.length > previous.length) return true;
+    return _bestSharedSeconds(candidates) > _bestSharedSeconds(previous);
+  }
+
+  static int _bestSharedSeconds(List<JointJourneyOption> options) =>
+      options.fold<int>(
+        0,
+        (best, option) => math.max(best, option.sharedDuration.inSeconds),
+      );
 
   static Journey _soloBaseline(
     List<Journey> journeys, {
@@ -140,35 +232,6 @@ class JointJourneyPlanner {
         ? baseline.departure.difference(candidate.departure)
         : candidate.arrival.difference(baseline.arrival);
     return math.max(0, difference.inMinutes);
-  }
-
-  static double _score(
-    JointJourneyIntent intent, {
-    required double sharedMinutes,
-    required int myExtra,
-    required int friendExtra,
-    required int myTransfers,
-    required int friendTransfers,
-  }) {
-    final sharedWeight = switch (intent) {
-      JointJourneyIntent.fast => 0.9,
-      JointJourneyIntent.balanced => 1.6,
-      JointJourneyIntent.together => 2.4,
-    };
-    final detourWeight = switch (intent) {
-      JointJourneyIntent.fast => 1.5,
-      JointJourneyIntent.balanced => 1.0,
-      JointJourneyIntent.together => 0.7,
-    };
-    final usefulShared =
-        math.min(sharedMinutes, 45) + math.max(0, sharedMinutes - 45) * 0.35;
-    final detourSum = myExtra + friendExtra;
-    final unfairness = (myExtra - friendExtra).abs();
-    final transferCost = (myTransfers + friendTransfers) * 7;
-    return usefulShared * sharedWeight -
-        detourSum * detourWeight -
-        unfairness * 0.3 -
-        transferCost;
   }
 
   static List<SharedJourneySegment> _sharedSegments(

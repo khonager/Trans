@@ -12,6 +12,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/joint_journey.dart';
+import 'package:trans/models/joint_plan_friend.dart';
 import 'package:trans/models/favorite.dart';
 import 'package:trans/services/joint_journey_planner.dart';
 import 'package:trans/services/transport_api.dart';
@@ -27,6 +28,7 @@ import 'package:trans/services/wake_alarm_preview_player.dart';
 import 'package:trans/services/wake_alarm_settings.dart';
 import 'package:trans/utils/favorite_icons.dart';
 import 'package:trans/widgets/chat_sheet.dart';
+import 'package:trans/widgets/joint_friend_chips.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/widgets/running_border.dart';
 import 'package:trans/config/app_theme.dart';
@@ -43,7 +45,30 @@ import 'route_results_view.dart';
 const int _activeJourneyRefreshWindowSize = 20;
 const int _routeLoadMoreResultCount = 30;
 const int _routeLoadEarlierResultCount = 16;
+
+/// Departures fetched per person for one "look further" step. Deliberately
+/// small: two people means two requests per press.
+const int _jointExpansionResultCount = 12;
 const String _routeSortOrderPreferenceKey = 'route_results_sort_order';
+
+/// Returns the stable saved identity when a journey originated from storage.
+/// Provider payloads and realtime times are only used for journeys which have
+/// not yet been associated with a persisted saved entry.
+@visibleForTesting
+String savedJourneyConnectionKeyFor({
+  required Journey journey,
+  required Station from,
+  required Station to,
+}) {
+  return journey.savedConnectionKey ??
+      SearchHistoryManager.buildSavedJourneyConnectionKey(
+        from: from,
+        to: to,
+        departure: journey.plannedDeparture ?? journey.departure,
+        arrival: journey.plannedArrival ?? journey.arrival,
+        journeyData: journey.rawSource,
+      );
+}
 
 enum RouteHistoryView { frequent, recent }
 
@@ -65,16 +90,187 @@ class _RouteSearchDefaults {
 
 class _JointRouteContext {
   final List<JointJourneyOption> options;
-  final String friendId;
+
+  /// Null when the companion's start was typed in rather than picked from a
+  /// friend who shares a location, which is the only case that can be shared
+  /// back into a chat.
+  final String? friendId;
   final String friendName;
   final String destinationName;
+  final JointSearchWindow window;
+
+  // Everything needed to look further without asking the user again.
+  final Station myOrigin;
+  final Station friendOrigin;
+  final Station destination;
+  final RouteSearchSettings searchSettings;
+  final List<Journey> myJourneys;
+  final List<Journey> friendJourneys;
+  final bool isExpanding;
+
+  /// True once neither a wider budget nor more departures can add anything.
+  final bool exhausted;
 
   const _JointRouteContext({
     required this.options,
     required this.friendId,
     required this.friendName,
     required this.destinationName,
+    required this.window,
+    required this.myOrigin,
+    required this.friendOrigin,
+    required this.destination,
+    required this.searchSettings,
+    required this.myJourneys,
+    required this.friendJourneys,
+    this.isExpanding = false,
+    this.exhausted = false,
   });
+
+  bool get canExpand => !exhausted && window.canExpand;
+
+  _JointRouteContext copyWith({
+    List<JointJourneyOption>? options,
+    JointSearchWindow? window,
+    List<Journey>? myJourneys,
+    List<Journey>? friendJourneys,
+    bool? isExpanding,
+    bool? exhausted,
+  }) {
+    return _JointRouteContext(
+      options: options ?? this.options,
+      friendId: friendId,
+      friendName: friendName,
+      destinationName: destinationName,
+      window: window ?? this.window,
+      myOrigin: myOrigin,
+      friendOrigin: friendOrigin,
+      destination: destination,
+      searchSettings: searchSettings,
+      myJourneys: myJourneys ?? this.myJourneys,
+      friendJourneys: friendJourneys ?? this.friendJourneys,
+      isExpanding: isExpanding ?? this.isExpanding,
+      exhausted: exhausted ?? this.exhausted,
+    );
+  }
+}
+
+/// Identity of a journey inside a candidate key, exposed for tests that build
+/// the same keys the detection suppression list uses.
+@visibleForTesting
+String journeyListKeyForTesting(Journey journey) => _journeyListKey(journey);
+
+/// The journeys the app may consider the user to be travelling on.
+///
+/// Tabs holding somebody else's route — a companion's half of a joint plan, a
+/// route a friend sent — are skipped outright, so a foreign journey can never
+/// be detected or published as the user's own presence. What is left is sorted
+/// by how much it says about intent: the journey the user opened beats one they
+/// merely have in a result list.
+///
+/// The same journey can sit in several places; it is kept once, under its
+/// strongest source, so duplicates cannot split the confidence between them.
+@visibleForTesting
+List<JourneyDetectionCandidate> journeyDetectionCandidates({
+  required Iterable<RouteTab> tabs,
+  Iterable<JourneyDetectionCandidate> savedCandidates = const [],
+  Set<String> suppressedKeys = const <String>{},
+}) {
+  final byJourney = <String, JourneyDetectionCandidate>{};
+
+  void offer(JourneyDetectionCandidate candidate) {
+    if (suppressedKeys.contains(candidate.key)) return;
+    final journeyKey = _journeyListKey(candidate.journey);
+    final existing = byJourney[journeyKey];
+    if (existing != null &&
+        existing.source.confidenceWeight >= candidate.source.confidenceWeight) {
+      return;
+    }
+    byJourney[journeyKey] = candidate;
+  }
+
+  for (final tab in tabs) {
+    if (tab.isCompanionRoute) continue;
+    final destinationName = tab.destination.name;
+
+    JourneyDetectionCandidate build(
+      Journey journey,
+      JourneyDetectionSource source,
+    ) =>
+        JourneyDetectionCandidate(
+          key: '${tab.id}:${_journeyListKey(journey)}',
+          journey: journey,
+          source: source,
+          destinationName: destinationName,
+          tabId: tab.id,
+        );
+
+    final active = tab.activeJourney;
+    if (active != null) {
+      offer(build(active, JourneyDetectionSource.selected));
+    }
+    for (final journey in tab.stack) {
+      offer(build(journey, JourneyDetectionSource.opened));
+    }
+    for (final journey in tab.candidates ?? const <Journey>[]) {
+      offer(build(journey, JourneyDetectionSource.searchResult));
+    }
+  }
+
+  for (final candidate in savedCandidates) {
+    offer(candidate);
+  }
+
+  return byJourney.values.toList();
+}
+
+/// Saved connections as detection candidates, so a journey the user saved is
+/// recognised even when no tab is open for it.
+@visibleForTesting
+List<JourneyDetectionCandidate> savedJourneyDetectionCandidates(
+  List<Map<String, dynamic>> savedJourneys,
+  Journey? Function(Map<String, dynamic> rawJourney, String destinationName)
+      rehydrate,
+) {
+  final candidates = <JourneyDetectionCandidate>[];
+  for (final entry in savedJourneys) {
+    final rawJourney = entry['journey'];
+    final destination = entry['to'];
+    if (rawJourney is! Map || destination is! Map) continue;
+    final destinationName = destination['name']?.toString();
+    if (destinationName == null || destinationName.isEmpty) continue;
+
+    final journey = rehydrate(
+      Map<String, dynamic>.from(rawJourney),
+      destinationName,
+    );
+    if (journey == null) continue;
+
+    final connectionKey = entry['connectionKey']?.toString();
+    candidates.add(JourneyDetectionCandidate(
+      key: 'saved:${connectionKey ?? _journeyListKey(journey)}',
+      journey: journey,
+      source: JourneyDetectionSource.saved,
+      destinationName: destinationName,
+    ));
+  }
+  return candidates;
+}
+
+/// Whether the search button can start a search with the inputs at hand.
+///
+/// Planning together needs one extra piece of information — where the
+/// companion starts — and that is the only thing joint mode adds to the
+/// regular requirements.
+@visibleForTesting
+bool canStartRouteSearch({
+  required bool hasOrigin,
+  required bool hasDestination,
+  required bool jointPlanningEnabled,
+  required bool hasCompanionOrigin,
+}) {
+  if (!hasOrigin || !hasDestination) return false;
+  return !jointPlanningEnabled || hasCompanionOrigin;
 }
 
 @visibleForTesting
@@ -272,6 +468,60 @@ bool sameTransitStationForTesting(
   String? rightName,
 ) =>
     _sameTransitStation(leftId, leftName, rightId, rightName);
+
+/// Returns the live platform change surrounding a wait step.
+///
+/// Transfer instructions are initially built from the journey payload, but a
+/// later realtime refresh can add platforms to the neighbouring ride steps.
+/// Deriving this small piece of display state from those rides prevents the
+/// transfer card from continuing to say only "Wait" after both tracks are
+/// already visible elsewhere on screen.
+@visibleForTesting
+({String fromPlatform, String toPlatform})? transferPlatformChangeForStep(
+  List<JourneyStep> steps,
+  int stepIndex,
+) {
+  if (stepIndex <= 0 || stepIndex >= steps.length - 1) return null;
+  if (steps[stepIndex].type != 'wait') return null;
+
+  JourneyStep? previousRide;
+  for (var index = stepIndex - 1; index >= 0; index--) {
+    if (steps[index].type == 'ride') {
+      previousRide = steps[index];
+      break;
+    }
+  }
+
+  JourneyStep? nextRide;
+  for (var index = stepIndex + 1; index < steps.length; index++) {
+    if (steps[index].type == 'ride') {
+      nextRide = steps[index];
+      break;
+    }
+  }
+
+  if (previousRide == null || nextRide == null) return null;
+  if (!_sameTransitStation(
+    previousRide.destinationStationId,
+    previousRide.destinationName,
+    nextRide.startStationId,
+    nextRide.startStationName,
+  )) {
+    return null;
+  }
+
+  final fromPlatform = previousRide.arrivalPlatform?.trim();
+  final toPlatform = nextRide.platform?.trim();
+  if (fromPlatform == null ||
+      fromPlatform.isEmpty ||
+      toPlatform == null ||
+      toPlatform.isEmpty ||
+      fromPlatform.toLowerCase() == toPlatform.toLowerCase()) {
+    return null;
+  }
+
+  return (fromPlatform: fromPlatform, toPlatform: toPlatform);
+}
 
 bool _looksLikeOpaqueStopCode(String label) {
   final lower = label.toLowerCase();
@@ -513,6 +763,112 @@ String compactSavedRouteLabel(String fromName, String toName) {
 
 const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
 const int _savedRouteStatusDetailMaxLength = 38;
+const int _savedRouteTightConnectionMinutes = 3;
+const String _savedRouteHealthPreferenceKey =
+    'saved_route_notification_health_v1';
+
+enum SavedRouteHealthState { normal, delayed, tightConnection, unavailable }
+
+class SavedRouteHealth {
+  final SavedRouteHealthState state;
+  final int maxDelayMinutes;
+  final int? shortestTransferMinutes;
+
+  const SavedRouteHealth({
+    required this.state,
+    this.maxDelayMinutes = 0,
+    this.shortestTransferMinutes,
+  });
+}
+
+enum SavedRouteNotificationAction { none, silentUpdate, alert }
+
+/// Reduces frequently changing realtime fields to the route conditions that
+/// are useful enough to interrupt the traveller.
+@visibleForTesting
+SavedRouteHealth savedRouteHealthForJourney(
+  Journey journey, {
+  bool stillPossible = true,
+}) {
+  if (!stillPossible) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  final rides = journey.steps.where((step) => step.type == 'ride').toList();
+  if (rides.any((ride) => ride.isCancelled)) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  var maxDelayMinutes = 0;
+  for (final ride in rides) {
+    maxDelayMinutes = max(
+      maxDelayMinutes,
+      max(ride.departureDelay ?? 0, ride.arrivalDelay ?? 0),
+    );
+  }
+
+  int? shortestTransferMinutes;
+  for (var index = 1; index < rides.length; index++) {
+    final previous = rides[index - 1];
+    final next = rides[index];
+    final previousArrival = previous.plannedArrival
+        ?.add(Duration(minutes: previous.arrivalDelay ?? 0));
+    final nextDeparture = next.plannedDeparture
+            ?.add(Duration(minutes: next.departureDelay ?? 0)) ??
+        next.dateTime;
+    if (previousArrival == null || nextDeparture == null) continue;
+
+    final transfer = nextDeparture.difference(previousArrival);
+    final transferMinutes = transfer.inMinutes;
+    if (transfer <= Duration.zero) {
+      return SavedRouteHealth(
+        state: SavedRouteHealthState.unavailable,
+        maxDelayMinutes: maxDelayMinutes,
+        shortestTransferMinutes: transferMinutes,
+      );
+    }
+    shortestTransferMinutes =
+        min(shortestTransferMinutes ?? transferMinutes, transferMinutes);
+  }
+
+  if (shortestTransferMinutes != null &&
+      shortestTransferMinutes <= _savedRouteTightConnectionMinutes) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.tightConnection,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  if (maxDelayMinutes > 0) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.delayed,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  return SavedRouteHealth(
+    state: SavedRouteHealthState.normal,
+    shortestTransferMinutes: shortestTransferMinutes,
+  );
+}
+
+@visibleForTesting
+SavedRouteNotificationAction savedRouteNotificationAction({
+  required SavedRouteHealthState? previous,
+  required SavedRouteHealthState current,
+  required bool realtimeChanged,
+}) {
+  if (previous == null) {
+    return current == SavedRouteHealthState.normal
+        ? SavedRouteNotificationAction.none
+        : SavedRouteNotificationAction.alert;
+  }
+  if (previous != current) return SavedRouteNotificationAction.alert;
+  if (current != SavedRouteHealthState.normal && realtimeChanged) {
+    return SavedRouteNotificationAction.silentUpdate;
+  }
+  return SavedRouteNotificationAction.none;
+}
 
 @visibleForTesting
 int savedRouteStatusNotificationIdForKey(String routeKey) {
@@ -949,6 +1305,24 @@ bool _isSameJourneyEntry(Journey a, Journey b) {
 bool isSameJourneyEntryForTesting(Journey a, Journey b) =>
     _isSameJourneyEntry(a, b);
 
+List<Journey> _stackWithJourneyEntry(
+  Iterable<Journey> stack,
+  Journey journey,
+) {
+  final updated = List<Journey>.from(stack);
+  if (!updated.any((existing) => _isSameJourneyEntry(existing, journey))) {
+    updated.add(journey);
+  }
+  return updated;
+}
+
+@visibleForTesting
+List<Journey> stackWithJourneyEntryForTesting(
+  Iterable<Journey> stack,
+  Journey journey,
+) =>
+    _stackWithJourneyEntry(stack, journey);
+
 bool _journeysLikelySameRoute(Journey a, Journey b) {
   final depA = a.plannedDeparture ?? a.departure;
   final depB = b.plannedDeparture ?? b.departure;
@@ -978,6 +1352,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   if (incomingScore == existingScore &&
@@ -985,6 +1360,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   return existing;
@@ -1031,10 +1407,23 @@ Journey _mergeJourneyWithFreshRealtime(
 }) {
   final freshRideSteps =
       incoming.steps.where((step) => step.type == 'ride').toList();
+  final hasMatchingStepShape = existing.steps.length == incoming.steps.length &&
+      List.generate(
+        existing.steps.length,
+        (index) => existing.steps[index].type == incoming.steps[index].type,
+      ).every((matches) => matches);
   var matchedRide = false;
 
-  final mergedSteps = existing.steps.map((step) {
-    if (step.type != 'ride') return step;
+  final mergedSteps = existing.steps.asMap().entries.map((entry) {
+    final index = entry.key;
+    final step = entry.value;
+    // When the provider returned the same itinerary shape, its rebuilt
+    // transfer step contains instructions based on the newly supplied
+    // platforms. Keeping the stale non-ride step is what previously left a
+    // "Wait" card between two rides showing different tracks.
+    if (step.type != 'ride') {
+      return hasMatchingStepShape ? incoming.steps[index] : step;
+    }
 
     JourneyStep? fresh;
     for (final candidate in freshRideSteps) {
@@ -1159,19 +1548,23 @@ class RoutesTab extends StatefulWidget {
   State<RoutesTab> createState() => RoutesTabState();
 }
 
-class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
+class RoutesTabState extends State<RoutesTab>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
 
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
+  final TextEditingController _friendOriginController = TextEditingController();
 
   final FocusNode _fromFocusNode = FocusNode();
   final FocusNode _toFocusNode = FocusNode();
+  final FocusNode _friendOriginFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final ScrollController _suggestionsScrollController = ScrollController();
   final GlobalKey _fromFieldKey = GlobalKey();
   final GlobalKey _toFieldKey = GlobalKey();
+  final GlobalKey _friendFieldKey = GlobalKey();
 
   Station? _fromStation;
   Station? _toStation;
@@ -1224,12 +1617,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _activeJourneyRefreshTimer;
   DateTime? _lastActiveJourneyRefresh;
   JourneyDetectionMatch? _detectedJourney;
-  String? _detectedJourneyTabId;
   String? _detectedDestinationName;
   String? _pendingDetectionKey;
   int _pendingDetectionSamples = 0;
   int _detectedMismatchSamples = 0;
   final Set<String> _suppressedDetectionKeys = <String>{};
+  List<JourneyDetectionCandidate> _savedDetectionCandidates =
+      const <JourneyDetectionCandidate>[];
   int _maximumEffectiveSignalLevel = 0;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
@@ -1254,10 +1648,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
+  final Map<String, SavedRouteHealthState> _savedJourneyLastHealthStates =
+      <String, SavedRouteHealthState>{};
   final Set<String> _savingRouteIds = <String>{};
   final Map<String, ScrollController> _routeResultsScrollControllers =
       <String, ScrollController>{};
+  final Map<String, ScrollController> _activeJourneyScrollControllers =
+      <String, ScrollController>{};
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
+
+  /// Scroll position the fixed tab strip is currently pulling on, or null when
+  /// no header pull is in flight.
+  ScrollPosition? _tabBarPullPosition;
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
   final Map<String, _JointRouteContext> _jointRouteContexts =
@@ -1268,11 +1670,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   DateTime? _lastSavedJourneyStatusCheck;
   RouteHistoryView _historyView = RouteHistoryView.frequent;
   bool _jointPlanningEnabled = false;
-  double _jointHeaderProgress = 0;
-  bool _isJointHeaderDragging = false;
-  List<Map<String, dynamic>> _jointPlanningFriends = [];
-  String? _selectedJointFriendId;
-  JointJourneyIntent _jointJourneyIntent = JointJourneyIntent.balanced;
+  late final AnimationController _jointHeaderController;
+  double _jointHeaderDragStartGlobalX = 0;
+  double _jointHeaderDragStartProgress = 0;
+
+  /// Friends who currently share a location and can be picked in one tap.
+  List<JointPlanFriend> _jointPlanningFriends = [];
+
+  /// Set when the companion's start came from a friend rather than free text.
+  JointPlanFriend? _selectedJointFriend;
+  Station? _friendOriginStation;
+  double _jointTogetherness =
+      JointJourneyPreferences.togethernessFor(JointJourneyIntent.balanced);
 
   Position? get _effectiveCurrentPosition =>
       _manualCurrentPosition ?? widget.currentPosition;
@@ -1302,6 +1711,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _jointHeaderController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
     _fetchSuggestions(forceHistory: true);
     _loadFavorites();
     _loadDeviceRoutePreferences();
@@ -1311,6 +1724,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _fromFocusNode.addListener(_onFocusChange);
     _toFocusNode.addListener(_onFocusChange);
+    _friendOriginFocusNode.addListener(_onFocusChange);
     _resolveCurrentAddress();
     _loadHistoryData();
     _loadJointPlanningFriends();
@@ -1328,21 +1742,30 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Future<void> _loadJointPlanningFriends() async {
     try {
       final friends = await SupabaseService.getFriends();
-      final available = friends
-          .where((friend) =>
-              (friend['visible_privacy_level'] as int? ?? 0) >= 7 &&
-              friend['latitude'] is num &&
-              friend['longitude'] is num)
-          .toList();
+      final selectable = JointPlanFriend.selectableFrom(friends);
       if (!mounted) return;
       setState(() {
-        _jointPlanningFriends = available;
-        if (_selectedJointFriendId == null && available.isNotEmpty) {
-          _selectedJointFriendId = available.first['id']?.toString();
-        } else if (!available.any(
-            (friend) => friend['id']?.toString() == _selectedJointFriendId)) {
-          _selectedJointFriendId =
-              available.isEmpty ? null : available.first['id']?.toString();
+        _jointPlanningFriends = selectable;
+        final selected = _selectedJointFriend;
+        if (selected == null) return;
+        JointPlanFriend? refreshed;
+        for (final friend in selectable) {
+          if (friend.id == selected.id) {
+            refreshed = friend;
+            break;
+          }
+        }
+        if (refreshed == null) {
+          // They stopped sharing; the start they contributed stays usable, but
+          // it can no longer be refreshed.
+          _selectedJointFriend = null;
+          return;
+        }
+        _selectedJointFriend = refreshed;
+        // A friend on the move should not be planned from a position we
+        // already know is outdated.
+        if (_friendOriginStation?.id == refreshed.toOriginStation()?.id) {
+          _friendOriginStation = refreshed.toOriginStation();
         }
       });
     } catch (error, stackTrace) {
@@ -1355,24 +1778,73 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   JointJourneyPreferences get _jointJourneyPreferences =>
-      switch (_jointJourneyIntent) {
-        JointJourneyIntent.fast => const JointJourneyPreferences.fast(),
-        JointJourneyIntent.balanced => const JointJourneyPreferences.balanced(),
-        JointJourneyIntent.together => const JointJourneyPreferences.together(),
-      };
+      JointJourneyPreferences.fromTogetherness(_jointTogetherness);
 
+  List<JointPlanFriend> _matchingJointFriends(String query) =>
+      _jointPlanningFriends.where((friend) => friend.matches(query)).toList();
+
+  /// How old a friend's shared position is, in a full sentence. A position
+  /// without a timestamp says so instead of pretending to know.
+  String _friendLocationAgeNote(
+    JointPlanFriend friend, {
+    required bool german,
+  }) {
+    if (friend.locationAge() == null) {
+      return german
+          ? 'Für diesen Standort gibt es keine Zeitangabe.'
+          : 'There is no timestamp for this location.';
+    }
+    final label = JointFriendChips.freshnessLabel(friend, german: german);
+    return german
+        ? 'Dieser Standort wurde $label aktualisiert.'
+        : 'This location was last updated $label.';
+  }
+
+  /// Switches between the normal planner and the two-origin planner.
   void _setJointPlanningEnabled(bool enabled) {
     setState(() {
       _jointPlanningEnabled = enabled;
-      _jointHeaderProgress = enabled ? 1 : 0;
-      _isJointHeaderDragging = false;
+      if (!enabled && _activeSearchField == 'friend') {
+        _activeSearchField = '';
+        _suggestions = [];
+        _isSuggestionsLoading = false;
+      }
     });
+    unawaited(_jointHeaderController.animateTo(
+      enabled ? 1 : 0,
+      curve: Curves.easeOutCubic,
+    ));
     if (enabled) unawaited(_loadJointPlanningFriends());
   }
 
   Widget _buildPlanModeHeader(TransColors colors, {required bool isGerman}) {
+    final planStyle = TextStyle(
+      fontSize: 18,
+      fontWeight: FontWeight.bold,
+      color: colors.textPrimary,
+    );
+    final togetherStyle = TextStyle(
+      fontSize: 18,
+      fontWeight: FontWeight.bold,
+      color: colors.effectiveSeed,
+    );
+    final planText = AppLocalizations.of(context)!.planJourney;
+    final togetherText = isGerman ? ' zusammen' : ' Together';
+
     Widget glass({required bool moving, double progress = 0}) {
-      final icon = Container(
+      Widget glyph = Icon(Icons.search, color: colors.searchHeaderIcon);
+      // Only the glyph turns. Flipping the tinted square along with it made
+      // its edges read as a bright sliver that kept the untransformed width.
+      if (moving) {
+        glyph = Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.001)
+            ..rotateY(pi * progress),
+          child: glyph,
+        );
+      }
+      return Container(
         width: 40,
         height: 40,
         padding: const EdgeInsets.all(8),
@@ -1380,15 +1852,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           color: colors.searchHeaderIconBg,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Icon(Icons.search, color: colors.searchHeaderIcon),
-      );
-      if (!moving) return icon;
-      return Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.identity()
-          ..setEntry(3, 2, 0.001)
-          ..rotateY(pi * progress),
-        child: icon,
+        child: glyph,
       );
     }
 
@@ -1397,13 +1861,41 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       height: 42,
       child: LayoutBuilder(builder: (context, constraints) {
         final travel = max(1.0, constraints.maxWidth - 40);
-        return TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: _jointHeaderProgress),
-          duration: Duration(
-            milliseconds: _isJointHeaderDragging ? 35 : 240,
-          ),
-          curve: _isJointHeaderDragging ? Curves.linear : Curves.easeOutCubic,
-          builder: (context, progress, _) => Stack(
+        final textDirection = Directionality.of(context);
+        final textScaler = MediaQuery.textScalerOf(context);
+        // Text.rich paints its spans on top of the ambient default style, so
+        // the measurement has to start from that same style. Leaving it out
+        // dropped the theme's letter spacing and left the reveal a glyph short
+        // of the real end of Together.
+        final titleSpan = TextSpan(
+          style: DefaultTextStyle.of(context).style,
+          children: [
+            TextSpan(text: planText, style: planStyle),
+            TextSpan(text: togetherText, style: togetherStyle),
+          ],
+        );
+        // Measure the two runs as the single line they are painted as.
+        final titlePainter = TextPainter(
+          text: titleSpan,
+          textDirection: textDirection,
+          textScaler: textScaler,
+          maxLines: 1,
+        )..layout();
+        // A little slack for glyphs that paint past their advance width.
+        final intrinsicTitleWidth = titlePainter.width + 2;
+        // At the completed position the moving icon is the reveal boundary.
+        // Scale long/localized titles just enough to leave a small gap before
+        // that boundary rather than letting the text and handle drift apart.
+        final availableTitleWidth = max(1.0, travel - 56);
+        final titleScale = intrinsicTitleWidth <= availableTitleWidth
+            ? 1.0
+            : availableTitleWidth / intrinsicTitleWidth;
+        Widget buildHeader(double progress) {
+          final iconLeft = travel * progress;
+          final renderedTitleWidth = intrinsicTitleWidth * titleScale;
+          final revealedTitleWidth =
+              (iconLeft - 52).clamp(0.0, renderedTitleWidth).toDouble();
+          return Stack(
             clipBehavior: Clip.none,
             children: [
               Positioned(left: 0, top: 1, child: glass(moving: false)),
@@ -1411,47 +1903,53 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 left: 52,
                 top: 0,
                 bottom: 0,
-                right: 44,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
+                  child: Transform.scale(
+                    scale: titleScale,
                     alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          AppLocalizations.of(context)!.planJourney,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        ClipRect(
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            widthFactor: progress,
-                            child: Opacity(
-                              opacity: progress,
-                              child: Text(
-                                isGerman ? ' zusammen' : ' Together',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: colors.effectiveSeed,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      planText,
+                      key: const ValueKey('joint-plan-title-base'),
+                      style: planStyle,
                     ),
                   ),
                 ),
               ),
+              // Draw the complete title as one line and reveal it up to the
+              // moving icon. The always-visible Plan Journey layer beneath
+              // is identical, while Together now shares its exact baseline.
+              if (revealedTitleWidth > 0)
+                Positioned(
+                  left: 52,
+                  top: 0,
+                  bottom: 0,
+                  width: revealedTitleWidth,
+                  child: ClipRect(
+                    key: const ValueKey('joint-together-reveal'),
+                    child: OverflowBox(
+                      alignment: Alignment.centerLeft,
+                      minWidth: intrinsicTitleWidth,
+                      maxWidth: intrinsicTitleWidth,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Transform.scale(
+                          scale: titleScale,
+                          alignment: Alignment.centerLeft,
+                          child: Text.rich(
+                            key: const ValueKey('joint-plan-title-reveal'),
+                            titleSpan,
+                            maxLines: 1,
+                            softWrap: false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               Positioned(
-                left: travel * progress,
+                key: const ValueKey('joint-plan-handle-position'),
+                left: iconLeft,
                 top: 1,
                 child: Semantics(
                   button: true,
@@ -1467,17 +1965,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                     behavior: HitTestBehavior.opaque,
                     onTap: () =>
                         _setJointPlanningEnabled(!_jointPlanningEnabled),
-                    onHorizontalDragStart: (_) =>
-                        setState(() => _isJointHeaderDragging = true),
+                    onHorizontalDragStart: (details) {
+                      _jointHeaderController.stop();
+                      _jointHeaderDragStartGlobalX = details.globalPosition.dx;
+                      _jointHeaderDragStartProgress =
+                          _jointHeaderController.value;
+                    },
                     onHorizontalDragUpdate: (details) {
-                      setState(() {
-                        _jointHeaderProgress =
-                            (_jointHeaderProgress + details.delta.dx / travel)
-                                .clamp(0.0, 1.0);
-                      });
+                      _jointHeaderController.value =
+                          (_jointHeaderDragStartProgress +
+                                  (details.globalPosition.dx -
+                                          _jointHeaderDragStartGlobalX) /
+                                      travel)
+                              .clamp(0.0, 1.0);
                     },
                     onHorizontalDragEnd: (_) => _setJointPlanningEnabled(
-                      _jointHeaderProgress >= 0.45,
+                      _jointHeaderController.value >= 0.45,
                     ),
                     onHorizontalDragCancel: () =>
                         _setJointPlanningEnabled(_jointPlanningEnabled),
@@ -1486,7 +1989,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 ),
               ),
             ],
-          ),
+          );
+        }
+
+        return AnimatedBuilder(
+          animation: _jointHeaderController,
+          builder: (context, _) => buildHeader(_jointHeaderController.value),
         );
       }),
     );
@@ -1520,6 +2028,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           TransportApi.advancedBikeTogglePreferenceKey,
         ) ??
         false;
+    final jointTogetherness = (prefs.getDouble(
+              jointTogethernessPreferenceKey,
+            ) ??
+            JointJourneyPreferences.togethernessFor(
+              JointJourneyIntent.balanced,
+            ))
+        .clamp(0.0, 1.0)
+        .toDouble();
     final effectiveToggleEnabled = hasBikeModesConfigured && bikeToggleEnabled;
     if (!hasBikeModesConfigured && bikeToggleEnabled) {
       await prefs.setBool(TransportApi.advancedBikeTogglePreferenceKey, false);
@@ -1531,6 +2047,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       _alarmStopsBefore = alarmStopsBefore;
       _hasBikeModesConfiguredForDevice = hasBikeModesConfigured;
       _bikeSearchToggleEnabledForDevice = effectiveToggleEnabled;
+      _jointTogetherness = jointTogetherness;
       _routeResultsSortOrder = normalizedRouteSortOrder(
         savedSortOrder ?? defaultRouteSortOrder,
       );
@@ -1667,7 +2184,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       await _sharingGpsStream?.cancel();
       _sharingGpsStream = null;
       _detectedJourney = null;
-      _detectedJourneyTabId = null;
       _detectedDestinationName = null;
       await SupabaseService.clearPublishedJourney(keepLastLine: false);
       return;
@@ -1690,6 +2206,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     final recent = await SearchHistoryManager.getRecentJourneys();
     final saved = await SearchHistoryManager.getSavedJourneys();
+    await _restoreSavedJourneyHealthStates(saved);
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
@@ -1698,6 +2215,8 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _recentJourneys = recent;
         _savedJourneys = saved;
       });
+      _rebuildSavedDetectionCandidates();
+      unawaited(_updateJourneyDetectionMonitoring());
     }
     _syncSavedJourneyReminderTimers(saved);
     _syncSavedJourneyStatusMonitoring(saved);
@@ -1912,6 +2431,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         });
         _scrollFocusedFieldIntoViewIfNeeded();
       }
+    } else if (_friendOriginFocusNode.hasFocus) {
+      _focusDebounce?.cancel();
+      if (_activeSearchField != 'friend') {
+        setState(() {
+          _activeSearchField = 'friend';
+          _fetchSuggestions(forceHistory: _friendOriginController.text.isEmpty);
+        });
+        _scrollFocusedFieldIntoViewIfNeeded();
+      }
     } else {
       // We no longer clear suggestions on focus loss so users can interact with them after dismissing the keyboard.
       _focusDebounce?.cancel();
@@ -1937,13 +2465,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _jointHeaderController.dispose();
     _fromController.dispose();
     _toController.dispose();
+    _friendOriginController.dispose();
     _fromFocusNode.dispose();
     _toFocusNode.dispose();
+    _friendOriginFocusNode.dispose();
     _scrollController.dispose();
     _suggestionsScrollController.dispose();
     for (final controller in _routeResultsScrollControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _activeJourneyScrollControllers.values) {
       controller.dispose();
     }
     _debounce?.cancel();
@@ -1966,15 +2500,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Iterable<MapEntry<String, Journey>> _journeyDetectionCandidates() sync* {
-    for (final tab in _tabs) {
-      for (final journey in tab.candidates ?? const <Journey>[]) {
-        final key = '${tab.id}:${_journeyListKey(journey)}';
-        if (!_suppressedDetectionKeys.contains(key)) {
-          yield MapEntry(key, journey);
+  List<JourneyDetectionCandidate> _journeyDetectionCandidates() {
+    return journeyDetectionCandidates(
+      tabs: _tabs,
+      savedCandidates: _savedDetectionCandidates,
+      suppressedKeys: _suppressedDetectionKeys,
+    );
+  }
+
+  /// Saved journeys cost a full parse each, so they are rebuilt when the saved
+  /// list changes rather than on every position update.
+  void _rebuildSavedDetectionCandidates() {
+    _savedDetectionCandidates = savedJourneyDetectionCandidates(
+      _savedJourneys,
+      (rawJourney, destinationName) {
+        try {
+          return _createJourney(
+            rawJourney,
+            destinationNameOverride: destinationName,
+          );
+        } catch (_) {
+          // A saved entry from an older format is simply not a candidate.
+          return null;
         }
-      }
-    }
+      },
+    );
   }
 
   Future<void> _updateJourneyDetectionMonitoring() async {
@@ -1985,15 +2535,16 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         now.isAfter(detected.journey.arrival
             .add(JourneyDetectionService.arrivalGrace))) {
       _detectedJourney = null;
-      _detectedJourneyTabId = null;
       _detectedDestinationName = null;
       await SupabaseService.clearPublishedJourney();
     }
 
     final shouldMonitor = _detectedJourney != null ||
         _journeyDetectionCandidates().any(
-          (entry) =>
-              JourneyDetectionService.isInMonitoringWindow(entry.value, now),
+          (candidate) => JourneyDetectionService.isInMonitoringWindow(
+            candidate.journey,
+            now,
+          ),
         );
     if (!shouldMonitor) {
       await _sharingGpsStream?.cancel();
@@ -2075,13 +2626,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (_pendingDetectionSamples < 2) return;
       match = best;
       _detectedJourney = best;
-      _detectedJourneyTabId = best.key.split(':').first;
+      _detectedDestinationName = best.destinationName;
       _pendingDetectionKey = null;
       _pendingDetectionSamples = 0;
       _detectedMismatchSamples = 0;
     } else {
       final reranked = JourneyDetectionService.rankCandidates(
-        candidates: [MapEntry(match.key, match.journey)],
+        candidates: [match.candidate],
         now: now,
         latitude: position.latitude,
         longitude: position.longitude,
@@ -2100,7 +2651,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (_detectedMismatchSamples >= 3) {
         _suppressedDetectionKeys.add(match.key);
         _detectedJourney = null;
-        _detectedJourneyTabId = null;
         _detectedDestinationName = null;
         _detectedMismatchSamples = 0;
         await SupabaseService.clearPublishedJourney();
@@ -2109,15 +2659,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
     }
 
-    final tab = _tabs.cast<RouteTab?>().firstWhere(
-          (candidate) => candidate?.id == _detectedJourneyTabId,
-          orElse: () => null,
-        );
-    if (tab != null) {
-      _detectedDestinationName = tab.destination.name;
-    }
+    // The candidate carries its own destination, so a detected journey keeps
+    // publishing even after its tab is closed.
+    _detectedDestinationName = match.destinationName;
     final destinationName = _detectedDestinationName;
-    if (destinationName == null) return;
+    if (destinationName == null || destinationName.isEmpty) return;
     final currentLine = match.currentRide?.line;
     await SupabaseService.publishJourneyPresence({
       'journey_id': match.key,
@@ -2187,7 +2733,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     }
     if (_wasKeyboardVisible && !isVisible) {
       // Keyboard JUST closed
-      if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+      if (_fromFocusNode.hasFocus ||
+          _toFocusNode.hasFocus ||
+          _friendOriginFocusNode.hasFocus) {
         FocusScope.of(context).unfocus();
       }
     }
@@ -2195,7 +2743,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _scrollToTop() {
-    if (_fromFocusNode.hasFocus || _toFocusNode.hasFocus) {
+    if (_fromFocusNode.hasFocus ||
+        _toFocusNode.hasFocus ||
+        _friendOriginFocusNode.hasFocus) {
       _scrollFocusedFieldIntoViewIfNeeded();
       return;
     }
@@ -2212,11 +2762,19 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   /// Large viewports already have that room, so their scroll position is left
   /// untouched.
   void _scrollFocusedFieldIntoViewIfNeeded() {
-    final fieldKey = _fromFocusNode.hasFocus ? _fromFieldKey : _toFieldKey;
+    final fieldKey = _fromFocusNode.hasFocus
+        ? _fromFieldKey
+        : _friendOriginFocusNode.hasFocus
+            ? _friendFieldKey
+            : _toFieldKey;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
-      if (!_fromFocusNode.hasFocus && !_toFocusNode.hasFocus) return;
+      if (!_fromFocusNode.hasFocus &&
+          !_toFocusNode.hasFocus &&
+          !_friendOriginFocusNode.hasFocus) {
+        return;
+      }
 
       final fieldContext = fieldKey.currentContext;
       final viewportContext = _scrollController.position.context.storageContext;
@@ -3037,7 +3595,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       final history = await SearchHistoryManager.getHistory();
       if (mounted) {
         setState(() {
-          _suggestions = history;
+          // Friends who share a location head the list of the companion field,
+          // so tapping it is enough to see who can be picked.
+          _suggestions = <dynamic>[
+            if (_activeSearchField == 'friend') ..._friendOriginSuggestions(''),
+            ...history,
+          ];
           if (updateLoadingState) _isSuggestionsLoading = false;
         });
       }
@@ -3047,14 +3610,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       setState(() => _isSuggestionsLoading = true);
     }
     List<dynamic> results = [];
-    final query = (_activeSearchField == 'from'
-            ? _fromController.text
-            : _toController.text)
-        .trim();
-    if (query.isNotEmpty) {
-      final matchingFavs = _matchingFavoritesForQuery(query);
-      results.addAll(matchingFavs);
-      results.addAll(_matchingSharedFriendPlaces(query));
+    final query = _controllerForField(_activeSearchField).text.trim();
+    if (query.isNotEmpty || _activeSearchField == 'friend') {
+      results.addAll(_localMatchesForField(_activeSearchField, query));
     }
     final history = await SearchHistoryManager.getHistory();
     if (history.isNotEmpty) {
@@ -3093,6 +3651,28 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         .toList();
   }
 
+  TextEditingController _controllerForField(String field) => switch (field) {
+        'from' => _fromController,
+        'friend' => _friendOriginController,
+        _ => _toController,
+      };
+
+  /// Friends who share a location show up as places, so the companion's start
+  /// can be picked by typing their name just like any station.
+  List<Station> _friendOriginSuggestions(String query) {
+    return _matchingJointFriends(query)
+        .map((friend) => friend.toOriginStation())
+        .whereType<Station>()
+        .toList();
+  }
+
+  /// Matches that need no network round trip, in the order they are shown.
+  List<dynamic> _localMatchesForField(String field, String query) => <dynamic>[
+        if (field == 'friend') ..._friendOriginSuggestions(query),
+        ..._matchingFavoritesForQuery(query),
+        ..._matchingSharedFriendPlaces(query),
+      ];
+
   ({double? lat, double? lng}) _suggestionReferencePoint() {
     double? refLat;
     double? refLng;
@@ -3107,7 +3687,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         refLat = _effectiveCurrentPosition!.latitude;
         refLng = _effectiveCurrentPosition!.longitude;
       }
-    } else if (_activeSearchField == 'to') {
+    } else if (_activeSearchField == 'to' || _activeSearchField == 'friend') {
       if (_fromStation != null &&
           _fromStation!.latitude != null &&
           _fromStation!.longitude != null) {
@@ -3192,6 +3772,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           _isSuggestionsLoading = false;
         });
         return;
+      } else if (field == 'friend') {
+        setState(() {
+          _friendOriginStation = null;
+          _selectedJointFriend = null;
+          _isSuggestionsLoading = false;
+        });
+        return;
       }
       return;
     }
@@ -3200,14 +3787,14 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         _fromStation = null;
         _fromUsesCurrentLocation = _isCurrentLocationText(sanitizedQuery);
       });
+    } else if (field == 'friend') {
+      setState(() {
+        _friendOriginStation = null;
+        _selectedJointFriend = null;
+      });
     }
-    final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
-    final matchingSharedPlaces = _matchingSharedFriendPlaces(sanitizedQuery);
     setState(() {
-      _suggestions = <dynamic>[
-        ...matchingFavs,
-        ...matchingSharedPlaces,
-      ];
+      _suggestions = _localMatchesForField(field, sanitizedQuery);
       _isSuggestionsLoading = sanitizedQuery.length > 2;
     });
     if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -3229,7 +3816,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           refLat = _effectiveCurrentPosition!.latitude;
           refLng = _effectiveCurrentPosition!.longitude;
         }
-      } else if (field == 'to') {
+      } else if (field == 'to' || field == 'friend') {
         if (_fromStation != null &&
             _fromStation!.latitude != null &&
             _fromStation!.longitude != null) {
@@ -3249,14 +3836,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           limit: 60,
         );
         if (!mounted || requestToken != _suggestionRequestToken) return;
-        final matchingFavs = _matchingFavoritesForQuery(sanitizedQuery);
-        final matchingSharedPlaces =
-            _matchingSharedFriendPlaces(sanitizedQuery);
+        final localMatches = _localMatchesForField(field, sanitizedQuery);
         if (mounted) {
           setState(() {
-            if (apiResults.isEmpty &&
-                matchingFavs.isEmpty &&
-                matchingSharedPlaces.isEmpty) {
+            if (apiResults.isEmpty && localMatches.isEmpty) {
               // Show message if no results at all
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content:
@@ -3264,8 +3847,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   duration: const Duration(seconds: 2)));
             }
             _suggestions = <dynamic>[
-              ...matchingFavs,
-              ...matchingSharedPlaces,
+              ...localMatches,
               ...apiResults,
             ];
             _isSuggestionsLoading = false;
@@ -3293,6 +3875,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _selectStation(Station station) {
+    if (_activeSearchField == 'friend') {
+      _selectFriendOriginStation(station);
+      return;
+    }
     SearchHistoryManager.saveStation(station);
     setState(() {
       if (_activeSearchField == 'from') {
@@ -3313,6 +3899,32 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       }
       _suggestions = [];
       _activeSearchField = '';
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  /// A friend's live position is not a place worth keeping in history, so it
+  /// takes a separate path from the regular station selection.
+  void _selectFriendOriginStation(Station station) {
+    JointPlanFriend? friend;
+    final friendId = JointPlanFriend.friendIdFromStation(station);
+    if (friendId != null) {
+      for (final candidate in _jointPlanningFriends) {
+        if (candidate.id == friendId) {
+          friend = candidate;
+          break;
+        }
+      }
+    } else {
+      SearchHistoryManager.saveStation(station);
+    }
+    setState(() {
+      _selectedJointFriend = friend;
+      _friendOriginStation = station;
+      _friendOriginController.text = station.name;
+      _suggestions = [];
+      _activeSearchField = '';
+      _isSuggestionsLoading = false;
     });
     FocusScope.of(context).unfocus();
   }
@@ -3377,6 +3989,11 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       return;
     }
 
+    if (currentField == 'friend') {
+      _selectFriendOriginStation(target);
+      return;
+    }
+
     if (mounted) {
       setState(() {
         if (currentField == 'from') {
@@ -3417,6 +4034,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _closeTab(String id) {
     final controller = _routeResultsScrollControllers.remove(id);
     controller?.dispose();
+    _activeJourneyScrollControllers.remove(id)?.dispose();
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
     _jointRouteContexts.remove(id);
@@ -3432,6 +4050,135 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  /// How often the active-journey refresh callback has been invoked.
+  @visibleForTesting
+  int debugActiveJourneyRefreshCount = 0;
+
+  /// How often the route-results refresh callback has been invoked.
+  @visibleForTesting
+  int debugRouteResultsRefreshCount = 0;
+
+  /// Replaces the open tabs with [tabs] and activates one of them, so tests can
+  /// reach the route views without driving a live search first.
+  @visibleForTesting
+  void debugOpenRouteTabs(List<RouteTab> tabs, {String? activeId}) {
+    setState(() {
+      _tabs
+        ..clear()
+        ..addAll(tabs);
+      _activeTabId = activeId ?? (tabs.isEmpty ? null : tabs.first.id);
+    });
+  }
+
+  ScrollController _activeJourneyScrollControllerFor(String routeId) {
+    return _activeJourneyScrollControllers.putIfAbsent(
+      routeId,
+      ScrollController.new,
+    );
+  }
+
+  /// The scroll position behind whichever route view is on screen right now.
+  ///
+  /// Only one of the two views is mounted for the active tab, so at most one of
+  /// these controllers ever has clients.
+  ScrollPosition? _activeRoutePullPosition() {
+    final routeId = _activeTabId;
+    if (routeId == null) return null;
+    for (final controllers in <Map<String, ScrollController>>[
+      _activeJourneyScrollControllers,
+      _routeResultsScrollControllers,
+    ]) {
+      final controller = controllers[routeId];
+      if (controller != null &&
+          controller.hasClients &&
+          controller.positions.length == 1) {
+        return controller.position;
+      }
+    }
+    return null;
+  }
+
+  /// Metrics that describe the journey as if it were parked at the very top.
+  ///
+  /// [RefreshIndicator] only arms while `extentBefore` is zero, and the whole
+  /// point of the header pull is to refresh without moving the journey, so the
+  /// pull reports `pixels: 0` instead of the real offset. Everything else
+  /// mirrors the live position, which keeps the indicator's arm distance
+  /// identical to the in-list gesture.
+  ScrollMetrics _tabBarPullMetrics(ScrollPosition position) {
+    return FixedScrollMetrics(
+      minScrollExtent: 0,
+      maxScrollExtent: position.maxScrollExtent,
+      pixels: 0,
+      viewportDimension: position.viewportDimension,
+      axisDirection: AxisDirection.down,
+      devicePixelRatio: position.devicePixelRatio,
+    );
+  }
+
+  // The fixed tab strip lives outside the journey's scroll view, so dragging it
+  // can never produce a real overscroll. Instead we hand the RefreshIndicator
+  // the same ScrollNotifications the in-list gesture would produce. That keeps
+  // the stock circular indicator, its arm/cancel thresholds and the existing
+  // onRefresh callback, and it never touches the journey's scroll offset.
+  void _handleTabBarVerticalDragStart(DragStartDetails details) {
+    // The pull only begins once the drag actually moves downwards, so taps and
+    // upward drags on the strip stay inert.
+    _tabBarPullPosition = null;
+  }
+
+  void _handleTabBarVerticalDragUpdate(DragUpdateDetails details) {
+    final delta = details.delta.dy;
+    if (delta == 0) return;
+
+    var position = _tabBarPullPosition;
+    if (position == null) {
+      if (delta <= 0) return;
+      position = _activeRoutePullPosition();
+      final notificationContext = position?.context.notificationContext;
+      if (position == null || notificationContext == null) return;
+      _tabBarPullPosition = position;
+      ScrollStartNotification(
+        metrics: _tabBarPullMetrics(position),
+        context: notificationContext,
+        dragDetails: DragStartDetails(
+          globalPosition: details.globalPosition,
+          localPosition: details.localPosition,
+          sourceTimeStamp: details.sourceTimeStamp,
+        ),
+      ).dispatch(notificationContext);
+    }
+
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    OverscrollNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+      dragDetails: details,
+      // Negative overscroll means "dragged past the top", which is exactly what
+      // pulling the strip downwards represents.
+      overscroll: -delta,
+    ).dispatch(notificationContext);
+  }
+
+  void _handleTabBarVerticalDragEnd(DragEndDetails details) => _endTabBarPull();
+
+  void _handleTabBarVerticalDragCancel() => _endTabBarPull();
+
+  /// Hands the release back to [RefreshIndicator]: a pull past its threshold
+  /// refreshes, anything shorter is cancelled. Same rule as the in-list pull.
+  void _endTabBarPull() {
+    final position = _tabBarPullPosition;
+    _tabBarPullPosition = null;
+    if (position == null) return;
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    ScrollEndNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+    ).dispatch(notificationContext);
   }
 
   ScrollController _routeResultsScrollControllerFor(String routeId) {
@@ -3454,12 +4201,10 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final from = route.origin;
     final active = route.activeJourney;
     if (from == null || active == null) return null;
-    return SearchHistoryManager.buildSavedJourneyConnectionKey(
+    return savedJourneyConnectionKeyFor(
+      journey: active,
       from: from,
       to: route.destination,
-      departure: active.plannedDeparture ?? active.departure,
-      arrival: active.plannedArrival ?? active.arrival,
-      journeyData: active.rawSource,
     );
   }
 
@@ -3489,16 +4234,60 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     });
 
     try {
-      final saved = await SearchHistoryManager.toggleSavedJourney(
-        from: from,
-        to: route.destination,
-        journeyData: activeJourney.rawSource,
-        departure: activeJourney.plannedDeparture ?? activeJourney.departure,
-        arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
-      );
+      final persistedKey = activeJourney.savedConnectionKey;
+      final existingSavedItem = persistedKey == null
+          ? null
+          : _savedJourneys.cast<Map<String, dynamic>?>().firstWhere(
+                (item) => item?['connectionKey'] == persistedKey,
+                orElse: () => null,
+              );
+      final bool saved;
+      if (existingSavedItem != null) {
+        await SearchHistoryManager.removeSavedJourneyByItem(
+          item: existingSavedItem,
+        );
+        saved = false;
+      } else {
+        saved = await SearchHistoryManager.toggleSavedJourney(
+          from: from,
+          to: route.destination,
+          journeyData: activeJourney.rawSource,
+          departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+          arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+        );
+      }
       await _loadHistoryData();
 
       if (!mounted) return;
+      final connectionKey = saved
+          ? SearchHistoryManager.buildSavedJourneyConnectionKey(
+              from: from,
+              to: route.destination,
+              departure:
+                  activeJourney.plannedDeparture ?? activeJourney.departure,
+              arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+              journeyData: activeJourney.rawSource,
+            )
+          : null;
+      setState(() {
+        final index = _tabs.indexWhere((tab) => tab.id == route.id);
+        if (index == -1) return;
+        final current = _tabs[index];
+        Journey update(Journey journey) =>
+            _isSameJourneyEntry(journey, activeJourney)
+                ? journey.copyWith(
+                    savedConnectionKey: connectionKey,
+                    clearSavedConnectionKey: !saved,
+                  )
+                : journey;
+        _tabs[index] = current.copyWith(
+          activeJourney: current.activeJourney == null
+              ? null
+              : update(current.activeJourney!),
+          candidates: current.candidates?.map(update).toList(),
+          stack: current.stack.map(update).toList(),
+        );
+      });
       final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -3525,6 +4314,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final journey = Map<String, dynamic>.from(rawJourney);
     final tabId = _addJourneyTab(
       singleJourneyData: journey,
+      savedConnectionKey: item['connectionKey'] is String
+          ? item['connectionKey'] as String
+          : null,
       origin: from,
       destination: to,
       title: to.name,
@@ -3919,8 +4711,22 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   void _syncSavedJourneyStatusMonitoring(List<Map<String, dynamic>> journeys) {
     final activeKeys =
         journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final removedKeys = <String>{
+      ..._savedJourneyLastStatusSignatures.keys,
+      ..._savedJourneyLastHealthStates.keys,
+    }.difference(activeKeys);
     _savedJourneyLastStatusSignatures
         .removeWhere((key, _) => !activeKeys.contains(key));
+    _savedJourneyLastHealthStates
+        .removeWhere((key, _) => !activeKeys.contains(key));
+    if (removedKeys.isNotEmpty) {
+      unawaited(_persistSavedJourneyHealthStates());
+      for (final key in removedKeys) {
+        unawaited(NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        ));
+      }
+    }
 
     if (journeys.isEmpty) {
       _savedJourneyStatusPollTimer?.cancel();
@@ -3940,6 +4746,55 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     if (shouldCheckNow) {
       unawaited(_checkSavedJourneyStatuses());
     }
+  }
+
+  Future<void> _restoreSavedJourneyHealthStates(
+    List<Map<String, dynamic>> journeys,
+  ) async {
+    final activeKeys =
+        journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = prefs.getString(_savedRouteHealthPreferenceKey);
+    if (encoded == null) return;
+
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return;
+      _savedJourneyLastHealthStates.clear();
+      final removedKeys = <String>{};
+      for (final entry in decoded.entries) {
+        final key = entry.key.toString();
+        if (!activeKeys.contains(key)) {
+          removedKeys.add(key);
+          continue;
+        }
+        final stateName = entry.value?.toString();
+        for (final state in SavedRouteHealthState.values) {
+          if (state.name == stateName) {
+            _savedJourneyLastHealthStates[key] = state;
+            break;
+          }
+        }
+      }
+      if (_savedJourneyLastHealthStates.length != decoded.length) {
+        await _persistSavedJourneyHealthStates();
+      }
+      for (final key in removedKeys) {
+        await NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        );
+      }
+    } catch (error) {
+      debugPrint('Could not restore saved-route notification states: $error');
+    }
+  }
+
+  Future<void> _persistSavedJourneyHealthStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(_savedJourneyLastHealthStates.map(
+      (key, state) => MapEntry(key, state.name),
+    ));
+    await prefs.setString(_savedRouteHealthPreferenceKey, encoded);
   }
 
   String _savedJourneyRealtimeSignature(Journey journey) {
@@ -3983,18 +4838,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       if (nowStep.isCancelled && !oldStep.isCancelled) {
         hasCancellation = true;
       }
-      final depDelayChanged =
-          (nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0);
-      final arrDelayChanged =
-          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0);
-      if (depDelayChanged || arrDelayChanged) {
+      if ((nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0) ||
+          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0)) {
         hasDelay = true;
       }
-      final platformChanged =
-          (nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
-              (nowStep.arrivalPlatform ?? '').trim() !=
-                  (oldStep.arrivalPlatform ?? '').trim();
-      if (platformChanged) {
+      if ((nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
+          (nowStep.arrivalPlatform ?? '').trim() !=
+              (oldStep.arrivalPlatform ?? '').trim()) {
         hasPlatformChange = true;
       }
     }
@@ -4005,7 +4855,39 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     return 'Schedule update';
   }
 
-  Future<({bool stillPossible, String signature, String detail})>
+  String _savedJourneyHealthDetail(SavedRouteHealth health) {
+    switch (health.state) {
+      case SavedRouteHealthState.normal:
+        return 'Back to normal';
+      case SavedRouteHealthState.delayed:
+        return '${health.maxDelayMinutes} min late';
+      case SavedRouteHealthState.tightConnection:
+        return 'Only ${health.shortestTransferMinutes ?? 0} min to change';
+      case SavedRouteHealthState.unavailable:
+        return 'Connection no longer possible';
+    }
+  }
+
+  ({SavedRouteHealthState state, String signature})? _savedJourneyStoredStatus(
+      Map<String, dynamic> item) {
+    final rawJourney = item['journey'];
+    final toMap = item['to'];
+    if (rawJourney is! Map || toMap is! Map) return null;
+    try {
+      final journey = _createJourney(
+        Map<String, dynamic>.from(rawJourney),
+        destinationNameOverride: toMap['name']?.toString(),
+      );
+      return (
+        state: savedRouteHealthForJourney(journey).state,
+        signature: _savedJourneyRealtimeSignature(journey),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<({SavedRouteHealth health, String signature, String detail})>
       _computeSavedJourneyStatus(Map<String, dynamic> item) async {
     final fromJson = item['from'];
     final toJson = item['to'];
@@ -4013,14 +4895,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final departure = _savedJourneyDepartureLocal(item);
     if (fromJson is! Map || toJson is! Map || rawJourney is! Map) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid',
         detail: 'Connection no longer possible'
       );
     }
     if (departure == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'missing-departure',
         detail: 'Connection no longer possible'
       );
@@ -4029,7 +4915,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final now = DateTime.now();
     if (departure.isBefore(now.subtract(const Duration(hours: 2)))) {
       return (
-        stillPossible: true,
+        health: const SavedRouteHealth(state: SavedRouteHealthState.normal),
         signature: 'past-departure',
         detail: 'No relevant updates'
       );
@@ -4045,7 +4931,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       );
     } catch (_) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid-saved-journey',
         detail: 'Connection no longer possible'
       );
@@ -4075,7 +4963,9 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     final matched = _findStrictJourneyMatch(savedJourney, freshJourneys);
     if (matched == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'unavailable',
         detail: 'Connection no longer possible'
       );
@@ -4083,18 +4973,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     final merged = _mergeRealtimeIntoJourney(savedJourney, matched);
     final signature = _savedJourneyRealtimeSignature(merged);
-    final detail = _describeSavedJourneyChange(
-      savedJourney: savedJourney,
-      freshJourney: merged,
+    final health = savedRouteHealthForJourney(merged);
+    return (
+      health: health,
+      signature: signature,
+      detail: _savedJourneyHealthDetail(health),
     );
-    return (stillPossible: true, signature: signature, detail: detail);
   }
 
   Future<void> _notifySavedJourneyStatusChange({
     required String routeKey,
     required Map<String, dynamic> item,
-    required bool stillPossible,
+    required SavedRouteHealth health,
+    required SavedRouteHealthState? previousHealth,
     required String detail,
+    required bool alertUser,
   }) async {
     final fromMap = item['from'];
     final toMap = item['to'];
@@ -4105,30 +4998,47 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     await NotificationManager.requestPermissions();
 
     final androidDetails = AndroidNotificationDetails(
-      'saved_route_status_channel',
+      NotificationManager.savedRouteStatusChannelId,
       'Saved Route Status',
       channelDescription:
-          'Updates when saved routes change or become unavailable',
+          'Important delay and connection updates for saved routes',
       importance: Importance.high,
       priority: Priority.high,
-      enableVibration: true,
+      playSound: alertUser,
+      enableVibration: alertUser,
+      silent: !alertUser,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(),
-      linux: const LinuxNotificationDetails(),
+      iOS: DarwinNotificationDetails(
+        presentAlert: alertUser,
+        presentBanner: alertUser,
+        presentList: true,
+        presentSound: alertUser,
+        interruptionLevel:
+            alertUser ? InterruptionLevel.active : InterruptionLevel.passive,
+      ),
+      linux: LinuxNotificationDetails(suppressSound: !alertUser),
     );
 
     final routeLabel = compactSavedRouteLabel(fromName, toName);
-    final statusText = stillPossible ? 'Still possible' : 'No longer possible';
     // Keep body concise on Android while still showing the key status reason.
     final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
-    final message = routeLabel.isEmpty
-        ? '$compactDetail · $statusText'
-        : '$routeLabel · $compactDetail · $statusText';
+    final message =
+        routeLabel.isEmpty ? compactDetail : '$routeLabel · $compactDetail';
+    final title = switch (health.state) {
+      SavedRouteHealthState.normal => 'Saved route back to normal',
+      SavedRouteHealthState.delayed =>
+        previousHealth == SavedRouteHealthState.tightConnection ||
+                previousHealth == SavedRouteHealthState.unavailable
+            ? 'Connection possible again'
+            : 'Saved route is late',
+      SavedRouteHealthState.tightConnection => 'Connection at risk',
+      SavedRouteHealthState.unavailable => 'Connection no longer possible',
+    };
     await _notificationsPlugin.show(
       id: savedRouteStatusNotificationIdForKey(routeKey),
-      title: 'Saved route changed',
+      title: title,
       body: message,
       notificationDetails: details,
     );
@@ -4140,6 +5050,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     _isCheckingSavedJourneyStatuses = true;
     _lastSavedJourneyStatusCheck = DateTime.now();
+    var healthStatesChanged = false;
     try {
       final journeys = List<Map<String, dynamic>>.from(_savedJourneys);
       for (final item in journeys) {
@@ -4148,57 +5059,47 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
         try {
           final status = await _computeSavedJourneyStatus(item);
-          final currentStatusSignature = status.stillPossible
-              ? 'possible:${status.signature}'
-              : 'unavailable';
-          final previousStatusSignature =
-              _savedJourneyLastStatusSignatures[key];
-          final isFirstObservation = previousStatusSignature == null;
-          _savedJourneyLastStatusSignatures[key] = currentStatusSignature;
+          if (status.signature == 'past-departure') {
+            await NotificationManager.cancelNotification(
+              id: savedRouteStatusNotificationIdForKey(key),
+            );
+            continue;
+          }
+          var previousSignature = _savedJourneyLastStatusSignatures[key];
+          var previousHealth = _savedJourneyLastHealthStates[key];
+          if (previousHealth == null) {
+            final stored = _savedJourneyStoredStatus(item);
+            previousHealth = stored?.state;
+            previousSignature ??= stored?.signature;
+          }
+          final action = savedRouteNotificationAction(
+            previous: previousHealth,
+            current: status.health.state,
+            realtimeChanged: previousSignature != status.signature,
+          );
 
-          if (status.stillPossible) {
-            final rawJourney = item['journey'];
-            if (rawJourney is! Map) continue;
+          _savedJourneyLastStatusSignatures[key] = status.signature;
+          _savedJourneyLastHealthStates[key] = status.health.state;
+          if (previousHealth != status.health.state) {
+            healthStatesChanged = true;
+          }
 
-            Journey savedJourney;
-            try {
-              savedJourney = _createJourney(
-                Map<String, dynamic>.from(rawJourney),
-                destinationNameOverride: item['toName']?.toString(),
-              );
-            } catch (_) {
-              continue;
-            }
-            final savedSignature = _savedJourneyRealtimeSignature(savedJourney);
-            final changedFromSaved = status.signature != savedSignature;
-            final changedSinceLast =
-                previousStatusSignature != currentStatusSignature;
-            if (changedSinceLast &&
-                (changedFromSaved ||
-                    (previousStatusSignature != null &&
-                        previousStatusSignature.startsWith('unavailable')))) {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: true,
-                detail: status.detail,
-              );
-            } else if (isFirstObservation && !changedFromSaved) {
-              // Baseline set: no notification for unchanged route.
-            }
-          } else {
-            if (previousStatusSignature != 'unavailable') {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: false,
-                detail: status.detail,
-              );
-            }
+          if (action != SavedRouteNotificationAction.none) {
+            await _notifySavedJourneyStatusChange(
+              routeKey: key,
+              item: item,
+              health: status.health,
+              previousHealth: previousHealth,
+              detail: status.detail,
+              alertUser: action == SavedRouteNotificationAction.alert,
+            );
           }
         } catch (e) {
           debugPrint('Saved journey status check failed for one route: $e');
         }
+      }
+      if (healthStatesChanged) {
+        await _persistSavedJourneyHealthStates();
       }
     } finally {
       _isCheckingSavedJourneyStatuses = false;
@@ -4600,11 +5501,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                 final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
                 if (idx != -1) {
                   final currentTab = _tabs[idx];
-                  final newStack = List<Journey>.from(currentTab.stack);
-                  if (!newStack.any((e) =>
-                      e.departure == j.departure && e.arrival == j.arrival)) {
-                    newStack.add(j);
-                  }
+                  final newStack = _stackWithJourneyEntry(currentTab.stack, j);
                   _tabs[idx] = currentTab.copyWith(
                       activeJourney: j,
                       stack: newStack,
@@ -5109,6 +6006,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Journey _createJourney(
     Map<String, dynamic> journeyData, {
     String? destinationNameOverride,
+    String? savedConnectionKey,
   }) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
@@ -5215,6 +6113,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       arrival: arr ?? DateTime.now(),
       plannedDeparture: pDep,
       plannedArrival: pArr,
+      savedConnectionKey: savedConnectionKey,
       duration:
           (dep != null && arr != null) ? arr.difference(dep) : Duration.zero,
       transferCount: transfers,
@@ -5233,6 +6132,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       String? subtitle,
       Station? origin,
       Station? destination,
+      String? savedConnectionKey,
       RouteSearchSettings? searchSettings}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
@@ -5264,6 +6164,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         activeJourney = _createJourney(
           singleJourneyData,
           destinationNameOverride: dest?.name,
+          savedConnectionKey: savedConnectionKey,
         );
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
@@ -5794,38 +6695,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     required int searchToken,
   }) async {
     final german = Localizations.localeOf(context).languageCode == 'de';
-    Map<String, dynamic>? friend;
-    for (final candidate in _jointPlanningFriends) {
-      if (candidate['id']?.toString() == _selectedJointFriendId) {
-        friend = candidate;
-        break;
-      }
-    }
-    if (friend == null ||
-        friend['latitude'] is! num ||
-        friend['longitude'] is! num) {
+    final friendOrigin = _friendOriginStation;
+    if (friendOrigin == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(german
-              ? 'Wähle zuerst eine Person mit freigegebenem Standort.'
-              : 'Choose a friend who currently shares their location.'),
+              ? 'Wähle zuerst, wo deine Begleitung startet.'
+              : 'Choose where your companion starts first.'),
         ));
       }
+      _releaseBlockingRouteLoad(searchToken);
       return;
     }
 
-    final updatedAt = DateTime.tryParse(friend['updated_at']?.toString() ?? '');
-    final locationIsStale = updatedAt == null ||
-        DateTime.now().toUtc().difference(updatedAt.toUtc()) >
-            const Duration(minutes: 30);
-    if (locationIsStale) {
+    // Only a shared live position can go out of date; a place that was typed
+    // in stays valid until the user changes it.
+    final friend = _selectedJointFriend;
+    if (friend != null && friend.isStale()) {
+      final ageNote = _friendLocationAgeNote(friend, german: german);
       final useStaleLocation = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text(german ? 'Standort ist älter' : 'Location may be stale'),
           content: Text(german
-              ? 'Der letzte freigegebene Standort ist älter als 30 Minuten. Soll er trotzdem als Start verwendet werden?'
-              : 'The last shared location is more than 30 minutes old. Use it as the starting point anyway?'),
+              ? '$ageNote Soll der geteilte Standort von ${friend.name} trotzdem als Start verwendet werden?'
+              : '$ageNote Use what ${friend.name} shared as the starting point anyway?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -5838,18 +6732,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           ],
         ),
       );
-      if (useStaleLocation != true || !mounted) return;
+      if (useStaleLocation != true || !mounted) {
+        _releaseBlockingRouteLoad(searchToken);
+        return;
+      }
     }
 
-    final friendName = friend['username']?.toString() ??
-        (german ? 'deine Begleitung' : 'your friend');
-    final friendOrigin = Station(
-      id: 'joint-friend:${friend['id']}',
-      name: friendName,
-      type: 'location',
-      latitude: (friend['latitude'] as num).toDouble(),
-      longitude: (friend['longitude'] as num).toDouble(),
-    );
+    final friendName = friend?.name ??
+        (friendOrigin.name.trim().isNotEmpty
+            ? friendOrigin.name.trim()
+            : (german ? 'deine Begleitung' : 'your companion'));
+    final preferences = _jointJourneyPreferences;
 
     try {
       final searches = await Future.wait([
@@ -5893,22 +6786,31 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
         }
       }
 
-      final options = JointJourneyPlanner.rank(
+      // Start at the chosen setting and, only if that finds nothing, stretch
+      // the budget over the journeys already fetched. Looking beyond those is
+      // left to the user.
+      final outcome = JointJourneyPlanner.rankProgressively(
         myJourneys: mine,
         friendJourneys: theirs,
-        preferences: _jointJourneyPreferences,
+        window: JointSearchWindow(
+          baseTogetherness: preferences.togetherness,
+        ),
         isArrival: settings.isArrival,
       );
       _releaseBlockingRouteLoad(searchToken);
       _addJointJourneyTab(
-        options: options,
-        friendId: friend['id'].toString(),
+        outcome: outcome,
+        friendId: friend?.id,
         friendName: friendName,
         origin: myOrigin,
+        friendOrigin: friendOrigin,
         destination: destination,
         searchSettings: settings,
+        myJourneys: mine,
+        friendJourneys: theirs,
       );
     } on TimeoutException {
+      _releaseBlockingRouteLoad(searchToken);
       if (mounted && !_isRouteSearchCancelled(searchToken)) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(german
@@ -5920,27 +6822,32 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   void _addJointJourneyTab({
-    required List<JointJourneyOption> options,
-    required String friendId,
+    required JointSearchOutcome outcome,
+    required String? friendId,
     required String friendName,
     required Station origin,
+    required Station friendOrigin,
     required Station destination,
     required RouteSearchSettings searchSettings,
+    required List<Journey> myJourneys,
+    required List<Journey> friendJourneys,
   }) {
     final id = DateTime.now().microsecondsSinceEpoch.toString();
-    final candidates = <Journey>[];
-    final seen = <String>{};
-    for (final option in options) {
-      if (seen.add(_journeyListKey(option.myJourney))) {
-        candidates.add(option.myJourney);
-      }
-    }
+    final candidates = _jointTabCandidates(outcome.options);
     setState(() {
       _jointRouteContexts[id] = _JointRouteContext(
-        options: options,
+        options: outcome.options,
         friendId: friendId,
         friendName: friendName,
         destinationName: destination.name,
+        window: outcome.window,
+        myOrigin: origin,
+        friendOrigin: friendOrigin,
+        destination: destination,
+        searchSettings: searchSettings,
+        myJourneys: myJourneys,
+        friendJourneys: friendJourneys,
+        exhausted: outcome.needsMoreDepartures && !outcome.window.canFetchMore,
       );
       _tabs.add(RouteTab(
         id: id,
@@ -5957,6 +6864,192 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       ));
       _activeTabId = id;
     });
+  }
+
+  /// The candidate list a joint tab shows behind the shared options.
+  List<Journey> _jointTabCandidates(List<JointJourneyOption> options) {
+    final candidates = <Journey>[];
+    final seen = <String>{};
+    for (final option in options) {
+      if (seen.add(_journeyListKey(option.myJourney))) {
+        candidates.add(option.myJourney);
+      }
+    }
+    return candidates;
+  }
+
+  void _applyJointOutcome(
+    String tabId,
+    JointSearchOutcome outcome, {
+    List<Journey>? myJourneys,
+    List<Journey>? friendJourneys,
+    bool? exhausted,
+    bool isExpanding = false,
+  }) {
+    final context = _jointRouteContexts[tabId];
+    if (context == null) return;
+    setState(() {
+      _jointRouteContexts[tabId] = context.copyWith(
+        options: outcome.options,
+        window: outcome.window,
+        myJourneys: myJourneys,
+        friendJourneys: friendJourneys,
+        isExpanding: isExpanding,
+        exhausted: exhausted,
+      );
+      final index = _tabs.indexWhere((tab) => tab.id == tabId);
+      if (index == -1) return;
+      _tabs[index] = _tabs[index].copyWith(
+        candidates: _jointTabCandidates(outcome.options),
+      );
+    });
+  }
+
+  /// One press of "look further": first re-score the journeys already loaded
+  /// with a wider budget, and only fetch another page of departures when that
+  /// cannot turn up anything better.
+  Future<void> _expandJointSearch(String tabId) async {
+    final joint = _jointRouteContexts[tabId];
+    if (joint == null || joint.isExpanding || !joint.canExpand) return;
+    final german = Localizations.localeOf(context).languageCode == 'de';
+
+    final widened = JointJourneyPlanner.rankProgressively(
+      myJourneys: joint.myJourneys,
+      friendJourneys: joint.friendJourneys,
+      window: joint.window,
+      previousOptions: joint.options,
+      isArrival: joint.searchSettings.isArrival,
+    );
+    if (!widened.needsMoreDepartures) {
+      _applyJointOutcome(tabId, widened);
+      return;
+    }
+    if (!widened.window.canFetchMore) {
+      _applyJointOutcome(tabId, widened, exhausted: true);
+      return;
+    }
+
+    final earlier = widened.window.nextFetchIsEarlier;
+    // Show the widened budget while fetching, so the header and the list agree
+    // even if the request fails.
+    setState(() {
+      _jointRouteContexts[tabId] = joint.copyWith(
+        options: widened.options,
+        window: widened.window,
+        isExpanding: true,
+      );
+    });
+
+    try {
+      final fetched = await Future.wait([
+        _fetchMoreJointJourneys(
+          origin: joint.myOrigin,
+          destination: joint.destination,
+          existing: joint.myJourneys,
+          settings: joint.searchSettings,
+          earlier: earlier,
+        ),
+        _fetchMoreJointJourneys(
+          origin: joint.friendOrigin,
+          destination: joint.destination,
+          existing: joint.friendJourneys,
+          settings: joint.searchSettings,
+          earlier: earlier,
+        ),
+      ]).timeout(const Duration(seconds: 35));
+      if (!mounted || !_jointRouteContexts.containsKey(tabId)) return;
+
+      final mine = _mergeJourneyCandidates(joint.myJourneys, fetched[0]);
+      final theirs = _mergeJourneyCandidates(joint.friendJourneys, fetched[1]);
+      final window = widened.window.fetched();
+      final outcome = JointJourneyPlanner.rankProgressively(
+        myJourneys: mine,
+        friendJourneys: theirs,
+        window: window,
+        previousOptions: joint.options,
+        isArrival: joint.searchSettings.isArrival,
+      );
+      final foundNothingNew =
+          outcome.needsMoreDepartures && !outcome.window.canFetchMore;
+      _applyJointOutcome(
+        tabId,
+        outcome,
+        myJourneys: mine,
+        friendJourneys: theirs,
+        exhausted: foundNothingNew || !outcome.window.canExpand,
+      );
+    } on TimeoutException {
+      if (!mounted) return;
+      final current = _jointRouteContexts[tabId];
+      if (current != null) {
+        setState(() {
+          _jointRouteContexts[tabId] = current.copyWith(isExpanding: false);
+        });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(german
+            ? 'Die Suche nach weiteren Verbindungen hat zu lange gedauert.'
+            : 'Looking for more connections took too long.'),
+      ));
+    } catch (error, stackTrace) {
+      AppError.log(
+        error,
+        stackTrace: stackTrace,
+        source: 'RoutesTab._expandJointSearch',
+      );
+      if (!mounted) return;
+      final current = _jointRouteContexts[tabId];
+      if (current != null) {
+        setState(() {
+          _jointRouteContexts[tabId] = current.copyWith(isExpanding: false);
+        });
+      }
+    }
+  }
+
+  /// One more page of departures for a single person, just past the edge of
+  /// what is already loaded.
+  Future<List<Journey>> _fetchMoreJointJourneys({
+    required Station origin,
+    required Station destination,
+    required List<Journey> existing,
+    required RouteSearchSettings settings,
+    required bool earlier,
+  }) async {
+    if (existing.isEmpty) return const [];
+    final boundary = existing
+        .map((journey) => journey.plannedDeparture ?? journey.departure)
+        .reduce((a, b) =>
+            earlier ? (a.isBefore(b) ? a : b) : (a.isAfter(b) ? a : b));
+    final reference = earlier
+        ? boundary.subtract(const Duration(hours: 2))
+        : boundary.add(const Duration(seconds: 1));
+
+    final raw = await _searchJourneysForSettings(
+      origin,
+      destination,
+      settings: settings.copyWith(when: reference, isArrival: false),
+      results: _jointExpansionResultCount,
+    );
+
+    final journeys = <Journey>[];
+    for (final entry in raw) {
+      try {
+        journeys.add(_createJourney(
+          entry,
+          destinationNameOverride: destination.name,
+        ));
+      } catch (_) {
+        // A malformed provider alternative should not abort the expansion.
+      }
+    }
+    journeys.removeWhere((journey) {
+      final departure = journey.plannedDeparture ?? journey.departure;
+      return earlier
+          ? !departure.isBefore(boundary)
+          : departure.isBefore(reference);
+    });
+    return journeys;
   }
 
   String _jointPlanMessage(
@@ -6076,11 +7169,15 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   @override
   @override
   Widget build(BuildContext context) {
-    final bool canSearch = (_fromStation != null ||
-            _fromUsesCurrentLocation ||
-            _fromController.text.trim().isNotEmpty) &&
-        (_toStation != null || _toController.text.trim().isNotEmpty) &&
-        (!_jointPlanningEnabled || _selectedJointFriendId != null);
+    final bool canSearch = canStartRouteSearch(
+      hasOrigin: _fromStation != null ||
+          _fromUsesCurrentLocation ||
+          _fromController.text.trim().isNotEmpty,
+      hasDestination:
+          _toStation != null || _toController.text.trim().isNotEmpty,
+      jointPlanningEnabled: _jointPlanningEnabled,
+      hasCompanionOrigin: _friendOriginStation != null,
+    );
     final colors = TransColors.of(context);
     final topPadding = MediaQuery.of(context).padding.top + 10;
 
@@ -6104,23 +7201,34 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
       // Main Tab Bar
       if (_tabs.isNotEmpty)
-        SizedBox(
-            height: 60,
-            child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _tabs.length + 1,
-                itemBuilder: (ctx, idx) {
-                  if (idx == _tabs.length) {
-                    return Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () =>
-                                setState(() => _activeTabId = null)));
-                  }
-                  return _buildTabItem(_tabs[idx], colors);
-                })),
+        // Pulling down on the strip refreshes the route below without asking
+        // the user to scroll the journey back to the top first. The vertical
+        // recogniser only claims the gesture once the drag beats the touch
+        // slop, so the strip keeps scrolling sideways and the chips, close
+        // buttons and "+" keep their taps.
+        GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: _handleTabBarVerticalDragStart,
+            onVerticalDragUpdate: _handleTabBarVerticalDragUpdate,
+            onVerticalDragEnd: _handleTabBarVerticalDragEnd,
+            onVerticalDragCancel: _handleTabBarVerticalDragCancel,
+            child: SizedBox(
+                height: 60,
+                child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _tabs.length + 1,
+                    itemBuilder: (ctx, idx) {
+                      if (idx == _tabs.length) {
+                        return Padding(
+                            padding: const EdgeInsets.only(bottom: 20),
+                            child: IconButton(
+                                icon: const Icon(Icons.add_circle_outline),
+                                onPressed: () =>
+                                    setState(() => _activeTabId = null)));
+                      }
+                      return _buildTabItem(_tabs[idx], colors);
+                    }))),
 
       // Secondary Tab Row (Alternatives)
       if (activeTab != null &&
@@ -6378,6 +7486,61 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   children: [
                     _buildPlanModeHeader(colors, isGerman: isGerman),
                     const SizedBox(height: 20),
+                    if (_jointPlanningEnabled) ...[
+                      KeyedSubtree(
+                        key: _friendFieldKey,
+                        child: _buildTextField(
+                          AppLocalizations.of(context)!.friendStartLabel,
+                          _friendOriginController,
+                          _friendOriginFocusNode,
+                          _friendOriginStation != null,
+                          'friend',
+                          hint: AppLocalizations.of(context)!.friendStartHint,
+                          themeTinted: true,
+                        ),
+                      ),
+                      if (_activeSearchField == 'friend')
+                        _buildSuggestionsList(),
+                      if (_selectedJointFriend?.isStale() == true)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, left: 4),
+                          child: Row(
+                            key: const ValueKey('joint-stale-location'),
+                            children: [
+                              const Icon(Icons.schedule,
+                                  size: 14, color: Colors.orange),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _friendLocationAgeNote(
+                                    _selectedJointFriend!,
+                                    german: isGerman,
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 11.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (!canSearch && _friendOriginStation == null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, left: 4),
+                          child: Text(
+                            isGerman
+                                ? 'Wähle noch, wo deine Begleitung startet.'
+                                : 'Still missing where your companion starts.',
+                            key: const ValueKey('joint-missing-origin-hint'),
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                    ],
                     KeyedSubtree(
                       key: _fromFieldKey,
                       child: _buildTextField(
@@ -6457,127 +7620,6 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       ],
                     ),
                     if (_activeSearchField == 'to') _buildSuggestionsList(),
-                    if (_jointPlanningEnabled) ...[
-                      const SizedBox(height: 14),
-                      Container(
-                        key: const ValueKey('joint-plan-options'),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: colors.effectiveSeed.withValues(alpha: 0.09),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: colors.effectiveSeed.withValues(alpha: 0.35),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.group_outlined,
-                                    size: 18, color: colors.effectiveSeed),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    isGerman
-                                        ? 'Fahren, Warten und Laufen zählen als gemeinsame Zeit.'
-                                        : 'Riding, waiting, and walking all count as time together.',
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            if (_jointPlanningFriends.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                                child: Text(
-                                  isGerman
-                                      ? 'Niemand teilt gerade einen Standort für Freundes-Routing.'
-                                      : 'No friend currently shares a location for friend routing.',
-                                  style: TextStyle(
-                                    color: colors.textSecondary,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              )
-                            else
-                              DropdownButtonFormField<String>(
-                                initialValue: _selectedJointFriendId,
-                                isExpanded: true,
-                                decoration: InputDecoration(
-                                  labelText: isGerman ? 'Person' : 'Friend',
-                                  filled: true,
-                                  fillColor: colors.searchInputFill,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                ),
-                                dropdownColor: colors.cardBg,
-                                items: _jointPlanningFriends
-                                    .map((friend) => DropdownMenuItem<String>(
-                                          value: friend['id']?.toString(),
-                                          child: Text(
-                                            friend['username']?.toString() ??
-                                                (isGerman
-                                                    ? 'Unbekannt'
-                                                    : 'Unknown'),
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                                color: colors.textPrimary),
-                                          ),
-                                        ))
-                                    .toList(),
-                                onChanged: (value) => setState(
-                                    () => _selectedJointFriendId = value),
-                              ),
-                            const SizedBox(height: 10),
-                            SegmentedButton<JointJourneyIntent>(
-                              segments: [
-                                ButtonSegment(
-                                  value: JointJourneyIntent.fast,
-                                  icon: const Icon(Icons.bolt, size: 16),
-                                  label: Text(isGerman ? 'Schnell' : 'Fast'),
-                                ),
-                                ButtonSegment(
-                                  value: JointJourneyIntent.balanced,
-                                  icon: const Icon(Icons.balance, size: 16),
-                                  label:
-                                      Text(isGerman ? 'Balance' : 'Balanced'),
-                                ),
-                                ButtonSegment(
-                                  value: JointJourneyIntent.together,
-                                  icon: const Icon(Icons.group, size: 16),
-                                  label:
-                                      Text(isGerman ? 'Zusammen' : 'Together'),
-                                ),
-                              ],
-                              selected: {_jointJourneyIntent},
-                              onSelectionChanged: (selection) => setState(
-                                () => _jointJourneyIntent = selection.first,
-                              ),
-                              showSelectedIcon: false,
-                            ),
-                            const SizedBox(height: 8),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                isGerman
-                                    ? 'Max. ${_jointJourneyPreferences.maxExtraTravelMinutes} Min. und ${_jointJourneyPreferences.maxExtraTransfers} zusätzliche Umstiege pro Person'
-                                    : 'Up to ${_jointJourneyPreferences.maxExtraTravelMinutes} extra minutes and ${_jointJourneyPreferences.maxExtraTransfers} extra transfers per person',
-                                style: TextStyle(
-                                  color: colors.textSecondary,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 20),
                     Text(AppLocalizations.of(context)!.tripTime,
                         style: TextStyle(
@@ -7308,11 +8350,21 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     );
   }
 
+  JointPlanFriend? _jointFriendForStation(Station station) {
+    final friendId = JointPlanFriend.friendIdFromStation(station);
+    if (friendId == null) return null;
+    for (final friend in _jointPlanningFriends) {
+      if (friend.id == friendId) return friend;
+    }
+    return null;
+  }
+
   Widget _buildSuggestionsList() {
     if (!_isSuggestionsLoading && _suggestions.isEmpty) {
       return const SizedBox.shrink();
     }
     final colors = TransColors.of(context);
+    final isGerman = Localizations.localeOf(context).languageCode == 'de';
     final sections = _buildSuggestionSections();
     return GestureDetector(
       onTap: () {
@@ -7378,8 +8430,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                             );
                           } else {
                             final station = item as Station;
+                            final friendForStation =
+                                _jointFriendForStation(station);
                             IconData leadingIcon = Icons.place;
-                            if (station.type == 'address') {
+                            if (friendForStation != null) {
+                              leadingIcon = Icons.person_pin_circle;
+                            } else if (station.type == 'address') {
                               leadingIcon = Icons.home_work;
                             } else if (station.type == 'stop') {
                               leadingIcon = Icons.train;
@@ -7387,15 +8443,23 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
                             final distanceText =
                                 _distanceTextForStation(station);
+                            final subtitleText = friendForStation != null
+                                ? (isGerman
+                                    ? 'Geteilter Standort · ${JointFriendChips.freshnessLabel(friendForStation, german: true)}'
+                                    : 'Shared location · ${JointFriendChips.freshnessLabel(friendForStation, german: false)}')
+                                : station.locationSummary;
 
                             tile = ListTile(
                               leading: Icon(leadingIcon,
-                                  size: 16, color: Colors.grey),
+                                  size: 16,
+                                  color: friendForStation != null
+                                      ? colors.effectiveSeed
+                                      : Colors.grey),
                               title: Text(station.name,
                                   style: TextStyle(
                                       color: colors.textPrimary, fontSize: 14)),
-                              subtitle: station.locationSummary != null
-                                  ? Text(station.locationSummary!,
+                              subtitle: subtitleText != null
+                                  ? Text(subtitleText,
                                       style: TextStyle(
                                           color: colors.searchHintText,
                                           fontSize: 11))
@@ -7443,9 +8507,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
   Widget _buildTextField(String label, TextEditingController controller,
       FocusNode focusNode, bool isSelected, String fieldKey,
-      {String hint = ""}) {
+      {String hint = "", bool themeTinted = false}) {
     final colors = TransColors.of(context);
     Color iconColor = colors.searchInputIcon;
+    final inputFill = themeTinted
+        ? Color.alphaBlend(
+            colors.effectiveSeed.withValues(alpha: 0.13),
+            colors.searchInputFill,
+          )
+        : colors.searchInputFill;
+    final themedBorder = BorderSide(
+      color: colors.effectiveSeed.withValues(alpha: 0.32),
+    );
 
     String effectiveHint = hint;
     bool isLocationHint = false;
@@ -7460,8 +8533,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
 
     final isCapturedCurrentLocation =
         fieldKey == 'to' && _toIsCapturedCurrentLocation;
+    final usesFriendLocation =
+        fieldKey == 'friend' && _selectedJointFriend != null;
 
-    if (isCapturedCurrentLocation) {
+    if (usesFriendLocation) {
+      iconColor = colors.effectiveSeed;
+    } else if (isCapturedCurrentLocation) {
       iconColor = Colors.blue;
     } else if (isSelected) {
       iconColor = Colors.greenAccent;
@@ -7478,11 +8555,12 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 4),
           child: Text(label.toUpperCase(),
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 10,
-                  color: Colors.grey,
+                  color: themeTinted ? colors.effectiveSeed : Colors.grey,
                   fontWeight: FontWeight.bold))),
       TextField(
+          key: ValueKey('route-search-field-$fieldKey'),
           controller: controller,
           focusNode: focusNode,
           onChanged: (val) => _onSearchChanged(val, fieldKey),
@@ -7511,7 +8589,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
           style: TextStyle(color: colors.searchInputText),
           decoration: InputDecoration(
               filled: true,
-              fillColor: colors.searchInputFill,
+              fillColor: inputFill,
               prefixIcon: fieldKey == 'from'
                   ? IconButton(
                       tooltip: AppLocalizations.of(context)!.refreshLocation,
@@ -7530,9 +8608,13 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                           : Icon(Icons.my_location, color: iconColor, size: 20),
                     )
                   : Icon(
-                      isCapturedCurrentLocation
-                          ? Icons.my_location
-                          : Icons.location_on,
+                      fieldKey == 'friend'
+                          ? (usesFriendLocation
+                              ? Icons.person_pin_circle
+                              : Icons.person_search)
+                          : isCapturedCurrentLocation
+                              ? Icons.my_location
+                              : Icons.location_on,
                       color: iconColor,
                       size: 20,
                     ),
@@ -7553,7 +8635,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                       : colors.searchHintText),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none)))
+                  borderSide: themeTinted ? themedBorder : BorderSide.none),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: themeTinted ? themedBorder : BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: themeTinted
+                      ? BorderSide(
+                          color: colors.effectiveSeed,
+                          width: 1.5,
+                        )
+                      : BorderSide.none)))
     ]);
   }
 
@@ -7723,6 +8816,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   }
 
   Future<void> _refreshRoutes(RouteTab route) async {
+    debugRouteResultsRefreshCount += 1;
     if (_isLoadingRoute) return;
 
     // We want to reset pagination and reload the initial search window.
@@ -8129,6 +9223,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
     RouteTab route, {
     bool showCompletionFeedback = true,
   }) async {
+    debugActiveJourneyRefreshCount += 1;
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
@@ -8912,11 +10007,17 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
   Widget _buildActiveRouteView(RouteTab route) {
     final jointContext = _jointRouteContexts[route.id];
     if (route.activeJourney == null && jointContext != null) {
+      final jointFriendId = jointContext.friendId;
       return JointRouteResultsView(
         key: ValueKey<String>('joint-route-results-${route.id}'),
         friendName: jointContext.friendName,
         destinationName: jointContext.destinationName,
         options: jointContext.options,
+        window: jointContext.window,
+        isExpanding: jointContext.isExpanding,
+        onExpand: jointContext.canExpand
+            ? () => unawaited(_expandJointSearch(route.id))
+            : null,
         onBack: () => _closeTab(route.id),
         onSelect: (option) {
           setState(() {
@@ -8943,15 +10044,18 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
             option.myJourney,
           ));
         },
-        onShare: (option) => SupabaseService.sendPrivateMessage(
-          jointContext.friendId,
-          _jointPlanMessage(
-            option,
-            friendName: jointContext.friendName,
-            destinationName: jointContext.destinationName,
-            german: Localizations.localeOf(context).languageCode == 'de',
-          ),
-        ),
+        onShare: jointFriendId == null
+            ? null
+            : (option) => SupabaseService.sendPrivateMessage(
+                  jointFriendId,
+                  _jointPlanMessage(
+                    option,
+                    friendName: jointContext.friendName,
+                    destinationName: jointContext.destinationName,
+                    german:
+                        Localizations.localeOf(context).languageCode == 'de',
+                  ),
+                ),
       );
     }
     if (route.activeJourney == null &&
@@ -9049,6 +10153,7 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
       child: ListView(
+          controller: _activeJourneyScrollControllerFor(route.id),
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
           children: [
             Padding(
@@ -9201,7 +10306,24 @@ class RoutesTabState extends State<RoutesTab> with WidgetsBindingObserver {
                   route.activeJourney?.parentJourney != null)
                 _buildReturnToParentButton(context, route),
               _StepCard(
-                  step: route.steps[i],
+                  step: () {
+                    final step = route.steps[i];
+                    final platformChange =
+                        transferPlatformChangeForStep(route.steps, i);
+                    if (platformChange == null) return step;
+
+                    final l10n = AppLocalizations.of(context)!;
+                    String platformLabel(String platform) =>
+                        int.tryParse(platform) == null
+                            ? platform
+                            : l10n.platformShort(platform);
+                    return step.copyWith(
+                      instruction: l10n.switchPlatform(
+                        platformLabel(platformChange.fromPlatform),
+                        platformLabel(platformChange.toPlatform),
+                      ),
+                    );
+                  }(),
                   isFirst: i == 0,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??

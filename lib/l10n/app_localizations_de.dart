@@ -275,6 +275,15 @@ class AppLocalizationsDe extends AppLocalizations {
   String get planJourney => 'Fahrt planen';
 
   @override
+  String get friendStartLabel => 'Start der Begleitung';
+
+  @override
+  String get friendStartHint => 'Haltestelle oder Adresse...';
+
+  @override
+  String get planJourneyTogetherBalance => 'Balance für gemeinsame Fahrten';
+
+  @override
   String get tripTime => 'Fahrtzeit';
 
   @override
