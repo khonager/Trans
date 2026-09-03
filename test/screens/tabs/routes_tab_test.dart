@@ -1,8 +1,51 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trans/models/journey.dart';
+import 'package:trans/models/station.dart';
 import 'package:trans/screens/tabs/routes_tab.dart';
 
 void main() {
+  test('saved journey identity survives realtime provider changes', () {
+    const savedKey = 'origin::destination::saved-connection';
+    final plannedDeparture = DateTime.utc(2026, 9, 3, 10);
+    final plannedArrival = DateTime.utc(2026, 9, 3, 11);
+    final journey = Journey(
+      steps: const [],
+      departure: plannedDeparture,
+      arrival: plannedArrival,
+      duration: const Duration(hours: 1),
+      transferCount: 0,
+      totalWaitTime: Duration.zero,
+      rawSource: const {'legs': []},
+      source: 'motis',
+      plannedDeparture: plannedDeparture,
+      plannedArrival: plannedArrival,
+      savedConnectionKey: savedKey,
+    );
+
+    final refreshed = journey.copyWith(
+      departure: plannedDeparture.add(const Duration(minutes: 12)),
+      arrival: plannedArrival.add(const Duration(minutes: 12)),
+      rawSource: const {
+        'legs': [
+          {'tripId': 'provider-now-uses-a-different-id'}
+        ],
+      },
+    );
+
+    expect(
+      savedJourneyConnectionKeyFor(
+        journey: refreshed,
+        from: Station(id: 'origin', name: 'Origin', type: 'station'),
+        to: Station(
+          id: 'destination',
+          name: 'Destination',
+          type: 'station',
+        ),
+      ),
+      savedKey,
+    );
+  });
+
   test('formats ride line with numeric platform', () {
     final formatted = formatRideLineWithPlatform('RB21', '6');
     expect(formatted, 'RB21 (Gl. 6)');

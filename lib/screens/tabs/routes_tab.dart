@@ -51,6 +51,25 @@ const int _routeLoadEarlierResultCount = 16;
 const int _jointExpansionResultCount = 12;
 const String _routeSortOrderPreferenceKey = 'route_results_sort_order';
 
+/// Returns the stable saved identity when a journey originated from storage.
+/// Provider payloads and realtime times are only used for journeys which have
+/// not yet been associated with a persisted saved entry.
+@visibleForTesting
+String savedJourneyConnectionKeyFor({
+  required Journey journey,
+  required Station from,
+  required Station to,
+}) {
+  return journey.savedConnectionKey ??
+      SearchHistoryManager.buildSavedJourneyConnectionKey(
+        from: from,
+        to: to,
+        departure: journey.plannedDeparture ?? journey.departure,
+        arrival: journey.plannedArrival ?? journey.arrival,
+        journeyData: journey.rawSource,
+      );
+}
+
 enum RouteHistoryView { frequent, recent }
 
 class _RouteSearchDefaults {
@@ -1155,6 +1174,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   if (incomingScore == existingScore &&
@@ -1162,6 +1182,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   return existing;
@@ -3847,12 +3868,10 @@ class RoutesTabState extends State<RoutesTab>
     final from = route.origin;
     final active = route.activeJourney;
     if (from == null || active == null) return null;
-    return SearchHistoryManager.buildSavedJourneyConnectionKey(
+    return savedJourneyConnectionKeyFor(
+      journey: active,
       from: from,
       to: route.destination,
-      departure: active.plannedDeparture ?? active.departure,
-      arrival: active.plannedArrival ?? active.arrival,
-      journeyData: active.rawSource,
     );
   }
 
@@ -3882,16 +3901,60 @@ class RoutesTabState extends State<RoutesTab>
     });
 
     try {
-      final saved = await SearchHistoryManager.toggleSavedJourney(
-        from: from,
-        to: route.destination,
-        journeyData: activeJourney.rawSource,
-        departure: activeJourney.plannedDeparture ?? activeJourney.departure,
-        arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
-      );
+      final persistedKey = activeJourney.savedConnectionKey;
+      final existingSavedItem = persistedKey == null
+          ? null
+          : _savedJourneys.cast<Map<String, dynamic>?>().firstWhere(
+                (item) => item?['connectionKey'] == persistedKey,
+                orElse: () => null,
+              );
+      final bool saved;
+      if (existingSavedItem != null) {
+        await SearchHistoryManager.removeSavedJourneyByItem(
+          item: existingSavedItem,
+        );
+        saved = false;
+      } else {
+        saved = await SearchHistoryManager.toggleSavedJourney(
+          from: from,
+          to: route.destination,
+          journeyData: activeJourney.rawSource,
+          departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+          arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+        );
+      }
       await _loadHistoryData();
 
       if (!mounted) return;
+      final connectionKey = saved
+          ? SearchHistoryManager.buildSavedJourneyConnectionKey(
+              from: from,
+              to: route.destination,
+              departure:
+                  activeJourney.plannedDeparture ?? activeJourney.departure,
+              arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+              journeyData: activeJourney.rawSource,
+            )
+          : null;
+      setState(() {
+        final index = _tabs.indexWhere((tab) => tab.id == route.id);
+        if (index == -1) return;
+        final current = _tabs[index];
+        Journey update(Journey journey) =>
+            _isSameJourneyEntry(journey, activeJourney)
+                ? journey.copyWith(
+                    savedConnectionKey: connectionKey,
+                    clearSavedConnectionKey: !saved,
+                  )
+                : journey;
+        _tabs[index] = current.copyWith(
+          activeJourney: current.activeJourney == null
+              ? null
+              : update(current.activeJourney!),
+          candidates: current.candidates?.map(update).toList(),
+          stack: current.stack.map(update).toList(),
+        );
+      });
       final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -3918,6 +3981,9 @@ class RoutesTabState extends State<RoutesTab>
     final journey = Map<String, dynamic>.from(rawJourney);
     final tabId = _addJourneyTab(
       singleJourneyData: journey,
+      savedConnectionKey: item['connectionKey'] is String
+          ? item['connectionKey'] as String
+          : null,
       origin: from,
       destination: to,
       title: to.name,
@@ -5502,6 +5568,7 @@ class RoutesTabState extends State<RoutesTab>
   Journey _createJourney(
     Map<String, dynamic> journeyData, {
     String? destinationNameOverride,
+    String? savedConnectionKey,
   }) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
@@ -5608,6 +5675,7 @@ class RoutesTabState extends State<RoutesTab>
       arrival: arr ?? DateTime.now(),
       plannedDeparture: pDep,
       plannedArrival: pArr,
+      savedConnectionKey: savedConnectionKey,
       duration:
           (dep != null && arr != null) ? arr.difference(dep) : Duration.zero,
       transferCount: transfers,
@@ -5626,6 +5694,7 @@ class RoutesTabState extends State<RoutesTab>
       String? subtitle,
       Station? origin,
       Station? destination,
+      String? savedConnectionKey,
       RouteSearchSettings? searchSettings}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
@@ -5657,6 +5726,7 @@ class RoutesTabState extends State<RoutesTab>
         activeJourney = _createJourney(
           singleJourneyData,
           destinationNameOverride: dest?.name,
+          savedConnectionKey: savedConnectionKey,
         );
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
