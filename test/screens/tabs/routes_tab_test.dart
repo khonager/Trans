@@ -1290,6 +1290,101 @@ void main() {
     expect(realtimeChangedSuffixStart('10:42', '10:50'), 3);
   });
 
+  test('derives a platform change around a stale wait step', () {
+    final steps = [
+      JourneyStep(
+        type: 'ride',
+        line: 'RE14',
+        instruction: 'RE14',
+        duration: '20 min',
+        departureTime: '08:30',
+        arrivalTime: '08:56',
+        destinationStationId: 'saalfeld',
+        destinationName: 'Saalfeld (Saale)',
+        arrivalPlatform: '6',
+      ),
+      JourneyStep(
+        type: 'wait',
+        line: 'Transfer',
+        instruction: 'Wait at Saalfeld (Saale)',
+        duration: '5 min',
+        departureTime: '08:56',
+        arrivalTime: '09:00',
+      ),
+      JourneyStep(
+        type: 'ride',
+        line: 'RE14',
+        instruction: 'RE14',
+        duration: '95 min',
+        departureTime: '09:00',
+        arrivalTime: '10:35',
+        startStationId: 'saalfeld',
+        startStationName: 'Saalfeld (Saale)',
+        platform: '2',
+      ),
+    ];
+
+    expect(
+      transferPlatformChangeForStep(steps, 1),
+      (fromPlatform: '6', toPlatform: '2'),
+    );
+  });
+
+  testWidgets('renders current platforms instead of a stale wait instruction',
+      (tester) async {
+    final state = await _pumpRoutesTab(tester);
+    final departure = DateTime(2030, 9, 3, 8, 30);
+    final journey = Journey(
+      steps: [
+        JourneyStep(
+          type: 'ride',
+          line: 'RE14',
+          instruction: 'RE14 → Saalfeld (Saale)',
+          duration: '26 min',
+          departureTime: '08:30',
+          arrivalTime: '08:56',
+          destinationStationId: 'saalfeld',
+          destinationName: 'Saalfeld (Saale)',
+          arrivalPlatform: '6',
+        ),
+        JourneyStep(
+          type: 'wait',
+          line: 'Transfer',
+          instruction: 'Wait at Saalfeld (Saale)',
+          duration: '5 min',
+          departureTime: '08:56',
+          arrivalTime: '09:00',
+          waitDuration: const Duration(minutes: 5),
+        ),
+        JourneyStep(
+          type: 'ride',
+          line: 'RE14',
+          instruction: 'RE14 → Bamberg',
+          duration: '1h 35min',
+          departureTime: '09:00',
+          arrivalTime: '10:35',
+          startStationId: 'saalfeld',
+          startStationName: 'Saalfeld (Saale)',
+          platform: '2',
+        ),
+      ],
+      departure: departure,
+      arrival: departure.add(const Duration(hours: 2, minutes: 5)),
+      duration: const Duration(hours: 2, minutes: 5),
+      transferCount: 1,
+      totalWaitTime: const Duration(minutes: 5),
+      rawSource: const {'legs': []},
+      source: 'test',
+    );
+    state.debugOpenRouteTabs([
+      _routeTab(index: 0, activeJourney: journey),
+    ]);
+    await tester.pump();
+
+    expect(find.text('Switch from Pl. 6 to Pl. 2'), findsOneWidget);
+    expect(find.text('Wait at Saalfeld (Saale)'), findsNothing);
+  });
+
   group('pulling down on the fixed tab strip', () {
     testWidgets('a mouse pull refreshes the opened journey in place',
         (tester) async {

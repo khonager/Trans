@@ -469,6 +469,60 @@ bool sameTransitStationForTesting(
 ) =>
     _sameTransitStation(leftId, leftName, rightId, rightName);
 
+/// Returns the live platform change surrounding a wait step.
+///
+/// Transfer instructions are initially built from the journey payload, but a
+/// later realtime refresh can add platforms to the neighbouring ride steps.
+/// Deriving this small piece of display state from those rides prevents the
+/// transfer card from continuing to say only "Wait" after both tracks are
+/// already visible elsewhere on screen.
+@visibleForTesting
+({String fromPlatform, String toPlatform})? transferPlatformChangeForStep(
+  List<JourneyStep> steps,
+  int stepIndex,
+) {
+  if (stepIndex <= 0 || stepIndex >= steps.length - 1) return null;
+  if (steps[stepIndex].type != 'wait') return null;
+
+  JourneyStep? previousRide;
+  for (var index = stepIndex - 1; index >= 0; index--) {
+    if (steps[index].type == 'ride') {
+      previousRide = steps[index];
+      break;
+    }
+  }
+
+  JourneyStep? nextRide;
+  for (var index = stepIndex + 1; index < steps.length; index++) {
+    if (steps[index].type == 'ride') {
+      nextRide = steps[index];
+      break;
+    }
+  }
+
+  if (previousRide == null || nextRide == null) return null;
+  if (!_sameTransitStation(
+    previousRide.destinationStationId,
+    previousRide.destinationName,
+    nextRide.startStationId,
+    nextRide.startStationName,
+  )) {
+    return null;
+  }
+
+  final fromPlatform = previousRide.arrivalPlatform?.trim();
+  final toPlatform = nextRide.platform?.trim();
+  if (fromPlatform == null ||
+      fromPlatform.isEmpty ||
+      toPlatform == null ||
+      toPlatform.isEmpty ||
+      fromPlatform.toLowerCase() == toPlatform.toLowerCase()) {
+    return null;
+  }
+
+  return (fromPlatform: fromPlatform, toPlatform: toPlatform);
+}
+
 bool _looksLikeOpaqueStopCode(String label) {
   final lower = label.toLowerCase();
   const userFacingKeywords = <String>[
@@ -1335,10 +1389,23 @@ Journey _mergeJourneyWithFreshRealtime(
 }) {
   final freshRideSteps =
       incoming.steps.where((step) => step.type == 'ride').toList();
+  final hasMatchingStepShape = existing.steps.length == incoming.steps.length &&
+      List.generate(
+        existing.steps.length,
+        (index) => existing.steps[index].type == incoming.steps[index].type,
+      ).every((matches) => matches);
   var matchedRide = false;
 
-  final mergedSteps = existing.steps.map((step) {
-    if (step.type != 'ride') return step;
+  final mergedSteps = existing.steps.asMap().entries.map((entry) {
+    final index = entry.key;
+    final step = entry.value;
+    // When the provider returned the same itinerary shape, its rebuilt
+    // transfer step contains instructions based on the newly supplied
+    // platforms. Keeping the stale non-ride step is what previously left a
+    // "Wait" card between two rides showing different tracks.
+    if (step.type != 'ride') {
+      return hasMatchingStepShape ? incoming.steps[index] : step;
+    }
 
     JourneyStep? fresh;
     for (final candidate in freshRideSteps) {
@@ -10225,7 +10292,24 @@ class RoutesTabState extends State<RoutesTab>
                   route.activeJourney?.parentJourney != null)
                 _buildReturnToParentButton(context, route),
               _StepCard(
-                  step: route.steps[i],
+                  step: () {
+                    final step = route.steps[i];
+                    final platformChange =
+                        transferPlatformChangeForStep(route.steps, i);
+                    if (platformChange == null) return step;
+
+                    final l10n = AppLocalizations.of(context)!;
+                    String platformLabel(String platform) =>
+                        int.tryParse(platform) == null
+                            ? platform
+                            : l10n.platformShort(platform);
+                    return step.copyWith(
+                      instruction: l10n.switchPlatform(
+                        platformLabel(platformChange.fromPlatform),
+                        platformLabel(platformChange.toPlatform),
+                      ),
+                    );
+                  }(),
                   isFirst: i == 0,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??
