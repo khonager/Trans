@@ -1040,6 +1040,142 @@ void main() {
     expect(first, greaterThanOrEqualTo(0));
   });
 
+  group('saved route notification health', () {
+    Journey journeyWithRides(List<JourneyStep> rides) {
+      final departure = rides.first.plannedDeparture!;
+      final arrival = rides.last.plannedArrival!;
+      return Journey(
+        steps: rides,
+        departure: departure,
+        arrival: arrival,
+        duration: arrival.difference(departure),
+        transferCount: rides.length - 1,
+        totalWaitTime: Duration.zero,
+        rawSource: const {},
+        source: 'test',
+      );
+    }
+
+    JourneyStep ride({
+      required int departureMinute,
+      required int arrivalMinute,
+      int departureDelay = 0,
+      int arrivalDelay = 0,
+      bool cancelled = false,
+    }) {
+      final base = DateTime.utc(2026, 9, 3, 10);
+      return JourneyStep(
+        type: 'ride',
+        line: 'RE 1',
+        instruction: 'Ride',
+        duration: '10 min',
+        departureTime: '10:${departureMinute.toString().padLeft(2, '0')}',
+        arrivalTime: '10:${arrivalMinute.toString().padLeft(2, '0')}',
+        plannedDeparture: base.add(Duration(minutes: departureMinute)),
+        plannedArrival: base.add(Duration(minutes: arrivalMinute)),
+        departureDelay: departureDelay,
+        arrivalDelay: arrivalDelay,
+        isCancelled: cancelled,
+      );
+    }
+
+    test('routine changes within a delay only update silently', () {
+      expect(
+        savedRouteNotificationAction(
+          previous: SavedRouteHealthState.delayed,
+          current: SavedRouteHealthState.delayed,
+          realtimeChanged: true,
+        ),
+        SavedRouteNotificationAction.silentUpdate,
+      );
+      expect(
+        savedRouteNotificationAction(
+          previous: SavedRouteHealthState.delayed,
+          current: SavedRouteHealthState.delayed,
+          realtimeChanged: false,
+        ),
+        SavedRouteNotificationAction.none,
+      );
+    });
+
+    test('starting and recovering from a delay both alert', () {
+      expect(
+        savedRouteNotificationAction(
+          previous: SavedRouteHealthState.normal,
+          current: SavedRouteHealthState.delayed,
+          realtimeChanged: true,
+        ),
+        SavedRouteNotificationAction.alert,
+      );
+      expect(
+        savedRouteNotificationAction(
+          previous: SavedRouteHealthState.delayed,
+          current: SavedRouteHealthState.normal,
+          realtimeChanged: true,
+        ),
+        SavedRouteNotificationAction.alert,
+      );
+    });
+
+    test('first on-time observation establishes a quiet baseline', () {
+      expect(
+        savedRouteNotificationAction(
+          previous: null,
+          current: SavedRouteHealthState.normal,
+          realtimeChanged: true,
+        ),
+        SavedRouteNotificationAction.none,
+      );
+
+      final delayed = journeyWithRides([
+        ride(
+          departureMinute: 0,
+          arrivalMinute: 20,
+          departureDelay: 4,
+        ),
+      ]);
+      final health = savedRouteHealthForJourney(delayed);
+      expect(health.state, SavedRouteHealthState.delayed);
+      expect(health.maxDelayMinutes, 4);
+    });
+
+    test(
+        'three-minute transfer is at risk and a missed transfer is unavailable',
+        () {
+      final tight = journeyWithRides([
+        ride(departureMinute: 0, arrivalMinute: 20, arrivalDelay: 2),
+        ride(departureMinute: 25, arrivalMinute: 40),
+      ]);
+      final missed = journeyWithRides([
+        ride(departureMinute: 0, arrivalMinute: 20, arrivalDelay: 5),
+        ride(departureMinute: 25, arrivalMinute: 40),
+      ]);
+
+      expect(
+        savedRouteHealthForJourney(tight).state,
+        SavedRouteHealthState.tightConnection,
+      );
+      expect(
+        savedRouteHealthForJourney(tight).shortestTransferMinutes,
+        3,
+      );
+      expect(
+        savedRouteHealthForJourney(missed).state,
+        SavedRouteHealthState.unavailable,
+      );
+    });
+
+    test('cancelled route is unavailable', () {
+      final cancelled = journeyWithRides([
+        ride(departureMinute: 0, arrivalMinute: 20, cancelled: true),
+      ]);
+      expect(
+        savedRouteHealthForJourney(cancelled).state,
+        SavedRouteHealthState.unavailable,
+      );
+    });
+  });
+
   test('alternative journey display departure prefers planned departure', () {
     final departure = alternativeJourneyDisplayDepartureLocal({
       'legs': [

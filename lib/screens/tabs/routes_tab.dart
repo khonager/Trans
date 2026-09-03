@@ -709,6 +709,112 @@ String compactSavedRouteLabel(String fromName, String toName) {
 
 const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
 const int _savedRouteStatusDetailMaxLength = 38;
+const int _savedRouteTightConnectionMinutes = 3;
+const String _savedRouteHealthPreferenceKey =
+    'saved_route_notification_health_v1';
+
+enum SavedRouteHealthState { normal, delayed, tightConnection, unavailable }
+
+class SavedRouteHealth {
+  final SavedRouteHealthState state;
+  final int maxDelayMinutes;
+  final int? shortestTransferMinutes;
+
+  const SavedRouteHealth({
+    required this.state,
+    this.maxDelayMinutes = 0,
+    this.shortestTransferMinutes,
+  });
+}
+
+enum SavedRouteNotificationAction { none, silentUpdate, alert }
+
+/// Reduces frequently changing realtime fields to the route conditions that
+/// are useful enough to interrupt the traveller.
+@visibleForTesting
+SavedRouteHealth savedRouteHealthForJourney(
+  Journey journey, {
+  bool stillPossible = true,
+}) {
+  if (!stillPossible) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  final rides = journey.steps.where((step) => step.type == 'ride').toList();
+  if (rides.any((ride) => ride.isCancelled)) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  var maxDelayMinutes = 0;
+  for (final ride in rides) {
+    maxDelayMinutes = max(
+      maxDelayMinutes,
+      max(ride.departureDelay ?? 0, ride.arrivalDelay ?? 0),
+    );
+  }
+
+  int? shortestTransferMinutes;
+  for (var index = 1; index < rides.length; index++) {
+    final previous = rides[index - 1];
+    final next = rides[index];
+    final previousArrival = previous.plannedArrival
+        ?.add(Duration(minutes: previous.arrivalDelay ?? 0));
+    final nextDeparture = next.plannedDeparture
+            ?.add(Duration(minutes: next.departureDelay ?? 0)) ??
+        next.dateTime;
+    if (previousArrival == null || nextDeparture == null) continue;
+
+    final transfer = nextDeparture.difference(previousArrival);
+    final transferMinutes = transfer.inMinutes;
+    if (transfer <= Duration.zero) {
+      return SavedRouteHealth(
+        state: SavedRouteHealthState.unavailable,
+        maxDelayMinutes: maxDelayMinutes,
+        shortestTransferMinutes: transferMinutes,
+      );
+    }
+    shortestTransferMinutes =
+        min(shortestTransferMinutes ?? transferMinutes, transferMinutes);
+  }
+
+  if (shortestTransferMinutes != null &&
+      shortestTransferMinutes <= _savedRouteTightConnectionMinutes) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.tightConnection,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  if (maxDelayMinutes > 0) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.delayed,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  return SavedRouteHealth(
+    state: SavedRouteHealthState.normal,
+    shortestTransferMinutes: shortestTransferMinutes,
+  );
+}
+
+@visibleForTesting
+SavedRouteNotificationAction savedRouteNotificationAction({
+  required SavedRouteHealthState? previous,
+  required SavedRouteHealthState current,
+  required bool realtimeChanged,
+}) {
+  if (previous == null) {
+    return current == SavedRouteHealthState.normal
+        ? SavedRouteNotificationAction.none
+        : SavedRouteNotificationAction.alert;
+  }
+  if (previous != current) return SavedRouteNotificationAction.alert;
+  if (current != SavedRouteHealthState.normal && realtimeChanged) {
+    return SavedRouteNotificationAction.silentUpdate;
+  }
+  return SavedRouteNotificationAction.none;
+}
 
 @visibleForTesting
 int savedRouteStatusNotificationIdForKey(String routeKey) {
@@ -1457,6 +1563,8 @@ class RoutesTabState extends State<RoutesTab>
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
+  final Map<String, SavedRouteHealthState> _savedJourneyLastHealthStates =
+      <String, SavedRouteHealthState>{};
   final Set<String> _savingRouteIds = <String>{};
   final Map<String, ScrollController> _routeResultsScrollControllers =
       <String, ScrollController>{};
@@ -2013,6 +2121,7 @@ class RoutesTabState extends State<RoutesTab>
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     final recent = await SearchHistoryManager.getRecentJourneys();
     final saved = await SearchHistoryManager.getSavedJourneys();
+    await _restoreSavedJourneyHealthStates(saved);
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
@@ -4517,8 +4626,22 @@ class RoutesTabState extends State<RoutesTab>
   void _syncSavedJourneyStatusMonitoring(List<Map<String, dynamic>> journeys) {
     final activeKeys =
         journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final removedKeys = <String>{
+      ..._savedJourneyLastStatusSignatures.keys,
+      ..._savedJourneyLastHealthStates.keys,
+    }.difference(activeKeys);
     _savedJourneyLastStatusSignatures
         .removeWhere((key, _) => !activeKeys.contains(key));
+    _savedJourneyLastHealthStates
+        .removeWhere((key, _) => !activeKeys.contains(key));
+    if (removedKeys.isNotEmpty) {
+      unawaited(_persistSavedJourneyHealthStates());
+      for (final key in removedKeys) {
+        unawaited(NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        ));
+      }
+    }
 
     if (journeys.isEmpty) {
       _savedJourneyStatusPollTimer?.cancel();
@@ -4538,6 +4661,55 @@ class RoutesTabState extends State<RoutesTab>
     if (shouldCheckNow) {
       unawaited(_checkSavedJourneyStatuses());
     }
+  }
+
+  Future<void> _restoreSavedJourneyHealthStates(
+    List<Map<String, dynamic>> journeys,
+  ) async {
+    final activeKeys =
+        journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = prefs.getString(_savedRouteHealthPreferenceKey);
+    if (encoded == null) return;
+
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return;
+      _savedJourneyLastHealthStates.clear();
+      final removedKeys = <String>{};
+      for (final entry in decoded.entries) {
+        final key = entry.key.toString();
+        if (!activeKeys.contains(key)) {
+          removedKeys.add(key);
+          continue;
+        }
+        final stateName = entry.value?.toString();
+        for (final state in SavedRouteHealthState.values) {
+          if (state.name == stateName) {
+            _savedJourneyLastHealthStates[key] = state;
+            break;
+          }
+        }
+      }
+      if (_savedJourneyLastHealthStates.length != decoded.length) {
+        await _persistSavedJourneyHealthStates();
+      }
+      for (final key in removedKeys) {
+        await NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        );
+      }
+    } catch (error) {
+      debugPrint('Could not restore saved-route notification states: $error');
+    }
+  }
+
+  Future<void> _persistSavedJourneyHealthStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(_savedJourneyLastHealthStates.map(
+      (key, state) => MapEntry(key, state.name),
+    ));
+    await prefs.setString(_savedRouteHealthPreferenceKey, encoded);
   }
 
   String _savedJourneyRealtimeSignature(Journey journey) {
@@ -4581,18 +4753,13 @@ class RoutesTabState extends State<RoutesTab>
       if (nowStep.isCancelled && !oldStep.isCancelled) {
         hasCancellation = true;
       }
-      final depDelayChanged =
-          (nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0);
-      final arrDelayChanged =
-          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0);
-      if (depDelayChanged || arrDelayChanged) {
+      if ((nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0) ||
+          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0)) {
         hasDelay = true;
       }
-      final platformChanged =
-          (nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
-              (nowStep.arrivalPlatform ?? '').trim() !=
-                  (oldStep.arrivalPlatform ?? '').trim();
-      if (platformChanged) {
+      if ((nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
+          (nowStep.arrivalPlatform ?? '').trim() !=
+              (oldStep.arrivalPlatform ?? '').trim()) {
         hasPlatformChange = true;
       }
     }
@@ -4603,7 +4770,39 @@ class RoutesTabState extends State<RoutesTab>
     return 'Schedule update';
   }
 
-  Future<({bool stillPossible, String signature, String detail})>
+  String _savedJourneyHealthDetail(SavedRouteHealth health) {
+    switch (health.state) {
+      case SavedRouteHealthState.normal:
+        return 'Back to normal';
+      case SavedRouteHealthState.delayed:
+        return '${health.maxDelayMinutes} min late';
+      case SavedRouteHealthState.tightConnection:
+        return 'Only ${health.shortestTransferMinutes ?? 0} min to change';
+      case SavedRouteHealthState.unavailable:
+        return 'Connection no longer possible';
+    }
+  }
+
+  ({SavedRouteHealthState state, String signature})? _savedJourneyStoredStatus(
+      Map<String, dynamic> item) {
+    final rawJourney = item['journey'];
+    final toMap = item['to'];
+    if (rawJourney is! Map || toMap is! Map) return null;
+    try {
+      final journey = _createJourney(
+        Map<String, dynamic>.from(rawJourney),
+        destinationNameOverride: toMap['name']?.toString(),
+      );
+      return (
+        state: savedRouteHealthForJourney(journey).state,
+        signature: _savedJourneyRealtimeSignature(journey),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<({SavedRouteHealth health, String signature, String detail})>
       _computeSavedJourneyStatus(Map<String, dynamic> item) async {
     final fromJson = item['from'];
     final toJson = item['to'];
@@ -4611,14 +4810,18 @@ class RoutesTabState extends State<RoutesTab>
     final departure = _savedJourneyDepartureLocal(item);
     if (fromJson is! Map || toJson is! Map || rawJourney is! Map) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid',
         detail: 'Connection no longer possible'
       );
     }
     if (departure == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'missing-departure',
         detail: 'Connection no longer possible'
       );
@@ -4627,7 +4830,7 @@ class RoutesTabState extends State<RoutesTab>
     final now = DateTime.now();
     if (departure.isBefore(now.subtract(const Duration(hours: 2)))) {
       return (
-        stillPossible: true,
+        health: const SavedRouteHealth(state: SavedRouteHealthState.normal),
         signature: 'past-departure',
         detail: 'No relevant updates'
       );
@@ -4643,7 +4846,9 @@ class RoutesTabState extends State<RoutesTab>
       );
     } catch (_) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid-saved-journey',
         detail: 'Connection no longer possible'
       );
@@ -4673,7 +4878,9 @@ class RoutesTabState extends State<RoutesTab>
     final matched = _findStrictJourneyMatch(savedJourney, freshJourneys);
     if (matched == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'unavailable',
         detail: 'Connection no longer possible'
       );
@@ -4681,18 +4888,21 @@ class RoutesTabState extends State<RoutesTab>
 
     final merged = _mergeRealtimeIntoJourney(savedJourney, matched);
     final signature = _savedJourneyRealtimeSignature(merged);
-    final detail = _describeSavedJourneyChange(
-      savedJourney: savedJourney,
-      freshJourney: merged,
+    final health = savedRouteHealthForJourney(merged);
+    return (
+      health: health,
+      signature: signature,
+      detail: _savedJourneyHealthDetail(health),
     );
-    return (stillPossible: true, signature: signature, detail: detail);
   }
 
   Future<void> _notifySavedJourneyStatusChange({
     required String routeKey,
     required Map<String, dynamic> item,
-    required bool stillPossible,
+    required SavedRouteHealth health,
+    required SavedRouteHealthState? previousHealth,
     required String detail,
+    required bool alertUser,
   }) async {
     final fromMap = item['from'];
     final toMap = item['to'];
@@ -4703,30 +4913,47 @@ class RoutesTabState extends State<RoutesTab>
     await NotificationManager.requestPermissions();
 
     final androidDetails = AndroidNotificationDetails(
-      'saved_route_status_channel',
+      NotificationManager.savedRouteStatusChannelId,
       'Saved Route Status',
       channelDescription:
-          'Updates when saved routes change or become unavailable',
+          'Important delay and connection updates for saved routes',
       importance: Importance.high,
       priority: Priority.high,
-      enableVibration: true,
+      playSound: alertUser,
+      enableVibration: alertUser,
+      silent: !alertUser,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(),
-      linux: const LinuxNotificationDetails(),
+      iOS: DarwinNotificationDetails(
+        presentAlert: alertUser,
+        presentBanner: alertUser,
+        presentList: true,
+        presentSound: alertUser,
+        interruptionLevel:
+            alertUser ? InterruptionLevel.active : InterruptionLevel.passive,
+      ),
+      linux: LinuxNotificationDetails(suppressSound: !alertUser),
     );
 
     final routeLabel = compactSavedRouteLabel(fromName, toName);
-    final statusText = stillPossible ? 'Still possible' : 'No longer possible';
     // Keep body concise on Android while still showing the key status reason.
     final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
-    final message = routeLabel.isEmpty
-        ? '$compactDetail · $statusText'
-        : '$routeLabel · $compactDetail · $statusText';
+    final message =
+        routeLabel.isEmpty ? compactDetail : '$routeLabel · $compactDetail';
+    final title = switch (health.state) {
+      SavedRouteHealthState.normal => 'Saved route back to normal',
+      SavedRouteHealthState.delayed =>
+        previousHealth == SavedRouteHealthState.tightConnection ||
+                previousHealth == SavedRouteHealthState.unavailable
+            ? 'Connection possible again'
+            : 'Saved route is late',
+      SavedRouteHealthState.tightConnection => 'Connection at risk',
+      SavedRouteHealthState.unavailable => 'Connection no longer possible',
+    };
     await _notificationsPlugin.show(
       id: savedRouteStatusNotificationIdForKey(routeKey),
-      title: 'Saved route changed',
+      title: title,
       body: message,
       notificationDetails: details,
     );
@@ -4738,6 +4965,7 @@ class RoutesTabState extends State<RoutesTab>
 
     _isCheckingSavedJourneyStatuses = true;
     _lastSavedJourneyStatusCheck = DateTime.now();
+    var healthStatesChanged = false;
     try {
       final journeys = List<Map<String, dynamic>>.from(_savedJourneys);
       for (final item in journeys) {
@@ -4746,57 +4974,47 @@ class RoutesTabState extends State<RoutesTab>
 
         try {
           final status = await _computeSavedJourneyStatus(item);
-          final currentStatusSignature = status.stillPossible
-              ? 'possible:${status.signature}'
-              : 'unavailable';
-          final previousStatusSignature =
-              _savedJourneyLastStatusSignatures[key];
-          final isFirstObservation = previousStatusSignature == null;
-          _savedJourneyLastStatusSignatures[key] = currentStatusSignature;
+          if (status.signature == 'past-departure') {
+            await NotificationManager.cancelNotification(
+              id: savedRouteStatusNotificationIdForKey(key),
+            );
+            continue;
+          }
+          var previousSignature = _savedJourneyLastStatusSignatures[key];
+          var previousHealth = _savedJourneyLastHealthStates[key];
+          if (previousHealth == null) {
+            final stored = _savedJourneyStoredStatus(item);
+            previousHealth = stored?.state;
+            previousSignature ??= stored?.signature;
+          }
+          final action = savedRouteNotificationAction(
+            previous: previousHealth,
+            current: status.health.state,
+            realtimeChanged: previousSignature != status.signature,
+          );
 
-          if (status.stillPossible) {
-            final rawJourney = item['journey'];
-            if (rawJourney is! Map) continue;
+          _savedJourneyLastStatusSignatures[key] = status.signature;
+          _savedJourneyLastHealthStates[key] = status.health.state;
+          if (previousHealth != status.health.state) {
+            healthStatesChanged = true;
+          }
 
-            Journey savedJourney;
-            try {
-              savedJourney = _createJourney(
-                Map<String, dynamic>.from(rawJourney),
-                destinationNameOverride: item['toName']?.toString(),
-              );
-            } catch (_) {
-              continue;
-            }
-            final savedSignature = _savedJourneyRealtimeSignature(savedJourney);
-            final changedFromSaved = status.signature != savedSignature;
-            final changedSinceLast =
-                previousStatusSignature != currentStatusSignature;
-            if (changedSinceLast &&
-                (changedFromSaved ||
-                    (previousStatusSignature != null &&
-                        previousStatusSignature.startsWith('unavailable')))) {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: true,
-                detail: status.detail,
-              );
-            } else if (isFirstObservation && !changedFromSaved) {
-              // Baseline set: no notification for unchanged route.
-            }
-          } else {
-            if (previousStatusSignature != 'unavailable') {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: false,
-                detail: status.detail,
-              );
-            }
+          if (action != SavedRouteNotificationAction.none) {
+            await _notifySavedJourneyStatusChange(
+              routeKey: key,
+              item: item,
+              health: status.health,
+              previousHealth: previousHealth,
+              detail: status.detail,
+              alertUser: action == SavedRouteNotificationAction.alert,
+            );
           }
         } catch (e) {
           debugPrint('Saved journey status check failed for one route: $e');
         }
+      }
+      if (healthStatesChanged) {
+        await _persistSavedJourneyHealthStates();
       }
     } finally {
       _isCheckingSavedJourneyStatuses = false;
