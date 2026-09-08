@@ -2614,6 +2614,17 @@ class TransportApi {
   static String _bahnTime(DateTime time) =>
       '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}:00';
 
+  static const List<String> _bahnBoardTransportModes = [
+    'ICE',
+    'INTERCITY',
+    'REGIONAL',
+    'SBAHN',
+  ];
+
+  @visibleForTesting
+  static List<String> get bahnBoardTransportModesForTesting =>
+      _bahnBoardTransportModes;
+
   static Uri _getBahnWebUri(
     String endpoint,
     Map<String, List<String>> queryParameters,
@@ -2770,7 +2781,10 @@ class TransportApi {
         'datum': [_bahnDate(queryTime)],
         'zeit': [_bahnTime(queryTime)],
         'ortExtId': [evaNumber],
-        'verkehrsMittel[]': ['ICE', 'INTERCITY', 'REGIONAL'],
+        // S-Bahn platforms at large stations are often distinct three-digit
+        // underground tracks (for example 101-104 at Frankfurt Hbf). Without
+        // this category the fallback board lookup can never see an S2 event.
+        'verkehrsMittel[]': _bahnBoardTransportModes,
       }),
     );
     final data = json.decode(response.body);

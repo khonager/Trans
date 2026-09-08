@@ -51,6 +51,25 @@ const int _routeLoadEarlierResultCount = 16;
 const int _jointExpansionResultCount = 12;
 const String _routeSortOrderPreferenceKey = 'route_results_sort_order';
 
+/// Returns the stable saved identity when a journey originated from storage.
+/// Provider payloads and realtime times are only used for journeys which have
+/// not yet been associated with a persisted saved entry.
+@visibleForTesting
+String savedJourneyConnectionKeyFor({
+  required Journey journey,
+  required Station from,
+  required Station to,
+}) {
+  return journey.savedConnectionKey ??
+      SearchHistoryManager.buildSavedJourneyConnectionKey(
+        from: from,
+        to: to,
+        departure: journey.plannedDeparture ?? journey.departure,
+        arrival: journey.plannedArrival ?? journey.arrival,
+        journeyData: journey.rawSource,
+      );
+}
+
 enum RouteHistoryView { frequent, recent }
 
 class _RouteSearchDefaults {
@@ -450,6 +469,60 @@ bool sameTransitStationForTesting(
 ) =>
     _sameTransitStation(leftId, leftName, rightId, rightName);
 
+/// Returns the live platform change surrounding a wait step.
+///
+/// Transfer instructions are initially built from the journey payload, but a
+/// later realtime refresh can add platforms to the neighbouring ride steps.
+/// Deriving this small piece of display state from those rides prevents the
+/// transfer card from continuing to say only "Wait" after both tracks are
+/// already visible elsewhere on screen.
+@visibleForTesting
+({String fromPlatform, String toPlatform})? transferPlatformChangeForStep(
+  List<JourneyStep> steps,
+  int stepIndex,
+) {
+  if (stepIndex <= 0 || stepIndex >= steps.length - 1) return null;
+  if (steps[stepIndex].type != 'wait') return null;
+
+  JourneyStep? previousRide;
+  for (var index = stepIndex - 1; index >= 0; index--) {
+    if (steps[index].type == 'ride') {
+      previousRide = steps[index];
+      break;
+    }
+  }
+
+  JourneyStep? nextRide;
+  for (var index = stepIndex + 1; index < steps.length; index++) {
+    if (steps[index].type == 'ride') {
+      nextRide = steps[index];
+      break;
+    }
+  }
+
+  if (previousRide == null || nextRide == null) return null;
+  if (!_sameTransitStation(
+    previousRide.destinationStationId,
+    previousRide.destinationName,
+    nextRide.startStationId,
+    nextRide.startStationName,
+  )) {
+    return null;
+  }
+
+  final fromPlatform = previousRide.arrivalPlatform?.trim();
+  final toPlatform = nextRide.platform?.trim();
+  if (fromPlatform == null ||
+      fromPlatform.isEmpty ||
+      toPlatform == null ||
+      toPlatform.isEmpty ||
+      fromPlatform.toLowerCase() == toPlatform.toLowerCase()) {
+    return null;
+  }
+
+  return (fromPlatform: fromPlatform, toPlatform: toPlatform);
+}
+
 bool _looksLikeOpaqueStopCode(String label) {
   final lower = label.toLowerCase();
   const userFacingKeywords = <String>[
@@ -690,6 +763,112 @@ String compactSavedRouteLabel(String fromName, String toName) {
 
 const int _savedRouteStatusNotificationIdSalt = 0x5a5a5a5a;
 const int _savedRouteStatusDetailMaxLength = 38;
+const int _savedRouteTightConnectionMinutes = 3;
+const String _savedRouteHealthPreferenceKey =
+    'saved_route_notification_health_v1';
+
+enum SavedRouteHealthState { normal, delayed, tightConnection, unavailable }
+
+class SavedRouteHealth {
+  final SavedRouteHealthState state;
+  final int maxDelayMinutes;
+  final int? shortestTransferMinutes;
+
+  const SavedRouteHealth({
+    required this.state,
+    this.maxDelayMinutes = 0,
+    this.shortestTransferMinutes,
+  });
+}
+
+enum SavedRouteNotificationAction { none, silentUpdate, alert }
+
+/// Reduces frequently changing realtime fields to the route conditions that
+/// are useful enough to interrupt the traveller.
+@visibleForTesting
+SavedRouteHealth savedRouteHealthForJourney(
+  Journey journey, {
+  bool stillPossible = true,
+}) {
+  if (!stillPossible) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  final rides = journey.steps.where((step) => step.type == 'ride').toList();
+  if (rides.any((ride) => ride.isCancelled)) {
+    return const SavedRouteHealth(state: SavedRouteHealthState.unavailable);
+  }
+
+  var maxDelayMinutes = 0;
+  for (final ride in rides) {
+    maxDelayMinutes = max(
+      maxDelayMinutes,
+      max(ride.departureDelay ?? 0, ride.arrivalDelay ?? 0),
+    );
+  }
+
+  int? shortestTransferMinutes;
+  for (var index = 1; index < rides.length; index++) {
+    final previous = rides[index - 1];
+    final next = rides[index];
+    final previousArrival = previous.plannedArrival
+        ?.add(Duration(minutes: previous.arrivalDelay ?? 0));
+    final nextDeparture = next.plannedDeparture
+            ?.add(Duration(minutes: next.departureDelay ?? 0)) ??
+        next.dateTime;
+    if (previousArrival == null || nextDeparture == null) continue;
+
+    final transfer = nextDeparture.difference(previousArrival);
+    final transferMinutes = transfer.inMinutes;
+    if (transfer <= Duration.zero) {
+      return SavedRouteHealth(
+        state: SavedRouteHealthState.unavailable,
+        maxDelayMinutes: maxDelayMinutes,
+        shortestTransferMinutes: transferMinutes,
+      );
+    }
+    shortestTransferMinutes =
+        min(shortestTransferMinutes ?? transferMinutes, transferMinutes);
+  }
+
+  if (shortestTransferMinutes != null &&
+      shortestTransferMinutes <= _savedRouteTightConnectionMinutes) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.tightConnection,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  if (maxDelayMinutes > 0) {
+    return SavedRouteHealth(
+      state: SavedRouteHealthState.delayed,
+      maxDelayMinutes: maxDelayMinutes,
+      shortestTransferMinutes: shortestTransferMinutes,
+    );
+  }
+  return SavedRouteHealth(
+    state: SavedRouteHealthState.normal,
+    shortestTransferMinutes: shortestTransferMinutes,
+  );
+}
+
+@visibleForTesting
+SavedRouteNotificationAction savedRouteNotificationAction({
+  required SavedRouteHealthState? previous,
+  required SavedRouteHealthState current,
+  required bool realtimeChanged,
+}) {
+  if (previous == null) {
+    return current == SavedRouteHealthState.normal
+        ? SavedRouteNotificationAction.none
+        : SavedRouteNotificationAction.alert;
+  }
+  if (previous != current) return SavedRouteNotificationAction.alert;
+  if (current != SavedRouteHealthState.normal && realtimeChanged) {
+    return SavedRouteNotificationAction.silentUpdate;
+  }
+  return SavedRouteNotificationAction.none;
+}
 
 @visibleForTesting
 int savedRouteStatusNotificationIdForKey(String routeKey) {
@@ -1126,6 +1305,24 @@ bool _isSameJourneyEntry(Journey a, Journey b) {
 bool isSameJourneyEntryForTesting(Journey a, Journey b) =>
     _isSameJourneyEntry(a, b);
 
+List<Journey> _stackWithJourneyEntry(
+  Iterable<Journey> stack,
+  Journey journey,
+) {
+  final updated = List<Journey>.from(stack);
+  if (!updated.any((existing) => _isSameJourneyEntry(existing, journey))) {
+    updated.add(journey);
+  }
+  return updated;
+}
+
+@visibleForTesting
+List<Journey> stackWithJourneyEntryForTesting(
+  Iterable<Journey> stack,
+  Journey journey,
+) =>
+    _stackWithJourneyEntry(stack, journey);
+
 bool _journeysLikelySameRoute(Journey a, Journey b) {
   final depA = a.plannedDeparture ?? a.departure;
   final depB = b.plannedDeparture ?? b.departure;
@@ -1155,6 +1352,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   if (incomingScore == existingScore &&
@@ -1162,6 +1360,7 @@ Journey _preferJourneyWithMorePlatformDetail(
     return incoming.copyWith(
       parentJourney: existing.parentJourney,
       branchStepIndex: existing.branchStepIndex,
+      savedConnectionKey: existing.savedConnectionKey,
     );
   }
   return existing;
@@ -1208,10 +1407,23 @@ Journey _mergeJourneyWithFreshRealtime(
 }) {
   final freshRideSteps =
       incoming.steps.where((step) => step.type == 'ride').toList();
+  final hasMatchingStepShape = existing.steps.length == incoming.steps.length &&
+      List.generate(
+        existing.steps.length,
+        (index) => existing.steps[index].type == incoming.steps[index].type,
+      ).every((matches) => matches);
   var matchedRide = false;
 
-  final mergedSteps = existing.steps.map((step) {
-    if (step.type != 'ride') return step;
+  final mergedSteps = existing.steps.asMap().entries.map((entry) {
+    final index = entry.key;
+    final step = entry.value;
+    // When the provider returned the same itinerary shape, its rebuilt
+    // transfer step contains instructions based on the newly supplied
+    // platforms. Keeping the stale non-ride step is what previously left a
+    // "Wait" card between two rides showing different tracks.
+    if (step.type != 'ride') {
+      return hasMatchingStepShape ? incoming.steps[index] : step;
+    }
 
     JourneyStep? fresh;
     for (final candidate in freshRideSteps) {
@@ -1436,10 +1648,18 @@ class RoutesTabState extends State<RoutesTab>
   Timer? _savedJourneyStatusPollTimer;
   final Map<String, String> _savedJourneyLastStatusSignatures =
       <String, String>{};
+  final Map<String, SavedRouteHealthState> _savedJourneyLastHealthStates =
+      <String, SavedRouteHealthState>{};
   final Set<String> _savingRouteIds = <String>{};
   final Map<String, ScrollController> _routeResultsScrollControllers =
       <String, ScrollController>{};
+  final Map<String, ScrollController> _activeJourneyScrollControllers =
+      <String, ScrollController>{};
   final Map<String, double> _routeResultsScrollOffsets = <String, double>{};
+
+  /// Scroll position the fixed tab strip is currently pulling on, or null when
+  /// no header pull is in flight.
+  ScrollPosition? _tabBarPullPosition;
   final Map<String, RouteSortOption> _routeResultsSortSelections =
       <String, RouteSortOption>{};
   final Map<String, _JointRouteContext> _jointRouteContexts =
@@ -1986,6 +2206,7 @@ class RoutesTabState extends State<RoutesTab>
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     final recent = await SearchHistoryManager.getRecentJourneys();
     final saved = await SearchHistoryManager.getSavedJourneys();
+    await _restoreSavedJourneyHealthStates(saved);
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
@@ -2254,6 +2475,9 @@ class RoutesTabState extends State<RoutesTab>
     _scrollController.dispose();
     _suggestionsScrollController.dispose();
     for (final controller in _routeResultsScrollControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _activeJourneyScrollControllers.values) {
       controller.dispose();
     }
     _debounce?.cancel();
@@ -3810,6 +4034,7 @@ class RoutesTabState extends State<RoutesTab>
   void _closeTab(String id) {
     final controller = _routeResultsScrollControllers.remove(id);
     controller?.dispose();
+    _activeJourneyScrollControllers.remove(id)?.dispose();
     _routeResultsScrollOffsets.remove(id);
     _routeResultsSortSelections.remove(id);
     _jointRouteContexts.remove(id);
@@ -3825,6 +4050,135 @@ class RoutesTabState extends State<RoutesTab>
 
   bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
     return item['from']?['id'] == from.id && item['to']?['id'] == to.id;
+  }
+
+  /// How often the active-journey refresh callback has been invoked.
+  @visibleForTesting
+  int debugActiveJourneyRefreshCount = 0;
+
+  /// How often the route-results refresh callback has been invoked.
+  @visibleForTesting
+  int debugRouteResultsRefreshCount = 0;
+
+  /// Replaces the open tabs with [tabs] and activates one of them, so tests can
+  /// reach the route views without driving a live search first.
+  @visibleForTesting
+  void debugOpenRouteTabs(List<RouteTab> tabs, {String? activeId}) {
+    setState(() {
+      _tabs
+        ..clear()
+        ..addAll(tabs);
+      _activeTabId = activeId ?? (tabs.isEmpty ? null : tabs.first.id);
+    });
+  }
+
+  ScrollController _activeJourneyScrollControllerFor(String routeId) {
+    return _activeJourneyScrollControllers.putIfAbsent(
+      routeId,
+      ScrollController.new,
+    );
+  }
+
+  /// The scroll position behind whichever route view is on screen right now.
+  ///
+  /// Only one of the two views is mounted for the active tab, so at most one of
+  /// these controllers ever has clients.
+  ScrollPosition? _activeRoutePullPosition() {
+    final routeId = _activeTabId;
+    if (routeId == null) return null;
+    for (final controllers in <Map<String, ScrollController>>[
+      _activeJourneyScrollControllers,
+      _routeResultsScrollControllers,
+    ]) {
+      final controller = controllers[routeId];
+      if (controller != null &&
+          controller.hasClients &&
+          controller.positions.length == 1) {
+        return controller.position;
+      }
+    }
+    return null;
+  }
+
+  /// Metrics that describe the journey as if it were parked at the very top.
+  ///
+  /// [RefreshIndicator] only arms while `extentBefore` is zero, and the whole
+  /// point of the header pull is to refresh without moving the journey, so the
+  /// pull reports `pixels: 0` instead of the real offset. Everything else
+  /// mirrors the live position, which keeps the indicator's arm distance
+  /// identical to the in-list gesture.
+  ScrollMetrics _tabBarPullMetrics(ScrollPosition position) {
+    return FixedScrollMetrics(
+      minScrollExtent: 0,
+      maxScrollExtent: position.maxScrollExtent,
+      pixels: 0,
+      viewportDimension: position.viewportDimension,
+      axisDirection: AxisDirection.down,
+      devicePixelRatio: position.devicePixelRatio,
+    );
+  }
+
+  // The fixed tab strip lives outside the journey's scroll view, so dragging it
+  // can never produce a real overscroll. Instead we hand the RefreshIndicator
+  // the same ScrollNotifications the in-list gesture would produce. That keeps
+  // the stock circular indicator, its arm/cancel thresholds and the existing
+  // onRefresh callback, and it never touches the journey's scroll offset.
+  void _handleTabBarVerticalDragStart(DragStartDetails details) {
+    // The pull only begins once the drag actually moves downwards, so taps and
+    // upward drags on the strip stay inert.
+    _tabBarPullPosition = null;
+  }
+
+  void _handleTabBarVerticalDragUpdate(DragUpdateDetails details) {
+    final delta = details.delta.dy;
+    if (delta == 0) return;
+
+    var position = _tabBarPullPosition;
+    if (position == null) {
+      if (delta <= 0) return;
+      position = _activeRoutePullPosition();
+      final notificationContext = position?.context.notificationContext;
+      if (position == null || notificationContext == null) return;
+      _tabBarPullPosition = position;
+      ScrollStartNotification(
+        metrics: _tabBarPullMetrics(position),
+        context: notificationContext,
+        dragDetails: DragStartDetails(
+          globalPosition: details.globalPosition,
+          localPosition: details.localPosition,
+          sourceTimeStamp: details.sourceTimeStamp,
+        ),
+      ).dispatch(notificationContext);
+    }
+
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    OverscrollNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+      dragDetails: details,
+      // Negative overscroll means "dragged past the top", which is exactly what
+      // pulling the strip downwards represents.
+      overscroll: -delta,
+    ).dispatch(notificationContext);
+  }
+
+  void _handleTabBarVerticalDragEnd(DragEndDetails details) => _endTabBarPull();
+
+  void _handleTabBarVerticalDragCancel() => _endTabBarPull();
+
+  /// Hands the release back to [RefreshIndicator]: a pull past its threshold
+  /// refreshes, anything shorter is cancelled. Same rule as the in-list pull.
+  void _endTabBarPull() {
+    final position = _tabBarPullPosition;
+    _tabBarPullPosition = null;
+    if (position == null) return;
+    final notificationContext = position.context.notificationContext;
+    if (notificationContext == null) return;
+    ScrollEndNotification(
+      metrics: _tabBarPullMetrics(position),
+      context: notificationContext,
+    ).dispatch(notificationContext);
   }
 
   ScrollController _routeResultsScrollControllerFor(String routeId) {
@@ -3847,12 +4201,10 @@ class RoutesTabState extends State<RoutesTab>
     final from = route.origin;
     final active = route.activeJourney;
     if (from == null || active == null) return null;
-    return SearchHistoryManager.buildSavedJourneyConnectionKey(
+    return savedJourneyConnectionKeyFor(
+      journey: active,
       from: from,
       to: route.destination,
-      departure: active.plannedDeparture ?? active.departure,
-      arrival: active.plannedArrival ?? active.arrival,
-      journeyData: active.rawSource,
     );
   }
 
@@ -3882,16 +4234,60 @@ class RoutesTabState extends State<RoutesTab>
     });
 
     try {
-      final saved = await SearchHistoryManager.toggleSavedJourney(
-        from: from,
-        to: route.destination,
-        journeyData: activeJourney.rawSource,
-        departure: activeJourney.plannedDeparture ?? activeJourney.departure,
-        arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
-      );
+      final persistedKey = activeJourney.savedConnectionKey;
+      final existingSavedItem = persistedKey == null
+          ? null
+          : _savedJourneys.cast<Map<String, dynamic>?>().firstWhere(
+                (item) => item?['connectionKey'] == persistedKey,
+                orElse: () => null,
+              );
+      final bool saved;
+      if (existingSavedItem != null) {
+        await SearchHistoryManager.removeSavedJourneyByItem(
+          item: existingSavedItem,
+        );
+        saved = false;
+      } else {
+        saved = await SearchHistoryManager.toggleSavedJourney(
+          from: from,
+          to: route.destination,
+          journeyData: activeJourney.rawSource,
+          departure: activeJourney.plannedDeparture ?? activeJourney.departure,
+          arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+        );
+      }
       await _loadHistoryData();
 
       if (!mounted) return;
+      final connectionKey = saved
+          ? SearchHistoryManager.buildSavedJourneyConnectionKey(
+              from: from,
+              to: route.destination,
+              departure:
+                  activeJourney.plannedDeparture ?? activeJourney.departure,
+              arrival: activeJourney.plannedArrival ?? activeJourney.arrival,
+              journeyData: activeJourney.rawSource,
+            )
+          : null;
+      setState(() {
+        final index = _tabs.indexWhere((tab) => tab.id == route.id);
+        if (index == -1) return;
+        final current = _tabs[index];
+        Journey update(Journey journey) =>
+            _isSameJourneyEntry(journey, activeJourney)
+                ? journey.copyWith(
+                    savedConnectionKey: connectionKey,
+                    clearSavedConnectionKey: !saved,
+                  )
+                : journey;
+        _tabs[index] = current.copyWith(
+          activeJourney: current.activeJourney == null
+              ? null
+              : update(current.activeJourney!),
+          candidates: current.candidates?.map(update).toList(),
+          stack: current.stack.map(update).toList(),
+        );
+      });
       final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -3918,6 +4314,9 @@ class RoutesTabState extends State<RoutesTab>
     final journey = Map<String, dynamic>.from(rawJourney);
     final tabId = _addJourneyTab(
       singleJourneyData: journey,
+      savedConnectionKey: item['connectionKey'] is String
+          ? item['connectionKey'] as String
+          : null,
       origin: from,
       destination: to,
       title: to.name,
@@ -4312,8 +4711,22 @@ class RoutesTabState extends State<RoutesTab>
   void _syncSavedJourneyStatusMonitoring(List<Map<String, dynamic>> journeys) {
     final activeKeys =
         journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final removedKeys = <String>{
+      ..._savedJourneyLastStatusSignatures.keys,
+      ..._savedJourneyLastHealthStates.keys,
+    }.difference(activeKeys);
     _savedJourneyLastStatusSignatures
         .removeWhere((key, _) => !activeKeys.contains(key));
+    _savedJourneyLastHealthStates
+        .removeWhere((key, _) => !activeKeys.contains(key));
+    if (removedKeys.isNotEmpty) {
+      unawaited(_persistSavedJourneyHealthStates());
+      for (final key in removedKeys) {
+        unawaited(NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        ));
+      }
+    }
 
     if (journeys.isEmpty) {
       _savedJourneyStatusPollTimer?.cancel();
@@ -4333,6 +4746,55 @@ class RoutesTabState extends State<RoutesTab>
     if (shouldCheckNow) {
       unawaited(_checkSavedJourneyStatuses());
     }
+  }
+
+  Future<void> _restoreSavedJourneyHealthStates(
+    List<Map<String, dynamic>> journeys,
+  ) async {
+    final activeKeys =
+        journeys.map(_savedJourneyUiKey).whereType<String>().toSet();
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = prefs.getString(_savedRouteHealthPreferenceKey);
+    if (encoded == null) return;
+
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return;
+      _savedJourneyLastHealthStates.clear();
+      final removedKeys = <String>{};
+      for (final entry in decoded.entries) {
+        final key = entry.key.toString();
+        if (!activeKeys.contains(key)) {
+          removedKeys.add(key);
+          continue;
+        }
+        final stateName = entry.value?.toString();
+        for (final state in SavedRouteHealthState.values) {
+          if (state.name == stateName) {
+            _savedJourneyLastHealthStates[key] = state;
+            break;
+          }
+        }
+      }
+      if (_savedJourneyLastHealthStates.length != decoded.length) {
+        await _persistSavedJourneyHealthStates();
+      }
+      for (final key in removedKeys) {
+        await NotificationManager.cancelNotification(
+          id: savedRouteStatusNotificationIdForKey(key),
+        );
+      }
+    } catch (error) {
+      debugPrint('Could not restore saved-route notification states: $error');
+    }
+  }
+
+  Future<void> _persistSavedJourneyHealthStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(_savedJourneyLastHealthStates.map(
+      (key, state) => MapEntry(key, state.name),
+    ));
+    await prefs.setString(_savedRouteHealthPreferenceKey, encoded);
   }
 
   String _savedJourneyRealtimeSignature(Journey journey) {
@@ -4376,18 +4838,13 @@ class RoutesTabState extends State<RoutesTab>
       if (nowStep.isCancelled && !oldStep.isCancelled) {
         hasCancellation = true;
       }
-      final depDelayChanged =
-          (nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0);
-      final arrDelayChanged =
-          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0);
-      if (depDelayChanged || arrDelayChanged) {
+      if ((nowStep.departureDelay ?? 0) != (oldStep.departureDelay ?? 0) ||
+          (nowStep.arrivalDelay ?? 0) != (oldStep.arrivalDelay ?? 0)) {
         hasDelay = true;
       }
-      final platformChanged =
-          (nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
-              (nowStep.arrivalPlatform ?? '').trim() !=
-                  (oldStep.arrivalPlatform ?? '').trim();
-      if (platformChanged) {
+      if ((nowStep.platform ?? '').trim() != (oldStep.platform ?? '').trim() ||
+          (nowStep.arrivalPlatform ?? '').trim() !=
+              (oldStep.arrivalPlatform ?? '').trim()) {
         hasPlatformChange = true;
       }
     }
@@ -4398,7 +4855,39 @@ class RoutesTabState extends State<RoutesTab>
     return 'Schedule update';
   }
 
-  Future<({bool stillPossible, String signature, String detail})>
+  String _savedJourneyHealthDetail(SavedRouteHealth health) {
+    switch (health.state) {
+      case SavedRouteHealthState.normal:
+        return 'Back to normal';
+      case SavedRouteHealthState.delayed:
+        return '${health.maxDelayMinutes} min late';
+      case SavedRouteHealthState.tightConnection:
+        return 'Only ${health.shortestTransferMinutes ?? 0} min to change';
+      case SavedRouteHealthState.unavailable:
+        return 'Connection no longer possible';
+    }
+  }
+
+  ({SavedRouteHealthState state, String signature})? _savedJourneyStoredStatus(
+      Map<String, dynamic> item) {
+    final rawJourney = item['journey'];
+    final toMap = item['to'];
+    if (rawJourney is! Map || toMap is! Map) return null;
+    try {
+      final journey = _createJourney(
+        Map<String, dynamic>.from(rawJourney),
+        destinationNameOverride: toMap['name']?.toString(),
+      );
+      return (
+        state: savedRouteHealthForJourney(journey).state,
+        signature: _savedJourneyRealtimeSignature(journey),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<({SavedRouteHealth health, String signature, String detail})>
       _computeSavedJourneyStatus(Map<String, dynamic> item) async {
     final fromJson = item['from'];
     final toJson = item['to'];
@@ -4406,14 +4895,18 @@ class RoutesTabState extends State<RoutesTab>
     final departure = _savedJourneyDepartureLocal(item);
     if (fromJson is! Map || toJson is! Map || rawJourney is! Map) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid',
         detail: 'Connection no longer possible'
       );
     }
     if (departure == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'missing-departure',
         detail: 'Connection no longer possible'
       );
@@ -4422,7 +4915,7 @@ class RoutesTabState extends State<RoutesTab>
     final now = DateTime.now();
     if (departure.isBefore(now.subtract(const Duration(hours: 2)))) {
       return (
-        stillPossible: true,
+        health: const SavedRouteHealth(state: SavedRouteHealthState.normal),
         signature: 'past-departure',
         detail: 'No relevant updates'
       );
@@ -4438,7 +4931,9 @@ class RoutesTabState extends State<RoutesTab>
       );
     } catch (_) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'invalid-saved-journey',
         detail: 'Connection no longer possible'
       );
@@ -4468,7 +4963,9 @@ class RoutesTabState extends State<RoutesTab>
     final matched = _findStrictJourneyMatch(savedJourney, freshJourneys);
     if (matched == null) {
       return (
-        stillPossible: false,
+        health: const SavedRouteHealth(
+          state: SavedRouteHealthState.unavailable,
+        ),
         signature: 'unavailable',
         detail: 'Connection no longer possible'
       );
@@ -4476,18 +4973,21 @@ class RoutesTabState extends State<RoutesTab>
 
     final merged = _mergeRealtimeIntoJourney(savedJourney, matched);
     final signature = _savedJourneyRealtimeSignature(merged);
-    final detail = _describeSavedJourneyChange(
-      savedJourney: savedJourney,
-      freshJourney: merged,
+    final health = savedRouteHealthForJourney(merged);
+    return (
+      health: health,
+      signature: signature,
+      detail: _savedJourneyHealthDetail(health),
     );
-    return (stillPossible: true, signature: signature, detail: detail);
   }
 
   Future<void> _notifySavedJourneyStatusChange({
     required String routeKey,
     required Map<String, dynamic> item,
-    required bool stillPossible,
+    required SavedRouteHealth health,
+    required SavedRouteHealthState? previousHealth,
     required String detail,
+    required bool alertUser,
   }) async {
     final fromMap = item['from'];
     final toMap = item['to'];
@@ -4498,30 +4998,47 @@ class RoutesTabState extends State<RoutesTab>
     await NotificationManager.requestPermissions();
 
     final androidDetails = AndroidNotificationDetails(
-      'saved_route_status_channel',
+      NotificationManager.savedRouteStatusChannelId,
       'Saved Route Status',
       channelDescription:
-          'Updates when saved routes change or become unavailable',
+          'Important delay and connection updates for saved routes',
       importance: Importance.high,
       priority: Priority.high,
-      enableVibration: true,
+      playSound: alertUser,
+      enableVibration: alertUser,
+      silent: !alertUser,
     );
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: const DarwinNotificationDetails(),
-      linux: const LinuxNotificationDetails(),
+      iOS: DarwinNotificationDetails(
+        presentAlert: alertUser,
+        presentBanner: alertUser,
+        presentList: true,
+        presentSound: alertUser,
+        interruptionLevel:
+            alertUser ? InterruptionLevel.active : InterruptionLevel.passive,
+      ),
+      linux: LinuxNotificationDetails(suppressSound: !alertUser),
     );
 
     final routeLabel = compactSavedRouteLabel(fromName, toName);
-    final statusText = stillPossible ? 'Still possible' : 'No longer possible';
     // Keep body concise on Android while still showing the key status reason.
     final compactDetail = _ellipsize(detail, _savedRouteStatusDetailMaxLength);
-    final message = routeLabel.isEmpty
-        ? '$compactDetail · $statusText'
-        : '$routeLabel · $compactDetail · $statusText';
+    final message =
+        routeLabel.isEmpty ? compactDetail : '$routeLabel · $compactDetail';
+    final title = switch (health.state) {
+      SavedRouteHealthState.normal => 'Saved route back to normal',
+      SavedRouteHealthState.delayed =>
+        previousHealth == SavedRouteHealthState.tightConnection ||
+                previousHealth == SavedRouteHealthState.unavailable
+            ? 'Connection possible again'
+            : 'Saved route is late',
+      SavedRouteHealthState.tightConnection => 'Connection at risk',
+      SavedRouteHealthState.unavailable => 'Connection no longer possible',
+    };
     await _notificationsPlugin.show(
       id: savedRouteStatusNotificationIdForKey(routeKey),
-      title: 'Saved route changed',
+      title: title,
       body: message,
       notificationDetails: details,
     );
@@ -4533,6 +5050,7 @@ class RoutesTabState extends State<RoutesTab>
 
     _isCheckingSavedJourneyStatuses = true;
     _lastSavedJourneyStatusCheck = DateTime.now();
+    var healthStatesChanged = false;
     try {
       final journeys = List<Map<String, dynamic>>.from(_savedJourneys);
       for (final item in journeys) {
@@ -4541,57 +5059,47 @@ class RoutesTabState extends State<RoutesTab>
 
         try {
           final status = await _computeSavedJourneyStatus(item);
-          final currentStatusSignature = status.stillPossible
-              ? 'possible:${status.signature}'
-              : 'unavailable';
-          final previousStatusSignature =
-              _savedJourneyLastStatusSignatures[key];
-          final isFirstObservation = previousStatusSignature == null;
-          _savedJourneyLastStatusSignatures[key] = currentStatusSignature;
+          if (status.signature == 'past-departure') {
+            await NotificationManager.cancelNotification(
+              id: savedRouteStatusNotificationIdForKey(key),
+            );
+            continue;
+          }
+          var previousSignature = _savedJourneyLastStatusSignatures[key];
+          var previousHealth = _savedJourneyLastHealthStates[key];
+          if (previousHealth == null) {
+            final stored = _savedJourneyStoredStatus(item);
+            previousHealth = stored?.state;
+            previousSignature ??= stored?.signature;
+          }
+          final action = savedRouteNotificationAction(
+            previous: previousHealth,
+            current: status.health.state,
+            realtimeChanged: previousSignature != status.signature,
+          );
 
-          if (status.stillPossible) {
-            final rawJourney = item['journey'];
-            if (rawJourney is! Map) continue;
+          _savedJourneyLastStatusSignatures[key] = status.signature;
+          _savedJourneyLastHealthStates[key] = status.health.state;
+          if (previousHealth != status.health.state) {
+            healthStatesChanged = true;
+          }
 
-            Journey savedJourney;
-            try {
-              savedJourney = _createJourney(
-                Map<String, dynamic>.from(rawJourney),
-                destinationNameOverride: item['toName']?.toString(),
-              );
-            } catch (_) {
-              continue;
-            }
-            final savedSignature = _savedJourneyRealtimeSignature(savedJourney);
-            final changedFromSaved = status.signature != savedSignature;
-            final changedSinceLast =
-                previousStatusSignature != currentStatusSignature;
-            if (changedSinceLast &&
-                (changedFromSaved ||
-                    (previousStatusSignature != null &&
-                        previousStatusSignature.startsWith('unavailable')))) {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: true,
-                detail: status.detail,
-              );
-            } else if (isFirstObservation && !changedFromSaved) {
-              // Baseline set: no notification for unchanged route.
-            }
-          } else {
-            if (previousStatusSignature != 'unavailable') {
-              await _notifySavedJourneyStatusChange(
-                routeKey: key,
-                item: item,
-                stillPossible: false,
-                detail: status.detail,
-              );
-            }
+          if (action != SavedRouteNotificationAction.none) {
+            await _notifySavedJourneyStatusChange(
+              routeKey: key,
+              item: item,
+              health: status.health,
+              previousHealth: previousHealth,
+              detail: status.detail,
+              alertUser: action == SavedRouteNotificationAction.alert,
+            );
           }
         } catch (e) {
           debugPrint('Saved journey status check failed for one route: $e');
         }
+      }
+      if (healthStatesChanged) {
+        await _persistSavedJourneyHealthStates();
       }
     } finally {
       _isCheckingSavedJourneyStatuses = false;
@@ -4993,11 +5501,7 @@ class RoutesTabState extends State<RoutesTab>
                 final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
                 if (idx != -1) {
                   final currentTab = _tabs[idx];
-                  final newStack = List<Journey>.from(currentTab.stack);
-                  if (!newStack.any((e) =>
-                      e.departure == j.departure && e.arrival == j.arrival)) {
-                    newStack.add(j);
-                  }
+                  final newStack = _stackWithJourneyEntry(currentTab.stack, j);
                   _tabs[idx] = currentTab.copyWith(
                       activeJourney: j,
                       stack: newStack,
@@ -5502,6 +6006,7 @@ class RoutesTabState extends State<RoutesTab>
   Journey _createJourney(
     Map<String, dynamic> journeyData, {
     String? destinationNameOverride,
+    String? savedConnectionKey,
   }) {
     if (journeyData['legs'] == null) throw Exception("No legs data");
     final List legs = journeyData['legs'];
@@ -5608,6 +6113,7 @@ class RoutesTabState extends State<RoutesTab>
       arrival: arr ?? DateTime.now(),
       plannedDeparture: pDep,
       plannedArrival: pArr,
+      savedConnectionKey: savedConnectionKey,
       duration:
           (dep != null && arr != null) ? arr.difference(dep) : Duration.zero,
       transferCount: transfers,
@@ -5626,6 +6132,7 @@ class RoutesTabState extends State<RoutesTab>
       String? subtitle,
       Station? origin,
       Station? destination,
+      String? savedConnectionKey,
       RouteSearchSettings? searchSettings}) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     List<Journey> candidates = [];
@@ -5657,6 +6164,7 @@ class RoutesTabState extends State<RoutesTab>
         activeJourney = _createJourney(
           singleJourneyData,
           destinationNameOverride: dest?.name,
+          savedConnectionKey: savedConnectionKey,
         );
         candidates = [activeJourney];
         final lastLeg = singleJourneyData['legs'].last;
@@ -6693,23 +7201,34 @@ class RoutesTabState extends State<RoutesTab>
 
       // Main Tab Bar
       if (_tabs.isNotEmpty)
-        SizedBox(
-            height: 60,
-            child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _tabs.length + 1,
-                itemBuilder: (ctx, idx) {
-                  if (idx == _tabs.length) {
-                    return Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () =>
-                                setState(() => _activeTabId = null)));
-                  }
-                  return _buildTabItem(_tabs[idx], colors);
-                })),
+        // Pulling down on the strip refreshes the route below without asking
+        // the user to scroll the journey back to the top first. The vertical
+        // recogniser only claims the gesture once the drag beats the touch
+        // slop, so the strip keeps scrolling sideways and the chips, close
+        // buttons and "+" keep their taps.
+        GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: _handleTabBarVerticalDragStart,
+            onVerticalDragUpdate: _handleTabBarVerticalDragUpdate,
+            onVerticalDragEnd: _handleTabBarVerticalDragEnd,
+            onVerticalDragCancel: _handleTabBarVerticalDragCancel,
+            child: SizedBox(
+                height: 60,
+                child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _tabs.length + 1,
+                    itemBuilder: (ctx, idx) {
+                      if (idx == _tabs.length) {
+                        return Padding(
+                            padding: const EdgeInsets.only(bottom: 20),
+                            child: IconButton(
+                                icon: const Icon(Icons.add_circle_outline),
+                                onPressed: () =>
+                                    setState(() => _activeTabId = null)));
+                      }
+                      return _buildTabItem(_tabs[idx], colors);
+                    }))),
 
       // Secondary Tab Row (Alternatives)
       if (activeTab != null &&
@@ -8297,6 +8816,7 @@ class RoutesTabState extends State<RoutesTab>
   }
 
   Future<void> _refreshRoutes(RouteTab route) async {
+    debugRouteResultsRefreshCount += 1;
     if (_isLoadingRoute) return;
 
     // We want to reset pagination and reload the initial search window.
@@ -8703,6 +9223,7 @@ class RoutesTabState extends State<RoutesTab>
     RouteTab route, {
     bool showCompletionFeedback = true,
   }) async {
+    debugActiveJourneyRefreshCount += 1;
     if (_isLoadingRoute || route.activeJourney == null) return;
 
     final refreshToken = ++_nextRouteSearchToken;
@@ -9632,6 +10153,7 @@ class RoutesTabState extends State<RoutesTab>
       color: _routeLoadingColor(colors),
       onRefresh: () => _refreshActiveJourney(route),
       child: ListView(
+          controller: _activeJourneyScrollControllerFor(route.id),
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
           children: [
             Padding(
@@ -9784,7 +10306,24 @@ class RoutesTabState extends State<RoutesTab>
                   route.activeJourney?.parentJourney != null)
                 _buildReturnToParentButton(context, route),
               _StepCard(
-                  step: route.steps[i],
+                  step: () {
+                    final step = route.steps[i];
+                    final platformChange =
+                        transferPlatformChangeForStep(route.steps, i);
+                    if (platformChange == null) return step;
+
+                    final l10n = AppLocalizations.of(context)!;
+                    String platformLabel(String platform) =>
+                        int.tryParse(platform) == null
+                            ? platform
+                            : l10n.platformShort(platform);
+                    return step.copyWith(
+                      instruction: l10n.switchPlatform(
+                        platformLabel(platformChange.fromPlatform),
+                        platformLabel(platformChange.toPlatform),
+                      ),
+                    );
+                  }(),
                   isFirst: i == 0,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??

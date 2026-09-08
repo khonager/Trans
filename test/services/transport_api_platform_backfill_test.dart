@@ -325,6 +325,32 @@ void main() {
       expect(platform, '3b');
     });
 
+    test('requests and matches underground S-Bahn platforms', () {
+      expect(
+        TransportApi.bahnBoardTransportModesForTesting,
+        contains('SBAHN'),
+      );
+
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-09-03T14:52:00',
+            'gleis': '103',
+            'richtung': 'Niedernhausen Bahnhof',
+            'verkehrmittel': {'mittelText': 'S2'},
+          },
+        ],
+        leg: {
+          'mode': 'SUBURBAN',
+          'line': {'name': 'S2'},
+          'direction': 'Niedernhausen Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-09-03T14:52:00').toLocal(),
+      );
+
+      expect(platform, '103');
+    });
+
     test('matches bahn board line when Transitous only has train number', () {
       final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
         [

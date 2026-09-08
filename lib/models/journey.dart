@@ -211,6 +211,12 @@ class Journey {
   final DateTime? plannedDeparture; // NEW
   final DateTime? plannedArrival; // NEW
 
+  /// The persisted identity of the saved journey this object was opened from.
+  ///
+  /// Realtime refreshes can replace provider payloads and adjust their times,
+  /// so rebuilding the saved-journey key from [rawSource] is not always stable.
+  final String? savedConnectionKey;
+
   /// The journey this one was branched off from by picking an alternative,
   /// so the traveller can step back out of it.
   final Journey? parentJourney;
@@ -232,6 +238,7 @@ class Journey {
     this.totalBikingDuration = Duration.zero,
     this.plannedDeparture,
     this.plannedArrival,
+    this.savedConnectionKey,
     this.parentJourney,
     this.branchStepIndex,
   });
@@ -249,6 +256,8 @@ class Journey {
     Duration? totalBikingDuration,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
+    String? savedConnectionKey,
+    bool clearSavedConnectionKey = false,
     Journey? parentJourney,
     int? branchStepIndex,
   }) {
@@ -265,6 +274,9 @@ class Journey {
       totalBikingDuration: totalBikingDuration ?? this.totalBikingDuration,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
+      savedConnectionKey: clearSavedConnectionKey
+          ? null
+          : (savedConnectionKey ?? this.savedConnectionKey),
       parentJourney: parentJourney ?? this.parentJourney,
       branchStepIndex: branchStepIndex ?? this.branchStepIndex,
     );
