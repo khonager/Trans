@@ -1315,6 +1315,67 @@ void main() {
     expect(merged.single.steps.single.platform, 'D');
   });
 
+  test('live platform refresh replaces a stale complete platform value', () {
+    final departure = DateTime.utc(2026, 9, 8, 16, 6);
+
+    Journey journey(String platform) => Journey(
+          steps: [
+            JourneyStep(
+              type: 'ride',
+              line: 'RB21',
+              instruction: 'RB21',
+              duration: '20 min',
+              departureTime: '16:06',
+              arrivalTime: '16:26',
+              tripId: 'rb21-live-trip',
+              startStationName: 'Wiesbaden Hauptbahnhof',
+              destinationName: 'Wiesbaden-Igstadt',
+              plannedDeparture: departure,
+              plannedArrival: departure.add(const Duration(minutes: 20)),
+              platform: platform,
+            ),
+          ],
+          departure: departure,
+          arrival: departure.add(const Duration(minutes: 20)),
+          duration: const Duration(minutes: 20),
+          transferCount: 0,
+          totalWaitTime: Duration.zero,
+          rawSource: const {},
+          source: 'motis',
+        );
+
+    final updated = applyLivePlatformRefreshForTesting(
+      journey('10'),
+      journey('8'),
+    );
+
+    expect(updated.steps.single.platform, '8');
+  });
+
+  test('realtime refresh window includes a transfer late in a long journey',
+      () {
+    final departure = DateTime.utc(2026, 9, 8, 14, 52);
+    final arrival = DateTime.utc(2026, 9, 8, 16, 29);
+    final journey = Journey(
+      steps: const [],
+      departure: departure,
+      arrival: arrival,
+      duration: arrival.difference(departure),
+      transferCount: 1,
+      totalWaitTime: const Duration(minutes: 11),
+      rawSource: const {},
+      source: 'motis',
+    );
+
+    expect(
+      journeyIsInRealtimeRefreshWindow(
+        journey,
+        DateTime.utc(2026, 9, 8, 16),
+      ),
+      isTrue,
+    );
+  });
+
   test('formats short and long realtime delays clearly', () {
     expect(formatRealtimeDelay(7), '+7 min');
     expect(formatRealtimeDelay(124), '+2h 4min');

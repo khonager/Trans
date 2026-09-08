@@ -1373,6 +1373,47 @@ Journey preferJourneyWithMorePlatformDetailForTesting(
 ) =>
     _preferJourneyWithMorePlatformDetail(existing, incoming);
 
+String _journeyPlatformValueSignature(Journey journey) => journey.steps
+    .where((step) => step.type == 'ride')
+    .map(
+      (step) => [
+        step.tripId ?? '',
+        step.platform ?? '',
+        step.arrivalPlatform ?? '',
+      ].join('|'),
+    )
+    .join('||');
+
+/// A live platform lookup is authoritative even when it replaces one complete
+/// value with another (for example a late change from platform 10 to 8).
+Journey _applyLivePlatformRefresh(Journey existing, Journey incoming) {
+  final merged = _mergeJourneyWithFreshRealtime(
+    existing,
+    incoming,
+    updateJourneyBounds: false,
+  );
+  if (_journeyPlatformValueSignature(merged) !=
+      _journeyPlatformValueSignature(existing)) {
+    return merged;
+  }
+  return _preferJourneyWithMorePlatformDetail(existing, incoming);
+}
+
+@visibleForTesting
+Journey applyLivePlatformRefreshForTesting(
+  Journey existing,
+  Journey incoming,
+) =>
+    _applyLivePlatformRefresh(existing, incoming);
+
+@visibleForTesting
+bool journeyIsInRealtimeRefreshWindow(Journey journey, DateTime now) {
+  final departure = journey.plannedDeparture ?? journey.departure;
+  final arrival = journey.plannedArrival ?? journey.arrival;
+  return !arrival.isBefore(now.subtract(const Duration(minutes: 15))) &&
+      !departure.isAfter(now.add(const Duration(hours: 2)));
+}
+
 bool _sameRideForRealtimeRefresh(JourneyStep current, JourneyStep fresh) {
   final currentTripId = current.tripId?.trim();
   final freshTripId = fresh.tripId?.trim();
@@ -2265,11 +2306,9 @@ class RoutesTabState extends State<RoutesTab>
     _scheduleEarlierAlternativeScans(route, journey);
 
     final now = DateTime.now();
-    final departure = journey.plannedDeparture ?? journey.departure;
-    // Poll only a journey that is about to start or has just started. A
+    // Poll while the journey is upcoming or still in progress. A
     // single visible tab is refreshed at most once every three minutes.
-    if (departure.isBefore(now.subtract(const Duration(minutes: 15))) ||
-        departure.isAfter(now.add(const Duration(hours: 2))) ||
+    if (!journeyIsInRealtimeRefreshWindow(journey, now) ||
         (_lastActiveJourneyRefresh != null &&
             now.difference(_lastActiveJourneyRefresh!) <
                 const Duration(minutes: 3))) {
@@ -9366,7 +9405,6 @@ class RoutesTabState extends State<RoutesTab>
             }
           });
           hasMatchedUpdate = true;
-          unawaited(_enrichActiveJourneyPlatforms(route.id, upd));
           completionMessage = hasChanged
               ? "Route refresh finished: ${_describeSavedJourneyChange(savedJourney: previousJourney, freshJourney: matched)}."
               : "Route refresh finished: no changes.";
@@ -9393,6 +9431,23 @@ class RoutesTabState extends State<RoutesTab>
       if (_isRouteSearchCancelled(refreshToken) || !mounted) return;
 
       handleResults(newResults);
+      final refreshedRoute = _tabs.cast<RouteTab?>().firstWhere(
+            (tab) => tab?.id == route.id,
+            orElse: () => null,
+          );
+      final refreshedJourney = refreshedRoute?.activeJourney;
+      if (refreshedJourney != null &&
+          mounted &&
+          !_isRouteSearchCancelled(refreshToken)) {
+        // Route/trip APIs can keep returning the originally planned platform.
+        // Finish every explicit or periodic refresh with an uncached live
+        // board check so late platform changes behave like delay updates.
+        await _enrichActiveJourneyPlatforms(
+          route.id,
+          refreshedJourney,
+          forceBahnRefresh: true,
+        );
+      }
       if (showCompletionFeedback &&
           mounted &&
           !_isRouteSearchCancelled(refreshToken)) {
@@ -9887,13 +9942,15 @@ class RoutesTabState extends State<RoutesTab>
 
   Future<void> _enrichActiveJourneyPlatforms(
     String tabId,
-    Journey selectedJourney,
-  ) async {
+    Journey selectedJourney, {
+    bool forceBahnRefresh = false,
+  }) async {
     final departure =
         selectedJourney.plannedDeparture ?? selectedJourney.departure;
     final arrival = selectedJourney.plannedArrival ?? selectedJourney.arrival;
     final enrichmentKey = '$tabId|${departure.millisecondsSinceEpoch}|'
-        '${arrival.millisecondsSinceEpoch}|${_firstRideTripId(selectedJourney)}';
+        '${arrival.millisecondsSinceEpoch}|${_firstRideTripId(selectedJourney)}'
+        '${forceBahnRefresh ? '|force' : ''}';
     if (_completedActivePlatformEnrichmentKeys.contains(enrichmentKey)) return;
     if (!_activePlatformEnrichmentKeys.add(enrichmentKey)) return;
 
@@ -9918,7 +9975,7 @@ class RoutesTabState extends State<RoutesTab>
           enrichedRaw,
           destinationNameOverride: currentRoute.destination.name,
         );
-        final preferredActive = _preferJourneyWithMorePlatformDetail(
+        final preferredActive = _applyLivePlatformRefresh(
           currentActive,
           enrichedJourney,
         );
@@ -9947,7 +10004,7 @@ class RoutesTabState extends State<RoutesTab>
                   candidate,
                   preferredActive,
                 )
-                    ? _preferJourneyWithMorePlatformDetail(
+                    ? _applyLivePlatformRefresh(
                         candidate,
                         preferredActive,
                       )
@@ -9957,7 +10014,7 @@ class RoutesTabState extends State<RoutesTab>
           final updatedStack = latest.stack
               .map(
                 (journey) => _journeysLikelySameRoute(journey, preferredActive)
-                    ? _preferJourneyWithMorePlatformDetail(
+                    ? _applyLivePlatformRefresh(
                         journey,
                         preferredActive,
                       )
@@ -9983,6 +10040,7 @@ class RoutesTabState extends State<RoutesTab>
         Map<String, dynamic>.from(selectedJourney.rawSource),
         preferBahnForRail: true,
         fastBahnRailOnly: true,
+        forceBahnRefresh: forceBahnRefresh,
         onProgress: (enrichedSoFar) {
           applyEnrichedRaw(
             enrichedSoFar,

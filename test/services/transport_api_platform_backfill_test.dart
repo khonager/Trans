@@ -511,5 +511,43 @@ void main() {
         isNull,
       );
     });
+
+    test('strict matching uses the exact train despite terminus mismatch', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-09-08T16:06:00',
+            'gleis': '5',
+            'richtung': 'Niedernhausen Bahnhof',
+            'verkehrmittel': {
+              'name': '24449',
+              'mittelText': 'RB21',
+              'linienNummer': 'RB21',
+            },
+          },
+          {
+            'zeit': '2026-09-08T16:06:00',
+            'gleis': '10',
+            'ezGleis': '8',
+            'terminus': 'Limburg(Lahn)',
+            'verkehrmittel': {
+              'name': '24448',
+              'mittelText': 'RB21',
+              'linienNummer': 'RB21',
+            },
+          },
+        ],
+        leg: {
+          'mode': 'REGIONAL_RAIL',
+          'line': {'name': 'RB21 (24448)'},
+          'direction': 'Niedernhausen Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-09-08T16:06:00').toLocal(),
+        strict: true,
+        matchDirection: true,
+      );
+
+      expect(platform, '8');
+    });
   });
 }
