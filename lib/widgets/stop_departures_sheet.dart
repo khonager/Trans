@@ -2,6 +2,7 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/services/transport_api.dart';
 import 'package:trans/utils/app_error.dart';
@@ -62,6 +63,8 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
   _StopDeparturesData? _dataCache;
   String? _selectedDayTabId;
   String? _selectedPlatformKey;
+  String? _selectedLineKey;
+  String? _selectedLineLabel;
 
   @override
   void initState() {
@@ -211,6 +214,31 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
     }
   }
 
+  void _toggleLineFilter(Map<String, dynamic> departure) {
+    final lineKey = _lineFilterKey(departure);
+    final lineLabel = _lineName(departure);
+    if (lineKey == null || lineLabel == null) return;
+
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_selectedLineKey == lineKey) {
+        _selectedLineKey = null;
+        _selectedLineLabel = null;
+      } else {
+        _selectedLineKey = lineKey;
+        _selectedLineLabel = lineLabel;
+      }
+    });
+  }
+
+  void _clearLineFilter() {
+    if (_selectedLineKey == null) return;
+    setState(() {
+      _selectedLineKey = null;
+      _selectedLineLabel = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
@@ -242,16 +270,29 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    l10n.stopDeparturesTitle(widget.stopName),
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: colors.textPrimary,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l10n.stopDeparturesTitle(widget.stopName),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: colors.textPrimary,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_selectedLineLabel != null) ...[
+                      const SizedBox(width: 10),
+                      _ActiveLineFilterChip(
+                        label: _selectedLineLabel!,
+                        removeTooltip: l10n.remove,
+                        onRemove: _clearLineFilter,
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Expanded(
@@ -274,8 +315,17 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                               (tab) => tab?.key == selectedPlatformKey,
                               orElse: () => null,
                             );
-                    final departures = selectedPlatformTab?.departures ??
-                        selectedDayTab.departures;
+                    final platformDepartures =
+                        selectedPlatformTab?.departures ??
+                            selectedDayTab.departures;
+                    final departures = _selectedLineKey == null
+                        ? platformDepartures
+                        : platformDepartures
+                            .where(
+                              (departure) =>
+                                  _lineFilterKey(departure) == _selectedLineKey,
+                            )
+                            .toList(growable: false);
 
                     return Column(
                       children: [
@@ -369,13 +419,15 @@ class _StopDeparturesSheetState extends State<StopDeparturesSheet> {
                                         )
                                       : _LazyLoopDeparturesList(
                                           key: ValueKey(
-                                            '${selectedDayTab.id}|${selectedPlatformKey ?? 'all'}|${departures.length}',
+                                            '${selectedDayTab.id}|${selectedPlatformKey ?? 'all'}|${_selectedLineKey ?? 'all-lines'}|${departures.length}',
                                           ),
                                           departures: departures,
                                           initialAnchorTime: widget.date,
                                           scrollController: scrollCtrl,
                                           colors: colors,
                                           l10n: l10n,
+                                          selectedLineKey: _selectedLineKey,
+                                          onLineLongPress: _toggleLineFilter,
                                         ),
                         ),
                       ],
@@ -585,15 +637,71 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
+class _ActiveLineFilterChip extends StatelessWidget {
+  final String label;
+  final String removeTooltip;
+  final VoidCallback onRemove;
+
+  const _ActiveLineFilterChip({
+    required this.label,
+    required this.removeTooltip,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return Tooltip(
+      message: removeTooltip,
+      child: Material(
+        color: colors.chipActiveBg,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: onRemove,
+          borderRadius: BorderRadius.circular(999),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.directions_bus,
+                    size: 14, color: colors.chipActiveFg),
+                const SizedBox(width: 5),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 82),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.chipActiveFg,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(Icons.close, size: 14, color: colors.chipActiveFg),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DepartureRow extends StatelessWidget {
   final Map<String, dynamic> dep;
   final TransColors colors;
   final AppLocalizations l10n;
+  final bool isSelected;
 
   const _DepartureRow({
     required this.dep,
     required this.colors,
     required this.l10n,
+    required this.isSelected,
   });
 
   @override
@@ -611,14 +719,16 @@ class _DepartureRow extends StatelessWidget {
             decoration: BoxDecoration(
               color: parsed.isCancelled
                   ? Colors.red.withValues(alpha: 0.12)
-                  : colors.chipBg,
+                  : (isSelected ? colors.chipActiveBg : colors.chipBg),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               parsed.lineName.isNotEmpty ? parsed.lineName : '—',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: parsed.isCancelled ? Colors.red : colors.textPrimary,
+                color: parsed.isCancelled
+                    ? Colors.red
+                    : (isSelected ? colors.chipActiveFg : colors.textPrimary),
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 decoration:
@@ -712,6 +822,8 @@ class _LazyLoopDeparturesList extends StatefulWidget {
   final ScrollController scrollController;
   final TransColors colors;
   final AppLocalizations l10n;
+  final String? selectedLineKey;
+  final ValueChanged<Map<String, dynamic>> onLineLongPress;
 
   const _LazyLoopDeparturesList({
     super.key,
@@ -720,6 +832,8 @@ class _LazyLoopDeparturesList extends StatefulWidget {
     required this.scrollController,
     required this.colors,
     required this.l10n,
+    required this.selectedLineKey,
+    required this.onLineLongPress,
   });
 
   @override
@@ -1032,15 +1146,32 @@ class _LazyLoopDeparturesListState extends State<_LazyLoopDeparturesList> {
               final effectiveIndex = idx - (_isLoadingPrevious ? 1 : 0);
               final realIdx = _visibleStart + effectiveIndex;
               final dep = departures[realIdx];
+              final lineKey = _lineFilterKey(dep);
+              final isSelected =
+                  lineKey != null && lineKey == widget.selectedLineKey;
+              final isPast = _isDeparturePast(
+                dep,
+                referenceTime: widget.initialAnchorTime,
+              );
               return KeyedSubtree(
                 key: realIdx == _anchorIndex ? _anchorRowKey : null,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _DepartureRow(
-                      dep: dep,
-                      colors: widget.colors,
-                      l10n: widget.l10n,
+                    Opacity(
+                      opacity: isPast ? 0.45 : 1,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onLongPress: lineKey == null
+                            ? null
+                            : () => widget.onLineLongPress(dep),
+                        child: _DepartureRow(
+                          dep: dep,
+                          colors: widget.colors,
+                          l10n: widget.l10n,
+                          isSelected: isSelected,
+                        ),
+                      ),
                     ),
                     Divider(
                       height: 1,
@@ -1491,6 +1622,12 @@ String? _lineName(Map<String, dynamic> dep) {
   return text == null || text.isEmpty ? null : text;
 }
 
+String? _lineFilterKey(Map<String, dynamic> dep) {
+  final lineName = _lineName(dep);
+  if (lineName == null) return null;
+  return lineName.toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
+
 String _shortDirection(Map<String, dynamic> dep) {
   final direction = _direction(dep).trim();
   if (direction.isEmpty) return '';
@@ -1542,6 +1679,42 @@ DateTime? _departureDateTimeLocal(Map<String, dynamic> dep) {
     _departureDateTimeCache[dep] = _nullDateTimeSentinel;
     return null;
   }
+}
+
+DateTime? _effectiveDepartureDateTimeLocal(Map<String, dynamic> dep) {
+  final motisDepObj = dep['departure'] as Map<String, dynamic>?;
+  final motisPlaceObj = dep['place'] as Map<String, dynamic>?;
+  final rawTime = (motisDepObj?['time'] as String?) ??
+      (motisDepObj?['scheduledTime'] as String?) ??
+      (motisPlaceObj?['departure'] as String?) ??
+      (motisPlaceObj?['scheduledDeparture'] as String?) ??
+      (motisPlaceObj?['arrival'] as String?) ??
+      (motisPlaceObj?['scheduledArrival'] as String?) ??
+      (dep['when'] as String?) ??
+      (dep['plannedWhen'] as String?);
+  if (rawTime == null || rawTime.isEmpty) return null;
+  return DateTime.tryParse(rawTime)?.toLocal();
+}
+
+bool _isDeparturePast(
+  Map<String, dynamic> departure, {
+  required DateTime referenceTime,
+}) {
+  final departureTime = _effectiveDepartureDateTimeLocal(departure);
+  if (departureTime == null) return false;
+
+  final reference = _resolveAnchorReferenceTime(referenceTime);
+  final departureClock = Duration(
+    hours: departureTime.hour,
+    minutes: departureTime.minute,
+    seconds: departureTime.second,
+  );
+  final referenceClock = Duration(
+    hours: reference.hour,
+    minutes: reference.minute,
+    seconds: reference.second,
+  );
+  return departureClock < referenceClock;
 }
 
 final Expando<Object> _departureDateTimeCache =
