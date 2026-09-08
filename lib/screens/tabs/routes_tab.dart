@@ -638,10 +638,12 @@ String? _extractStopDetailCode(String label, {required bool isRail}) {
 String? combinePlatformAndStopLabel(
   String? platform,
   String? stopLabel, {
+  String? scheduledPlatform,
   String? stationName,
   required bool isRail,
 }) {
   final normalizedPlatform = platform?.trim();
+  final normalizedScheduledPlatform = scheduledPlatform?.trim();
   final normalizedStopLabel = _normalizeStopDetailLabel(
     stopLabel,
     stationName: stationName,
@@ -652,6 +654,16 @@ String? combinePlatformAndStopLabel(
     final normalized = value?.trim();
     if (normalized == null || normalized.isEmpty) return null;
     return '$prefix $normalized';
+  }
+
+  if (normalizedPlatform != null &&
+      normalizedPlatform.isNotEmpty &&
+      normalizedScheduledPlatform != null &&
+      normalizedScheduledPlatform.isNotEmpty &&
+      normalizedPlatform.toLowerCase() !=
+          normalizedScheduledPlatform.toLowerCase()) {
+    return '$prefix $normalizedScheduledPlatform → '
+        '$prefix $normalizedPlatform';
   }
 
   final extractedCode = normalizedStopLabel == null
@@ -1380,6 +1392,8 @@ String _journeyPlatformValueSignature(Journey journey) => journey.steps
         step.tripId ?? '',
         step.platform ?? '',
         step.arrivalPlatform ?? '',
+        step.scheduledPlatform ?? '',
+        step.scheduledArrivalPlatform ?? '',
       ].join('|'),
     )
     .join('||');
@@ -1485,6 +1499,9 @@ Journey _mergeJourneyWithFreshRealtime(
           fresh.destinationStationId ?? step.destinationStationId,
       platform: fresh.platform ?? step.platform,
       arrivalPlatform: fresh.arrivalPlatform ?? step.arrivalPlatform,
+      scheduledPlatform: fresh.scheduledPlatform ?? step.scheduledPlatform,
+      scheduledArrivalPlatform:
+          fresh.scheduledArrivalPlatform ?? step.scheduledArrivalPlatform,
       departureStopLabel: fresh.departureStopLabel ?? step.departureStopLabel,
       arrivalStopLabel: fresh.arrivalStopLabel ?? step.arrivalStopLabel,
       stopovers: fresh.stopovers ?? step.stopovers,
@@ -5931,6 +5948,12 @@ class RoutesTabState extends State<RoutesTab>
                   leg['destination']?['id']?.toString(),
           platform: leg['origin']?['platform']?.toString(),
           arrivalPlatform: leg['destination']?['platform']?.toString(),
+          scheduledPlatform: (leg['origin']?['scheduledPlatform'] ??
+                  leg['origin']?['scheduledTrack'])
+              ?.toString(),
+          scheduledArrivalPlatform: (leg['destination']?['scheduledPlatform'] ??
+                  leg['destination']?['scheduledTrack'])
+              ?.toString(),
           departureStopLabel: leg['origin']?['stopLabel']?.toString(),
           arrivalStopLabel: leg['destination']?['stopLabel']?.toString(),
           stopovers: leg['stopovers'],
@@ -10596,16 +10619,34 @@ class _StepCardState extends State<_StepCard> {
     bool constrainWidth = true,
   }) {
     final colors = TransColors.of(context);
-    final detailText = Text(
-      detail,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: colors.textPrimary,
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
-      ),
+    const changeSeparator = ' → ';
+    final changeSeparatorIndex = detail.indexOf(changeSeparator);
+    final baseStyle = TextStyle(
+      color: colors.textPrimary,
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
     );
+    final detailText = changeSeparatorIndex < 0
+        ? Text(detail, style: baseStyle)
+        : Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: detail.substring(
+                    0,
+                    changeSeparatorIndex + changeSeparator.length,
+                  ),
+                ),
+                TextSpan(
+                  text: detail.substring(
+                    changeSeparatorIndex + changeSeparator.length,
+                  ),
+                  style: TextStyle(color: colors.delayLate),
+                ),
+              ],
+            ),
+            style: baseStyle,
+          );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -10621,10 +10662,18 @@ class _StepCardState extends State<_StepCard> {
           if (constrainWidth)
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 110),
-              child: detailText,
+              child: DefaultTextStyle.merge(
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                child: detailText,
+              ),
             )
           else
-            detailText,
+            DefaultTextStyle.merge(
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              child: detailText,
+            ),
         ],
       ),
     );
@@ -10948,6 +10997,7 @@ class _StepCardState extends State<_StepCard> {
                                   if (combinePlatformAndStopLabel(
                                     step.platform,
                                     step.departureStopLabel,
+                                    scheduledPlatform: step.scheduledPlatform,
                                     stationName: step.startStationName,
                                     isRail: _lineLooksRailForPlatformLabel(
                                       step.line,
@@ -11061,6 +11111,7 @@ class _StepCardState extends State<_StepCard> {
                                   stopDetail: combinePlatformAndStopLabel(
                                     step.platform,
                                     step.departureStopLabel,
+                                    scheduledPlatform: step.scheduledPlatform,
                                     stationName: step.startStationName,
                                     isRail: _lineLooksRailForPlatformLabel(
                                       step.line,
@@ -11313,6 +11364,8 @@ class _StepCardState extends State<_StepCard> {
                               stopDetail: combinePlatformAndStopLabel(
                                 step.arrivalPlatform,
                                 step.arrivalStopLabel,
+                                scheduledPlatform:
+                                    step.scheduledArrivalPlatform,
                                 stationName: step.destinationName,
                                 isRail: _lineLooksRailForPlatformLabel(
                                   step.line,

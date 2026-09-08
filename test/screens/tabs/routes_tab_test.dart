@@ -332,6 +332,17 @@ void main() {
     expect(combined, 'Gl. 24');
   });
 
+  test('shows both scheduled and live platforms when the track changes', () {
+    final combined = combinePlatformAndStopLabel(
+      '8',
+      'Gleis 10',
+      scheduledPlatform: '10',
+      isRail: true,
+    );
+
+    expect(combined, 'Gl. 10 → Gl. 8');
+  });
+
   group('earlier alternative hints', () {
     JourneyStep ride(String line, DateTime departure, DateTime arrival) {
       return JourneyStep(
@@ -1463,6 +1474,7 @@ void main() {
           startStationId: 'saalfeld',
           startStationName: 'Saalfeld (Saale)',
           platform: '2',
+          scheduledPlatform: '10',
         ),
       ],
       departure: departure,
@@ -1479,6 +1491,13 @@ void main() {
     await tester.pump();
 
     expect(find.text('Switch from Pl. 6 to Pl. 2'), findsOneWidget);
+    final changedPlatform = find.text('Gl. 10 → Gl. 2');
+    expect(changedPlatform, findsOneWidget);
+    final changedPlatformText = tester.widget<Text>(changedPlatform);
+    final spans = (changedPlatformText.textSpan as TextSpan).children!;
+    expect((spans.first as TextSpan).text, 'Gl. 10 → ');
+    expect((spans.last as TextSpan).text, 'Gl. 2');
+    expect((spans.last as TextSpan).style?.color, Colors.red);
     expect(find.text('Wait at Saalfeld (Saale)'), findsNothing);
   });
 

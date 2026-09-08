@@ -3246,8 +3246,18 @@ class TransportApi {
   }) {
     if (platform != null && platform.isNotEmpty) {
       if (overwritePlatform) {
+        // Keep the provider's original platform as the schedule so the UI can
+        // explain a realtime change (for example `Gl. 10 → Gl. 8`).
+        final originalPlatform = _platformFromPlace(place);
+        final scheduledPlatform = _stringOrNull(
+              place['scheduledPlatform'] ?? place['scheduledTrack'],
+            ) ??
+            originalPlatform;
         place['platform'] = platform;
-        place['scheduledPlatform'] = platform;
+        if (place.containsKey('track')) place['track'] = platform;
+        if (scheduledPlatform != null) {
+          place['scheduledPlatform'] = scheduledPlatform;
+        }
       } else {
         _setIfBlankMapValue(place, 'platform', platform);
         _setIfBlankMapValue(place, 'scheduledPlatform', platform);
@@ -3263,6 +3273,21 @@ class TransportApi {
       _setIfBlankMapValue(place, 'parentId', parentId);
     }
   }
+
+  @visibleForTesting
+  static void applyBackfilledPlatformForTesting(
+    Map<String, dynamic> place,
+    String platform, {
+    bool overwritePlatform = false,
+  }) =>
+      _applyBackfilledStopDetails(
+        place,
+        platform: platform,
+        stopLabel: null,
+        stopId: null,
+        parentId: null,
+        overwritePlatform: overwritePlatform,
+      );
 
   static Future<void> _enrichJourneyRailPlatformsFromBahnBoardFast(
     Map<String, dynamic> journey, {

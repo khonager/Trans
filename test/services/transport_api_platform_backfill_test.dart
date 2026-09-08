@@ -420,6 +420,23 @@ void main() {
       expect(place['exactStopId'], 'existing-child');
     });
 
+    test('live platform writeback preserves the scheduled platform', () {
+      final place = <String, dynamic>{
+        'platform': '10',
+        'scheduledPlatform': '10',
+        'stopLabel': 'Gleis 10',
+      };
+
+      TransportApi.applyBackfilledPlatformForTesting(
+        place,
+        '8',
+        overwritePlatform: true,
+      );
+
+      expect(place['platform'], '8');
+      expect(place['scheduledPlatform'], '10');
+    });
+
     test('flags a track that only names a combined platform area', () {
       expect(
         TransportApi.platformLooksLikeTrackAreaForTesting({

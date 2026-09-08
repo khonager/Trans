@@ -17,6 +17,8 @@ class JourneyStep {
   final String? destinationStationId;
   final String? platform;
   final String? arrivalPlatform;
+  final String? scheduledPlatform;
+  final String? scheduledArrivalPlatform;
   final String? departureStopLabel;
   final String? arrivalStopLabel;
   final List<dynamic>? stopovers;
@@ -72,6 +74,8 @@ class JourneyStep {
     this.destinationStationId,
     this.platform,
     this.arrivalPlatform,
+    this.scheduledPlatform,
+    this.scheduledArrivalPlatform,
     this.departureStopLabel,
     this.arrivalStopLabel,
     this.stopovers,
@@ -115,6 +119,8 @@ class JourneyStep {
     String? destinationStationId,
     String? platform,
     String? arrivalPlatform,
+    String? scheduledPlatform,
+    String? scheduledArrivalPlatform,
     String? departureStopLabel,
     String? arrivalStopLabel,
     List<dynamic>? stopovers,
@@ -160,6 +166,9 @@ class JourneyStep {
       destinationStationId: destinationStationId ?? this.destinationStationId,
       platform: platform ?? this.platform,
       arrivalPlatform: arrivalPlatform ?? this.arrivalPlatform,
+      scheduledPlatform: scheduledPlatform ?? this.scheduledPlatform,
+      scheduledArrivalPlatform:
+          scheduledArrivalPlatform ?? this.scheduledArrivalPlatform,
       departureStopLabel: departureStopLabel ?? this.departureStopLabel,
       arrivalStopLabel: arrivalStopLabel ?? this.arrivalStopLabel,
       stopovers: stopovers ?? this.stopovers,
