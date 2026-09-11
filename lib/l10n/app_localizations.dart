@@ -548,6 +548,24 @@ abstract class AppLocalizations {
   /// **'Plan Journey'**
   String get planJourney;
 
+  /// No description provided for @friendStartLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Friend start'**
+  String get friendStartLabel;
+
+  /// No description provided for @friendStartHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Station or address...'**
+  String get friendStartHint;
+
+  /// No description provided for @planJourneyTogetherBalance.
+  ///
+  /// In en, this message translates to:
+  /// **'Plan Journey Together balance'**
+  String get planJourneyTogetherBalance;
+
   /// No description provided for @tripTime.
   ///
   /// In en, this message translates to:

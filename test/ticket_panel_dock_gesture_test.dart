@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/l10n/app_localizations.dart';
+import 'package:trans/widgets/ticket_dock_geometry.dart';
 import 'package:trans/widgets/ticket_panel.dart';
 
 void main() {
@@ -131,22 +132,20 @@ void main() {
     await tester.pumpAndSettle();
 
     double slideOffset() => tester
-        .widget<SlideTransition>(
-          find
-              .descendant(
-                of: find.byType(TicketPanel),
-                matching: find.byType(SlideTransition),
-              )
-              .first,
-        )
-        .position
-        .value
-        .dy;
+        .widget<Transform>(find.byKey(dockSlideKey))
+        .transform
+        .getTranslation()
+        .y;
 
     rebuild(() => restoreProgress = 0);
     await tester.pump();
     final dockedOffset = slideOffset();
     expect(dockedOffset, greaterThan(0));
+    // The card has to carry its handle exactly onto the navigation bar icon:
+    // any mismatch leaves the flight pill hovering off the card it sits on.
+    final geometry =
+        TicketDockGeometry.of(tester.element(find.byType(TicketPanel)));
+    expect(dockedOffset, moreOrLessEquals(geometry.travel.dy));
 
     rebuild(() => restoreProgress = 0.8);
     await tester.pump();

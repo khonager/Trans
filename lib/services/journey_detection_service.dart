@@ -2,20 +2,85 @@ import 'dart:math' as math;
 
 import '../models/journey.dart';
 
-class JourneyDetectionMatch {
-  final Journey journey;
+/// Where a candidate journey came from.
+///
+/// This is what the app knows about the user's intent before any GPS is
+/// involved: a journey they opened is a far better guess than one of twenty
+/// search results that happens to pass the same street.
+enum JourneyDetectionSource {
+  /// The journey the user opened and is looking at.
+  selected,
+
+  /// Opened earlier and kept as an alternative in a tab.
+  opened,
+
+  /// A saved connection, whether or not a tab is open for it.
+  saved,
+
+  /// One of many results of a search that is still on screen.
+  searchResult,
+}
+
+extension JourneyDetectionSourceWeight on JourneyDetectionSource {
+  /// Scales the evidence a candidate collects. A search result needs stronger
+  /// proof to win, because the user never said they meant to take it.
+  double get confidenceWeight => switch (this) {
+        JourneyDetectionSource.selected => 1,
+        JourneyDetectionSource.opened => 0.92,
+        JourneyDetectionSource.saved => 0.9,
+        JourneyDetectionSource.searchResult => 0.8,
+      };
+}
+
+/// A journey the user could plausibly be travelling on.
+///
+/// Journeys that belong to somebody else — a companion's half of a joint plan,
+/// a route a friend sent — are never turned into candidates, so they can never
+/// be detected or published as the user's own presence.
+class JourneyDetectionCandidate {
   final String key;
+  final Journey journey;
+  final JourneyDetectionSource source;
+
+  /// Where the journey ends, for the presence payload. Kept on the candidate
+  /// so detection does not depend on a tab still being open.
+  final String destinationName;
+
+  /// The tab this came from, when it came from one.
+  final String? tabId;
+
+  const JourneyDetectionCandidate({
+    required this.key,
+    required this.journey,
+    required this.source,
+    required this.destinationName,
+    this.tabId,
+  });
+}
+
+class JourneyDetectionMatch {
+  final JourneyDetectionCandidate candidate;
+
+  /// How well position and time fit, before the source is taken into account.
+  final double evidence;
+
   final double score;
   final double progress;
   final JourneyStep? currentRide;
 
   const JourneyDetectionMatch({
-    required this.journey,
-    required this.key,
+    required this.candidate,
+    required this.evidence,
     required this.score,
     required this.progress,
     required this.currentRide,
   });
+
+  Journey get journey => candidate.journey;
+  String get key => candidate.key;
+  JourneyDetectionSource get source => candidate.source;
+  String get destinationName => candidate.destinationName;
+  String? get tabId => candidate.tabId;
 }
 
 class JourneyDetectionService {
@@ -30,14 +95,14 @@ class JourneyDetectionService {
   }
 
   static List<JourneyDetectionMatch> rankCandidates({
-    required Iterable<MapEntry<String, Journey>> candidates,
+    required Iterable<JourneyDetectionCandidate> candidates,
     required DateTime now,
     required double latitude,
     required double longitude,
   }) {
     final matches = <JourneyDetectionMatch>[];
     for (final candidate in candidates) {
-      final journey = candidate.value;
+      final journey = candidate.journey;
       if (!isInMonitoringWindow(journey, now) || journey.isCancelled) continue;
 
       final points = _journeyPoints(journey);
@@ -69,15 +134,15 @@ class JourneyDetectionService {
           : nearestIndex / (points.length - 1);
       final progress =
           (spatialProgress * 0.65 + timeProgress * 0.35).clamp(0.0, 1.0);
-      final score = (spatialScore * 0.68 +
+      final evidence = (spatialScore * 0.68 +
               temporalScore * 0.22 +
               (inJourneyTime ? 0.10 : 0.0))
           .clamp(0.0, 1.0);
 
       matches.add(JourneyDetectionMatch(
-        journey: journey,
-        key: candidate.key,
-        score: score,
+        candidate: candidate,
+        evidence: evidence,
+        score: evidence * candidate.source.confidenceWeight,
         progress: progress,
         currentRide: currentRideFor(journey, now),
       ));

@@ -358,5 +358,216 @@ void main() {
 
       expect(ranked.first.id, 'stop');
     });
+
+    test('keeps an exact address ahead of city-named street stops', () {
+      // Real api.transitous.org/api/v1/geocode payload for the query below,
+      // which the prefilled "from" field produces from a reverse-geocoded
+      // current location. Transitous ranks the address first; the app used to
+      // sort it last behind nine near-tied "Wiesbaden <X>-Straße" bus stops.
+      Station stop(String name, double lat, double lng, double score,
+              double importance) =>
+          Station(
+            id: name,
+            name: name,
+            type: 'stop',
+            latitude: lat,
+            longitude: lng,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: score,
+            searchImportance: importance,
+          );
+
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -42.95,
+          ),
+          stop('Wiesbaden Berliner Straße', 50.072205, 8.256731, -30.55,
+              0.000143),
+          stop('Wiesbaden Carl-von-Linde-Straße', 50.076176, 8.208654, -30.55,
+              0.000105),
+          stop('Wiesbaden Wilhelm-Hauff-Straße', 50.069366, 8.232805, -30.55,
+              0.00000079),
+          stop('Wiesbaden Hans-Bredow-Straße', 50.076977, 8.258082, -30.05,
+              0.0000092),
+          stop('Wiesbaden-Biebrich Faaker Straße', 50.055847, 8.224544, -30.05,
+              0.0000284),
+          stop('Wiesbaden A.-Schlüter-Straße', 50.064552, 8.265466, -29.80,
+              0.0000282),
+          stop('Wiesbaden-Dotzheim Juister Straße', 50.062110, 8.209416, -29.80,
+              0.0000414),
+          stop('Wiesbaden Gustav-Mahler-Straße', 50.087326, 8.256986, -29.55,
+              0.0000304),
+          stop('Wiesbaden Klarenthaler Straße', 50.078125, 8.227440, -29.55,
+              0.000125),
+        ],
+        'Helgoländer Straße Wiesbaden Hessen',
+        lat: 50.0660486,
+        lng: 8.2058587,
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
+
+    test('tolerates a single slipped keystroke in the city name', () {
+      // "wiesbden" misses the 'a'. Transitous still ranks the address first;
+      // without typo tolerance the token matched nothing here, so far-away
+      // stops carrying the street name outscored it.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'gifhorn-stop',
+            name: 'Gifhorn, Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.4875,
+            longitude: 10.5501,
+            city: 'Gifhorn',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -20.35,
+            searchImportance: 0.0000062,
+          ),
+          Station(
+            id: 'syke-stop',
+            name: 'Ristedt(Syke) Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.9163,
+            longitude: 8.8221,
+            city: 'Syke',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -19.35,
+            searchImportance: 0.0000017,
+          ),
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -24.50,
+          ),
+        ],
+        'Helgoländer Straße wiesbden',
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
+
+    test('tolerates two slipped keystrokes in a long city name', () {
+      // "wiesbdne" is two edits from "wiesbaden" (a dropped letter plus a
+      // transposition), and the query carries no usable location. Transitous
+      // still ranks the address first, by a margin of 0.15.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'gifhorn-stop',
+            name: 'Gifhorn, Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.465546,
+            longitude: 10.569263,
+            city: 'Gifhorn',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -19.35,
+            searchImportance: 0.0000062,
+          ),
+          Station(
+            id: 'syke-stop',
+            name: 'Ristedt(Syke) Helgoländer Straße',
+            type: 'stop',
+            latitude: 52.94754,
+            longitude: 8.75603,
+            city: 'Syke',
+            region: 'Niedersachsen',
+            country: 'DE',
+            searchScore: -18.35,
+            searchImportance: 0.0000017,
+          ),
+          Station(
+            id: 'helgolander-address',
+            name: 'Helgoländer Straße',
+            type: 'address',
+            latitude: 50.0660486,
+            longitude: 8.2058587,
+            city: 'Wiesbaden',
+            region: 'Hessen',
+            country: 'DE',
+            searchScore: -19.50,
+          ),
+        ],
+        'helgölander straße wiesbdne',
+      );
+
+      expect(ranked.first.id, 'helgolander-address');
+    });
+
+    test('keeps the edit budget tight for mid-length tokens', () {
+      // "kasel" is two edits from "kassel", but at five characters the budget
+      // is one, so the unrelated exact match must stay ahead.
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'exact-city',
+            name: 'Kasel Bahnhof',
+            type: 'stop',
+            city: 'Kasel',
+            country: 'DE',
+            searchScore: -20.0,
+          ),
+          Station(
+            id: 'two-edits-away',
+            name: 'Kassel Hauptbahnhof',
+            type: 'stop',
+            city: 'Kassel',
+            country: 'DE',
+            searchScore: -20.0,
+          ),
+        ],
+        'kasel',
+      );
+
+      expect(ranked.first.id, 'exact-city');
+    });
+
+    test('does not treat short tokens as typos of each other', () {
+      final ranked = TransportApi.rankStationsForQuery(
+        [
+          Station(
+            id: 'mainz-hbf',
+            name: 'Mainz Hbf',
+            type: 'stop',
+            city: 'Mainz',
+            country: 'DE',
+            searchScore: -30.9,
+            searchImportance: 0.075,
+          ),
+          Station(
+            id: 'unrelated-main',
+            name: 'Main Tower',
+            type: 'location',
+            city: 'Frankfurt am Main',
+            country: 'DE',
+            searchScore: -30.9,
+          ),
+        ],
+        'mainz',
+      );
+
+      expect(ranked.first.id, 'mainz-hbf');
+    });
   });
 }

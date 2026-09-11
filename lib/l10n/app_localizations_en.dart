@@ -274,6 +274,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get planJourney => 'Plan Journey';
 
   @override
+  String get friendStartLabel => 'Friend start';
+
+  @override
+  String get friendStartHint => 'Station or address...';
+
+  @override
+  String get planJourneyTogetherBalance => 'Plan Journey Together balance';
+
+  @override
   String get tripTime => 'Trip Time';
 
   @override

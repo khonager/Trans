@@ -13,6 +13,7 @@ import 'package:trans/screens/transitous_live_map_screen.dart';
 import 'tabs/routes_tab.dart';
 import 'tabs/friends_tab.dart';
 import 'tabs/settings_tab.dart';
+import '../widgets/ticket_dock_geometry.dart';
 import '../widgets/ticket_panel.dart';
 import '../config/app_theme.dart';
 import '../l10n/app_localizations.dart';
@@ -454,7 +455,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _ticketDockGestureArmed = armed;
       _ticketDockGestureProgress = 0;
+      if (armed) _clearIdleRestoreState();
     });
+  }
+
+  /// Drops any left-over restore bookkeeping once no restore gesture is live.
+  /// A new dock gesture must never be driven by a stale [_qrRestoreProgress].
+  void _clearIdleRestoreState() {
+    if (_qrRestoreGestureActive || _qrRestoreCancelPending) return;
+    _qrRestoreArmed = false;
+    _qrRestoreProgress = 0;
+    _qrRestoreSheetExtent = 0.1;
   }
 
   void _handleTicketDockGestureProgressChanged(double progress) {
@@ -665,11 +676,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
+    final dockGestureLive =
+        _ticketDockGestureArmed || _ticketDockAnimationPending;
+    final restoreLive = _qrRestoreGestureActive ||
+        _qrRestoreCancelPending ||
+        (_qrRestoreArmed && !dockGestureLive);
     final restoreHandleBelongsToSheet =
-        _qrRestoreArmed && _qrRestoreSheetExtent > 0.105;
-    final showSharedPill = _ticketDockGestureArmed ||
-        _ticketDockAnimationPending ||
-        (_qrRestoreArmed && !restoreHandleBelongsToSheet);
+        restoreLive && _qrRestoreSheetExtent > 0.105;
+    final showSharedPill =
+        dockGestureLive || (restoreLive && !restoreHandleBelongsToSheet);
+    // The pill always follows whichever gesture is currently live, so it can
+    // never be pinned to the end state of the previous one.
+    final sharedPillPosition = dockGestureLive
+        ? _ticketDockGestureProgress
+        : (restoreLive ? 1 - _qrRestoreProgress : 0.0);
+    final sharedPillInteractive = dockGestureLive
+        ? (_ticketDockGestureArmed && !_ticketDockAnimationPending)
+        : _qrRestoreGestureActive;
     final ticketPanel = TicketPanel(
       key: _ticketPanelKey,
       fullPage: _ticketDocked,
@@ -677,9 +700,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _qrRestoreGestureActive ? _qrRestoreProgress : null,
       interactiveRestoreSheetExtent: _qrRestoreSheetExtent,
       settleRestoreBackToNavigation: _qrRestoreCancelPending,
-      hideDockHandle: _ticketDockGestureArmed ||
-          _ticketDockAnimationPending ||
-          (_qrRestoreArmed && !restoreHandleBelongsToSheet),
+      hideDockHandle: showSharedPill,
       onDockAnimationStarted: _beginTicketDockAnimation,
       onDockRequested: () => unawaited(_dockTicket()),
       onInteractiveRestoreCancelled: _finishCancelledQrRestore,
@@ -784,12 +805,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ticketEnabled: _ticketDocked ||
                     _qrRestoreGestureActive ||
                     _qrRestoreCancelPending,
-                ticketPullProgress: _qrRestoreProgress,
-                dockGestureProgress: _qrRestoreGestureActive
-                    ? 1 - _qrRestoreProgress
-                    : _ticketDockGestureProgress,
-                dockGestureInteractive: _qrRestoreGestureActive ||
-                    (_ticketDockGestureArmed && !_ticketDockAnimationPending),
+                ticketPullProgress: restoreLive ? _qrRestoreProgress : 0,
+                dockGestureProgress: sharedPillPosition,
+                dockGestureInteractive: sharedPillInteractive,
                 currentTabId: _tabIdForIndex(_currentIndex),
                 routesLabel: AppLocalizations.of(context)!.routes,
                 friendsLabel: AppLocalizations.of(context)!.friends,
@@ -808,12 +826,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           Positioned.fill(
             child: IgnorePointer(
               child: _TicketDockFlightOverlay(
-                position: _qrRestoreArmed
-                    ? 1 - _qrRestoreProgress
-                    : _ticketDockGestureProgress,
+                position: sharedPillPosition,
                 animateToNavigation: _ticketDockAnimationPending,
-                interactive: _qrRestoreGestureActive ||
-                    (_ticketDockGestureArmed && !_ticketDockAnimationPending),
+                interactive: sharedPillInteractive,
               ),
             ),
           ),
@@ -875,22 +890,17 @@ class _TicketDockFlightOverlayState extends State<_TicketDockFlightOverlay>
   @override
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
-    final size = MediaQuery.sizeOf(context);
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-    final bodyHeight = size.height - 72 - bottomInset;
-    final start = Offset(size.width / 2, (bodyHeight * 0.9) + 15);
-    final end = Offset(size.width * 5 / 8, bodyHeight + 20);
+    final geometry = TicketDockGeometry.of(context);
 
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         final progress = _controller.value;
-        final center = Offset(
-          _mix(start.dx, end.dx, progress),
-          _mix(start.dy, end.dy, progress),
-        );
-        final shapeMorph = ((progress - 0.62) / 0.22).clamp(0.0, 1.0);
-        final iconMorph = ((progress - 0.84) / 0.12).clamp(0.0, 1.0);
+        final center = geometry.lerp(progress);
+        // Front-loaded: the pill has finished turning into the QR icon while
+        // the card is still on its way behind the navigation bar.
+        final shapeMorph = ((progress - 0.20) / 0.25).clamp(0.0, 1.0);
+        final iconMorph = ((progress - 0.42) / 0.24).clamp(0.0, 1.0);
         return Stack(
           children: [
             Positioned(
@@ -996,6 +1006,27 @@ class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
     }
   }
 
+  /// [forward]/[reverse] are silent when the controller already sits on the
+  /// target (an interactive drag that ran all the way to an end stop), so the
+  /// status listener would never report the exit. Report it explicitly instead,
+  /// otherwise the restore state stays armed and poisons the next gesture.
+  void _settleTo({required bool docked}) {
+    final target = docked ? 1.0 : 0.0;
+    if (_controller.value == target) {
+      if (!docked) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onTicketExitAnimationCompleted();
+        });
+      }
+      return;
+    }
+    if (docked) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
   @override
   void didUpdateWidget(_AnimatedHomeNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1006,19 +1037,11 @@ class _AnimatedHomeNavigationBarState extends State<_AnimatedHomeNavigationBar>
       return;
     }
     if (oldWidget.dockGestureInteractive) {
-      if (widget.ticketDocked) {
-        _controller.forward();
-      } else {
-        _controller.reverse();
-      }
+      _settleTo(docked: widget.ticketDocked);
       return;
     }
     if (oldWidget.ticketDocked == widget.ticketDocked) return;
-    if (widget.ticketDocked) {
-      _controller.forward();
-    } else {
-      _controller.reverse();
-    }
+    _settleTo(docked: widget.ticketDocked);
   }
 
   @override

@@ -154,15 +154,13 @@ class _FriendsTabState extends State<FriendsTab> {
         backgroundColor: colors.cardBg,
         elevation: 6,
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: Row(
           children: [
             Icon(icon, color: iconColor ?? Colors.blue, size: 20),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(message,
-                  style: TextStyle(color: colors.textPrimary)),
+              child: Text(message, style: TextStyle(color: colors.textPrimary)),
             ),
           ],
         ),

@@ -1419,8 +1419,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     if (_isLoadingInitialView) {
       return Scaffold(
         backgroundColor: colors.scaffoldBg,
-        appBar: AppBar(
-            title: Text(AppLocalizations.of(context)!.liveBuses)),
+        appBar: AppBar(title: Text(AppLocalizations.of(context)!.liveBuses)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }

@@ -325,6 +325,32 @@ void main() {
       expect(platform, '3b');
     });
 
+    test('requests and matches underground S-Bahn platforms', () {
+      expect(
+        TransportApi.bahnBoardTransportModesForTesting,
+        contains('SBAHN'),
+      );
+
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-09-03T14:52:00',
+            'gleis': '103',
+            'richtung': 'Niedernhausen Bahnhof',
+            'verkehrmittel': {'mittelText': 'S2'},
+          },
+        ],
+        leg: {
+          'mode': 'SUBURBAN',
+          'line': {'name': 'S2'},
+          'direction': 'Niedernhausen Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-09-03T14:52:00').toLocal(),
+      );
+
+      expect(platform, '103');
+    });
+
     test('matches bahn board line when Transitous only has train number', () {
       final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
         [
@@ -392,6 +418,23 @@ void main() {
       expect(place['scheduledPlatform'], '2');
       expect(place['stopLabel'], 'Gleis 2');
       expect(place['exactStopId'], 'existing-child');
+    });
+
+    test('live platform writeback preserves the scheduled platform', () {
+      final place = <String, dynamic>{
+        'platform': '10',
+        'scheduledPlatform': '10',
+        'stopLabel': 'Gleis 10',
+      };
+
+      TransportApi.applyBackfilledPlatformForTesting(
+        place,
+        '8',
+        overwritePlatform: true,
+      );
+
+      expect(place['platform'], '8');
+      expect(place['scheduledPlatform'], '10');
     });
 
     test('flags a track that only names a combined platform area', () {
@@ -484,6 +527,44 @@ void main() {
         ),
         isNull,
       );
+    });
+
+    test('strict matching uses the exact train despite terminus mismatch', () {
+      final platform = TransportApi.matchPlatformFromBahnBoardEventsForTesting(
+        [
+          {
+            'zeit': '2026-09-08T16:06:00',
+            'gleis': '5',
+            'richtung': 'Niedernhausen Bahnhof',
+            'verkehrmittel': {
+              'name': '24449',
+              'mittelText': 'RB21',
+              'linienNummer': 'RB21',
+            },
+          },
+          {
+            'zeit': '2026-09-08T16:06:00',
+            'gleis': '10',
+            'ezGleis': '8',
+            'terminus': 'Limburg(Lahn)',
+            'verkehrmittel': {
+              'name': '24448',
+              'mittelText': 'RB21',
+              'linienNummer': 'RB21',
+            },
+          },
+        ],
+        leg: {
+          'mode': 'REGIONAL_RAIL',
+          'line': {'name': 'RB21 (24448)'},
+          'direction': 'Niedernhausen Bahnhof',
+        },
+        expectedTime: DateTime.parse('2026-09-08T16:06:00').toLocal(),
+        strict: true,
+        matchDirection: true,
+      );
+
+      expect(platform, '8');
     });
   });
 }
