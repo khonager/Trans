@@ -733,6 +733,8 @@ void main() {
       int? branchStepIndex,
       Journey? parentJourney,
       String? platform,
+      String? tripId,
+      bool includePlannedTimes = true,
     }) {
       return Journey(
         steps: [
@@ -744,9 +746,10 @@ void main() {
             departureTime: '',
             arrivalTime: '',
             dateTime: departure,
-            plannedDeparture: departure,
-            plannedArrival: arrival,
+            plannedDeparture: includePlannedTimes ? departure : null,
+            plannedArrival: includePlannedTimes ? arrival : null,
             platform: platform,
+            tripId: tripId,
           ),
         ],
         departure: departure,
@@ -756,8 +759,8 @@ void main() {
         totalWaitTime: Duration.zero,
         rawSource: const {},
         source: 'motis',
-        plannedDeparture: departure,
-        plannedArrival: arrival,
+        plannedDeparture: includePlannedTimes ? departure : null,
+        plannedArrival: includePlannedTimes ? arrival : null,
         parentJourney: parentJourney,
         branchStepIndex: branchStepIndex,
       );
@@ -820,6 +823,47 @@ void main() {
       expect(
         stackWithJourneyEntryForTesting([branch], refreshedBranch),
         [branch],
+      );
+    });
+
+    test('recognises a delayed realtime journey by its stable trip id', () {
+      final original = journey(
+        departure: departure,
+        arrival: arrival,
+        tripId: 'trip-42',
+        includePlannedTimes: false,
+      );
+      final delayed = journey(
+        departure: departure.add(const Duration(minutes: 12)),
+        arrival: arrival.add(const Duration(minutes: 12)),
+        tripId: 'trip-42',
+        includePlannedTimes: false,
+      );
+
+      expect(journeysLikelySameRouteForTesting(original, delayed), isTrue);
+      expect(
+        stackWithSelectedJourneyForTesting([delayed], original),
+        [original],
+      );
+    });
+
+    test('reselecting a route repairs duplicate realtime stack entries', () {
+      final selected = journey(
+        departure: departure,
+        arrival: arrival,
+        tripId: 'trip-42',
+        includePlannedTimes: false,
+      );
+      final delayed = journey(
+        departure: departure.add(const Duration(minutes: 12)),
+        arrival: arrival.add(const Duration(minutes: 12)),
+        tripId: 'trip-42',
+        includePlannedTimes: false,
+      );
+
+      expect(
+        stackWithSelectedJourneyForTesting([selected, delayed], selected),
+        [selected],
       );
     });
 

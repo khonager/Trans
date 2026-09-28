@@ -1336,6 +1336,29 @@ List<Journey> stackWithJourneyEntryForTesting(
     _stackWithJourneyEntry(stack, journey);
 
 bool _journeysLikelySameRoute(Journey a, Journey b) {
+  // Realtime-only payloads do not always include planned journey bounds. In
+  // that case a delay changes [departure]/[arrival], sometimes by much more
+  // than the tolerance below. A vehicle trip id is the stronger identity and
+  // must be considered before comparing those mutable times.
+  final tripIdsA = a.steps
+      .where((step) => step.type == 'ride')
+      .map((step) => step.tripId?.trim() ?? '')
+      .where((tripId) => tripId.isNotEmpty)
+      .toList();
+  final tripIdsB = b.steps
+      .where((step) => step.type == 'ride')
+      .map((step) => step.tripId?.trim() ?? '')
+      .where((tripId) => tripId.isNotEmpty)
+      .toList();
+  if (tripIdsA.isNotEmpty &&
+      tripIdsA.length == tripIdsB.length &&
+      List.generate(
+        tripIdsA.length,
+        (index) => tripIdsA[index] == tripIdsB[index],
+      ).every((matches) => matches)) {
+    return true;
+  }
+
   final depA = a.plannedDeparture ?? a.departure;
   final depB = b.plannedDeparture ?? b.departure;
   final arrA = a.plannedArrival ?? a.arrival;
@@ -1353,6 +1376,42 @@ bool _journeysLikelySameRoute(Journey a, Journey b) {
   final lineB = _firstRideLineKey(b);
   return lineA.isEmpty || lineB.isEmpty || lineA == lineB;
 }
+
+@visibleForTesting
+bool journeysLikelySameRouteForTesting(Journey a, Journey b) =>
+    _journeysLikelySameRoute(a, b);
+
+/// Adds a journey selected from a route-results list while repairing any
+/// duplicate stack entries left by older realtime identity mismatches.
+///
+/// Branches are separate alternatives even when they use the same vehicles,
+/// so only entries with the same branch position may collapse.
+List<Journey> _stackWithSelectedJourney(
+  Iterable<Journey> stack,
+  Journey selected,
+) {
+  final updated = <Journey>[];
+  var replacedMatchingEntry = false;
+  for (final existing in stack) {
+    final matches = existing.branchStepIndex == selected.branchStepIndex &&
+        _journeysLikelySameRoute(existing, selected);
+    if (!matches) {
+      updated.add(existing);
+    } else if (!replacedMatchingEntry) {
+      updated.add(selected);
+      replacedMatchingEntry = true;
+    }
+  }
+  if (!replacedMatchingEntry) updated.add(selected);
+  return updated;
+}
+
+@visibleForTesting
+List<Journey> stackWithSelectedJourneyForTesting(
+  Iterable<Journey> stack,
+  Journey selected,
+) =>
+    _stackWithSelectedJourney(stack, selected);
 
 Journey _preferJourneyWithMorePlatformDetail(
   Journey existing,
@@ -10105,11 +10164,10 @@ class RoutesTabState extends State<RoutesTab>
             final index = _tabs.indexWhere((tab) => tab.id == route.id);
             if (index == -1) return;
             final current = _tabs[index];
-            final stack = List<Journey>.from(current.stack);
-            if (!stack.any((journey) =>
-                _journeysLikelySameRoute(journey, option.myJourney))) {
-              stack.add(option.myJourney);
-            }
+            final stack = _stackWithSelectedJourney(
+              current.stack,
+              option.myJourney,
+            );
             _tabs[index] = current.copyWith(
               activeJourney: option.myJourney,
               steps: option.myJourney.steps,
@@ -10156,15 +10214,10 @@ class RoutesTabState extends State<RoutesTab>
                 currentRoute.candidates ?? route.candidates!,
               );
               selectedJourneyForEnrichment = selectedJourney;
-              final currentStack = List<Journey>.from(currentRoute.stack);
-              if (!currentStack.any(
-                (existing) => _journeysLikelySameRoute(
-                  existing,
-                  selectedJourney,
-                ),
-              )) {
-                currentStack.add(selectedJourney);
-              }
+              final currentStack = _stackWithSelectedJourney(
+                currentRoute.stack,
+                selectedJourney,
+              );
 
               TransportApi.addSyntheticDebugLog(
                 'ui: selected journey tab=${route.id} platformSignal=${_journeyPlatformSignal(selectedJourney)}',
