@@ -1079,13 +1079,36 @@ Map<String, dynamic> spliceAlternativeIntoJourney({
   required Map<String, dynamic> original,
   required Map<String, dynamic> alternative,
   required int rideLegIndex,
+  String? intermediateStopId,
+  DateTime? intermediateStopTime,
 }) {
   final originalLegs = (original['legs'] as List?) ?? const [];
   final alternativeLegs = (alternative['legs'] as List?) ?? const [];
-  final prefix = journeyPrefixLegCount(originalLegs, rideLegIndex);
-  if (prefix <= 0 || alternativeLegs.isEmpty) return alternative;
+  if (alternativeLegs.isEmpty) return alternative;
 
-  final legs = [...originalLegs.take(prefix), ...alternativeLegs];
+  List<dynamic> prefixLegs;
+  if (intermediateStopId != null &&
+      rideLegIndex >= 0 &&
+      rideLegIndex < originalLegs.length &&
+      originalLegs[rideLegIndex] is Map) {
+    final partialRide = journeyLegThroughIntermediateStop(
+      Map<String, dynamic>.from(originalLegs[rideLegIndex] as Map),
+      stopId: intermediateStopId,
+      fallbackTime: intermediateStopTime,
+    );
+    // At an intermediate stop the traveller has already completed all access
+    // legs and part of this ride. Keep that history instead of treating the
+    // stop as a brand-new journey origin.
+    prefixLegs = partialRide == null
+        ? const []
+        : [...originalLegs.take(rideLegIndex), partialRide];
+  } else {
+    final prefix = journeyPrefixLegCount(originalLegs, rideLegIndex);
+    prefixLegs = prefix <= 0 ? const [] : originalLegs.take(prefix).toList();
+  }
+  if (prefixLegs.isEmpty) return alternative;
+
+  final legs = [...prefixLegs, ...alternativeLegs];
   final spliced = Map<String, dynamic>.from(alternative)..['legs'] = legs;
 
   final firstLeg = legs.first;
@@ -1103,6 +1126,112 @@ Map<String, dynamic> spliceAlternativeIntoJourney({
   spliced.remove('duration');
   spliced.remove('transfers');
   return spliced;
+}
+
+/// Returns a copy of a ride ending at [stopId]. The stop itself becomes the
+/// destination and only the intermediate stops already passed are retained.
+///
+/// Provider polylines describe the complete ride and cannot safely be shown
+/// for a shortened leg. The decoded path is clipped at the nearest point when
+/// stop coordinates are available; otherwise the stale geometry is removed.
+@visibleForTesting
+Map<String, dynamic>? journeyLegThroughIntermediateStop(
+  Map<String, dynamic> leg, {
+  required String stopId,
+  DateTime? fallbackTime,
+}) {
+  final rawStopovers = leg['stopovers'] as List?;
+  if (rawStopovers == null) return null;
+
+  var stopIndex = -1;
+  Map<String, dynamic>? stopover;
+  for (var i = 0; i < rawStopovers.length; i++) {
+    final raw = rawStopovers[i];
+    if (raw is! Map) continue;
+    final candidate = Map<String, dynamic>.from(raw);
+    final stop = candidate['stop'];
+    if (stop is Map && stop['id']?.toString() == stopId) {
+      stopIndex = i;
+      stopover = candidate;
+      break;
+    }
+  }
+  if (stopIndex == -1 || stopover == null || stopover['stop'] is! Map) {
+    return null;
+  }
+
+  String? firstTime(Iterable<dynamic> values) {
+    for (final value in values) {
+      if (value != null && value.toString().isNotEmpty) return value.toString();
+    }
+    return null;
+  }
+
+  final actualArrival = firstTime([
+    stopover['arrival'],
+    stopover['departure'],
+    fallbackTime?.toUtc().toIso8601String(),
+  ]);
+  final plannedArrival = firstTime([
+    stopover['plannedArrival'],
+    stopover['scheduledArrival'],
+    stopover['plannedDeparture'],
+    stopover['scheduledDeparture'],
+    actualArrival,
+  ]);
+  final destination = Map<String, dynamic>.from(stopover['stop'] as Map);
+  final location = destination['location'];
+  final targetLat = location is Map && location['latitude'] is num
+      ? (location['latitude'] as num).toDouble()
+      : null;
+  final targetLng = location is Map && location['longitude'] is num
+      ? (location['longitude'] as num).toDouble()
+      : null;
+  List<dynamic>? shortenedPath;
+  final rawPath = leg['decodedPath'];
+  if (rawPath is List &&
+      rawPath.isNotEmpty &&
+      targetLat != null &&
+      targetLng != null) {
+    var closestIndex = -1;
+    var closestDistance = double.infinity;
+    for (var i = 0; i < rawPath.length; i++) {
+      final point = rawPath[i];
+      if (point is! List ||
+          point.length < 2 ||
+          point[0] is! num ||
+          point[1] is! num) {
+        continue;
+      }
+      final latDelta = (point[0] as num).toDouble() - targetLat;
+      final lngDelta = (point[1] as num).toDouble() - targetLng;
+      final distance = latDelta * latDelta + lngDelta * lngDelta;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+    if (closestIndex >= 0) {
+      shortenedPath = rawPath.take(closestIndex + 1).toList();
+    }
+  }
+  final shortened = Map<String, dynamic>.from(leg)
+    ..['destination'] = destination
+    ..['stopovers'] = rawStopovers.take(stopIndex).toList()
+    ..remove('polyline');
+  if (shortenedPath == null) {
+    shortened.remove('decodedPath');
+  } else {
+    shortened['decodedPath'] = shortenedPath;
+  }
+  if (actualArrival != null) shortened['arrival'] = actualArrival;
+  if (plannedArrival != null) shortened['plannedArrival'] = plannedArrival;
+  if (stopover['arrivalDelay'] != null) {
+    shortened['arrivalDelay'] = stopover['arrivalDelay'];
+  } else {
+    shortened.remove('arrivalDelay');
+  }
+  return shortened;
 }
 
 bool _isBeforeFirstJourneyStep(int builtStepCount) => builtStepCount == 0;
@@ -5568,7 +5697,9 @@ class RoutesTabState extends State<RoutesTab>
       String? currentLine,
       List<Map<String, dynamic>>? initialResults,
       Journey? branchFrom,
-      int? branchRideLegIndex}) {
+      int? branchRideLegIndex,
+      String? branchIntermediateStopId,
+      DateTime? branchIntermediateStopTime}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -5610,6 +5741,8 @@ class RoutesTabState extends State<RoutesTab>
               destinationName: toDummy.name,
               branchFrom: branchFrom,
               branchRideLegIndex: branchRideLegIndex,
+              branchIntermediateStopId: branchIntermediateStopId,
+              branchIntermediateStopTime: branchIntermediateStopTime,
             );
             setState(() {
               if (_activeTabId != null) {
@@ -6056,6 +6189,8 @@ class RoutesTabState extends State<RoutesTab>
     required String destinationName,
     Journey? branchFrom,
     int? branchRideLegIndex,
+    String? branchIntermediateStopId,
+    DateTime? branchIntermediateStopTime,
   }) {
     if (branchFrom == null || branchRideLegIndex == null) {
       return _createJourney(alternative,
@@ -6063,17 +6198,21 @@ class RoutesTabState extends State<RoutesTab>
     }
 
     final originalLegs = (branchFrom.rawSource['legs'] as List?) ?? const [];
-    final prefix = journeyPrefixLegCount(originalLegs, branchRideLegIndex);
-    if (prefix <= 0) {
-      return _createJourney(alternative,
-          destinationNameOverride: destinationName);
-    }
-
     final spliced = spliceAlternativeIntoJourney(
       original: branchFrom.rawSource,
       alternative: alternative,
       rideLegIndex: branchRideLegIndex,
+      intermediateStopId: branchIntermediateStopId,
+      intermediateStopTime: branchIntermediateStopTime,
     );
+    final prefix = branchIntermediateStopId == null
+        ? journeyPrefixLegCount(originalLegs, branchRideLegIndex)
+        : branchRideLegIndex + 1;
+    if (prefix <= 0 || identical(spliced, alternative)) {
+      return _createJourney(alternative,
+          destinationNameOverride: destinationName);
+    }
+
     final journey = _createJourney(
       spliced,
       destinationNameOverride: destinationName,
@@ -10480,8 +10619,12 @@ class RoutesTabState extends State<RoutesTab>
                         preferredPlatform: preferredPlatform,
                       ),
                   onOpenAlternatives: (stationId, time,
-                          {double? lat, double? lng, String? name}) =>
-                      _showAlternatives(context, stationId, route.destination, time,
+                          {double? lat,
+                          double? lng,
+                          String? name,
+                          bool isIntermediateStop = false}) =>
+                      _showAlternatives(
+                          context, stationId, route.destination, time,
                           lat: lat,
                           lng: lng,
                           stationName: name,
@@ -10493,14 +10636,11 @@ class RoutesTabState extends State<RoutesTab>
                           initialResults: _preloadedAlternatives[
                               _alternativeHintKey(route.id, i)],
                           branchFrom: route.activeJourney,
-                          branchRideLegIndex: route.steps[i].legIndex),
-                  onIntermediateAlarmLongPress: (stopName,
-                          {required int stopIndex,
-                          double? targetLat,
-                          double? targetLng,
-                          double? originLat,
-                          double? originLng}) =>
-                      _toggleIntermediateStopAlarm(
+                          branchRideLegIndex: route.steps[i].legIndex,
+                          branchIntermediateStopId:
+                              isIntermediateStop ? stationId : null,
+                          branchIntermediateStopTime: isIntermediateStop ? time : null),
+                  onIntermediateAlarmLongPress: (stopName, {required int stopIndex, double? targetLat, double? targetLng, double? originLat, double? originLng}) => _toggleIntermediateStopAlarm(
                         route,
                         route.steps[i],
                         stopIndex: stopIndex,
@@ -10583,8 +10723,11 @@ class _StepCard extends StatefulWidget {
     required DateTime date,
     String? preferredPlatform,
   }) onShowStopDepartures;
-  final Function(String, DateTime, {double? lat, double? lng, String? name})
-      onOpenAlternatives;
+  final Function(String, DateTime,
+      {double? lat,
+      double? lng,
+      String? name,
+      bool isIntermediateStop}) onOpenAlternatives;
   final Function(
     String, {
     required int stopIndex,
@@ -11320,6 +11463,7 @@ class _StepCardState extends State<_StepCard> {
                                                             ['location']
                                                         ?['longitude'],
                                                     name: name,
+                                                    isIntermediateStop: true,
                                                   ),
                                                   style: IconButton.styleFrom(
                                                     minimumSize:
@@ -12053,6 +12197,19 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         firstRide['line'] != null ? firstRide['line']['name'] : 'Walk/Transfer';
     final dir = firstRide['direction'] ?? 'Destination';
     final depTime = _getDepTime(journey);
+    final lastLeg = legs.last;
+    DateTime? arrivalTime;
+    final rawArrival = lastLeg['arrival'] ?? lastLeg['plannedArrival'];
+    if (rawArrival != null) {
+      arrivalTime = DateTime.tryParse(rawArrival.toString())?.toLocal();
+    }
+    final int? durationMinutes =
+        arrivalTime?.difference(depTime).inMinutes.clamp(0, 1000000).toInt();
+    final int transferCount = (journey['transfers'] as num?)?.toInt() ??
+        (legs.where((leg) => leg['line'] != null).length - 1)
+            .clamp(0, 999)
+            .toInt();
+    final isCancelled = legs.any((leg) => leg['cancelled'] == true);
 
     int delayMin = 0;
     if (firstRide['departureDelay'] != null) {
@@ -12093,18 +12250,57 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                         fontWeight: FontWeight.bold)))
         ],
       ),
-      subtitle: Text.rich(TextSpan(children: [
-        TextSpan(
-            text: AppLocalizations.of(context)!
-                .departsAt(DateFormat('HH:mm').format(depTime)),
-            style: TextStyle(color: colors.textSecondary)),
-        if (delayMin > 0)
-          TextSpan(
-              text:
-                  " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
-              style: const TextStyle(
-                  color: Colors.orange, fontWeight: FontWeight.bold)),
-      ])),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text.rich(TextSpan(children: [
+              TextSpan(
+                  text: AppLocalizations.of(context)!
+                      .departsAt(DateFormat('HH:mm').format(depTime)),
+                  style: TextStyle(color: colors.textSecondary)),
+              if (delayMin > 0)
+                TextSpan(
+                    text:
+                        " ${AppLocalizations.of(context)!.lateByMinutes(delayMin.toString())}",
+                    style: const TextStyle(
+                        color: Colors.orange, fontWeight: FontWeight.bold)),
+              if (arrivalTime != null)
+                TextSpan(
+                    text:
+                        '  →  ${AppLocalizations.of(context)!.arrivalTimeLabel}: ${DateFormat('HH:mm').format(arrivalTime)}',
+                    style: TextStyle(color: colors.textPrimary)),
+            ])),
+            const SizedBox(height: 2),
+            Wrap(
+              spacing: 12,
+              runSpacing: 2,
+              children: [
+                if (durationMinutes != null)
+                  Text(
+                    FormatUtils.formatDuration(durationMinutes),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                Text(
+                  AppLocalizations.of(context)!
+                      .transfersCount(transferCount.toString()),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+                if (isCancelled)
+                  Text(
+                    AppLocalizations.of(context)!.cancelled,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
       onTap: () => widget.onSelected(journey, depTime),
     );
 

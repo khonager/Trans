@@ -962,6 +962,86 @@ void main() {
       expect(spliced.containsKey('duration'), isFalse);
     });
 
+    test('keeps a ride through the intermediate stop used to branch', () {
+      final ride = {
+        'origin': {'id': 'start', 'name': 'Start'},
+        'destination': {'id': 'old-destination', 'name': 'Old destination'},
+        'departure': '2030-08-24T11:00:00Z',
+        'plannedDeparture': '2030-08-24T11:00:00Z',
+        'arrival': '2030-08-24T12:00:00Z',
+        'plannedArrival': '2030-08-24T12:00:00Z',
+        'line': {'name': 'RB21'},
+        'decodedPath': [
+          [50.0, 8.0],
+          [50.5, 8.5],
+          [51.0, 9.0],
+        ],
+        'polyline': {'points': 'complete-ride'},
+        'stopovers': [
+          {
+            'stop': {'id': 'middle-a', 'name': 'Middle A'},
+            'arrival': '2030-08-24T11:20:00Z',
+            'plannedArrival': '2030-08-24T11:19:00Z',
+          },
+          {
+            'stop': {
+              'id': 'branch-stop',
+              'name': 'Branch stop',
+              'location': {'latitude': 50.48, 'longitude': 8.48},
+            },
+            'arrival': '2030-08-24T11:31:00Z',
+            'plannedArrival': '2030-08-24T11:30:00Z',
+            'arrivalDelay': 60,
+          },
+          {
+            'stop': {'id': 'middle-c', 'name': 'Middle C'},
+            'arrival': '2030-08-24T11:40:00Z',
+            'plannedArrival': '2030-08-24T11:40:00Z',
+          },
+        ],
+      };
+      final alternative = {
+        'legs': [
+          rideLeg('S8', '2030-08-24T11:35:00Z', '2030-08-24T11:55:00Z'),
+        ],
+      };
+
+      final spliced = spliceAlternativeIntoJourney(
+        original: {
+          'legs': [ride],
+        },
+        alternative: alternative,
+        rideLegIndex: 0,
+        intermediateStopId: 'branch-stop',
+      );
+      final legs = spliced['legs'] as List;
+      final partialRide = legs.first as Map;
+
+      expect(legs, hasLength(2));
+      expect(partialRide['destination']['id'], 'branch-stop');
+      expect(partialRide['arrival'], '2030-08-24T11:31:00Z');
+      expect(partialRide['plannedArrival'], '2030-08-24T11:30:00Z');
+      expect(partialRide['arrivalDelay'], 60);
+      expect(partialRide['stopovers'], hasLength(1));
+      expect(partialRide['decodedPath'], hasLength(2));
+      expect(partialRide.containsKey('polyline'), isFalse);
+      expect(spliced['departure'], '2030-08-24T11:00:00Z');
+      expect(spliced['arrival'], '2030-08-24T11:55:00Z');
+    });
+
+    test('does not shorten a ride when the stop is not in its stopovers', () {
+      expect(
+        journeyLegThroughIntermediateStop(
+          {
+            'line': {'name': 'RB21'},
+            'stopovers': const [],
+          },
+          stopId: 'missing',
+        ),
+        isNull,
+      );
+    });
+
     test('returns the alternative untouched when nothing precedes it', () {
       final alternative = {
         'legs': [
