@@ -7464,18 +7464,19 @@ class RoutesTabState extends State<RoutesTab>
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
-  Widget _buildFavoriteTile(TransColors colors, int index) {
+  Widget _buildFavoriteTile(TransColors colors, int index,
+      {required bool expanded}) {
     final isAdd = index == _favorites.length;
     final favorite = isAdd ? null : _favorites[index];
     final label = isAdd ? AppLocalizations.of(context)!.add : favorite!.label;
 
-    return SizedBox(
-      width: 76,
-      child: GestureDetector(
-        onTap: isAdd ? _addNewFavorite : () => _onFavoriteTap(favorite!),
-        onLongPress: isAdd ? null : () => _showEditFavoriteDialog(favorite!),
+    final tile = GestureDetector(
+      onTap: isAdd ? _addNewFavorite : () => _onFavoriteTap(favorite!),
+      onLongPress: isAdd ? null : () => _showEditFavoriteDialog(favorite!),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 7),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 48,
@@ -7493,8 +7494,9 @@ class RoutesTabState extends State<RoutesTab>
             const SizedBox(height: 4),
             Text(
               label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+              softWrap: false,
+              overflow: expanded ? TextOverflow.ellipsis : TextOverflow.visible,
               textAlign: TextAlign.center,
               style:
                   TextStyle(fontSize: 10, color: isAdd ? null : colors.favText),
@@ -7503,6 +7505,12 @@ class RoutesTabState extends State<RoutesTab>
         ),
       ),
     );
+    return expanded
+        ? SizedBox(width: 76, height: 86, child: tile)
+        : ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 76),
+            child: SizedBox(height: 86, child: tile),
+          );
   }
 
   @override
@@ -8200,7 +8208,8 @@ class RoutesTabState extends State<RoutesTab>
                             mainAxisExtent: 86,
                           ),
                           itemBuilder: (context, index) => Center(
-                            child: _buildFavoriteTile(colors, index),
+                            child: _buildFavoriteTile(colors, index,
+                                expanded: true),
                           ),
                         );
                       })
@@ -8212,8 +8221,9 @@ class RoutesTabState extends State<RoutesTab>
                           itemCount: _favorites.length + 1,
                           separatorBuilder: (_, __) =>
                               const SizedBox(width: 12),
-                          itemBuilder: (context, index) =>
-                              _buildFavoriteTile(colors, index),
+                          itemBuilder: (context, index) => _buildFavoriteTile(
+                              colors, index,
+                              expanded: false),
                         ),
                       ),
                     _buildRouteHistorySection(colors),
