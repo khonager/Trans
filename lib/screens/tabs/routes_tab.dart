@@ -7506,10 +7506,10 @@ class RoutesTabState extends State<RoutesTab>
       ),
     );
     return expanded
-        ? SizedBox(width: 76, height: 86, child: tile)
+        ? SizedBox(width: 76, height: 80, child: tile)
         : ConstrainedBox(
             constraints: const BoxConstraints(minWidth: 76),
-            child: SizedBox(height: 86, child: tile),
+            child: SizedBox(height: 80, child: tile),
           );
   }
 
@@ -8194,8 +8194,7 @@ class RoutesTabState extends State<RoutesTab>
                     if (_favoritesExpanded)
                       LayoutBuilder(builder: (context, constraints) {
                         final width = constraints.maxWidth;
-                        final columns =
-                            width >= 480 ? 5 : (width >= 350 ? 4 : 3);
+                        final columns = ((width + 4) / 78).floor().clamp(1, 8);
                         return GridView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
@@ -8203,9 +8202,9 @@ class RoutesTabState extends State<RoutesTab>
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: columns,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            mainAxisExtent: 86,
+                            crossAxisSpacing: 4,
+                            mainAxisSpacing: 4,
+                            mainAxisExtent: 80,
                           ),
                           itemBuilder: (context, index) => Center(
                             child: _buildFavoriteTile(colors, index,
@@ -8215,12 +8214,11 @@ class RoutesTabState extends State<RoutesTab>
                       })
                     else
                       SizedBox(
-                        height: 86,
+                        height: 80,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: _favorites.length + 1,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(width: 12),
+                          separatorBuilder: (_, __) => const SizedBox(width: 6),
                           itemBuilder: (context, index) => _buildFavoriteTile(
                               colors, index,
                               expanded: false),
