@@ -8068,24 +8068,11 @@ class RoutesTabState extends State<RoutesTab>
                                   shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16))),
                               child: _isLoadingRoute
-                                  ? Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: colors.searchBtnText)),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                            AppLocalizations.of(context)!
-                                                .cancel,
-                                            style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold))
-                                      ],
+                                  ? Text(
+                                      AppLocalizations.of(context)!.cancel,
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold),
                                     )
                                   : Text(
                                       _jointPlanningEnabled
