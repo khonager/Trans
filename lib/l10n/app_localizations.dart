@@ -644,6 +644,18 @@ abstract class AppLocalizations {
   /// **'Favorites'**
   String get favorites;
 
+  /// No description provided for @expandFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand favorites'**
+  String get expandFavorites;
+
+  /// No description provided for @collapseFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse favorites'**
+  String get collapseFavorites;
+
   /// No description provided for @add.
   ///
   /// In en, this message translates to:

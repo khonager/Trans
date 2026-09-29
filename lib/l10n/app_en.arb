@@ -199,6 +199,8 @@
   "refreshLocation": "Refresh location",
   "findRoutes": "Find Routes",
   "favorites": "Favorites",
+  "expandFavorites": "Expand favorites",
+  "collapseFavorites": "Collapse favorites",
   "add": "Add",
   "frequentJourneys": "Frequent Journeys",
   "fromStation": "From {station}",

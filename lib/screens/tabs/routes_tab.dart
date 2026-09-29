@@ -1875,6 +1875,7 @@ class RoutesTabState extends State<RoutesTab>
   int _maximumEffectiveSignalLevel = 0;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
+  bool _favoritesExpanded = false;
   List<Station> _sharedFriendPlaces = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -4244,6 +4245,8 @@ class RoutesTabState extends State<RoutesTab>
       return;
     }
 
+    unawaited(_recordFavoriteUse(fav.id));
+
     if (currentField == 'friend') {
       _selectFriendOriginStation(target);
       return;
@@ -4284,6 +4287,11 @@ class RoutesTabState extends State<RoutesTab>
         }
       });
     }
+  }
+
+  Future<void> _recordFavoriteUse(String id) async {
+    final favorites = await FavoritesManager.recordFavoriteUse(id);
+    if (mounted) setState(() => _favorites = favorites);
   }
 
   void _closeTab(String id) {
@@ -7456,6 +7464,47 @@ class RoutesTabState extends State<RoutesTab>
     _showEditFavoriteDialog(Favorite(id: id, label: '', type: 'station'));
   }
 
+  Widget _buildFavoriteTile(TransColors colors, int index) {
+    final isAdd = index == _favorites.length;
+    final favorite = isAdd ? null : _favorites[index];
+    final label = isAdd ? AppLocalizations.of(context)!.add : favorite!.label;
+
+    return SizedBox(
+      width: 76,
+      child: GestureDetector(
+        onTap: isAdd ? _addNewFavorite : () => _onFavoriteTap(favorite!),
+        onLongPress: isAdd ? null : () => _showEditFavoriteDialog(favorite!),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: isAdd ? colors.favAddBg : colors.favStationBg,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isAdd ? Icons.add : _favoriteIcon(favorite!),
+                color: isAdd ? colors.favAddIcon : colors.favStationIcon,
+                size: 20,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 10, color: isAdd ? null : colors.favText),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   @override
   Widget build(BuildContext context) {
@@ -8109,67 +8158,64 @@ class RoutesTabState extends State<RoutesTab>
                       ),
                     ],
                     const SizedBox(height: 20),
-                    Text(AppLocalizations.of(context)!.favorites,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: colors.sectionHeader)),
+                    Row(
+                      children: [
+                        Text(AppLocalizations.of(context)!.favorites,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: colors.sectionHeader)),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: _favoritesExpanded
+                              ? AppLocalizations.of(context)!.collapseFavorites
+                              : AppLocalizations.of(context)!.expandFavorites,
+                          onPressed: () => setState(
+                              () => _favoritesExpanded = !_favoritesExpanded),
+                          icon: Icon(_favoritesExpanded
+                              ? Icons.expand_less
+                              : Icons.expand_more),
+                          iconSize: 20,
+                          visualDensity: VisualDensity.compact,
+                          constraints:
+                              const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
-                    SizedBox(
-                        height: 80,
+                    if (_favoritesExpanded)
+                      LayoutBuilder(builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final columns =
+                            width >= 480 ? 5 : (width >= 350 ? 4 : 3);
+                        return GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _favorites.length + 1,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: columns,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            mainAxisExtent: 86,
+                          ),
+                          itemBuilder: (context, index) => Center(
+                            child: _buildFavoriteTile(colors, index),
+                          ),
+                        );
+                      })
+                    else
+                      SizedBox(
+                        height: 86,
                         child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: _favorites.length + 1,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 12),
-                            itemBuilder: (ctx, idx) {
-                              if (idx == _favorites.length) {
-                                return GestureDetector(
-                                    onTap: _addNewFavorite,
-                                    child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Container(
-                                              width: 48,
-                                              height: 48,
-                                              decoration: BoxDecoration(
-                                                  color: colors.favAddBg,
-                                                  shape: BoxShape.circle),
-                                              child: Icon(Icons.add,
-                                                  color: colors.favAddIcon)),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                              AppLocalizations.of(context)!.add,
-                                              style: TextStyle(fontSize: 10))
-                                        ]));
-                              }
-                              final fav = _favorites[idx];
-                              final icon = _favoriteIcon(fav);
-                              return GestureDetector(
-                                  onTap: () => _onFavoriteTap(fav),
-                                  onLongPress: () =>
-                                      _showEditFavoriteDialog(fav),
-                                  child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Container(
-                                            width: 48,
-                                            height: 48,
-                                            decoration: BoxDecoration(
-                                                color: colors.favStationBg,
-                                                shape: BoxShape.circle),
-                                            child: Icon(icon,
-                                                color: colors.favStationIcon,
-                                                size: 20)),
-                                        const SizedBox(height: 4),
-                                        Text(fav.label,
-                                            style: TextStyle(
-                                                fontSize: 10,
-                                                color: colors.favText))
-                                      ]));
-                            })),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _favorites.length + 1,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 12),
+                          itemBuilder: (context, index) =>
+                              _buildFavoriteTile(colors, index),
+                        ),
+                      ),
                     _buildRouteHistorySection(colors),
                     _buildSavedJourneys(colors),
                   ],
@@ -11871,7 +11917,8 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                               label: _labelCtrl.text,
                               type: kSupportedFavoriteType,
                               station: _selectedStation,
-                              iconCode: _selectedIconCode);
+                              iconCode: _selectedIconCode,
+                              usageCount: widget.favorite.usageCount);
                           await FavoritesManager.saveFavorite(newFav);
                           if (context.mounted) Navigator.pop(context, true);
                         }

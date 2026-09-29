@@ -7,6 +7,7 @@ class Favorite {
   final Station? station; // If type is station
   final String? friendId; // If type is friend
   final int? iconCode; // NEW: Stores the IconData.codePoint
+  final int usageCount;
 
   Favorite({
     required this.id,
@@ -15,6 +16,7 @@ class Favorite {
     this.station,
     this.friendId,
     this.iconCode,
+    this.usageCount = 0,
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,10 +26,15 @@ class Favorite {
         'station': station?.toJson(),
         'friendId': friendId,
         'iconCode': iconCode,
+        'usageCount': usageCount,
       };
 
   factory Favorite.fromJson(Map<String, dynamic> json) {
     final rawIconCode = json['iconCode'];
+    final rawUsageCount = json['usageCount'];
+    final parsedUsageCount = rawUsageCount is num
+        ? rawUsageCount.toInt()
+        : int.tryParse(rawUsageCount?.toString() ?? '') ?? 0;
     return Favorite(
       id: json['id'].toString(),
       label: json['label']?.toString() ?? '',
@@ -38,6 +45,7 @@ class Favorite {
       iconCode: rawIconCode is num
           ? rawIconCode.toInt()
           : int.tryParse(rawIconCode?.toString() ?? ''),
+      usageCount: parsedUsageCount < 0 ? 0 : parsedUsageCount,
     );
   }
 }

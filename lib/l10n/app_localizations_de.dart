@@ -323,6 +323,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get favorites => 'Favoriten';
 
   @override
+  String get expandFavorites => 'Favoriten ausklappen';
+
+  @override
+  String get collapseFavorites => 'Favoriten einklappen';
+
+  @override
   String get add => 'Hinzufügen';
 
   @override

@@ -91,6 +91,8 @@
   "refreshLocation": "Standort aktualisieren",
   "findRoutes": "Verbindungen suchen",
   "favorites": "Favoriten",
+  "expandFavorites": "Favoriten ausklappen",
+  "collapseFavorites": "Favoriten einklappen",
   "add": "Hinzufügen",
   "frequentJourneys": "Häufige Fahrten",
   "fromStation": "Ab {station}",
