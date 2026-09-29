@@ -14,6 +14,8 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
 import 'package:trans/widgets/friend_map_markers.dart';
+import 'package:trans/widgets/loading_status.dart';
+import 'package:trans/l10n/app_localizations.dart';
 
 String googleMapsTravelModeForRoute({
   required List<JourneyStep> steps,
@@ -521,7 +523,10 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoadingPath) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+          body: Center(
+              child: LoadingStatus(
+                  message: AppLocalizations.of(context)!.loadingRouteMap)));
     }
 
     final colors = TransColors.of(context);

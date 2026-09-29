@@ -2095,6 +2095,132 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Limit maximum walking time for this tab without changing app settings.'**
   String get sortSheetLeastWalkingHint;
+
+  /// No description provided for @stillWaitingForResults.
+  ///
+  /// In en, this message translates to:
+  /// **'This is taking longer than expected…'**
+  String get stillWaitingForResults;
+
+  /// No description provided for @findingCurrentLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding your location…'**
+  String get findingCurrentLocation;
+
+  /// No description provided for @findingStartingPlace.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding your starting place…'**
+  String get findingStartingPlace;
+
+  /// No description provided for @findingDestination.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding your destination…'**
+  String get findingDestination;
+
+  /// No description provided for @checkingRoutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking available routes…'**
+  String get checkingRoutes;
+
+  /// No description provided for @buildingMoreRoutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Putting together more route options…'**
+  String get buildingMoreRoutes;
+
+  /// No description provided for @findingSharedRoutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding routes for both of you…'**
+  String get findingSharedRoutes;
+
+  /// No description provided for @findingEarlierAlternatives.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking earlier departures…'**
+  String get findingEarlierAlternatives;
+
+  /// No description provided for @findingLaterAlternatives.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking later departures…'**
+  String get findingLaterAlternatives;
+
+  /// No description provided for @loadingFriends.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading friends and requests…'**
+  String get loadingFriends;
+
+  /// No description provided for @loadingMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading messages…'**
+  String get loadingMessages;
+
+  /// No description provided for @loadingChangelog.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading release notes…'**
+  String get loadingChangelog;
+
+  /// No description provided for @loadingLiveMap.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding the live map area…'**
+  String get loadingLiveMap;
+
+  /// No description provided for @loadingRouteMap.
+  ///
+  /// In en, this message translates to:
+  /// **'Drawing your route on the map…'**
+  String get loadingRouteMap;
+
+  /// No description provided for @loadingTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing your ticket…'**
+  String get loadingTicket;
+
+  /// No description provided for @checkingTicketCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the ticket code…'**
+  String get checkingTicketCode;
+
+  /// No description provided for @savingTicket.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving your ticket…'**
+  String get savingTicket;
+
+  /// No description provided for @loadingBlockedUsers.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading blocked users…'**
+  String get loadingBlockedUsers;
+
+  /// No description provided for @loadingLiveBuses.
+  ///
+  /// In en, this message translates to:
+  /// **'Updating live buses…'**
+  String get loadingLiveBuses;
+
+  /// No description provided for @preparingImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing image…'**
+  String get preparingImage;
+
+  /// No description provided for @findingStations.
+  ///
+  /// In en, this message translates to:
+  /// **'Finding stations and places…'**
+  String get findingStations;
 }
 
 class _AppLocalizationsDelegate

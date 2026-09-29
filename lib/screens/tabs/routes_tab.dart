@@ -31,6 +31,7 @@ import 'package:trans/widgets/chat_sheet.dart';
 import 'package:trans/widgets/joint_friend_chips.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/widgets/running_border.dart';
+import 'package:trans/widgets/loading_status.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
@@ -1847,6 +1848,7 @@ class RoutesTabState extends State<RoutesTab>
   final Map<String, List<Map<String, dynamic>>> _preloadedAlternatives =
       <String, List<Map<String, dynamic>>>{};
   Set<String> _activeRouteLoadPhases = <String>{};
+  String? _routeLoadMessage;
   bool _isSuggestionsLoading = false;
 
   DateTime? _selectedDate;
@@ -3140,6 +3142,7 @@ class RoutesTabState extends State<RoutesTab>
     setState(() {
       _activeRouteSearchToken = null;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = null;
     });
   }
 
@@ -3149,7 +3152,13 @@ class RoutesTabState extends State<RoutesTab>
         _isRouteSearchCancelled(token)) {
       return;
     }
-    setState(() => _activeRouteLoadPhases = phases);
+    final l10n = AppLocalizations.of(context)!;
+    setState(() {
+      _activeRouteLoadPhases = phases;
+      _routeLoadMessage = phases.contains(TransportApi.loadPhaseSynthetic)
+          ? l10n.buildingMoreRoutes
+          : l10n.checkingRoutes;
+    });
   }
 
   Color _routeLoadingColor(TransColors colors) {
@@ -3172,6 +3181,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = null;
     });
   }
 
@@ -3365,6 +3375,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = null;
       _isLoadingRoute = false;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = null;
     });
   }
 
@@ -6609,6 +6620,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = rerunToken;
       _isLoadingRoute = true;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = AppLocalizations.of(context)!.checkingRoutes;
       if (preferredSort != null) {
         _routeResultsSortSelections[route.id] = preferredSort;
       }
@@ -6683,6 +6695,14 @@ class RoutesTabState extends State<RoutesTab>
     setState(() {
       _activeRouteSearchToken = searchToken;
       _isLoadingRoute = true;
+      _routeLoadMessage = _fromStation == null
+          ? ((_fromUsesCurrentLocation ||
+                  _isCurrentLocationText(_fromController.text))
+              ? l10n.findingCurrentLocation
+              : l10n.findingStartingPlace)
+          : (_toStation == null
+              ? l10n.findingDestination
+              : l10n.checkingRoutes);
     });
 
     Station? from = _fromStation;
@@ -6717,6 +6737,7 @@ class RoutesTabState extends State<RoutesTab>
             ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(l10n.locationNotAvailable)));
           }
+          _disposeRouteSearch(searchToken);
           return;
         }
       } else {
@@ -6741,11 +6762,13 @@ class RoutesTabState extends State<RoutesTab>
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
           }
+          _disposeRouteSearch(searchToken);
           return;
         }
       }
     }
     if (_toStation == null) {
+      if (mounted) setState(() => _routeLoadMessage = l10n.findingDestination);
       if (_toController.text.isNotEmpty) {
         try {
           final results = await TransportApi.searchStations(_toController.text);
@@ -6766,13 +6789,16 @@ class RoutesTabState extends State<RoutesTab>
                 content: Text(
                     AppLocalizations.of(context)!.errorPrefix(e.toString()))));
           }
+          _disposeRouteSearch(searchToken);
           return;
         }
       } else {
+        _disposeRouteSearch(searchToken);
         return;
       }
     }
     final Station resolvedFrom = from;
+    if (mounted) setState(() => _routeLoadMessage = l10n.checkingRoutes);
 
     String? currentTabId;
     var hasDisplayedResults = false;
@@ -7003,6 +7029,10 @@ class RoutesTabState extends State<RoutesTab>
             ? friendOrigin.name.trim()
             : (german ? 'deine Begleitung' : 'your companion'));
     final preferences = _jointJourneyPreferences;
+    if (mounted) {
+      setState(() => _routeLoadMessage =
+          AppLocalizations.of(context)!.findingSharedRoutes);
+    }
 
     try {
       final searches = await Future.wait([
@@ -8012,6 +8042,18 @@ class RoutesTabState extends State<RoutesTab>
                       ),
                     ),
                     const SizedBox(height: 20),
+                    if (_isLoadingRoute && _routeLoadMessage != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Center(
+                          child: LoadingStatus(
+                            message: _routeLoadMessage!,
+                            compact: true,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
                     SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -8645,7 +8687,15 @@ class RoutesTabState extends State<RoutesTab>
             borderRadius: BorderRadius.circular(16),
             clipBehavior: Clip.hardEdge,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              if (_isSuggestionsLoading) const SizedBox.shrink(),
+              if (_isSuggestionsLoading)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: LoadingStatus(
+                    message: AppLocalizations.of(context)!.findingStations,
+                    compact: true,
+                    color: colors.textSecondary,
+                  ),
+                ),
               Flexible(
                 child: ListView.builder(
                   controller: _suggestionsScrollController,
@@ -8948,6 +8998,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = loadToken;
       _isLoadingRoute = true;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = AppLocalizations.of(context)!.checkingRoutes;
     });
 
     try {
@@ -9085,6 +9136,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = AppLocalizations.of(context)!.checkingRoutes;
     });
 
     try {
@@ -9495,6 +9547,7 @@ class RoutesTabState extends State<RoutesTab>
       _activeRouteSearchToken = refreshToken;
       _isLoadingRoute = true;
       _activeRouteLoadPhases = <String>{};
+      _routeLoadMessage = AppLocalizations.of(context)!.checkingRoutes;
     });
 
     try {
@@ -10392,6 +10445,7 @@ class RoutesTabState extends State<RoutesTab>
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
+        backgroundLoadingMessage: _routeLoadMessage,
         initialSort: _routeResultsSortSelections[route.id] ??
             _routeResultsSortOrder.first,
         sortOrder: _routeResultsSortOrder,
@@ -11766,6 +11820,15 @@ class _EditFavoriteDialogState extends State<_EditFavoriteDialog> {
                       });
                     },
                   ),
+                  if (_isLoading)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: LoadingStatus(
+                        message: AppLocalizations.of(context)!.findingStations,
+                        compact: true,
+                        color: colors.textSecondary,
+                      ),
+                    ),
                   if (_suggestions.isNotEmpty)
                     Container(
                         height: 150,
@@ -11888,6 +11951,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
   bool _isMoreLoading = false;
+  bool _loadingEarlier = false;
   Object? _error;
 
   @override
@@ -11906,7 +11970,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
 
   Future<void> _fetchInitial() async {
     // Preloaded rows stay on screen while the fresh search runs behind them.
-    if (mounted && _results.isEmpty) setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = _results.isEmpty;
+        _loadingEarlier = false;
+      });
+    }
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
@@ -11935,6 +12004,9 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
       processResults(forward);
 
       // Then the ones before it, for the sense of how often the line runs.
+      if (mounted) {
+        setState(() => _loadingEarlier = true);
+      }
       List<Map<String, dynamic>> earlier = await TransportApi.searchJourneys(
         widget.from,
         widget.to,
@@ -11948,6 +12020,9 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
 
       // Nothing preceding at all (infrequent line): reach further back.
       if (!_hasPreceding(_results)) {
+        if (mounted) {
+          setState(() => _loadingEarlier = true);
+        }
         earlier = await TransportApi.searchJourneys(
           widget.from,
           widget.to,
@@ -11979,7 +12054,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   }
 
   Future<void> _fetch(DateTime time, bool isArrival) async {
-    if (mounted) setState(() => _isMoreLoading = true);
+    if (mounted) {
+      setState(() {
+        _isMoreLoading = true;
+        _loadingEarlier = isArrival;
+      });
+    }
     try {
       void processResults(List<Map<String, dynamic>> res) {
         if (!mounted || res.isEmpty) return;
@@ -12011,9 +12091,10 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         setState(() {
           _error = e;
           _isLoading = false;
-          _isMoreLoading = false;
         });
       }
+    } finally {
+      if (mounted) setState(() => _isMoreLoading = false);
     }
   }
 
@@ -12074,7 +12155,14 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                 color: colors.textPrimary)),
         const SizedBox(height: 8),
         if (_isLoading)
-          const Expanded(child: Center(child: CircularProgressIndicator()))
+          Expanded(
+              child: Center(
+                  child: LoadingStatus(
+            message: _loadingEarlier
+                ? l10n.findingEarlierAlternatives
+                : l10n.findingLaterAlternatives,
+            color: colors.textPrimary,
+          )))
         else if (_error != null && _results.isEmpty)
           Expanded(
               child: Center(
@@ -12139,7 +12227,16 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
             }),
           ),
         if (_isMoreLoading && _results.isNotEmpty)
-          const LinearProgressIndicator(),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: LoadingStatus(
+              message: _loadingEarlier
+                  ? l10n.findingEarlierAlternatives
+                  : l10n.findingLaterAlternatives,
+              compact: true,
+              color: colors.textSecondary,
+            ),
+          ),
       ],
     );
   }

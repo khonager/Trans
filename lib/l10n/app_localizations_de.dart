@@ -1151,4 +1151,67 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get sortSheetLeastWalkingHint =>
       'Begrenze die Gehzeit nur für diesen Tab, ohne die App-Einstellungen zu ändern.';
+
+  @override
+  String get stillWaitingForResults => 'Das dauert länger als erwartet…';
+
+  @override
+  String get findingCurrentLocation => 'Dein Standort wird ermittelt…';
+
+  @override
+  String get findingStartingPlace => 'Dein Startort wird gesucht…';
+
+  @override
+  String get findingDestination => 'Dein Ziel wird gesucht…';
+
+  @override
+  String get checkingRoutes => 'Verfügbare Routen werden geprüft…';
+
+  @override
+  String get buildingMoreRoutes => 'Weitere Routen werden zusammengestellt…';
+
+  @override
+  String get findingSharedRoutes => 'Routen für euch beide werden gesucht…';
+
+  @override
+  String get findingEarlierAlternatives => 'Frühere Abfahrten werden geprüft…';
+
+  @override
+  String get findingLaterAlternatives => 'Spätere Abfahrten werden geprüft…';
+
+  @override
+  String get loadingFriends => 'Freunde und Anfragen werden geladen…';
+
+  @override
+  String get loadingMessages => 'Nachrichten werden geladen…';
+
+  @override
+  String get loadingChangelog => 'Versionshinweise werden geladen…';
+
+  @override
+  String get loadingLiveMap => 'Der Live-Kartenausschnitt wird ermittelt…';
+
+  @override
+  String get loadingRouteMap => 'Deine Route wird auf der Karte gezeichnet…';
+
+  @override
+  String get loadingTicket => 'Dein Ticket wird vorbereitet…';
+
+  @override
+  String get checkingTicketCode => 'Der Ticketcode wird geprüft…';
+
+  @override
+  String get savingTicket => 'Dein Ticket wird gespeichert…';
+
+  @override
+  String get loadingBlockedUsers => 'Blockierte Personen werden geladen…';
+
+  @override
+  String get loadingLiveBuses => 'Live-Busse werden aktualisiert…';
+
+  @override
+  String get preparingImage => 'Bild wird vorbereitet…';
+
+  @override
+  String get findingStations => 'Haltestellen und Orte werden gesucht…';
 }

@@ -24,6 +24,7 @@ import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
 import '../../widgets/privacy_level_tutorial.dart';
 import '../../widgets/togetherness_slider.dart';
+import '../../widgets/loading_status.dart';
 
 @visibleForTesting
 String deleteAccountErrorMessage(
@@ -1409,7 +1410,23 @@ class _SettingsTabState extends State<SettingsTab> {
         future: SupabaseService.getBlockedUsers(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return SizedBox(
+              height: 400,
+              child: Center(
+                  child: LoadingStatus(
+                message: AppLocalizations.of(context)!.loadingBlockedUsers,
+              )),
+            );
+          }
+          if (snapshot.hasError) {
+            return SizedBox(
+              height: 400,
+              child: Center(
+                  child: Text(
+                AppLocalizations.of(context)!.serviceBusyMoment,
+                textAlign: TextAlign.center,
+              )),
+            );
           }
           final users = snapshot.data ?? [];
           return Container(

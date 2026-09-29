@@ -1143,4 +1143,67 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get sortSheetLeastWalkingHint =>
       'Limit maximum walking time for this tab without changing app settings.';
+
+  @override
+  String get stillWaitingForResults => 'This is taking longer than expected…';
+
+  @override
+  String get findingCurrentLocation => 'Finding your location…';
+
+  @override
+  String get findingStartingPlace => 'Finding your starting place…';
+
+  @override
+  String get findingDestination => 'Finding your destination…';
+
+  @override
+  String get checkingRoutes => 'Checking available routes…';
+
+  @override
+  String get buildingMoreRoutes => 'Putting together more route options…';
+
+  @override
+  String get findingSharedRoutes => 'Finding routes for both of you…';
+
+  @override
+  String get findingEarlierAlternatives => 'Checking earlier departures…';
+
+  @override
+  String get findingLaterAlternatives => 'Checking later departures…';
+
+  @override
+  String get loadingFriends => 'Loading friends and requests…';
+
+  @override
+  String get loadingMessages => 'Loading messages…';
+
+  @override
+  String get loadingChangelog => 'Loading release notes…';
+
+  @override
+  String get loadingLiveMap => 'Finding the live map area…';
+
+  @override
+  String get loadingRouteMap => 'Drawing your route on the map…';
+
+  @override
+  String get loadingTicket => 'Preparing your ticket…';
+
+  @override
+  String get checkingTicketCode => 'Checking the ticket code…';
+
+  @override
+  String get savingTicket => 'Saving your ticket…';
+
+  @override
+  String get loadingBlockedUsers => 'Loading blocked users…';
+
+  @override
+  String get loadingLiveBuses => 'Updating live buses…';
+
+  @override
+  String get preparingImage => 'Preparing image…';
+
+  @override
+  String get findingStations => 'Finding stations and places…';
 }

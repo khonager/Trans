@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../l10n/app_localizations.dart';
 import '../config/app_theme.dart';
+import '../widgets/loading_status.dart';
 
 class ChangelogScreen extends StatefulWidget {
   final String? currentVersion;
@@ -32,7 +33,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
         Uri.parse(
             'https://api.github.com/repos/khonager/Trans/releases?per_page=100'),
         headers: {'Accept': 'application/vnd.github.v3+json'},
-      );
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = (json.decode(response.body) as List)
@@ -87,7 +88,10 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
         elevation: 0,
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: LoadingStatus(
+                  message: AppLocalizations.of(context)!.loadingChangelog,
+                  color: colors.textPrimary))
           : _error != null
               ? Center(
                   child: Column(

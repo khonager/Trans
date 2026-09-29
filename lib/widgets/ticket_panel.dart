@@ -22,6 +22,7 @@ import 'package:zxing_lib/zxing.dart' as zxing;
 import 'package:zxing_lib/common.dart' as zxing;
 import 'package:trans/widgets/manual_crop_wrapper.dart';
 import 'package:trans/widgets/ticket_dock_geometry.dart';
+import 'package:trans/widgets/loading_status.dart';
 
 /// Identifies the transform that slides the whole sheet towards the navigation
 /// bar during a dock transition.
@@ -78,6 +79,7 @@ class _TicketPanelState extends State<TicketPanel>
 
   List<dynamic> _history = [];
   bool _isLoading = false;
+  String? _loadingMessage;
   bool _isDockGestureActive = false;
   bool _isDockLongPressTracking = false;
   bool _sheetPointerIsDown = false;
@@ -480,7 +482,10 @@ class _TicketPanelState extends State<TicketPanel>
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = AppLocalizations.of(context)!.loadingTicket;
+    });
 
     try {
       final bytes = await File(image.path).readAsBytes();
@@ -495,6 +500,10 @@ class _TicketPanelState extends State<TicketPanel>
     setState(() => _isLoading = true);
 
     try {
+      if (mounted) {
+        setState(() =>
+            _loadingMessage = AppLocalizations.of(context)!.checkingTicketCode);
+      }
       File? originalFile = !isWeb && path != null ? File(path) : null;
       File? processedFile;
       Uint8List? processedBytes;
@@ -685,7 +694,10 @@ class _TicketPanelState extends State<TicketPanel>
 
   Future<void> _processAndUpload(File file,
       {XFile? isWebFile, Uint8List? directBytes, Rect? detectedQrBox}) async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = AppLocalizations.of(context)!.savingTicket;
+    });
     try {
       Uint8List bytes;
       if (directBytes != null) {
@@ -1050,7 +1062,9 @@ class _TicketPanelState extends State<TicketPanel>
         Container(
             height: 300,
             alignment: Alignment.center,
-            child: const CircularProgressIndicator())
+            child: LoadingStatus(
+                message: _loadingMessage ??
+                    AppLocalizations.of(context)!.loadingTicket))
       else if (imageToShow != null)
         Column(
           children: [
