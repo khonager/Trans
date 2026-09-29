@@ -7,6 +7,7 @@ import '../../config/app_theme.dart';
 import '../../widgets/private_chat_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/app_error.dart';
+import '../../widgets/loading_status.dart';
 import '../../models/journey_sharing.dart';
 import '../../models/favorite.dart';
 import '../../models/station.dart';
@@ -154,15 +155,13 @@ class _FriendsTabState extends State<FriendsTab> {
         backgroundColor: colors.cardBg,
         elevation: 6,
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: Row(
           children: [
             Icon(icon, color: iconColor ?? Colors.blue, size: 20),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(message,
-                  style: TextStyle(color: colors.textPrimary)),
+              child: Text(message, style: TextStyle(color: colors.textPrimary)),
             ),
           ],
         ),
@@ -425,7 +424,10 @@ class _FriendsTabState extends State<FriendsTab> {
 
         Expanded(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: LoadingStatus(
+                      message: AppLocalizations.of(context)!.loadingFriends,
+                      color: colors.textPrimary))
               : ListView(
                   padding: const EdgeInsets.fromLTRB(
                       16, 0, 16, 120), // ADDED BOTTOM PADDING FOR TICKET PANEL

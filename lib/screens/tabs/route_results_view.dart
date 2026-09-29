@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:trans/widgets/loading_status.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' as services;
 import 'package:intl/intl.dart';
@@ -113,6 +114,7 @@ class RouteResultsView extends StatefulWidget {
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
+  final String? backgroundLoadingMessage;
   final RouteSortOption initialSort;
   final List<RouteSortOption> sortOrder;
   final ValueChanged<RouteSortOption>? onSortChanged;
@@ -133,6 +135,7 @@ class RouteResultsView extends StatefulWidget {
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
+    this.backgroundLoadingMessage,
     this.initialSort = RouteSortOption.earliestDeparture,
     this.sortOrder = defaultRouteSortOrder,
     this.onSortChanged,
@@ -794,16 +797,11 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             if (showBackgroundLoadingSpace)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: Opacity(
-                    opacity: isLoadingMore ? 0 : 1,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: widget.loadingIndicatorColor,
-                    ),
-                  ),
+                child: LoadingStatus(
+                  message: widget.backgroundLoadingMessage ??
+                      AppLocalizations.of(context)!.checkingRoutes,
+                  compact: true,
+                  color: colors.textSecondary,
                 ),
               ),
 
@@ -843,7 +841,7 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                                 child: _isLoadingMoreEarlier
                                     ? _LoadTrigger(
                                         label: AppLocalizations.of(context)!
-                                            .loadEarlier,
+                                            .findingEarlierAlternatives,
                                         icon: Icons.keyboard_arrow_up,
                                         onTap: null,
                                         isLoading: true,
@@ -872,8 +870,8 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                             padding: const EdgeInsets.only(top: 8.0),
                             child: _isLoadingMoreLater
                                 ? _LoadTrigger(
-                                    label:
-                                        AppLocalizations.of(context)!.loadLater,
+                                    label: AppLocalizations.of(context)!
+                                        .findingLaterAlternatives,
                                     icon: Icons.keyboard_arrow_down,
                                     onTap: null,
                                     isLoading: true,

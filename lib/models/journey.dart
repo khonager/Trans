@@ -17,6 +17,8 @@ class JourneyStep {
   final String? destinationStationId;
   final String? platform;
   final String? arrivalPlatform;
+  final String? scheduledPlatform;
+  final String? scheduledArrivalPlatform;
   final String? departureStopLabel;
   final String? arrivalStopLabel;
   final List<dynamic>? stopovers;
@@ -72,6 +74,8 @@ class JourneyStep {
     this.destinationStationId,
     this.platform,
     this.arrivalPlatform,
+    this.scheduledPlatform,
+    this.scheduledArrivalPlatform,
     this.departureStopLabel,
     this.arrivalStopLabel,
     this.stopovers,
@@ -115,6 +119,8 @@ class JourneyStep {
     String? destinationStationId,
     String? platform,
     String? arrivalPlatform,
+    String? scheduledPlatform,
+    String? scheduledArrivalPlatform,
     String? departureStopLabel,
     String? arrivalStopLabel,
     List<dynamic>? stopovers,
@@ -160,6 +166,9 @@ class JourneyStep {
       destinationStationId: destinationStationId ?? this.destinationStationId,
       platform: platform ?? this.platform,
       arrivalPlatform: arrivalPlatform ?? this.arrivalPlatform,
+      scheduledPlatform: scheduledPlatform ?? this.scheduledPlatform,
+      scheduledArrivalPlatform:
+          scheduledArrivalPlatform ?? this.scheduledArrivalPlatform,
       departureStopLabel: departureStopLabel ?? this.departureStopLabel,
       arrivalStopLabel: arrivalStopLabel ?? this.arrivalStopLabel,
       stopovers: stopovers ?? this.stopovers,
@@ -211,6 +220,12 @@ class Journey {
   final DateTime? plannedDeparture; // NEW
   final DateTime? plannedArrival; // NEW
 
+  /// The persisted identity of the saved journey this object was opened from.
+  ///
+  /// Realtime refreshes can replace provider payloads and adjust their times,
+  /// so rebuilding the saved-journey key from [rawSource] is not always stable.
+  final String? savedConnectionKey;
+
   /// The journey this one was branched off from by picking an alternative,
   /// so the traveller can step back out of it.
   final Journey? parentJourney;
@@ -232,6 +247,7 @@ class Journey {
     this.totalBikingDuration = Duration.zero,
     this.plannedDeparture,
     this.plannedArrival,
+    this.savedConnectionKey,
     this.parentJourney,
     this.branchStepIndex,
   });
@@ -249,6 +265,8 @@ class Journey {
     Duration? totalBikingDuration,
     DateTime? plannedDeparture,
     DateTime? plannedArrival,
+    String? savedConnectionKey,
+    bool clearSavedConnectionKey = false,
     Journey? parentJourney,
     int? branchStepIndex,
   }) {
@@ -265,6 +283,9 @@ class Journey {
       totalBikingDuration: totalBikingDuration ?? this.totalBikingDuration,
       plannedDeparture: plannedDeparture ?? this.plannedDeparture,
       plannedArrival: plannedArrival ?? this.plannedArrival,
+      savedConnectionKey: clearSavedConnectionKey
+          ? null
+          : (savedConnectionKey ?? this.savedConnectionKey),
       parentJourney: parentJourney ?? this.parentJourney,
       branchStepIndex: branchStepIndex ?? this.branchStepIndex,
     );
@@ -362,6 +383,12 @@ class RouteTab {
   final bool isStackExpanded;
   final RouteSearchSettings searchSettings;
 
+  /// Set when the tab holds somebody else's route: the companion's half of a
+  /// joint plan, or a route a friend shared. Such a tab is never treated as a
+  /// journey the user is travelling on, so it stays out of journey detection
+  /// and out of published presence.
+  final String? companionName;
+
   RouteTab({
     required this.id,
     required this.title,
@@ -377,7 +404,10 @@ class RouteTab {
     this.activeJourney,
     this.isStackExpanded = true, // Default open
     required this.searchSettings,
+    this.companionName,
   });
+
+  bool get isCompanionRoute => companionName != null;
 
   RouteTab copyWith({
     String? id,
@@ -395,6 +425,7 @@ class RouteTab {
     bool clearActiveJourney = false,
     bool? isStackExpanded,
     RouteSearchSettings? searchSettings,
+    String? companionName,
   }) {
     return RouteTab(
       id: id ?? this.id,
@@ -412,6 +443,7 @@ class RouteTab {
           clearActiveJourney ? null : (activeJourney ?? this.activeJourney),
       isStackExpanded: isStackExpanded ?? this.isStackExpanded,
       searchSettings: searchSettings ?? this.searchSettings,
+      companionName: companionName ?? this.companionName,
     );
   }
 }

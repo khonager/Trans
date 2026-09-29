@@ -3,6 +3,7 @@ import '../l10n/app_localizations.dart';
 import 'dart:typed_data';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
+import 'package:trans/widgets/loading_status.dart';
 import 'package:trans/config/app_theme.dart';
 
 class ManualCropWrapper extends StatefulWidget {
@@ -75,7 +76,9 @@ class _ManualCropWrapperState extends State<ManualCropWrapper> {
         ],
       ),
       body: _imageData == null
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: LoadingStatus(
+                  message: AppLocalizations.of(context)!.preparingImage))
           : Padding(
               padding: const EdgeInsets.all(20.0),
               child: Crop(

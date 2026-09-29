@@ -1402,6 +1402,18 @@ class TransportApi {
           equivalentTokens.any(typeTokens.contains) ||
           equivalentTokens.any(countryTokens.contains);
       final weakRegionMatch = equivalentTokens.any(regionTokens.contains);
+      // Only consulted once the exact tiers miss, so a clean query never pays
+      // for the edit-distance walk.
+      bool typoNameMatch() => equivalentTokens.any(
+            (variant) => nameTokens.any(
+              (nameToken) => _tokensDifferByTypo(nameToken, variant),
+            ),
+          );
+      bool typoCityMatch() => equivalentTokens.any(
+            (variant) => cityTokens.any(
+              (cityToken) => _tokensDifferByTypo(cityToken, variant),
+            ),
+          );
 
       if (exactNameMatch) {
         matchedQueryTokens++;
@@ -1415,6 +1427,12 @@ class TransportApi {
       } else if (prefixCityMatch) {
         matchedQueryTokens++;
         score += 18;
+      } else if (typoNameMatch()) {
+        matchedQueryTokens++;
+        score += 38;
+      } else if (typoCityMatch()) {
+        matchedQueryTokens++;
+        score += 28;
       } else if (categoryMatch) {
         matchedQueryTokens++;
         score += 10;
@@ -1427,12 +1445,16 @@ class TransportApi {
       score += 75;
     }
 
+    // The type bonus stays modest unless the query actually asks for a stop.
+    // A full-strength boost outweighs matching an extra query token, so street
+    // stops named after their city ("Wiesbaden <X>-Straße") used to bury the
+    // address a query spelled out in full.
     if (isTransitStop) {
-      score += 105;
+      score += queryLooksLikeStation ? 105 : 40;
       if (queryLooksLikeStation) score += 55;
     } else {
       if (station.type == 'location') score -= 25;
-      if (station.type == 'address') score -= 55;
+      if (station.type == 'address') score -= queryLooksLikeStation ? 55 : 10;
       if (queryLooksLikeStation) {
         if (station.type == 'location') score -= 95;
         if (station.type == 'address') score -= 120;
@@ -1667,6 +1689,61 @@ class TransportApi {
     return {
       for (final token in tokens) token: _stationEquivalentTokens(token),
     };
+  }
+
+  /// Whether two tokens are the same word typed with a slipped keystroke.
+  ///
+  /// The edit budget scales with token length rather than being fixed: two
+  /// slips in a nine-letter city name still identify it, while the same budget
+  /// on a five-letter one collides with unrelated places. Below five characters
+  /// nothing is tolerated at all, since a single edit already turns plenty of
+  /// distinct names into each other ("mainz"/"main").
+  static bool _tokensDifferByTypo(String a, String b) {
+    if (a == b) return true;
+    final shortest = math.min(a.length, b.length);
+    if (shortest < 5) return false;
+    final budget = shortest >= 8 ? 2 : 1;
+    if ((a.length - b.length).abs() > budget) return false;
+    return _isWithinEditBudget(a, b, budget);
+  }
+
+  /// Optimal string alignment distance, answering only "does it fit the
+  /// budget?" so the table collapses to rolling rows and bails as soon as a
+  /// whole row exceeds it. Adjacent transpositions count as one edit, since
+  /// swapped letters are a common typing slip.
+  static bool _isWithinEditBudget(String a, String b, int budget) {
+    final lengthA = a.length;
+    final lengthB = b.length;
+    var beforePrevious = <int>[];
+    var previous = List<int>.generate(lengthB + 1, (index) => index);
+
+    for (var i = 1; i <= lengthA; i++) {
+      final current = List<int>.filled(lengthB + 1, 0);
+      current[0] = i;
+      var rowMinimum = current[0];
+
+      for (var j = 1; j <= lengthB; j++) {
+        final substitution = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+        var best = math.min(
+          math.min(current[j - 1] + 1, previous[j] + 1),
+          previous[j - 1] + substitution,
+        );
+        if (i > 1 &&
+            j > 1 &&
+            a.codeUnitAt(i - 1) == b.codeUnitAt(j - 2) &&
+            a.codeUnitAt(i - 2) == b.codeUnitAt(j - 1)) {
+          best = math.min(best, beforePrevious[j - 2] + 1);
+        }
+        current[j] = best;
+        if (best < rowMinimum) rowMinimum = best;
+      }
+
+      if (rowMinimum > budget) return false;
+      beforePrevious = previous;
+      previous = current;
+    }
+
+    return previous[lengthB] <= budget;
   }
 
   static Set<String> _stationEquivalentTokens(String token) {
@@ -2197,6 +2274,23 @@ class TransportApi {
     return rightNumbers.any(leftNumbers.contains);
   }
 
+  static String? _transitRailServiceKey(String value) {
+    final match = RegExp(
+      r'^(ICE|ECE|IC|EC|RE|RB|IR|S)\s*(\d+[A-Z]?)(?:\s|$)',
+    ).firstMatch(value);
+    if (match == null) return null;
+    return '${match.group(1)}${match.group(2)}';
+  }
+
+  static bool _transitLineKeysStrictlyMatch(String left, String right) {
+    if (_transitLineKeysMatch(left, right)) return true;
+    final leftService = _transitRailServiceKey(left);
+    final rightService = _transitRailServiceKey(right);
+    return leftService != null &&
+        rightService != null &&
+        leftService == rightService;
+  }
+
   static bool _journeyLegLooksRail(Map<String, dynamic> leg) {
     final mode = normalizeServiceText(leg['mode']);
     const railModes = {
@@ -2537,6 +2631,17 @@ class TransportApi {
   static String _bahnTime(DateTime time) =>
       '${_twoDigits(time.hour)}:${_twoDigits(time.minute)}:00';
 
+  static const List<String> _bahnBoardTransportModes = [
+    'ICE',
+    'INTERCITY',
+    'REGIONAL',
+    'SBAHN',
+  ];
+
+  @visibleForTesting
+  static List<String> get bahnBoardTransportModesForTesting =>
+      _bahnBoardTransportModes;
+
   static Uri _getBahnWebUri(
     String endpoint,
     Map<String, List<String>> queryParameters,
@@ -2678,12 +2783,15 @@ class TransportApi {
     String evaNumber, {
     required DateTime expectedTime,
     required bool arrivals,
+    bool forceRefresh = false,
   }) async {
     final queryTime = expectedTime.subtract(const Duration(minutes: 15));
     final cacheKey =
         '$evaNumber|${arrivals ? 'arr' : 'dep'}|${_bahnDate(queryTime)}|${_bahnTime(queryTime)}';
     final cached = _bahnBoardCache[cacheKey];
-    if (cached != null && !cached.isExpired) return cached.data;
+    if (!forceRefresh && cached != null && !cached.isExpired) {
+      return cached.data;
+    }
 
     final endpoint = arrivals
         ? '/web/api/reiseloesung/ankuenfte'
@@ -2693,7 +2801,10 @@ class TransportApi {
         'datum': [_bahnDate(queryTime)],
         'zeit': [_bahnTime(queryTime)],
         'ortExtId': [evaNumber],
-        'verkehrsMittel[]': ['ICE', 'INTERCITY', 'REGIONAL'],
+        // S-Bahn platforms at large stations are often distinct three-digit
+        // underground tracks (for example 101-104 at Frankfurt Hbf). Without
+        // this category the fallback board lookup can never see an S2 event.
+        'verkehrsMittel[]': _bahnBoardTransportModes,
       }),
     );
     final data = json.decode(response.body);
@@ -2730,6 +2841,39 @@ class TransportApi {
     return _normalizeTransitKey(
       vehicle?['mittelText'] ?? vehicle?['name'] ?? vehicle?['linienNummer'],
     );
+  }
+
+  static String? _journeyLegTrainNumber(Map<String, dynamic> leg) {
+    final line = (leg['line'] as Map?)?.cast<String, dynamic>();
+    for (final value in <Object?>[line?['fahrtNr'], line?['fahrtnr']]) {
+      final match = RegExp(r'^\s*(\d{3,6})\s*$').firstMatch(
+        value?.toString() ?? '',
+      );
+      if (match != null) return match.group(1);
+    }
+
+    // Transitous includes the operating train number in parentheses, for
+    // example `RB21 (24448)`, while the Bahn board exposes it as the vehicle
+    // name. The route number (21) alone is not specific enough to identify a
+    // platform change safely.
+    return RegExp(r'\((\d{3,6})\)\s*$')
+        .firstMatch(_journeyLegLineDisplayName(leg))
+        ?.group(1);
+  }
+
+  static String? _bahnBoardTrainNumber(Map<String, dynamic> entry) {
+    final vehicle = (entry['verkehrmittel'] as Map?)?.cast<String, dynamic>();
+    for (final value in <Object?>[
+      vehicle?['fahrtNr'],
+      vehicle?['fahrtnr'],
+      vehicle?['name'],
+    ]) {
+      final match = RegExp(r'^\s*(\d{3,6})\s*$').firstMatch(
+        value?.toString() ?? '',
+      );
+      if (match != null) return match.group(1);
+    }
+    return null;
   }
 
   /// bahn.de reports a live track change in `ezGleis`, falling back to the
@@ -2770,11 +2914,36 @@ class TransportApi {
       if (platform == null) continue;
 
       final entryLineKey = _bahnBoardLineKey(entry);
-      if (!_transitLineKeysLikelyMatch(lineKey, entryLineKey)) continue;
+      final lineMatches = strict
+          ? _transitLineKeysStrictlyMatch(lineKey, entryLineKey)
+          : _transitLineKeysLikelyMatch(lineKey, entryLineKey);
+      if (!lineMatches) continue;
+
+      final legTrainNumber = _journeyLegTrainNumber(leg);
+      final entryTrainNumber = _bahnBoardTrainNumber(entry);
+      if (strict &&
+          legTrainNumber != null &&
+          entryTrainNumber != null &&
+          legTrainNumber != entryTrainNumber) {
+        continue;
+      }
+      final exactTrainNumberMatch = legTrainNumber != null &&
+          entryTrainNumber != null &&
+          legTrainNumber == entryTrainNumber;
 
       // Overriding a track the feed already gave us is only safe on an
-      // unmistakable match, so require the direction to line up as well.
+      // unmistakable match. An exact operating train number is stronger than
+      // the direction label: one feed may name an intermediate destination
+      // while Bahn names the train's final terminus. Without a train-number
+      // match, require the direction to line up when both feeds supplied it.
+      final legHeadsign = _journeyLegHeadsign(leg);
+      final entryHeadsign = _stringOrNull(
+        entry['richtung'] ?? entry['terminus'],
+      );
       if (matchDirection &&
+          !exactTrainNumberMatch &&
+          legHeadsign.isNotEmpty &&
+          entryHeadsign != null &&
           !_bahnBoardDirectionMatches(entry, _journeyLegHeadsign(leg))) {
         continue;
       }
@@ -2855,23 +3024,37 @@ class TransportApi {
         'realtimeTime': entry['ezZeit']?.toString(),
         'line': line?.toString(),
         'direction': entry['richtung']?.toString(),
-        'platform': entry['gleis']?.toString(),
+        'plannedPlatform': entry['gleis']?.toString(),
+        'realtimePlatform': entry['ezGleis']?.toString(),
+        'platform': _bahnBoardPlatform(entry),
         'lineKey': _bahnBoardLineKey(entry),
+        'trainNumber': _bahnBoardTrainNumber(entry),
         'minutesFromExpected':
             _bahnBoardTimeDistance(entry, expectedTime)?.inMinutes.toString(),
       };
     }
 
     final lineKey = _normalizeTransitKey(lineName);
-    final relevantEntries = events
+    final relevantEvents = events
         .where((entry) =>
             _transitLineKeysLikelyMatch(lineKey, _bahnBoardLineKey(entry)) ||
             (_bahnBoardTimeDistance(entry, expectedTime) != null &&
                 _bahnBoardTimeDistance(entry, expectedTime)! <=
                     const Duration(minutes: 20)))
-        .map(simplifyEntry)
-        .take(20)
         .toList();
+    relevantEvents.sort((left, right) {
+      final leftMatches =
+          _transitLineKeysLikelyMatch(lineKey, _bahnBoardLineKey(left));
+      final rightMatches =
+          _transitLineKeysLikelyMatch(lineKey, _bahnBoardLineKey(right));
+      if (leftMatches != rightMatches) return leftMatches ? -1 : 1;
+      final leftDistance = _bahnBoardTimeDistance(left, expectedTime);
+      final rightDistance = _bahnBoardTimeDistance(right, expectedTime);
+      if (leftDistance == null) return 1;
+      if (rightDistance == null) return -1;
+      return leftDistance.compareTo(rightDistance);
+    });
+    final relevantEntries = relevantEvents.map(simplifyEntry).take(20).toList();
 
     return <String, dynamic>{
       'station': stationName,
@@ -2891,6 +3074,7 @@ class TransportApi {
     void Function(Map<String, dynamic> enrichedSoFar)? onProgress,
     bool preferBahnForRail = false,
     bool fastBahnRailOnly = false,
+    bool forceBahnRefresh = false,
   }) async {
     await _enrichJourneyWithCoupledLineAliases(
       journey,
@@ -2904,6 +3088,7 @@ class TransportApi {
           : (enrichedSoFar) => onProgress(enrichedSoFar.first),
       preferBahnForRail: preferBahnForRail,
       fastBahnRailOnly: fastBahnRailOnly,
+      forceBahnRefresh: forceBahnRefresh,
     );
     return journeys.first;
   }
@@ -2994,6 +3179,7 @@ class TransportApi {
     required DateTime? expectedTime,
     required bool arrivals,
     bool strict = false,
+    bool forceRefresh = false,
   }) async {
     if (expectedTime == null || !_journeyLegLooksRail(leg)) return null;
 
@@ -3014,6 +3200,7 @@ class TransportApi {
         evaNumber,
         expectedTime: expectedTime,
         arrivals: arrivals,
+        forceRefresh: forceRefresh,
       );
       final platform = _matchPlatformFromBahnBoardEvents(
         events,
@@ -3059,8 +3246,18 @@ class TransportApi {
   }) {
     if (platform != null && platform.isNotEmpty) {
       if (overwritePlatform) {
+        // Keep the provider's original platform as the schedule so the UI can
+        // explain a realtime change (for example `Gl. 10 → Gl. 8`).
+        final originalPlatform = _platformFromPlace(place);
+        final scheduledPlatform = _stringOrNull(
+              place['scheduledPlatform'] ?? place['scheduledTrack'],
+            ) ??
+            originalPlatform;
         place['platform'] = platform;
-        place['scheduledPlatform'] = platform;
+        if (place.containsKey('track')) place['track'] = platform;
+        if (scheduledPlatform != null) {
+          place['scheduledPlatform'] = scheduledPlatform;
+        }
       } else {
         _setIfBlankMapValue(place, 'platform', platform);
         _setIfBlankMapValue(place, 'scheduledPlatform', platform);
@@ -3077,9 +3274,25 @@ class TransportApi {
     }
   }
 
+  @visibleForTesting
+  static void applyBackfilledPlatformForTesting(
+    Map<String, dynamic> place,
+    String platform, {
+    bool overwritePlatform = false,
+  }) =>
+      _applyBackfilledStopDetails(
+        place,
+        platform: platform,
+        stopLabel: null,
+        stopId: null,
+        parentId: null,
+        overwritePlatform: overwritePlatform,
+      );
+
   static Future<void> _enrichJourneyRailPlatformsFromBahnBoardFast(
     Map<String, dynamic> journey, {
     void Function()? onProgress,
+    bool forceRefresh = false,
   }) async {
     final legs = (journey['legs'] as List?)?.whereType<Map>().toList();
     if (legs == null || legs.isEmpty) return;
@@ -3099,15 +3312,20 @@ class TransportApi {
         required bool arrivals,
       }) {
         if (place == null) return;
+        final existingPlatform = _platformFromPlace(place);
         final isTrackArea = _platformLooksLikeTrackArea(place);
-        if (_platformFromPlace(place) != null && !isTrackArea) return;
         tasks.add(() async {
           final details = await _backfillStopDetailsFromBahnBoard(
             leg,
             place,
             expectedTime: expectedTime,
             arrivals: arrivals,
-            strict: isTrackArea,
+            // Replacing a supplied platform needs the same narrow matching
+            // rules as replacing a feed value that only identifies a track
+            // area. This lets a live board correct a stale planned platform
+            // without borrowing a nearby train's track.
+            strict: existingPlatform != null || isTrackArea,
+            forceRefresh: forceRefresh,
           );
           if (details == null || details.platform == null) return;
           _applyBackfilledStopDetails(
@@ -3116,7 +3334,7 @@ class TransportApi {
             stopLabel: details.stopLabel,
             stopId: details.stopId,
             parentId: details.parentId,
-            overwritePlatform: isTrackArea,
+            overwritePlatform: existingPlatform != null || isTrackArea,
           );
           onProgress?.call();
         }());
@@ -3352,6 +3570,7 @@ class TransportApi {
     void Function(List<Map<String, dynamic>> enrichedSoFar)? onProgress,
     bool preferBahnForRail = false,
     bool fastBahnRailOnly = false,
+    bool forceBahnRefresh = false,
   }) async {
     for (var journeyIndex = 0; journeyIndex < journeys.length; journeyIndex++) {
       final journey = journeys[journeyIndex];
@@ -3369,6 +3588,7 @@ class TransportApi {
       if (fastBahnRailOnly) {
         await _enrichJourneyRailPlatformsFromBahnBoardFast(
           journey,
+          forceRefresh: forceBahnRefresh,
           onProgress: () =>
               onProgress?.call(List<Map<String, dynamic>>.from(journeys)),
         );

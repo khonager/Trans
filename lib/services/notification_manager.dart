@@ -16,6 +16,7 @@ class NotificationManager {
   static const String leaveAlarmChannelId = 'saved_route_leave_alarm_channel';
   static const String leaveCountdownChannelId =
       'saved_route_leave_countdown_channel';
+  static const String savedRouteStatusChannelId = 'saved_route_status_channel';
   static const MethodChannel _timezoneChannel =
       MethodChannel('de.khonager.trans/device_timezone');
   static bool _timezonesInitialized = false;
@@ -88,6 +89,15 @@ class NotificationManager {
         importance: Importance.low,
         playSound: false,
         enableVibration: false,
+      ));
+      await androidImplementation
+          .createNotificationChannel(const AndroidNotificationChannel(
+        savedRouteStatusChannelId,
+        'Saved Route Status',
+        description: 'Important delay and connection updates for saved routes',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
       ));
     }
   }

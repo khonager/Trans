@@ -167,4 +167,139 @@ void main() {
     expect(find.text('Suedfriedhof · Wiesbaden Hauptbahnhof'), findsOneWidget);
     expect(find.text('Dotzheim · Wiesbaden Hauptbahnhof'), findsOneWidget);
   });
+
+  testWidgets('long-pressing a departure filters the list to that line',
+      (tester) async {
+    Future<List<Map<String, dynamic>>> fakeLoader(
+      String stationId, {
+      DateTime? date,
+      int maxResults = 250,
+    }) async {
+      final day = date ?? DateTime(2026, 4, 24);
+      Map<String, dynamic> departure(
+        String line,
+        String direction,
+        int hour,
+      ) {
+        final time = DateTime(day.year, day.month, day.day, hour)
+            .toUtc()
+            .toIso8601String();
+        return <String, dynamic>{
+          'routeShortName': line,
+          'headsign': direction,
+          'place': <String, dynamic>{
+            'stopId': stationId,
+            'description': 'Test Stop',
+            'scheduledDeparture': time,
+            'departure': time,
+          },
+        };
+      }
+
+      return <Map<String, dynamic>>[
+        departure('7', 'Town Hall', 9),
+        departure('8', 'University', 10),
+        departure('7', 'Central Station', 11),
+      ];
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: StopDeparturesSheet(
+            stopId: 'test-stop',
+            stopName: 'Test Stop',
+            date: DateTime(2026, 4, 24, 10),
+            departuresLoader: fakeLoader,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(find.text('University'), findsOneWidget);
+    await tester.longPress(find.text('Town Hall'));
+    await tester.pump();
+
+    expect(find.text('Town Hall'), findsOneWidget);
+    expect(find.text('Central Station'), findsOneWidget);
+    expect(find.text('University'), findsNothing);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pump();
+
+    expect(find.text('University'), findsOneWidget);
+  });
+
+  testWidgets('greys departures before the sheet reference time',
+      (tester) async {
+    Future<List<Map<String, dynamic>>> fakeLoader(
+      String stationId, {
+      DateTime? date,
+      int maxResults = 250,
+    }) async {
+      final day = date ?? DateTime(2026, 4, 24);
+      Map<String, dynamic> departure(String direction, int hour) {
+        final time = DateTime(day.year, day.month, day.day, hour)
+            .toUtc()
+            .toIso8601String();
+        return <String, dynamic>{
+          'routeShortName': direction == 'Past bus' ? '7' : '8',
+          'headsign': direction,
+          'place': <String, dynamic>{
+            'stopId': stationId,
+            'description': 'Test Stop',
+            'scheduledDeparture': time,
+            'departure': time,
+          },
+        };
+      }
+
+      return <Map<String, dynamic>>[
+        departure('Past bus', 9),
+        departure('Upcoming bus', 11),
+      ];
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: createTheme(const Color(0xFF4F46E5), Brightness.light),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: StopDeparturesSheet(
+            stopId: 'test-stop',
+            stopName: 'Test Stop',
+            date: DateTime(2026, 4, 24, 10),
+            departuresLoader: fakeLoader,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    final pastOpacity = tester.widget<Opacity>(
+      find.ancestor(
+        of: find.text('Past bus'),
+        matching: find.byType(Opacity),
+      ),
+    );
+    final upcomingOpacity = tester.widget<Opacity>(
+      find.ancestor(
+        of: find.text('Upcoming bus'),
+        matching: find.byType(Opacity),
+      ),
+    );
+
+    expect(pastOpacity.opacity, 0.45);
+    expect(upcomingOpacity.opacity, 1);
+  });
 }

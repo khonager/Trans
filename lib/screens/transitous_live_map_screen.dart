@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:trans/widgets/loading_status.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
@@ -1230,8 +1231,8 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     } else if (zoom < _minLiveZoom) {
       text =
           'Zoom in to ${_minLiveZoom.toStringAsFixed(1)}+ to reveal live buses.';
-    } else if (_isFetchingTrips && busesVisible == 0) {
-      text = 'Loading live buses...';
+    } else if (_isFetchingTrips) {
+      text = AppLocalizations.of(context)!.loadingLiveBuses;
     } else if (_errorMessage != null) {
       text = _errorMessage!;
     } else if (totalLoaded > busesVisible) {
@@ -1419,9 +1420,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     if (_isLoadingInitialView) {
       return Scaffold(
         backgroundColor: colors.scaffoldBg,
-        appBar: AppBar(
-            title: Text(AppLocalizations.of(context)!.liveBuses)),
-        body: const Center(child: CircularProgressIndicator()),
+        appBar: AppBar(title: Text(AppLocalizations.of(context)!.liveBuses)),
+        body: Center(
+            child: LoadingStatus(
+                message: AppLocalizations.of(context)!.loadingLiveMap)),
       );
     }
 

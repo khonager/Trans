@@ -14,6 +14,8 @@ import 'package:trans/services/supabase_service.dart';
 import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
 import 'package:trans/widgets/friend_map_markers.dart';
+import 'package:trans/widgets/loading_status.dart';
+import 'package:trans/l10n/app_localizations.dart';
 
 String googleMapsTravelModeForRoute({
   required List<JourneyStep> steps,
@@ -42,6 +44,13 @@ Uri buildGoogleMapsDirectionsUri({
       '&travelmode=$travelMode',
     );
 
+class _RoutePath {
+  final List<LatLng> points;
+  final bool isWalking;
+
+  const _RoutePath({required this.points, required this.isWalking});
+}
+
 class MapScreen extends StatefulWidget {
   final List<JourneyStep> steps;
   final JourneyStep? focusStep;
@@ -61,6 +70,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   List<LatLng> _routePoints = [];
+  List<_RoutePath> _routePaths = [];
   List<Marker> _markers = [];
   List<Marker> _favoriteMarkers = [];
   List<Marker> _friendMarkers = [];
@@ -265,6 +275,7 @@ class _MapScreenState extends State<MapScreen> {
       final stepsToShow =
           widget.focusStep != null ? [widget.focusStep!] : widget.steps;
       List<LatLng> allPoints = [];
+      List<_RoutePath> routePaths = [];
       List<Marker> markers = [];
 
       final prefs = await SharedPreferences.getInstance();
@@ -327,6 +338,12 @@ class _MapScreenState extends State<MapScreen> {
         }
 
         allPoints.addAll(stepPoints);
+        if (stepPoints.length >= 2) {
+          routePaths.add(_RoutePath(
+            points: stepPoints,
+            isWalking: step.type == 'walk' || step.isWalking,
+          ));
+        }
 
         // Add Markers
         // Start Marker
@@ -337,7 +354,9 @@ class _MapScreenState extends State<MapScreen> {
               height: 16,
               child: Container(
                   decoration: BoxDecoration(
-                      color: step.type == 'walk' ? Colors.orange : Colors.blue,
+                      color: step.type == 'walk' || step.isWalking
+                          ? Colors.orange
+                          : Colors.blue,
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2)))));
         }
@@ -471,6 +490,7 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         setState(() {
           _routePoints = allPoints;
+          _routePaths = routePaths;
           _markers = markers;
           _bounds = bounds;
         });
@@ -503,7 +523,10 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoadingPath) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+          body: Center(
+              child: LoadingStatus(
+                  message: AppLocalizations.of(context)!.loadingRouteMap)));
     }
 
     final colors = TransColors.of(context);
@@ -619,18 +642,20 @@ class _MapScreenState extends State<MapScreen> {
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.trans',
           ),
-          if (_routePoints.isNotEmpty)
+          if (_routePaths.isNotEmpty)
             PolylineLayer<Object>(
-              polylines: [
-                Polyline(
-                  points: _routePoints,
-                  strokeWidth: 5.0,
-                  color: (widget.focusStep?.type == 'walk' ||
-                          (widget.focusStep?.isWalking ?? false))
-                      ? Theme.of(context).colorScheme.primary
-                      : Colors.blueAccent,
-                ),
-              ],
+              polylines: _routePaths
+                  .map(
+                    (path) => Polyline(
+                      points: path.points,
+                      strokeWidth: 5.0,
+                      color: path.isWalking ? Colors.orange : Colors.blueAccent,
+                      pattern: path.isWalking
+                          ? StrokePattern.dashed(segments: const [12, 8])
+                          : const StrokePattern.solid(),
+                    ),
+                  )
+                  .toList(),
             ),
           if (_favoriteMarkers.isNotEmpty)
             MarkerLayer(markers: _favoriteMarkers),

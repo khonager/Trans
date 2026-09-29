@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:trans/widgets/loading_status.dart';
 import '../l10n/app_localizations.dart';
 import '../services/community_safety_service.dart';
 import '../services/supabase_service.dart';
@@ -181,8 +182,18 @@ class _PrivateChatSheetState extends State<PrivateChatSheet> {
             child: StreamBuilder<List<Map<String, dynamic>>>(
               stream: SupabaseService.getPrivateMessages(widget.friendId),
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                      child: Text(
+                    AppLocalizations.of(context)!.serviceBusyMoment,
+                    textAlign: TextAlign.center,
+                  ));
+                }
                 if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+                  return Center(
+                      child: LoadingStatus(
+                          message:
+                              AppLocalizations.of(context)!.loadingMessages));
                 }
                 final msgs = snapshot.data!;
 

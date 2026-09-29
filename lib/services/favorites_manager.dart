@@ -8,6 +8,19 @@ import 'supabase_service.dart';
 
 class FavoritesManager {
   static const _key = 'saved_favorites';
+  static Future<void> _pendingUsageWrite = Future.value();
+
+  static List<Favorite> _sortByUsage(List<Favorite> favorites) {
+    favorites.sort((a, b) {
+      final usageComparison = b.usageCount.compareTo(a.usageCount);
+      if (usageComparison != 0) return usageComparison;
+      final labelComparison =
+          a.label.toLowerCase().compareTo(b.label.toLowerCase());
+      if (labelComparison != 0) return labelComparison;
+      return a.id.compareTo(b.id);
+    });
+    return favorites;
+  }
 
   static List<Favorite> _defaultFavorites() {
     return [
@@ -21,7 +34,7 @@ class FavoritesManager {
     final list = prefs.getStringList(_key);
 
     if (list == null || list.isEmpty) {
-      return _defaultFavorites();
+      return _sortByUsage(_defaultFavorites());
     }
 
     final favorites =
@@ -35,10 +48,10 @@ class FavoritesManager {
     }
 
     if (sanitized.isEmpty) {
-      return _defaultFavorites();
+      return _sortByUsage(_defaultFavorites());
     }
 
-    return sanitized.toList();
+    return _sortByUsage(sanitized.toList());
   }
 
   static Future<void> saveFavorite(Favorite favorite) async {
@@ -58,6 +71,35 @@ class FavoritesManager {
 
     // Sync to Supabase
     await _syncToSupabase(current);
+  }
+
+  static Future<List<Favorite>> recordFavoriteUse(String id) {
+    final write = _pendingUsageWrite.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final current = (await getFavorites()).toList();
+      final index = current.indexWhere((favorite) => favorite.id == id);
+      if (index == -1) return current;
+
+      final favorite = current[index];
+      current[index] = Favorite(
+        id: favorite.id,
+        label: favorite.label,
+        type: favorite.type,
+        station: favorite.station,
+        friendId: favorite.friendId,
+        iconCode: favorite.iconCode,
+        usageCount: favorite.usageCount + 1,
+      );
+      await prefs.setStringList(
+        _key,
+        current.map((item) => json.encode(item.toJson())).toList(),
+      );
+      await _syncToSupabase(current);
+      return _sortByUsage(current);
+    });
+    _pendingUsageWrite =
+        write.then((_) {}, onError: (Object _, StackTrace __) {});
+    return write;
   }
 
   static Future<void> deleteFavorite(String id) async {
