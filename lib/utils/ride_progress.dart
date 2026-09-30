@@ -9,6 +9,99 @@ class RideProgress {
   final double fraction;
 
   const RideProgress(this.interval, this.fraction);
+
+  @override
+  bool operator ==(Object other) =>
+      other is RideProgress &&
+      other.interval == interval &&
+      other.fraction == fraction;
+
+  @override
+  int get hashCode => Object.hash(interval, fraction);
+}
+
+/// Moves a confirmed position along the timetable between occasional GPS fixes.
+/// A timetable alone is not enough to claim the traveller is on this ride.
+RideProgress? estimatedRideProgressFor(
+    JourneyStep step, Position? lastFix, DateTime now) {
+  if (lastFix == null) return null;
+  final confirmed = rideProgressFor(step, lastFix);
+  if (confirmed == null) return null;
+  return extrapolatedRideProgressFor(step, confirmed, lastFix.timestamp, now);
+}
+
+/// Cheap enough to call for each visual tick after projecting a GPS fix once.
+RideProgress extrapolatedRideProgressFor(
+    JourneyStep step, RideProgress confirmed, DateTime fixTime, DateTime now) {
+  final then = _scheduledStage(step, fixTime);
+  final current = _scheduledStage(step, now);
+  if (then == null || current == null) return confirmed;
+
+  final intervalCount = (step.stopovers?.length ?? 0) + 1;
+  final stage = (confirmed.interval + confirmed.fraction + current - then)
+      .clamp(0.0, intervalCount.toDouble());
+  final interval =
+      stage == 0 ? 0 : (stage.ceil() - 1).clamp(0, intervalCount - 1);
+  return RideProgress(interval, stage - interval);
+}
+
+double? _scheduledStage(JourneyStep step, DateTime now) {
+  final start = step.dateTime ?? step.plannedDeparture;
+  if (start == null) return null;
+  final arrivalParts = step.arrivalTime.split(':');
+  DateTime? end;
+  if (arrivalParts.length == 2) {
+    final hour = int.tryParse(arrivalParts[0]);
+    final minute = int.tryParse(arrivalParts[1]);
+    if (hour != null && minute != null && hour < 24 && minute < 60) {
+      end = DateTime(start.year, start.month, start.day, hour, minute);
+      if (end.isBefore(start)) end = end.add(const Duration(days: 1));
+    }
+  }
+  end ??= step.plannedArrival;
+  if (end == null || !end.isAfter(start)) return null;
+
+  final stopovers = step.stopovers ?? const [];
+  final times = <DateTime>[start];
+  for (var index = 0; index < stopovers.length; index++) {
+    final stop = stopovers[index];
+    DateTime? time;
+    if (stop is Map) {
+      for (final key in [
+        'arrival',
+        'departure',
+        'plannedArrival',
+        'plannedDeparture',
+        'scheduledArrival',
+        'scheduledDeparture'
+      ]) {
+        final value = stop[key];
+        if (value is String) {
+          time = DateTime.tryParse(value)?.toLocal();
+          if (time != null) break;
+        }
+      }
+    }
+    time ??= start.add(Duration(
+      milliseconds: (end.difference(start).inMilliseconds *
+              (index + 1) /
+              (stopovers.length + 1))
+          .round(),
+    ));
+    times.add(time.isBefore(times.last) ? times.last : time);
+  }
+  times.add(end.isBefore(times.last) ? times.last : end);
+
+  if (!now.isAfter(start)) return 0;
+  if (!now.isBefore(times.last)) return (times.length - 1).toDouble();
+  for (var index = 0; index < times.length - 1; index++) {
+    if (!now.isAfter(times[index + 1])) {
+      final span = times[index + 1].difference(times[index]).inMilliseconds;
+      if (span <= 0) return (index + 1).toDouble();
+      return index + now.difference(times[index]).inMilliseconds / span;
+    }
+  }
+  return (times.length - 1).toDouble();
 }
 
 /// Projects the GPS fix onto the ride shape, then locates it between stops.

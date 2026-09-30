@@ -31,11 +31,12 @@ void main() {
     ],
   );
 
-  Position fix(double longitude, {double latitude = 52, double accuracy = 5}) =>
+  Position fix(double longitude,
+          {double latitude = 52, double accuracy = 5, DateTime? timestamp}) =>
       Position(
         latitude: latitude,
         longitude: longitude,
-        timestamp: DateTime.now(),
+        timestamp: timestamp ?? DateTime.now(),
         accuracy: accuracy,
         altitude: 0,
         altitudeAccuracy: 0,
@@ -81,5 +82,32 @@ void main() {
     final progress = rideProgressFor(reversed, fix(13.015))!;
     expect(progress.interval, 1);
     expect(progress.fraction, closeTo(0.5, 0.01));
+  });
+
+  test('moves from a confirmed fix using stop times between GPS checks', () {
+    final now = DateTime.now();
+    final stopTime =
+        DateTime(now.year, now.month, now.day, now.hour, now.minute);
+    final start = stopTime.subtract(const Duration(minutes: 1));
+    final end = stopTime.add(const Duration(minutes: 1));
+    final timed = step.copyWith(
+      dateTime: start,
+      arrivalTime: '${end.hour.toString().padLeft(2, '0')}:'
+          '${end.minute.toString().padLeft(2, '0')}',
+      stopovers: [
+        {
+          'stop': {
+            'location': {'latitude': 52, 'longitude': 13.01}
+          },
+          'arrival': stopTime.toIso8601String(),
+        },
+      ],
+    );
+    final confirmed = fix(13.01, timestamp: stopTime);
+    final estimated = estimatedRideProgressFor(
+        timed, confirmed, stopTime.add(const Duration(seconds: 30)))!;
+    expect(estimated.interval, 1);
+    expect(estimated.fraction, closeTo(0.5, 0.01));
+    expect(estimatedRideProgressFor(timed, null, stopTime), isNull);
   });
 }

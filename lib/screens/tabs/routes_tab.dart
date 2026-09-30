@@ -1859,6 +1859,7 @@ class RoutesTabState extends State<RoutesTab>
   bool _hasBikeModesConfiguredForDevice = false;
 
   bool _isWakeAlarmSet = false;
+  Position? _wakeCurrentPosition;
   int _alarmStopsBefore = 1;
   StreamSubscription<Position>? _gpsStream;
   StreamSubscription<Position>? _sharingGpsStream;
@@ -1934,7 +1935,7 @@ class RoutesTabState extends State<RoutesTab>
       JointJourneyPreferences.togethernessFor(JointJourneyIntent.balanced);
 
   Position? get _effectiveCurrentPosition =>
-      _manualCurrentPosition ?? widget.currentPosition;
+      _wakeCurrentPosition ?? _manualCurrentPosition ?? widget.currentPosition;
 
   void routeToSharedPlace(Station station) {
     setState(() {
@@ -3576,7 +3577,12 @@ class RoutesTabState extends State<RoutesTab>
     widget.onHighAccuracyTrackingChanged(false);
     SupabaseService.clearJourneyStatus();
     unawaited(_updateJourneyDetectionMonitoring());
-    if (mounted) setState(() => _isWakeAlarmSet = false);
+    if (mounted) {
+      setState(() {
+        _isWakeAlarmSet = false;
+        _wakeCurrentPosition = null;
+      });
+    }
   }
 
   Future<void> _startWakeAlarm(RouteTab route) async {
@@ -3693,7 +3699,12 @@ class RoutesTabState extends State<RoutesTab>
 
     _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
         .listen((Position pos) async {
-      if (mounted) setState(() => _gpsAccuracy = pos.accuracy);
+      if (mounted) {
+        setState(() {
+          _gpsAccuracy = pos.accuracy;
+          _wakeCurrentPosition = pos;
+        });
+      }
       SupabaseService.updateLocation(pos);
       unawaited(_handleJourneyDetectionPosition(pos));
 
@@ -10695,6 +10706,7 @@ class RoutesTabState extends State<RoutesTab>
                   }(),
                   isFirst: i == 0,
                   currentPosition: _effectiveCurrentPosition,
+                  wakeAlarmActive: _isWakeAlarmSet,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??
                           false,
@@ -10804,6 +10816,7 @@ class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
   final Position? currentPosition;
+  final bool wakeAlarmActive;
 
   /// An earlier departure for this ride exists that still reaches the
   /// destination in time, so switching buys transfer buffer.
@@ -10844,6 +10857,7 @@ class _StepCard extends StatefulWidget {
     required this.step,
     this.isFirst = false,
     this.currentPosition,
+    this.wakeAlarmActive = false,
     this.hasEarlierAlternative = false,
     this.alternativeHintSeen = false,
     this.onAlternativeHintSeen,
@@ -10862,15 +10876,25 @@ class _StepCard extends StatefulWidget {
   State<_StepCard> createState() => _StepCardState();
 }
 
-class _StepCardState extends State<_StepCard> {
+class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   bool _isExpanded = false;
   Position? _livePosition;
+  RideProgress? _confirmedProgress;
+  DateTime? _confirmedAt;
   StreamSubscription<Position>? _progressStream;
+  Timer? _progressTicker;
+  bool _isStartingProgressStream = false;
+  bool _appActive = true;
+  final ValueNotifier<RideProgress?> _displayProgress = ValueNotifier(null);
 
   @override
   void initState() {
     super.initState();
-    _livePosition = widget.currentPosition;
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.currentPosition != null) {
+      _acceptPosition(widget.currentPosition!);
+    }
+    _refreshProgress();
   }
 
   @override
@@ -10880,94 +10904,186 @@ class _StepCardState extends State<_StepCard> {
     if (incoming != null &&
         (_livePosition == null ||
             incoming.timestamp.isAfter(_livePosition!.timestamp))) {
-      _livePosition = incoming;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _acceptPosition(incoming);
+      });
+    } else if (widget.step != oldWidget.step && _livePosition != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _acceptPosition(_livePosition!);
+      });
+    }
+    if (widget.wakeAlarmActive != oldWidget.wakeAlarmActive && _isExpanded) {
+      if (widget.wakeAlarmActive) {
+        _progressStream?.cancel();
+        _progressStream = null;
+      } else if (_appActive) {
+        _trackExpandedRide();
+      }
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _progressTicker?.cancel();
     _progressStream?.cancel();
+    _displayProgress.dispose();
     super.dispose();
   }
 
-  Future<void> _trackExpandedRide() async {
-    if (widget.step.type != 'ride' || _progressStream != null) return;
-    final permission = await Geolocator.checkPermission();
-    if (!mounted ||
-        !_isExpanded ||
-        permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      return;
-    }
-    LocationSettings settings = const LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0,
-    );
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      settings = AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-        intervalDuration: const Duration(seconds: 1),
-      );
-    }
-    _progressStream = Geolocator.getPositionStream(locationSettings: settings)
-        .listen((position) {
-      if (mounted) setState(() => _livePosition = position);
-    }, onError: (Object error) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appActive = state == AppLifecycleState.resumed;
+    if (!_appActive) {
       _progressStream?.cancel();
       _progressStream = null;
+      _progressTicker?.cancel();
+      _progressTicker = null;
+    } else if (_isExpanded) {
+      _startProgressTicker();
+      _trackExpandedRide();
+    }
+  }
+
+  void _refreshProgress() {
+    final confirmed = _confirmedProgress;
+    final confirmedAt = _confirmedAt;
+    final now = DateTime.now();
+    _displayProgress.value = confirmed == null ||
+            confirmedAt == null ||
+            now.difference(confirmedAt) > const Duration(minutes: 5)
+        ? null
+        : extrapolatedRideProgressFor(widget.step, confirmed, confirmedAt, now);
+  }
+
+  void _acceptPosition(Position position) {
+    if (_livePosition != null &&
+        position.timestamp.isBefore(_livePosition!.timestamp)) {
+      return;
+    }
+    _livePosition = position;
+    final projected = rideProgressFor(widget.step, position);
+    if (projected != null) {
+      _confirmedProgress = projected;
+      _confirmedAt = position.timestamp;
+    } else if (position.accuracy <= 100) {
+      // A reliable fix away from this ride invalidates the previous estimate.
+      _confirmedProgress = null;
+      _confirmedAt = null;
+    }
+    _refreshProgress();
+  }
+
+  void _startProgressTicker() {
+    _refreshProgress();
+    _progressTicker ??=
+        Timer.periodic(const Duration(seconds: 1), (_) => _refreshProgress());
+  }
+
+  Future<void> _trackExpandedRide() async {
+    if (widget.step.type != 'ride' ||
+        widget.wakeAlarmActive ||
+        !_appActive ||
+        _progressStream != null ||
+        _isStartingProgressStream) {
+      return;
+    }
+    _isStartingProgressStream = true;
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (!mounted ||
+          !_isExpanded ||
+          widget.wakeAlarmActive ||
+          !_appActive ||
+          permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      LocationSettings settings = const LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 100,
+      );
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        settings = AndroidSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 100,
+          intervalDuration: const Duration(seconds: 30),
+        );
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        settings = AppleSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 100,
+          pauseLocationUpdatesAutomatically: true,
+        );
+      }
+      _progressStream = Geolocator.getPositionStream(locationSettings: settings)
+          .listen((position) {
+        if (!mounted || !_isExpanded) return;
+        _acceptPosition(position);
+      }, onError: (Object error) {
+        _progressStream?.cancel();
+        _progressStream = null;
+        debugPrint('Ride progress location unavailable: $error');
+      });
+    } catch (error) {
       debugPrint('Ride progress location unavailable: $error');
-    });
+    } finally {
+      _isStartingProgressStream = false;
+    }
   }
 
   void _setExpanded(bool expanded) {
     setState(() => _isExpanded = expanded);
     if (expanded) {
+      _startProgressTicker();
       _trackExpandedRide();
     } else {
+      _progressTicker?.cancel();
+      _progressTicker = null;
       _progressStream?.cancel();
       _progressStream = null;
     }
   }
 
   Widget _stopRail(
-      {required IconData icon,
-      required Color color,
-      required int incomingInterval,
-      required RideProgress? progress}) {
-    final active = progress?.interval == incomingInterval;
-    return SizedBox(
-      width: 18,
-      height: 48,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(
-              left: 8,
-              right: 8,
-              child: ColoredBox(color: Colors.grey.withValues(alpha: 0.5))),
-          Icon(icon, size: icon == Icons.circle ? 8 : 14, color: color),
-          if (active)
-            Positioned(
-              top: -31 + 48 * progress!.fraction,
-              child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: TransColors.of(context).navBarSelected,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black38, blurRadius: 3)
-                  ],
-                ),
+          {required IconData icon,
+          required Color color,
+          required int incomingInterval}) =>
+      ValueListenableBuilder<RideProgress?>(
+          valueListenable: _displayProgress,
+          builder: (context, progress, _) {
+            final active = progress?.interval == incomingInterval;
+            return SizedBox(
+              width: 22,
+              height: 48,
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Icon(icon, size: icon == Icons.circle ? 8 : 14, color: color),
+                  if (active)
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 900),
+                      curve: Curves.linear,
+                      left: -8,
+                      top: -31 + 48 * progress!.fraction,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: TransColors.of(context).navBarSelected,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black38, blurRadius: 3)
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            ),
-        ],
-      ),
-    );
-  }
+            );
+          });
 
   bool get _hasCustomAlarmTarget => widget.step.alarmTargetName != null;
 
@@ -11151,8 +11267,6 @@ class _StepCardState extends State<_StepCard> {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final step = widget.step;
-    final progress =
-        _livePosition == null ? null : rideProgressFor(step, _livePosition!);
     final stepHeadsign = (step.headsign ?? '').trim();
     final directionPrefix =
         Localizations.localeOf(context).languageCode == 'de' ? 'nach' : 'to';
@@ -11486,7 +11600,6 @@ class _StepCardState extends State<_StepCard> {
                                   icon: Icons.login,
                                   color: Colors.green,
                                   incomingInterval: -1,
-                                  progress: progress,
                                 ),
                                 title: Text(
                                     _formatBoardingText(
@@ -11620,7 +11733,6 @@ class _StepCardState extends State<_StepCard> {
                                         icon: Icons.circle,
                                         color: Colors.grey,
                                         incomingInterval: idx,
-                                        progress: progress,
                                       ),
                                       title: Text(displayName,
                                           maxLines: 1,
@@ -11748,7 +11860,6 @@ class _StepCardState extends State<_StepCard> {
                               icon: Icons.flag,
                               color: Colors.red,
                               incomingInterval: step.stopovers?.length ?? 0,
-                              progress: progress,
                             ),
                             title: Text(
                                 _formatAlightingText(
