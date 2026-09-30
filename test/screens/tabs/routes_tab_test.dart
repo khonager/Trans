@@ -9,6 +9,62 @@ import 'package:trans/screens/tabs/routes_tab.dart';
 
 final _pullOrigin = Station(id: 'origin', name: 'Origin', type: 'station');
 
+void _expectStopNames(
+  List<String> names,
+  List<({String? heading, String label})> expected,
+) {
+  expect(compactConsecutiveStopNames(names), expected);
+}
+
+void _testCompactStopNames() {
+  test('groups a repeated area while keeping each stop distinct', () {
+    _expectStopNames(
+      [
+        'Wiesbaden Erbenheim Im Herzen',
+        'Wiesbaden Erbenheim Egerstraße',
+        'Wiesbaden Dotzheim Bahnhof',
+        'Wiesbaden Dotzheim Mitte',
+      ],
+      [
+        (heading: 'Wiesbaden Erbenheim', label: 'Im Herzen'),
+        (heading: null, label: 'Egerstraße'),
+        (heading: 'Wiesbaden Dotzheim', label: 'Bahnhof'),
+        (heading: null, label: 'Mitte'),
+      ],
+    );
+  });
+
+  test('leaves a single stop and repeated whole names readable', () {
+    _expectStopNames(
+      [
+        'Wiesbaden Erbenheim Im Herzen',
+        'Wiesbaden Erbenheim Im Herzen',
+        'Wiesbaden Hauptbahnhof',
+      ],
+      [
+        (heading: null, label: 'Wiesbaden Erbenheim Im Herzen'),
+        (heading: null, label: 'Wiesbaden Erbenheim Im Herzen'),
+        (heading: null, label: 'Wiesbaden Hauptbahnhof'),
+      ],
+    );
+  });
+
+  test('uses the prefix shared by the entire consecutive group', () {
+    _expectStopNames(
+      [
+        'Wiesbaden Erbenheim Im Herzen',
+        'Wiesbaden Erbenheim Im Winkel',
+        'Wiesbaden Erbenheim Egerstraße',
+      ],
+      [
+        (heading: 'Wiesbaden Erbenheim', label: 'Im Herzen'),
+        (heading: null, label: 'Im Winkel'),
+        (heading: null, label: 'Egerstraße'),
+      ],
+    );
+  });
+}
+
 JourneyStep _pullStep(int index) => JourneyStep(
       type: 'ride',
       line: 'RB$index',
@@ -151,6 +207,7 @@ Future<void> _settleIndicator(WidgetTester tester) async {
 }
 
 void main() {
+  _testCompactStopNames();
   test('saved journey identity survives realtime provider changes', () {
     const savedKey = 'origin::destination::saved-connection';
     final plannedDeparture = DateTime.utc(2026, 9, 3, 10);

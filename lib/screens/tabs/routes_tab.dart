@@ -750,6 +750,61 @@ String _formatIntermediateStopTitle(
   return name;
 }
 
+/// Removes a shared place prefix only when at least two adjacent stops have
+/// distinct names after that prefix. Stop indexes and full names stay intact.
+@visibleForTesting
+List<({String? heading, String label})> compactConsecutiveStopNames(
+    List<String> names) {
+  final result = <({String? heading, String label})>[
+    for (final name in names) (heading: null, label: name),
+  ];
+  final words = [
+    for (final name in names) name.trim().split(RegExp(r'\s+')),
+  ];
+
+  int sharedWordCount(int first, int second) {
+    if (names[first].trim().toLowerCase() ==
+        names[second].trim().toLowerCase()) {
+      return 0;
+    }
+    final maxCount = min(words[first].length, words[second].length) - 1;
+    var count = 0;
+    while (count < maxCount &&
+        words[first][count].toLowerCase() ==
+            words[second][count].toLowerCase()) {
+      count++;
+    }
+    return count;
+  }
+
+  var start = 0;
+  while (start + 1 < names.length) {
+    var prefixLength = sharedWordCount(start, start + 1);
+    if (prefixLength < 2) {
+      start++;
+      continue;
+    }
+
+    var end = start + 2;
+    while (end < names.length) {
+      final nextPrefixLength = sharedWordCount(start, end);
+      if (nextPrefixLength < 2) break;
+      prefixLength = min(prefixLength, nextPrefixLength);
+      end++;
+    }
+
+    final heading = words[start].take(prefixLength).join(' ');
+    for (var index = start; index < end; index++) {
+      result[index] = (
+        heading: index == start ? heading : null,
+        label: words[index].skip(prefixLength).join(' '),
+      );
+    }
+    start = end;
+  }
+  return result;
+}
+
 @visibleForTesting
 bool savedJourneyLongPressShowsDelete({
   required bool isCompleted,
@@ -11267,6 +11322,10 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final step = widget.step;
+    final compactStopNames = compactConsecutiveStopNames([
+      for (final stop in step.stopovers ?? const [])
+        (stop['stop']?['name'] ?? '').toString(),
+    ]);
     final stepHeadsign = (step.headsign ?? '').trim();
     final directionPrefix =
         Localizations.localeOf(context).languageCode == 'de' ? 'nach' : 'to';
@@ -11665,6 +11724,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                 platform: platform?.toString(),
                                 stopLabel: stopLabel,
                               );
+                              final compactName = compactStopNames[idx];
                               final plannedDep = stop['plannedDeparture'] ??
                                   stop['scheduledDeparture'] ??
                                   stop['plannedArrival'] ??
@@ -11711,7 +11771,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                 stopLat: stopLat,
                                 stopLng: stopLng,
                               );
-                              return GestureDetector(
+                              final stopTile = GestureDetector(
                                   onLongPress: stopId != null
                                       ? () => widget.onShowStopDepartures(
                                             stopId: stopId as String,
@@ -11734,12 +11794,17 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                         color: Colors.grey,
                                         incomingInterval: idx,
                                       ),
-                                      title: Text(displayName,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                              color: colors.textPrimary,
-                                              fontSize: 13)),
+                                      title: Semantics(
+                                        label: displayName,
+                                        child: ExcludeSemantics(
+                                          child: Text(compactName.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  color: colors.textPrimary,
+                                                  fontSize: 13)),
+                                        ),
+                                      ),
                                       trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
@@ -11817,6 +11882,43 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                                 ),
                                               )
                                           ])));
+                              final heading = compactName.heading;
+                              if (heading == null) return stopTile;
+                              return Column(children: [
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(52, 10, 20, 2),
+                                  child: Row(children: [
+                                    Expanded(
+                                      child: Divider(
+                                          color: colors.textSecondary
+                                              .withValues(alpha: 0.4)),
+                                    ),
+                                    Flexible(
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8),
+                                        child: Text(
+                                          heading,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: colors.textSecondary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Divider(
+                                          color: colors.textSecondary
+                                              .withValues(alpha: 0.4)),
+                                    ),
+                                  ]),
+                                ),
+                                stopTile,
+                              ]);
                             }))
                   else
                     Padding(
