@@ -784,6 +784,7 @@ List<({List<String> headings, String label})> compactConsecutiveStopNames(
 
   void addNestedGroups(int groupStart, int groupEnd, int parentPrefixLength) {
     var childStart = groupStart;
+    var previousChildEnd = -1;
     while (childStart + 1 < groupEnd) {
       var childPrefixLength = sharedWordCount(childStart, childStart + 1);
       if (childPrefixLength <= parentPrefixLength) {
@@ -806,21 +807,39 @@ List<({List<String> headings, String label})> compactConsecutiveStopNames(
         continue;
       }
 
+      // A lone stop after a more specific group needs its full name so it
+      // cannot be mistaken for another stop in the previous neighbourhood.
+      if (previousChildEnd != -1) {
+        for (var index = previousChildEnd; index < childStart; index++) {
+          result[index] = (
+            headings: result[index].headings,
+            label: normalizedNames[index],
+          );
+        }
+      }
+
       final parentHeadingEnd = tokens[childStart][parentPrefixLength - 1].end;
       final heading =
           '${normalizedNames[childStart].substring(0, parentHeadingEnd)} '
           '${normalizedNames[childStart].substring(headingStart, headingEnd)}';
       for (var index = childStart; index < childEnd; index++) {
         result[index] = (
-          headings: index == childStart
-              ? [...result[index].headings, heading]
-              : result[index].headings,
+          headings: index == childStart ? [heading] : result[index].headings,
           label: normalizedNames[index]
               .substring(tokens[index][childPrefixLength].start),
         );
       }
       addNestedGroups(childStart, childEnd, childPrefixLength);
+      previousChildEnd = childEnd;
       childStart = childEnd;
+    }
+    if (previousChildEnd != -1) {
+      for (var index = previousChildEnd; index < groupEnd; index++) {
+        result[index] = (
+          headings: result[index].headings,
+          label: normalizedNames[index],
+        );
+      }
     }
   }
 
@@ -11978,12 +11997,13 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                                 child: Padding(
                                                   padding: const EdgeInsets
                                                       .symmetric(horizontal: 8),
-                                              child: Text(
-                                                headings[headingIndex],
-                                                textAlign: TextAlign.center,
-                                                textWidthBasis:
-                                                    TextWidthBasis.longestLine,
-                                                softWrap: true,
+                                                  child: Text(
+                                                    headings[headingIndex],
+                                                    textAlign: TextAlign.center,
+                                                    textWidthBasis:
+                                                        TextWidthBasis
+                                                            .longestLine,
+                                                    softWrap: true,
                                                     style: TextStyle(
                                                       color:
                                                           colors.textSecondary,

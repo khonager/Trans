@@ -128,18 +128,33 @@ void _testCompactStopNames() {
       (headings: <String>[], label: 'Plutoweg'),
       (headings: <String>[], label: 'Aukamm'),
       (headings: <String>[], label: 'Kappenbergweg'),
-      (headings: <String>[], label: 'Rambach Am Burgacker'),
+      (headings: <String>[], label: 'Wiesbaden Rambach Am Burgacker'),
       (headings: ['Wiesbaden Naurod'], label: 'Erbsenacker'),
       (headings: <String>[], label: 'Bernsteinstraße'),
       (headings: <String>[], label: 'Fondetter Straße'),
       (headings: <String>[], label: 'Laurentiusstraße'),
-      (headings: <String>[], label: 'Auringen Am Weinberg'),
+      (headings: <String>[], label: 'Wiesbaden Auringen Am Weinberg'),
     ];
     expect(actual.length, expected.length);
     for (var index = 0; index < expected.length; index++) {
       expect(actual[index].headings, expected[index].headings);
       expect(actual[index].label, expected[index].label);
     }
+  });
+
+  test('uses one heading when a district starts at the first stop', () {
+    final actual = compactConsecutiveStopNames([
+      'Eltville (Rhein) Martinsthal Am Steinberg',
+      'Eltville (Rhein) Martinsthal Schiersteiner Straße',
+      'Eltville (Rhein) Rauenthal Efenwerk',
+    ]);
+
+    expect(actual[0].headings, ['Eltville (Rhein) Martinsthal']);
+    expect(actual[0].label, 'Am Steinberg');
+    expect(actual[1].headings, isEmpty);
+    expect(actual[1].label, 'Schiersteiner Straße');
+    expect(actual[2].headings, isEmpty);
+    expect(actual[2].label, 'Eltville (Rhein) Rauenthal Efenwerk');
   });
 
   test('leaves a single stop and repeated whole names readable', () {
