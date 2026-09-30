@@ -806,8 +806,10 @@ List<({List<String> headings, String label})> compactConsecutiveStopNames(
         continue;
       }
 
+      final parentHeadingEnd = tokens[childStart][parentPrefixLength - 1].end;
       final heading =
-          normalizedNames[childStart].substring(headingStart, headingEnd);
+          '${normalizedNames[childStart].substring(0, parentHeadingEnd)} '
+          '${normalizedNames[childStart].substring(headingStart, headingEnd)}';
       for (var index = childStart; index < childEnd; index++) {
         result[index] = (
           headings: index == childStart
