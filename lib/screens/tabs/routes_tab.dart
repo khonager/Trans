@@ -35,6 +35,7 @@ import 'package:trans/widgets/loading_status.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
+import 'package:trans/utils/ride_progress.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import '../joint_route_results_screen.dart';
@@ -10693,6 +10694,7 @@ class RoutesTabState extends State<RoutesTab>
                     );
                   }(),
                   isFirst: i == 0,
+                  currentPosition: _effectiveCurrentPosition,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??
                           false,
@@ -10801,6 +10803,7 @@ const bool kPreviewAnimateEveryAltButton = false;
 class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
+  final Position? currentPosition;
 
   /// An earlier departure for this ride exists that still reaches the
   /// destination in time, so switching buys transfer buffer.
@@ -10840,6 +10843,7 @@ class _StepCard extends StatefulWidget {
   const _StepCard({
     required this.step,
     this.isFirst = false,
+    this.currentPosition,
     this.hasEarlierAlternative = false,
     this.alternativeHintSeen = false,
     this.onAlternativeHintSeen,
@@ -10860,6 +10864,110 @@ class _StepCard extends StatefulWidget {
 
 class _StepCardState extends State<_StepCard> {
   bool _isExpanded = false;
+  Position? _livePosition;
+  StreamSubscription<Position>? _progressStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _livePosition = widget.currentPosition;
+  }
+
+  @override
+  void didUpdateWidget(covariant _StepCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final incoming = widget.currentPosition;
+    if (incoming != null &&
+        (_livePosition == null ||
+            incoming.timestamp.isAfter(_livePosition!.timestamp))) {
+      _livePosition = incoming;
+    }
+  }
+
+  @override
+  void dispose() {
+    _progressStream?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _trackExpandedRide() async {
+    if (widget.step.type != 'ride' || _progressStream != null) return;
+    final permission = await Geolocator.checkPermission();
+    if (!mounted ||
+        !_isExpanded ||
+        permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+    LocationSettings settings = const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 0,
+    );
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      settings = AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        intervalDuration: const Duration(seconds: 1),
+      );
+    }
+    _progressStream = Geolocator.getPositionStream(locationSettings: settings)
+        .listen((position) {
+      if (mounted) setState(() => _livePosition = position);
+    }, onError: (Object error) {
+      _progressStream?.cancel();
+      _progressStream = null;
+      debugPrint('Ride progress location unavailable: $error');
+    });
+  }
+
+  void _setExpanded(bool expanded) {
+    setState(() => _isExpanded = expanded);
+    if (expanded) {
+      _trackExpandedRide();
+    } else {
+      _progressStream?.cancel();
+      _progressStream = null;
+    }
+  }
+
+  Widget _stopRail(
+      {required IconData icon,
+      required Color color,
+      required int incomingInterval,
+      required RideProgress? progress}) {
+    final active = progress?.interval == incomingInterval;
+    return SizedBox(
+      width: 18,
+      height: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+              left: 8,
+              right: 8,
+              child: ColoredBox(color: Colors.grey.withValues(alpha: 0.5))),
+          Icon(icon, size: icon == Icons.circle ? 8 : 14, color: color),
+          if (active)
+            Positioned(
+              top: -31 + 48 * progress!.fraction,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: TransColors.of(context).navBarSelected,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black38, blurRadius: 3)
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   bool get _hasCustomAlarmTarget => widget.step.alarmTargetName != null;
 
@@ -11043,6 +11151,8 @@ class _StepCardState extends State<_StepCard> {
   Widget build(BuildContext context) {
     final colors = TransColors.of(context);
     final step = widget.step;
+    final progress =
+        _livePosition == null ? null : rideProgressFor(step, _livePosition!);
     final stepHeadsign = (step.headsign ?? '').trim();
     final directionPrefix =
         Localizations.localeOf(context).languageCode == 'de' ? 'nach' : 'to';
@@ -11128,7 +11238,7 @@ class _StepCardState extends State<_StepCard> {
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
                 tilePadding: const EdgeInsets.fromLTRB(16, 8, 0, 8),
-                onExpansionChanged: (val) => setState(() => _isExpanded = val),
+                onExpansionChanged: _setExpanded,
                 title: Builder(builder: (context) {
                   final dest = (step.destinationName ??
                       step.instruction.split('→').last.trim());
@@ -11372,8 +11482,12 @@ class _StepCardState extends State<_StepCard> {
                                 contentPadding:
                                     const EdgeInsets.symmetric(horizontal: 20),
                                 minLeadingWidth: 18,
-                                leading: const Icon(Icons.login,
-                                    size: 14, color: Colors.green),
+                                leading: _stopRail(
+                                  icon: Icons.login,
+                                  color: Colors.green,
+                                  incomingInterval: -1,
+                                  progress: progress,
+                                ),
                                 title: Text(
                                     _formatBoardingText(
                                       AppLocalizations.of(context)!,
@@ -11415,6 +11529,7 @@ class _StepCardState extends State<_StepCard> {
                             BoxDecoration(color: colors.stepStopoversBg),
                         child: ListView.builder(
                             shrinkWrap: true,
+                            clipBehavior: Clip.none,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: step.stopovers!.length,
                             itemBuilder: (ctx, idx) {
@@ -11501,8 +11616,12 @@ class _StepCardState extends State<_StepCard> {
                                           const EdgeInsets.symmetric(
                                               horizontal: 20),
                                       minLeadingWidth: 12,
-                                      leading: const Icon(Icons.circle,
-                                          size: 8, color: Colors.grey),
+                                      leading: _stopRail(
+                                        icon: Icons.circle,
+                                        color: Colors.grey,
+                                        incomingInterval: idx,
+                                        progress: progress,
+                                      ),
                                       title: Text(displayName,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
@@ -11625,8 +11744,12 @@ class _StepCardState extends State<_StepCard> {
                             contentPadding:
                                 const EdgeInsets.symmetric(horizontal: 20),
                             minLeadingWidth: 18,
-                            leading: const Icon(Icons.flag,
-                                size: 14, color: Colors.red),
+                            leading: _stopRail(
+                              icon: Icons.flag,
+                              color: Colors.red,
+                              incomingInterval: step.stopovers?.length ?? 0,
+                              progress: progress,
+                            ),
                             title: Text(
                                 _formatAlightingText(
                                   AppLocalizations.of(context)!,

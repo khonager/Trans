@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
@@ -15,6 +16,7 @@ import 'package:trans/widgets/compass_icon.dart';
 import 'package:trans/widgets/favorite_map_markers.dart';
 import 'package:trans/widgets/friend_map_markers.dart';
 import 'package:trans/widgets/loading_status.dart';
+import 'package:trans/widgets/live_location_marker.dart';
 import 'package:trans/l10n/app_localizations.dart';
 
 String googleMapsTravelModeForRoute({
@@ -97,7 +99,10 @@ class _MapScreenState extends State<MapScreen> {
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.currentPosition != null &&
-        widget.currentPosition != oldWidget.currentPosition) {
+        widget.currentPosition != oldWidget.currentPosition &&
+        (_liveCurrentPosition == null ||
+            widget.currentPosition!.timestamp
+                .isAfter(_liveCurrentPosition!.timestamp))) {
       setState(() => _liveCurrentPosition = widget.currentPosition);
     }
   }
@@ -135,10 +140,17 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      final settings = const LocationSettings(
+      LocationSettings settings = const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
       );
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        settings = AndroidSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+          intervalDuration: const Duration(seconds: 1),
+        );
+      }
       _positionStream?.cancel();
       _positionStream = Geolocator.getPositionStream(locationSettings: settings)
           .listen((pos) {
@@ -534,19 +546,6 @@ class _MapScreenState extends State<MapScreen> {
 
     final displayedMarkers = <Marker>[
       ..._markers,
-      if (_liveCurrentPosition != null)
-        Marker(
-          point: LatLng(
-              _liveCurrentPosition!.latitude, _liveCurrentPosition!.longitude),
-          width: 32,
-          height: 32,
-          child: Container(
-              decoration: BoxDecoration(
-                  color: colors.navBarSelected.withValues(alpha: 0.3),
-                  shape: BoxShape.circle),
-              child: Icon(Icons.my_location,
-                  color: colors.navBarSelected, size: 16)),
-        ),
     ];
 
     return Scaffold(
@@ -661,6 +660,20 @@ class _MapScreenState extends State<MapScreen> {
             MarkerLayer(markers: _favoriteMarkers),
           if (_friendMarkers.isNotEmpty) MarkerLayer(markers: _friendMarkers),
           MarkerLayer(markers: displayedMarkers),
+          if (_liveCurrentPosition != null)
+            LiveLocationMarker(
+              position: LatLng(_liveCurrentPosition!.latitude,
+                  _liveCurrentPosition!.longitude),
+              size: 32,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: colors.navBarSelected.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.my_location,
+                    color: colors.navBarSelected, size: 16),
+              ),
+            ),
         ],
       ),
     );

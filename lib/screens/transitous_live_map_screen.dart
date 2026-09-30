@@ -19,6 +19,7 @@ import '../utils/app_error.dart';
 import '../widgets/compass_icon.dart';
 import '../widgets/favorite_map_markers.dart';
 import '../widgets/friend_map_markers.dart';
+import '../widgets/live_location_marker.dart';
 
 class TransitousLiveMapScreen extends StatefulWidget {
   final Position? currentPosition;
@@ -92,7 +93,10 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   void didUpdateWidget(covariant TransitousLiveMapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.currentPosition != null &&
-        widget.currentPosition != oldWidget.currentPosition) {
+        widget.currentPosition != oldWidget.currentPosition &&
+        (_liveCurrentPosition == null ||
+            widget.currentPosition!.timestamp
+                .isAfter(_liveCurrentPosition!.timestamp))) {
       setState(() => _liveCurrentPosition = widget.currentPosition);
     }
   }
@@ -159,10 +163,17 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
         return;
       }
 
-      const settings = LocationSettings(
+      LocationSettings settings = const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
       );
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        settings = AndroidSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+          intervalDuration: const Duration(seconds: 1),
+        );
+      }
       await _positionStream?.cancel();
       _positionStream = Geolocator.getPositionStream(locationSettings: settings)
           .listen((position) {
@@ -1607,15 +1618,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
                 },
               ),
               if (userPosition != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: userPosition,
-                      width: 34,
-                      height: 34,
-                      child: _buildUserLocationMarker(context),
-                    ),
-                  ],
+                LiveLocationMarker(
+                  position: userPosition,
+                  child: _buildUserLocationMarker(context),
                 ),
             ],
           ),
