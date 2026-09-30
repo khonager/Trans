@@ -11948,44 +11948,64 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                           ])));
                               final headings = compactName.headings;
                               if (headings.isEmpty) return stopTile;
-                              return Column(children: [
-                                for (var headingIndex = 0;
-                                    headingIndex < headings.length;
-                                    headingIndex++)
-                                  Padding(
-                                    padding: EdgeInsets.fromLTRB(
-                                        52, headingIndex == 0 ? 10 : 2, 20, 2),
-                                    child: Row(children: [
-                                      Expanded(
-                                        child: Divider(
-                                            color: colors.textSecondary
-                                                .withValues(alpha: 0.4)),
-                                      ),
-                                      Flexible(
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          child: Text(
-                                            headings[headingIndex],
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: colors.textSecondary,
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                            ),
+                              return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (var headingIndex = 0;
+                                        headingIndex < headings.length;
+                                        headingIndex++)
+                                      Padding(
+                                        padding: EdgeInsets.fromLTRB(20,
+                                            headingIndex == 0 ? 10 : 2, 20, 2),
+                                        child: LayoutBuilder(
+                                          builder: (context, constraints) =>
+                                              Row(
+                                            children: [
+                                              Expanded(
+                                                child: Divider(
+                                                    color: colors.textSecondary
+                                                        .withValues(
+                                                            alpha: 0.4)),
+                                              ),
+                                              ConstrainedBox(
+                                                constraints: BoxConstraints(
+                                                  maxWidth: max(
+                                                      0.0,
+                                                      constraints.maxWidth -
+                                                          48),
+                                                ),
+                                                child: Padding(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(horizontal: 8),
+                                              child: Text(
+                                                headings[headingIndex],
+                                                textAlign: TextAlign.center,
+                                                textWidthBasis:
+                                                    TextWidthBasis.longestLine,
+                                                softWrap: true,
+                                                    style: TextStyle(
+                                                      color:
+                                                          colors.textSecondary,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: Divider(
+                                                    color: colors.textSecondary
+                                                        .withValues(
+                                                            alpha: 0.4)),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ),
-                                      Expanded(
-                                        child: Divider(
-                                            color: colors.textSecondary
-                                                .withValues(alpha: 0.4)),
-                                      ),
-                                    ]),
-                                  ),
-                                stopTile,
-                              ]);
+                                    stopTile,
+                                  ]);
                             }))
                   else
                     Padding(
