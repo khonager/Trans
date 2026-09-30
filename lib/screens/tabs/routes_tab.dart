@@ -753,53 +753,115 @@ String _formatIntermediateStopTitle(
 /// Removes a shared place prefix only when at least two adjacent stops have
 /// distinct names after that prefix. Stop indexes and full names stay intact.
 @visibleForTesting
-List<({String? heading, String label})> compactConsecutiveStopNames(
+List<({List<String> headings, String label})> compactConsecutiveStopNames(
     List<String> names) {
-  final result = <({String? heading, String label})>[
-    for (final name in names) (heading: null, label: name),
+  final result = <({List<String> headings, String label})>[
+    for (final name in names) (headings: const [], label: name),
   ];
-  final words = [
-    for (final name in names) name.trim().split(RegExp(r'\s+')),
+  final normalizedNames = [for (final name in names) name.trim()];
+  final tokens = [
+    for (final name in normalizedNames)
+      RegExp(r'[^\s-]+').allMatches(name).toList(),
   ];
 
   int sharedWordCount(int first, int second) {
-    if (names[first].trim().toLowerCase() ==
-        names[second].trim().toLowerCase()) {
+    if (normalizedNames[first].toLowerCase() ==
+        normalizedNames[second].toLowerCase()) {
       return 0;
     }
-    final maxCount = min(words[first].length, words[second].length) - 1;
+    final maxCount = min(tokens[first].length, tokens[second].length) - 1;
     var count = 0;
     while (count < maxCount &&
-        words[first][count].toLowerCase() ==
-            words[second][count].toLowerCase()) {
+        tokens[first][count].group(0)!.toLowerCase() ==
+            tokens[second][count].group(0)!.toLowerCase()) {
       count++;
     }
     return count;
   }
 
+  bool isUsefulPrefix(int first, int count) =>
+      count > 0 && tokens[first][count - 1].end >= 4;
+
+  void addNestedGroups(int groupStart, int groupEnd, int parentPrefixLength) {
+    var childStart = groupStart;
+    while (childStart + 1 < groupEnd) {
+      var childPrefixLength = sharedWordCount(childStart, childStart + 1);
+      if (childPrefixLength <= parentPrefixLength) {
+        childStart++;
+        continue;
+      }
+
+      var childEnd = childStart + 2;
+      while (childEnd < groupEnd) {
+        final nextPrefixLength = sharedWordCount(childStart, childEnd);
+        if (nextPrefixLength <= parentPrefixLength) break;
+        childPrefixLength = min(childPrefixLength, nextPrefixLength);
+        childEnd++;
+      }
+
+      final headingStart = tokens[childStart][parentPrefixLength].start;
+      final headingEnd = tokens[childStart][childPrefixLength - 1].end;
+      if (headingEnd - headingStart < 4) {
+        childStart++;
+        continue;
+      }
+
+      final heading =
+          normalizedNames[childStart].substring(headingStart, headingEnd);
+      for (var index = childStart; index < childEnd; index++) {
+        result[index] = (
+          headings: index == childStart
+              ? [...result[index].headings, heading]
+              : result[index].headings,
+          label: normalizedNames[index]
+              .substring(tokens[index][childPrefixLength].start),
+        );
+      }
+      addNestedGroups(childStart, childEnd, childPrefixLength);
+      childStart = childEnd;
+    }
+  }
+
   var start = 0;
   while (start + 1 < names.length) {
+    if (normalizedNames[start].toLowerCase() ==
+        normalizedNames[start + 1].toLowerCase()) {
+      while (start + 1 < names.length &&
+          normalizedNames[start].toLowerCase() ==
+              normalizedNames[start + 1].toLowerCase()) {
+        start++;
+      }
+      start++;
+      continue;
+    }
     var prefixLength = sharedWordCount(start, start + 1);
-    if (prefixLength < 2) {
+    if (!isUsefulPrefix(start, prefixLength)) {
       start++;
       continue;
     }
 
+    // Keep an existing neighbourhood boundary even if the next stop still
+    // shares the broader city name. A group that began with just the city may
+    // span several neighbourhoods.
+    final minimumWords = prefixLength >= 2 ? 2 : 1;
     var end = start + 2;
     while (end < names.length) {
       final nextPrefixLength = sharedWordCount(start, end);
-      if (nextPrefixLength < 2) break;
+      if (nextPrefixLength < minimumWords) break;
       prefixLength = min(prefixLength, nextPrefixLength);
       end++;
     }
 
-    final heading = words[start].take(prefixLength).join(' ');
+    final heading = normalizedNames[start]
+        .substring(0, tokens[start][prefixLength - 1].end);
     for (var index = start; index < end; index++) {
       result[index] = (
-        heading: index == start ? heading : null,
-        label: words[index].skip(prefixLength).join(' '),
+        headings: index == start ? [heading] : const [],
+        label:
+            normalizedNames[index].substring(tokens[index][prefixLength].start),
       );
     }
+    addNestedGroups(start, end, prefixLength);
     start = end;
   }
   return result;
@@ -11882,41 +11944,44 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                                 ),
                                               )
                                           ])));
-                              final heading = compactName.heading;
-                              if (heading == null) return stopTile;
+                              final headings = compactName.headings;
+                              if (headings.isEmpty) return stopTile;
                               return Column(children: [
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(52, 10, 20, 2),
-                                  child: Row(children: [
-                                    Expanded(
-                                      child: Divider(
-                                          color: colors.textSecondary
-                                              .withValues(alpha: 0.4)),
-                                    ),
-                                    Flexible(
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8),
-                                        child: Text(
-                                          heading,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: colors.textSecondary,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
+                                for (var headingIndex = 0;
+                                    headingIndex < headings.length;
+                                    headingIndex++)
+                                  Padding(
+                                    padding: EdgeInsets.fromLTRB(
+                                        52, headingIndex == 0 ? 10 : 2, 20, 2),
+                                    child: Row(children: [
+                                      Expanded(
+                                        child: Divider(
+                                            color: colors.textSecondary
+                                                .withValues(alpha: 0.4)),
+                                      ),
+                                      Flexible(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8),
+                                          child: Text(
+                                            headings[headingIndex],
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: colors.textSecondary,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    Expanded(
-                                      child: Divider(
-                                          color: colors.textSecondary
-                                              .withValues(alpha: 0.4)),
-                                    ),
-                                  ]),
-                                ),
+                                      Expanded(
+                                        child: Divider(
+                                            color: colors.textSecondary
+                                                .withValues(alpha: 0.4)),
+                                      ),
+                                    ]),
+                                  ),
                                 stopTile,
                               ]);
                             }))

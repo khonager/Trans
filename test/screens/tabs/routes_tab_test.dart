@@ -13,7 +13,16 @@ void _expectStopNames(
   List<String> names,
   List<({String? heading, String label})> expected,
 ) {
-  expect(compactConsecutiveStopNames(names), expected);
+  expect(
+    [
+      for (final stop in compactConsecutiveStopNames(names))
+        (
+          heading: stop.headings.isEmpty ? null : stop.headings.first,
+          label: stop.label,
+        ),
+    ],
+    expected,
+  );
 }
 
 void _testCompactStopNames() {
@@ -32,6 +41,105 @@ void _testCompactStopNames() {
         (heading: null, label: 'Mitte'),
       ],
     );
+  });
+
+  test('groups city and hyphenated district names from a bus route', () {
+    _expectStopNames(
+      [
+        'Wiesbaden Rheinstr./Rh-M. CongressCenter',
+        'Wiesbaden Dernsches Gelände',
+        'Wiesbaden Bleichstraße',
+        'Taunusstein-Hahn Forsthausstraße',
+        'Taunusstein-Hahn Busbahnhof',
+        'Taunusstein-Bleidenstadt Röder',
+        'Taunusstein-Bleidenstadt Süd',
+        'Taunusstein-Seitzenhahn Hähnchesmühle',
+        'Taunusstein-Seitzenhahn Hammermühle',
+        'Bad Schwalbach-Hettenhain B 54',
+        'Bad Schwalbach Bahnhofstraße',
+        'Bad Schwalbach Kreishaus/Mühlweg',
+      ],
+      [
+        (heading: 'Wiesbaden', label: 'Rheinstr./Rh-M. CongressCenter'),
+        (heading: null, label: 'Dernsches Gelände'),
+        (heading: null, label: 'Bleichstraße'),
+        (heading: 'Taunusstein-Hahn', label: 'Forsthausstraße'),
+        (heading: null, label: 'Busbahnhof'),
+        (heading: 'Taunusstein-Bleidenstadt', label: 'Röder'),
+        (heading: null, label: 'Süd'),
+        (heading: 'Taunusstein-Seitzenhahn', label: 'Hähnchesmühle'),
+        (heading: null, label: 'Hammermühle'),
+        (heading: 'Bad Schwalbach', label: 'Hettenhain B 54'),
+        (heading: null, label: 'Bahnhofstraße'),
+        (heading: null, label: 'Kreishaus/Mühlweg'),
+      ],
+    );
+  });
+
+  test('does not make a heading from a short generic prefix', () {
+    _expectStopNames(
+      ['Am Bahnhof', 'Am Markt'],
+      [
+        (heading: null, label: 'Am Bahnhof'),
+        (heading: null, label: 'Am Markt'),
+      ],
+    );
+  });
+
+  test('splits a shared city before a hyphen without changing later hyphens',
+      () {
+    _expectStopNames(
+      [
+        'Wiesbaden-Igstadt',
+        'Wiesbaden-Auringen',
+        'Wiesbaden-Erbenheim',
+        'Wiesbaden-Rheinstr./Rh-M. CongressCenter',
+      ],
+      [
+        (heading: 'Wiesbaden', label: 'Igstadt'),
+        (heading: null, label: 'Auringen'),
+        (heading: null, label: 'Erbenheim'),
+        (heading: null, label: 'Rheinstr./Rh-M. CongressCenter'),
+      ],
+    );
+  });
+
+  test('adds Bierstadt and Naurod headings inside a Wiesbaden run', () {
+    final actual = compactConsecutiveStopNames([
+      'Wiesbaden Blumenstraße',
+      'Wiesbaden Alwinenstraße',
+      'Wiesbaden Fichtestraße/Handwerkskammer',
+      'Wiesbaden-Bierstadt Wartestraße',
+      'Wiesbaden Bierstadt Plutoweg',
+      'Wiesbaden Bierstadt Aukamm',
+      'Wiesbaden Bierstadt Kappenbergweg',
+      'Wiesbaden Rambach Am Burgacker',
+      'Wiesbaden-Naurod Erbsenacker',
+      'Wiesbaden Naurod Bernsteinstraße',
+      'Wiesbaden Naurod Fondetter Straße',
+      'Wiesbaden Naurod Laurentiusstraße',
+      'Wiesbaden Auringen Am Weinberg',
+    ]);
+    final expected = [
+      (headings: ['Wiesbaden'], label: 'Blumenstraße'),
+      (headings: <String>[], label: 'Alwinenstraße'),
+      (headings: <String>[], label: 'Fichtestraße/Handwerkskammer'),
+      (headings: ['Bierstadt'], label: 'Wartestraße'),
+      (headings: <String>[], label: 'Plutoweg'),
+      (headings: <String>[], label: 'Aukamm'),
+      (headings: <String>[], label: 'Kappenbergweg'),
+      (headings: <String>[], label: 'Rambach Am Burgacker'),
+      (headings: ['Naurod'], label: 'Erbsenacker'),
+      (headings: <String>[], label: 'Bernsteinstraße'),
+      (headings: <String>[], label: 'Fondetter Straße'),
+      (headings: <String>[], label: 'Laurentiusstraße'),
+      (headings: <String>[], label: 'Auringen Am Weinberg'),
+    ];
+    expect(actual.length, expected.length);
+    for (var index = 0; index < expected.length; index++) {
+      expect(actual[index].headings, expected[index].headings);
+      expect(actual[index].label, expected[index].label);
+    }
   });
 
   test('leaves a single stop and repeated whole names readable', () {
