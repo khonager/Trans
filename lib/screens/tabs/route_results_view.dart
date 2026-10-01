@@ -15,6 +15,7 @@ import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/widgets/route_shape_sketch.dart';
 import 'package:trans/widgets/route_share_ticket.dart';
+import 'package:trans/widgets/route_options.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
 
@@ -111,6 +112,7 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onRefresh;
   final Station? origin;
   final Station destination;
+  final DateTime? searchTime;
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
@@ -132,6 +134,7 @@ class RouteResultsView extends StatefulWidget {
     this.onRefresh,
     this.origin,
     required this.destination,
+    this.searchTime,
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
@@ -149,6 +152,7 @@ class RouteResultsView extends StatefulWidget {
 }
 
 class _RouteResultsViewState extends State<RouteResultsView> {
+  final DateTime _fallbackSearchTime = DateTime.now();
   late RouteSortOption _currentSort;
   late List<RouteSortOption> _sortOrder;
   late List<Journey> _sortedCandidates;
@@ -794,6 +798,15 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 ],
               ),
             ),
+            if (widget.origin != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: DirectLinesPanel(
+                  origin: widget.origin!,
+                  destination: widget.destination,
+                  start: widget.searchTime ?? _fallbackSearchTime,
+                ),
+              ),
             if (showBackgroundLoadingSpace)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

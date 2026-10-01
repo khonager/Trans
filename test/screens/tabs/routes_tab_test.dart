@@ -1222,6 +1222,34 @@ void main() {
       );
     });
 
+    test('keeps the current ride when changing at its final stop', () {
+      final ride = {
+        'origin': {'id': 'board'},
+        'destination': {'id': 'last-stop'},
+        'departure': '2030-08-24T11:00:00Z',
+        'arrival': '2030-08-24T11:20:00Z',
+        'line': {'name': '27'},
+        'stopovers': const [],
+      };
+      final alternative = {
+        'legs': [
+          rideLeg('18', '2030-08-24T11:23:00Z', '2030-08-24T11:40:00Z'),
+        ],
+      };
+
+      final spliced = spliceAlternativeIntoJourney(
+        original: {
+          'legs': [ride]
+        },
+        alternative: alternative,
+        rideLegIndex: 0,
+        intermediateStopId: 'last-stop',
+      );
+
+      expect(spliced['legs'], hasLength(2));
+      expect((spliced['legs'] as List).first['line']['name'], '27');
+    });
+
     test('returns the alternative untouched when nothing precedes it', () {
       final alternative = {
         'legs': [

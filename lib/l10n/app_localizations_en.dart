@@ -375,8 +375,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String getOffAt(String station) {
-    return 'Get off at $station';
+  String getOffAt(String stop) {
+    return 'Get off at $stop';
   }
 
   @override
@@ -396,6 +396,61 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alternatives => 'Alternatives';
+
+  @override
+  String get onThisBus => 'I\'m on this bus';
+
+  @override
+  String onBoardCurrentPlan(String time) {
+    return 'Current plan: arrive at $time';
+  }
+
+  @override
+  String get stayWithCurrentPlan => 'Stay with your current plan';
+
+  @override
+  String get checkingOnBoardOptions =>
+      'Checking your options from upcoming stops…';
+
+  @override
+  String get onBoardStopsUnavailable =>
+      'Stops for this bus are unavailable right now.';
+
+  @override
+  String get nextStop => 'Next stop (change if needed)';
+
+  @override
+  String stayOnUntil(String stop) {
+    return 'Stay on until $stop';
+  }
+
+  @override
+  String get noOnBoardChangesFound =>
+      'No useful changes found from the remaining stops.';
+
+  @override
+  String minutesEarlier(int minutes) {
+    return '$minutes min earlier';
+  }
+
+  @override
+  String minutesLater(int minutes) {
+    return '$minutes min later';
+  }
+
+  @override
+  String get sameArrivalTime => 'same arrival time';
+
+  @override
+  String get directLines => 'Lines you can take directly';
+
+  @override
+  String directLinesWindow(String start, String end) {
+    return 'Lines found from $start to $end';
+  }
+
+  @override
+  String get noDirectLinesFound => 'No direct lines found in this time window.';
 
   @override
   String errorPrefix(String error) {

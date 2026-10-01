@@ -725,8 +725,8 @@ abstract class AppLocalizations {
   /// No description provided for @getOffAt.
   ///
   /// In en, this message translates to:
-  /// **'Get off at {station}'**
-  String getOffAt(String station);
+  /// **'Get off at {stop}'**
+  String getOffAt(String stop);
 
   /// No description provided for @station.
   ///
@@ -763,6 +763,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Alternatives'**
   String get alternatives;
+
+  /// No description provided for @onThisBus.
+  ///
+  /// In en, this message translates to:
+  /// **'I\'m on this bus'**
+  String get onThisBus;
+
+  /// No description provided for @onBoardCurrentPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Current plan: arrive at {time}'**
+  String onBoardCurrentPlan(String time);
+
+  /// No description provided for @stayWithCurrentPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Stay with your current plan'**
+  String get stayWithCurrentPlan;
+
+  /// No description provided for @checkingOnBoardOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking your options from upcoming stops…'**
+  String get checkingOnBoardOptions;
+
+  /// No description provided for @onBoardStopsUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Stops for this bus are unavailable right now.'**
+  String get onBoardStopsUnavailable;
+
+  /// No description provided for @nextStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Next stop (change if needed)'**
+  String get nextStop;
+
+  /// No description provided for @stayOnUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Stay on until {stop}'**
+  String stayOnUntil(String stop);
+
+  /// No description provided for @noOnBoardChangesFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No useful changes found from the remaining stops.'**
+  String get noOnBoardChangesFound;
+
+  /// No description provided for @minutesEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min earlier'**
+  String minutesEarlier(int minutes);
+
+  /// No description provided for @minutesLater.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min later'**
+  String minutesLater(int minutes);
+
+  /// No description provided for @sameArrivalTime.
+  ///
+  /// In en, this message translates to:
+  /// **'same arrival time'**
+  String get sameArrivalTime;
+
+  /// No description provided for @directLines.
+  ///
+  /// In en, this message translates to:
+  /// **'Lines you can take directly'**
+  String get directLines;
+
+  /// No description provided for @directLinesWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Lines found from {start} to {end}'**
+  String directLinesWindow(String start, String end);
+
+  /// No description provided for @noDirectLinesFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No direct lines found in this time window.'**
+  String get noDirectLinesFound;
 
   /// No description provided for @errorPrefix.
   ///

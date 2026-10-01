@@ -32,6 +32,7 @@ import 'package:trans/widgets/joint_friend_chips.dart';
 import 'package:trans/widgets/stop_departures_sheet.dart';
 import 'package:trans/widgets/running_border.dart';
 import 'package:trans/widgets/loading_status.dart';
+import 'package:trans/widgets/route_options.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
@@ -1281,6 +1282,9 @@ Map<String, dynamic>? journeyLegThroughIntermediateStop(
   required String stopId,
   DateTime? fallbackTime,
 }) {
+  if ((leg['destination'] as Map?)?['id']?.toString() == stopId) {
+    return leg;
+  }
   final rawStopovers = leg['stopovers'] as List?;
   if (rawStopovers == null) return null;
 
@@ -5998,7 +6002,9 @@ class RoutesTabState extends State<RoutesTab>
       Journey? branchFrom,
       int? branchRideLegIndex,
       String? branchIntermediateStopId,
-      DateTime? branchIntermediateStopTime}) {
+      DateTime? branchIntermediateStopTime,
+      RouteTab? onBoardRoute,
+      JourneyStep? onBoardStep}) {
     Station fromDummy;
     if (lat != null && lng != null) {
       fromDummy = Station(
@@ -6033,6 +6039,12 @@ class RoutesTabState extends State<RoutesTab>
           currentTripId: currentTripId,
           currentLine: currentLine,
           initialResults: initialResults,
+          onOnBoard: onBoardRoute == null || onBoardStep == null
+              ? null
+              : () {
+                  Navigator.pop(ctx);
+                  _showOnBoardOptions(context, onBoardRoute, onBoardStep);
+                },
           onSelected: (journey, depTime) {
             Navigator.pop(ctx);
             final j = _journeyFromAlternative(
@@ -6066,6 +6078,87 @@ class RoutesTabState extends State<RoutesTab>
                         .departsAt(DateFormat('HH:mm').format(depTime)));
               }
             });
+          },
+        ),
+      ),
+    );
+  }
+
+  void _applyOnBoardJourney(String routeId, Journey journey) {
+    setState(() {
+      final index = _tabs.indexWhere((tab) => tab.id == routeId);
+      if (index < 0) return;
+      final current = _tabs[index];
+      _tabs[index] = current.copyWith(
+        activeJourney: journey,
+        stack: _stackWithJourneyEntry(current.stack, journey),
+        steps: journey.steps,
+        totalDuration: FormatUtils.formatDuration(journey.duration.inMinutes),
+      );
+    });
+  }
+
+  void _showOnBoardOptions(
+    BuildContext context,
+    RouteTab route,
+    JourneyStep step,
+  ) {
+    final active = route.activeJourney;
+    final legIndex = step.legIndex;
+    if (active == null || legIndex == null) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+        child: OnBoardOptionsSheet(
+          step: step,
+          destination: route.destination,
+          currentPlanArrival: active.arrival,
+          nahverkehrOnly: widget.onlyNahverkehr,
+          onSelected: (option, fullRide) {
+            final journey = _journeyFromAlternative(
+              option.onwardJourney,
+              destinationName: route.destination.name,
+              branchFrom: active,
+              branchRideLegIndex: legIndex,
+              branchIntermediateStopId: option.alight.id,
+              branchIntermediateStopTime: option.alight.arrival,
+              branchRideLegOverride: fullRide,
+            );
+            Navigator.pop(sheetContext);
+            _applyOnBoardJourney(route.id, journey);
+          },
+          onStayOn: (stop, fullRide) {
+            final originalLegs =
+                (active.rawSource['legs'] as List?) ?? const [];
+            if (legIndex < 0 || legIndex >= originalLegs.length) return;
+            final clipped = journeyLegThroughIntermediateStop(
+                  fullRide,
+                  stopId: stop.id,
+                  fallbackTime: stop.arrival,
+                ) ??
+                fullRide;
+            final legs = [...originalLegs.take(legIndex), clipped];
+            final raw = Map<String, dynamic>.from(active.rawSource)
+              ..['legs'] = legs
+              ..['arrival'] = clipped['arrival']
+              ..remove('duration')
+              ..remove('transfers');
+            final extended = _createJourney(
+              raw,
+              destinationNameOverride: route.destination.name,
+            );
+            final returnStep = extended.steps.indexWhere(
+              (candidate) =>
+                  candidate.type == 'ride' && candidate.legIndex == legIndex,
+            );
+            final journey = extended.copyWith(
+              parentJourney: active,
+              branchStepIndex: returnStep < 0 ? null : returnStep,
+            );
+            Navigator.pop(sheetContext);
+            _applyOnBoardJourney(route.id, journey);
           },
         ),
       ),
@@ -6490,6 +6583,7 @@ class RoutesTabState extends State<RoutesTab>
     int? branchRideLegIndex,
     String? branchIntermediateStopId,
     DateTime? branchIntermediateStopTime,
+    Map<String, dynamic>? branchRideLegOverride,
   }) {
     if (branchFrom == null || branchRideLegIndex == null) {
       return _createJourney(alternative,
@@ -6497,8 +6591,16 @@ class RoutesTabState extends State<RoutesTab>
     }
 
     final originalLegs = (branchFrom.rawSource['legs'] as List?) ?? const [];
+    final branchSource = Map<String, dynamic>.from(branchFrom.rawSource);
+    if (branchRideLegOverride != null &&
+        branchRideLegIndex >= 0 &&
+        branchRideLegIndex < originalLegs.length) {
+      final updatedLegs = List<dynamic>.from(originalLegs);
+      updatedLegs[branchRideLegIndex] = branchRideLegOverride;
+      branchSource['legs'] = updatedLegs;
+    }
     final spliced = spliceAlternativeIntoJourney(
-      original: branchFrom.rawSource,
+      original: branchSource,
       alternative: alternative,
       rideLegIndex: branchRideLegIndex,
       intermediateStopId: branchIntermediateStopId,
@@ -6522,9 +6624,13 @@ class RoutesTabState extends State<RoutesTab>
       (step) => step.type == 'ride' && (step.legIndex ?? -1) >= prefix,
     );
 
+    final returnStepIndex = branchStepIndex >= 0
+        ? branchStepIndex
+        : journey.steps.indexWhere((step) => (step.legIndex ?? -1) >= prefix);
+
     return journey.copyWith(
       parentJourney: branchFrom,
-      branchStepIndex: branchStepIndex == -1 ? null : branchStepIndex,
+      branchStepIndex: returnStepIndex == -1 ? null : returnStepIndex,
     );
   }
 
@@ -10763,6 +10869,7 @@ class RoutesTabState extends State<RoutesTab>
         onRefresh: () => _refreshRoutes(route),
         origin: route.origin,
         destination: route.destination,
+        searchTime: route.searchSettings.when,
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,
@@ -11015,7 +11122,10 @@ class RoutesTabState extends State<RoutesTab>
                           branchRideLegIndex: route.steps[i].legIndex,
                           branchIntermediateStopId:
                               isIntermediateStop ? stationId : null,
-                          branchIntermediateStopTime: isIntermediateStop ? time : null),
+                          branchIntermediateStopTime: isIntermediateStop ? time : null,
+                          onBoardRoute: route,
+                          onBoardStep: route.steps[i]),
+                  onOpenOnBoardOptions: () => _showOnBoardOptions(context, route, route.steps[i]),
                   onIntermediateAlarmLongPress: (stopName, {required int stopIndex, double? targetLat, double? targetLng, double? originLat, double? originLng}) => _toggleIntermediateStopAlarm(
                         route,
                         route.steps[i],
@@ -11146,6 +11256,7 @@ class _StepCard extends StatefulWidget {
       double? lng,
       String? name,
       bool isIntermediateStop}) onOpenAlternatives;
+  final VoidCallback onOpenOnBoardOptions;
   final Function(
     String, {
     required int stopIndex,
@@ -11170,6 +11281,7 @@ class _StepCard extends StatefulWidget {
     required this.finalDestinationId,
     required this.onShowStopDepartures,
     required this.onOpenAlternatives,
+    required this.onOpenOnBoardOptions,
     required this.onIntermediateAlarmLongPress,
     required this.onChat,
     required this.onAlarmToggle,
@@ -11824,6 +11936,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                           lng: step.startLng,
                                         );
                                       },
+                                      onLongPress: widget.onOpenOnBoardOptions,
                                     ),
                                     const SizedBox(width: 8),
                                   ],
@@ -12311,6 +12424,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
       bool outlined = false,
       bool highlighted = false,
       bool animated = false,
+      VoidCallback? onLongPress,
       required VoidCallback onTap}) {
     final colors = TransColors.of(context);
     // A highlighted chip keeps a faint wash of the theme colour so it reads as
@@ -12322,6 +12436,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
             : colors.chipBg);
     return GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: RunningBorder(
             active: animated,
             color: colors.effectiveSeed,
@@ -12605,6 +12720,7 @@ class _AlternativesSheet extends StatefulWidget {
   /// and replaced as soon as the fresh search comes back.
   final List<Map<String, dynamic>>? initialResults;
   final Function(Map<String, dynamic> journeyData, DateTime depTime) onSelected;
+  final VoidCallback? onOnBoard;
 
   const _AlternativesSheet({
     required this.from,
@@ -12612,6 +12728,7 @@ class _AlternativesSheet extends StatefulWidget {
     required this.initialTime,
     required this.nahverkehrOnly,
     required this.onSelected,
+    this.onOnBoard,
     this.highlightKey,
     this.earliestDeparture,
     this.currentTripId,
@@ -12833,6 +12950,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: colors.textPrimary)),
+        if (widget.onOnBoard != null)
+          TextButton.icon(
+            onPressed: widget.onOnBoard,
+            icon: const Icon(Icons.directions_bus),
+            label: Text(l10n.onThisBus),
+          ),
         const SizedBox(height: 8),
         if (_isLoading)
           Expanded(

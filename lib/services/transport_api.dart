@@ -4223,6 +4223,55 @@ class TransportApi {
     return null;
   }
 
+  /// The vehicle identity exposed by either supported departure provider.
+  static String? stopDepartureTripId(Map<String, dynamic> departure) =>
+      _stopDepartureTripId(departure);
+
+  static DateTime? stopDepartureTime(Map<String, dynamic> departure) =>
+      _stopDepartureDateTimeLocal(departure);
+
+  /// Departures in a short, explicit window. Used when checking which lines
+  /// actually reach a destination, so a busy stop does not exhaust a day-long
+  /// result limit before the requested time.
+  static Future<List<Map<String, dynamic>>> fetchStopDeparturesWindow(
+    String stationId, {
+    required DateTime start,
+    required DateTime end,
+    int maxResults = 250,
+  }) async {
+    if (!end.isAfter(start)) return [];
+    if (isTransitousEnabled) {
+      try {
+        return await _fetchMotisStopDeparturesWindow(
+          stationId,
+          startLocal: start.toLocal(),
+          endLocal: end.toLocal(),
+          maxResults: maxResults,
+        );
+      } catch (error) {
+        if (!isDbV6Enabled) rethrow;
+        debugPrint('MOTIS window departures failed: $error');
+      }
+    }
+    if (!isDbV6Enabled || !RegExp(r'^[0-9]+$').hasMatch(stationId)) {
+      return [];
+    }
+    final duration = end.difference(start).inMinutes + 1;
+    final response = await _fetch(_getV6Uri(
+      '/stops/$stationId/departures',
+      {
+        'when': start.toUtc().toIso8601String(),
+        'duration': duration,
+        'results': maxResults,
+      },
+    ));
+    return decodeStopDeparturesResponse(json.decode(response.body))
+        .where((departure) {
+      final time = _stopDepartureDateTimeLocal(departure);
+      return time != null && !time.isBefore(start) && !time.isAfter(end);
+    }).toList();
+  }
+
   static Future<List<Map<String, dynamic>>> _fetchMotisStopDeparturesWindow(
     String stationId, {
     required DateTime startLocal,

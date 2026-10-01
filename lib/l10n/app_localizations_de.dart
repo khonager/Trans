@@ -376,8 +376,8 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String getOffAt(String station) {
-    return 'Aussteigen in $station';
+  String getOffAt(String stop) {
+    return 'Aussteigen an $stop';
   }
 
   @override
@@ -397,6 +397,62 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get alternatives => 'Alternativen';
+
+  @override
+  String get onThisBus => 'Ich sitze in diesem Bus';
+
+  @override
+  String onBoardCurrentPlan(String time) {
+    return 'Aktueller Plan: Ankunft um $time';
+  }
+
+  @override
+  String get stayWithCurrentPlan => 'Beim aktuellen Plan bleiben';
+
+  @override
+  String get checkingOnBoardOptions =>
+      'Möglichkeiten ab den nächsten Haltestellen werden geprüft…';
+
+  @override
+  String get onBoardStopsUnavailable =>
+      'Die Haltestellen dieses Busses sind gerade nicht verfügbar.';
+
+  @override
+  String get nextStop => 'Nächste Haltestelle (bei Bedarf ändern)';
+
+  @override
+  String stayOnUntil(String stop) {
+    return 'Sitzen bleiben bis $stop';
+  }
+
+  @override
+  String get noOnBoardChangesFound =>
+      'Keine sinnvolle Änderung ab den nächsten Haltestellen gefunden.';
+
+  @override
+  String minutesEarlier(int minutes) {
+    return '$minutes Min. früher';
+  }
+
+  @override
+  String minutesLater(int minutes) {
+    return '$minutes Min. später';
+  }
+
+  @override
+  String get sameArrivalTime => 'gleiche Ankunftszeit';
+
+  @override
+  String get directLines => 'Direkt nutzbare Linien';
+
+  @override
+  String directLinesWindow(String start, String end) {
+    return 'Gefundene Linien von $start bis $end';
+  }
+
+  @override
+  String get noDirectLinesFound =>
+      'Keine Direktlinien in diesem Zeitraum gefunden.';
 
   @override
   String errorPrefix(String error) {
