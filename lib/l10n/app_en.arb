@@ -298,10 +298,9 @@
   "minutesLater": "{minutes} min later",
   "@minutesLater": {"placeholders": {"minutes": {"type": "int"}}},
   "sameArrivalTime": "same arrival time",
-  "directLines": "Lines you can take directly",
-  "directLinesWindow": "Lines found from {start} to {end}",
-  "@directLinesWindow": {"placeholders": {"start": {"type": "String"}, "end": {"type": "String"}}},
-  "noDirectLinesFound": "No direct lines found in this time window.",
+  "usefulLines": "Lines you can take",
+  "usefulLinesExplanation": "Includes routes with changes. Remembers lines from loaded routes and timetable checks.",
+  "noUsefulLinesFound": "No useful lines found yet.",
   "errorPrefix": "Error: {error}",
   "@errorPrefix": {
     "placeholders": {

@@ -442,15 +442,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sameArrivalTime => 'same arrival time';
 
   @override
-  String get directLines => 'Lines you can take directly';
+  String get usefulLines => 'Lines you can take';
 
   @override
-  String directLinesWindow(String start, String end) {
-    return 'Lines found from $start to $end';
-  }
+  String get usefulLinesExplanation =>
+      'Includes routes with changes. Remembers lines from loaded routes and timetable checks.';
 
   @override
-  String get noDirectLinesFound => 'No direct lines found in this time window.';
+  String get noUsefulLinesFound => 'No useful lines found yet.';
 
   @override
   String errorPrefix(String error) {

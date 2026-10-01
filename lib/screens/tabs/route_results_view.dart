@@ -112,7 +112,7 @@ class RouteResultsView extends StatefulWidget {
   final Future<void> Function()? onRefresh;
   final Station? origin;
   final Station destination;
-  final DateTime? searchTime;
+  final DateTime? searchDate;
   final bool showTrainNumbers;
   final Color? loadingIndicatorColor;
   final bool isBackgroundLoading;
@@ -134,7 +134,7 @@ class RouteResultsView extends StatefulWidget {
     this.onRefresh,
     this.origin,
     required this.destination,
-    this.searchTime,
+    this.searchDate,
     this.showTrainNumbers = false,
     this.loadingIndicatorColor,
     this.isBackgroundLoading = false,
@@ -152,7 +152,7 @@ class RouteResultsView extends StatefulWidget {
 }
 
 class _RouteResultsViewState extends State<RouteResultsView> {
-  final DateTime _fallbackSearchTime = DateTime.now();
+  final DateTime _fallbackSearchDate = DateTime.now();
   late RouteSortOption _currentSort;
   late List<RouteSortOption> _sortOrder;
   late List<Journey> _sortedCandidates;
@@ -801,10 +801,11 @@ class _RouteResultsViewState extends State<RouteResultsView> {
             if (widget.origin != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: DirectLinesPanel(
+                child: KnownLinesPanel(
                   origin: widget.origin!,
                   destination: widget.destination,
-                  start: widget.searchTime ?? _fallbackSearchTime,
+                  candidates: widget.candidates,
+                  sampleDate: widget.searchDate ?? _fallbackSearchDate,
                 ),
               ),
             if (showBackgroundLoadingSpace)

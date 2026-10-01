@@ -1233,11 +1233,35 @@ Map<String, dynamic> spliceAlternativeIntoJourney({
       rideLegIndex >= 0 &&
       rideLegIndex < originalLegs.length &&
       originalLegs[rideLegIndex] is Map) {
-    final partialRide = journeyLegThroughIntermediateStop(
-      Map<String, dynamic>.from(originalLegs[rideLegIndex] as Map),
+    final rideLeg =
+        Map<String, dynamic>.from(originalLegs[rideLegIndex] as Map);
+    var partialRide = journeyLegThroughIntermediateStop(
+      rideLeg,
       stopId: intermediateStopId,
       fallbackTime: intermediateStopTime,
     );
+    if (partialRide == null && intermediateStopTime != null) {
+      // Stop-area IDs can differ between a refreshed trip and a route search.
+      // We still know the selected vehicle reaches this stop at this time.
+      // Preserve the vehicle leg instead of opening an onward-only journey.
+      final firstOnward = alternativeLegs.first;
+      final onwardOrigin = firstOnward is Map && firstOnward['origin'] is Map
+          ? Map<String, dynamic>.from(firstOnward['origin'] as Map)
+          : <String, dynamic>{};
+      final stop = <String, dynamic>{
+        ...onwardOrigin,
+        'id': intermediateStopId,
+      };
+      final arrival = intermediateStopTime.toUtc().toIso8601String();
+      partialRide = Map<String, dynamic>.from(rideLeg)
+        ..['destination'] = stop
+        ..['arrival'] = arrival
+        ..['plannedArrival'] = arrival
+        ..['stopovers'] = const []
+        ..remove('arrivalDelay')
+        ..remove('polyline')
+        ..remove('decodedPath');
+    }
     // At an intermediate stop the traveller has already completed all access
     // legs and part of this ride. Keep that history instead of treating the
     // stop as a brand-new journey origin.
@@ -6055,29 +6079,17 @@ class RoutesTabState extends State<RoutesTab>
               branchIntermediateStopId: branchIntermediateStopId,
               branchIntermediateStopTime: branchIntermediateStopTime,
             );
-            setState(() {
-              if (_activeTabId != null) {
-                final idx = _tabs.indexWhere((t) => t.id == _activeTabId);
-                if (idx != -1) {
-                  final currentTab = _tabs[idx];
-                  final newStack = _stackWithJourneyEntry(currentTab.stack, j);
-                  _tabs[idx] = currentTab.copyWith(
-                      activeJourney: j,
-                      stack: newStack,
-                      steps: j.steps,
-                      totalDuration:
-                          FormatUtils.formatDuration(j.duration.inMinutes));
-                }
-              } else {
-                _addJourneyTab(
-                    singleJourneyData: journey,
-                    origin: fromDummy,
-                    destination: toDummy,
-                    title: AppLocalizations.of(context)!.alternative,
-                    subtitle: AppLocalizations.of(context)!
-                        .departsAt(DateFormat('HH:mm').format(depTime)));
-              }
-            });
+            if (onBoardRoute != null) {
+              _applyOnBoardJourney(onBoardRoute.id, j);
+            } else {
+              _addJourneyTab(
+                  singleJourneyData: j.rawSource,
+                  origin: fromDummy,
+                  destination: toDummy,
+                  title: AppLocalizations.of(context)!.alternative,
+                  subtitle: AppLocalizations.of(context)!
+                      .departsAt(DateFormat('HH:mm').format(depTime)));
+            }
           },
         ),
       ),
@@ -10869,7 +10881,7 @@ class RoutesTabState extends State<RoutesTab>
         onRefresh: () => _refreshRoutes(route),
         origin: route.origin,
         destination: route.destination,
-        searchTime: route.searchSettings.when,
+        searchDate: route.searchSettings.when,
         showTrainNumbers: widget.showTrainNumbers, // Pass the setting
         loadingIndicatorColor: _routeLoadingColor(TransColors.of(context)),
         isBackgroundLoading: _activeRouteLoadPhases.isNotEmpty,

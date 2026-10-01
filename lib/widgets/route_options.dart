@@ -1,123 +1,188 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/services/route_options_service.dart';
 import 'package:trans/services/transport_api.dart';
 
-class DirectLinesPanel extends StatefulWidget {
+class KnownLinesPanel extends StatefulWidget {
   final Station origin;
   final Station destination;
-  final DateTime start;
+  final List<Journey> candidates;
+  final DateTime sampleDate;
+  final Future<List<String>> Function({
+    required Station origin,
+    required Station destination,
+    required DateTime date,
+  })? discoverLines;
 
-  const DirectLinesPanel({
+  const KnownLinesPanel({
     super.key,
     required this.origin,
     required this.destination,
-    required this.start,
+    required this.candidates,
+    required this.sampleDate,
+    this.discoverLines,
   });
 
   @override
-  State<DirectLinesPanel> createState() => _DirectLinesPanelState();
+  State<KnownLinesPanel> createState() => _KnownLinesPanelState();
 }
 
-class _DirectLinesPanelState extends State<DirectLinesPanel> {
+class _KnownLinesPanelState extends State<KnownLinesPanel> {
   bool _expanded = false;
-  bool _loading = false;
-  Object? _error;
-  List<DirectLineOption>? _lines;
+  Set<String> _known = {};
+  Set<String> _discovered = {};
+  bool _loadingDiscovery = false;
+  String? _checkedDateKey;
+  int _discoveryGeneration = 0;
+  late final Future<SharedPreferences> _preferences =
+      SharedPreferences.getInstance();
+  Future<void> _sync = Future.value();
+
+  String get _key => 'known_route_lines_v1:'
+      '${jsonEncode([widget.origin.id, widget.destination.id])}';
 
   @override
-  void didUpdateWidget(covariant DirectLinesPanel oldWidget) {
+  void initState() {
+    super.initState();
+    _syncKnownLines();
+  }
+
+  @override
+  void didUpdateWidget(covariant KnownLinesPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.origin.id != widget.origin.id ||
-        oldWidget.destination.id != widget.destination.id ||
-        oldWidget.start != widget.start) {
-      _lines = null;
-      _error = null;
-      if (_expanded) _load();
+    final pairChanged = oldWidget.origin.id != widget.origin.id ||
+        oldWidget.destination.id != widget.destination.id;
+    final dateChanged = oldWidget.sampleDate.year != widget.sampleDate.year ||
+        oldWidget.sampleDate.month != widget.sampleDate.month ||
+        oldWidget.sampleDate.day != widget.sampleDate.day;
+    if (pairChanged) {
+      _known = {};
+    }
+    if (pairChanged || dateChanged) {
+      _discovered = {};
+      _loadingDiscovery = false;
+      _checkedDateKey = null;
+      _discoveryGeneration++;
+    }
+    if (oldWidget.candidates != widget.candidates || pairChanged) {
+      _syncKnownLines();
+    }
+    if (_expanded && (pairChanged || dateChanged)) {
+      _discover();
     }
   }
 
-  Future<void> _load() async {
-    if (_loading) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  void _syncKnownLines() {
+    final key = _key;
+    final observed = {
+      ...availableFirstLines(widget.candidates),
+      ..._discovered,
+    };
+    _sync = _sync.then((_) async {
+      final prefs = await _preferences;
+      final saved = prefs.getStringList(key) ?? const <String>[];
+      final merged = sortLineNames({...saved, ...observed});
+      if (merged.length != saved.length || !merged.toSet().containsAll(saved)) {
+        await prefs.setStringList(key, merged);
+      }
+      if (mounted && key == _key) {
+        setState(() => _known = merged.toSet());
+      }
+    }).catchError((Object _) {});
+  }
+
+  Future<void> _discover() async {
+    final generation = _discoveryGeneration;
+    final dateKey = '$_key:${widget.sampleDate.year}-'
+        '${widget.sampleDate.month}-${widget.sampleDate.day}';
+    if (_loadingDiscovery || _checkedDateKey == dateKey) return;
+    _checkedDateKey = dateKey;
+    setState(() => _loadingDiscovery = true);
     try {
-      final lines = await findDirectLines(
-        origin: widget.origin,
-        destination: widget.destination,
-        start: widget.start,
-      );
-      if (mounted) setState(() => _lines = lines);
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
+      final lines = await (widget.discoverLines?.call(
+            origin: widget.origin,
+            destination: widget.destination,
+            date: widget.sampleDate,
+          ) ??
+          discoverDirectFirstLines(
+            origin: widget.origin,
+            destination: widget.destination,
+            date: widget.sampleDate,
+          ));
+      if (!mounted ||
+          _checkedDateKey != dateKey ||
+          generation != _discoveryGeneration) {
+        return;
+      }
+      setState(() => _discovered.addAll(lines));
+      _syncKnownLines();
+    } catch (_) {
+      // The known lines still work when a timetable provider is unavailable.
+      if (mounted && generation == _discoveryGeneration) {
+        _checkedDateKey = null;
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _discoveryGeneration) {
+        setState(() => _loadingDiscovery = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final windowFormat = DateFormat('dd.MM HH:mm');
+    final lines = sortLineNames({
+      ..._known,
+      ..._discovered,
+      ...availableFirstLines(widget.candidates),
+    });
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Column(
         children: [
           ListTile(
             leading: const Icon(Icons.directions_bus_outlined),
-            title: Text(l10n.directLines),
-            subtitle: Text(l10n.directLinesWindow(
-              windowFormat.format(widget.start),
-              windowFormat.format(widget.start.add(const Duration(hours: 2))),
-            )),
+            title: Text(l10n.usefulLines),
+            subtitle: Text(l10n.usefulLinesExplanation),
             trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
             onTap: () {
               setState(() => _expanded = !_expanded);
-              if (_expanded && _lines == null) _load();
+              if (_expanded) _discover();
             },
           ),
           if (_expanded)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: _loading
-                  ? const LinearProgressIndicator()
-                  : _error != null
-                      ? TextButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: Text(l10n.retry),
-                        )
-                      : _lines == null || _lines!.isEmpty
-                          ? Text(l10n.noDirectLinesFound)
-                          : ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 180),
-                              child: SingleChildScrollView(
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      for (final line in _lines!)
-                                        Tooltip(
-                                          message:
-                                              '${line.direction} · ${DateFormat.Hm().format(line.arrival)}',
-                                          child: Chip(
-                                            label: Text(
-                                              '${line.line}  ${DateFormat.Hm().format(line.departure)}',
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_loadingDiscovery) const LinearProgressIndicator(),
+                  if (lines.isEmpty && !_loadingDiscovery)
+                    Text(l10n.noUsefulLinesFound),
+                  if (lines.isNotEmpty)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: SingleChildScrollView(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final line in lines) Chip(label: Text(line)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
         ],
       ),

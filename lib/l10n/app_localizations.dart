@@ -830,23 +830,23 @@ abstract class AppLocalizations {
   /// **'same arrival time'**
   String get sameArrivalTime;
 
-  /// No description provided for @directLines.
+  /// No description provided for @usefulLines.
   ///
   /// In en, this message translates to:
-  /// **'Lines you can take directly'**
-  String get directLines;
+  /// **'Lines you can take'**
+  String get usefulLines;
 
-  /// No description provided for @directLinesWindow.
+  /// No description provided for @usefulLinesExplanation.
   ///
   /// In en, this message translates to:
-  /// **'Lines found from {start} to {end}'**
-  String directLinesWindow(String start, String end);
+  /// **'Includes routes with changes. Remembers lines from loaded routes and timetable checks.'**
+  String get usefulLinesExplanation;
 
-  /// No description provided for @noDirectLinesFound.
+  /// No description provided for @noUsefulLinesFound.
   ///
   /// In en, this message translates to:
-  /// **'No direct lines found in this time window.'**
-  String get noDirectLinesFound;
+  /// **'No useful lines found yet.'**
+  String get noUsefulLinesFound;
 
   /// No description provided for @errorPrefix.
   ///

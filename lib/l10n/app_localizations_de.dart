@@ -443,16 +443,14 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sameArrivalTime => 'gleiche Ankunftszeit';
 
   @override
-  String get directLines => 'Direkt nutzbare Linien';
+  String get usefulLines => 'Linien für diese Strecke';
 
   @override
-  String directLinesWindow(String start, String end) {
-    return 'Gefundene Linien von $start bis $end';
-  }
+  String get usefulLinesExplanation =>
+      'Auch mit Umstieg. Merkt sich Linien aus geladenen Verbindungen und Fahrplanprüfungen.';
 
   @override
-  String get noDirectLinesFound =>
-      'Keine Direktlinien in diesem Zeitraum gefunden.';
+  String get noUsefulLinesFound => 'Noch keine passenden Linien gefunden.';
 
   @override
   String errorPrefix(String error) {

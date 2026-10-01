@@ -1209,6 +1209,41 @@ void main() {
       expect(spliced['arrival'], '2030-08-24T11:55:00Z');
     });
 
+    test('keeps earlier buses when providers use different stop IDs', () {
+      final first = {
+        ...rideLeg('27', '2030-08-24T11:00:00Z', '2030-08-24T11:20:00Z'),
+        'origin': {'id': 'origin'},
+        'destination': {'id': 'transfer'},
+      };
+      final current = {
+        ...rideLeg('18', '2030-08-24T11:25:00Z', '2030-08-24T12:00:00Z'),
+        'origin': {'id': 'transfer'},
+        'destination': {'id': 'old-end'},
+        'stopovers': const [],
+      };
+      final onward = {
+        ...rideLeg('45', '2030-08-24T11:43:00Z', '2030-08-24T12:10:00Z'),
+        'origin': {'id': 'stop-area-id', 'name': 'Change here'},
+      };
+
+      final spliced = spliceAlternativeIntoJourney(
+        original: {
+          'legs': [first, current]
+        },
+        alternative: {
+          'legs': [onward]
+        },
+        rideLegIndex: 1,
+        intermediateStopId: 'platform-id',
+        intermediateStopTime: DateTime.utc(2030, 8, 24, 11, 40),
+      );
+      final legs = (spliced['legs'] as List).cast<Map>();
+
+      expect(legs.map((leg) => leg['line']['name']), ['27', '18', '45']);
+      expect(legs[1]['destination']['id'], 'platform-id');
+      expect(spliced['departure'], '2030-08-24T11:00:00Z');
+    });
+
     test('does not shorten a ride when the stop is not in its stopovers', () {
       expect(
         journeyLegThroughIntermediateStop(

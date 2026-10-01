@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/services/route_options_service.dart';
 
-final _origin = Station(id: 'origin', name: 'Origin');
 final _destination = Station(id: 'destination', name: 'Destination');
 
 String _at(int minute) =>
@@ -49,49 +49,80 @@ void main() {
         ['origin', 'later', 'destination']);
   });
 
-  test('finds direct lines from departures even when a planner omits them',
-      () async {
+  test('collects first bus lines from direct and transfer journeys', () {
+    Journey journey(String first, {String? next}) => Journey(
+          steps: [
+            JourneyStep(
+              type: 'ride',
+              line: first,
+              instruction: '',
+              duration: '10 min',
+              departureTime: '10:00',
+              arrivalTime: '10:10',
+            ),
+            if (next != null)
+              JourneyStep(
+                type: 'ride',
+                line: next,
+                instruction: '',
+                duration: '10 min',
+                departureTime: '10:15',
+                arrivalTime: '10:25',
+              ),
+          ],
+          departure: DateTime.utc(2026, 10, 1, 10),
+          arrival: DateTime.utc(2026, 10, 1, 10, 25),
+          duration: const Duration(minutes: 25),
+          transferCount: next == null ? 0 : 1,
+          totalWaitTime: Duration.zero,
+          rawSource: const {},
+          source: 'test',
+        );
+
+    expect(
+      availableFirstLines([
+        journey('27'),
+        journey('18', next: '45'),
+        journey('4', next: '17'),
+        journey('27', next: '18'),
+      ]),
+      ['4', '18', '27'],
+    );
+  });
+
+  test('discovers a direct line missing from loaded journeys', () async {
     final departures = [
       {
         'routeShortName': '27',
         'headsign': 'Destination',
-        'tripId': 'trip-27',
+        'tripId': 'direct',
         'place': {'scheduledDeparture': _at(0)},
-      },
-      {
-        'routeShortName': '18',
-        'headsign': 'Destination',
-        'tripId': 'trip-18',
-        'place': {'scheduledDeparture': _at(4)},
       },
       {
         'routeShortName': '4',
         'headsign': 'Elsewhere',
         'tripId': 'wrong-way',
-        'place': {'scheduledDeparture': _at(6)},
+        'place': {'scheduledDeparture': _at(5)},
       },
     ];
     final trips = {
-      'trip-27': {
+      'direct': {
         'legs': [_leg()]
-      },
-      'trip-18': {
-        'legs': [_leg(line: '18', tripId: 'trip-18', departure: 4)]
       },
       'wrong-way': {
         'legs': [_leg(destination: 'elsewhere', line: '4')]
       },
     };
 
-    final lines = await findDirectLines(
-      origin: _origin,
+    final lines = await discoverDirectFirstLines(
+      origin: Station(id: 'origin', name: 'Origin'),
       destination: _destination,
-      start: DateTime.utc(2026, 10, 1, 10),
-      loadDepartures: (id, {required start, required end}) async => departures,
+      date: DateTime.utc(2026, 10, 1),
+      loadDepartures: (id, {date, maxResults = 1200}) async => departures,
       loadTrip: (id) async => trips[id],
     );
 
-    expect(lines.map((line) => line.line), ['27', '18']);
+    expect(lines, ['27']);
   });
 
   test('on-board search uses future stops and rejects the current bus',

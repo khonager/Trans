@@ -1,3 +1,4 @@
+import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/services/transport_api.dart';
 
@@ -79,36 +80,6 @@ List<RideStop> rideStopsFromLeg(Map<String, dynamic> leg) {
   return stops;
 }
 
-/// Parent stop ids differ between providers, so coordinates also identify
-/// platforms belonging to the same destination stop area.
-bool stopReachesDestination(RideStop stop, Station destination) {
-  if (stop.id == destination.id) return true;
-  final lat = stop.latitude;
-  final lon = stop.longitude;
-  final destLat = destination.latitude;
-  final destLon = destination.longitude;
-  if (lat == null || lon == null || destLat == null || destLon == null) {
-    return false;
-  }
-  final latMeters = (lat - destLat) * 111200;
-  final lonMeters = (lon - destLon) * 111200 * 0.7;
-  return latMeters * latMeters + lonMeters * lonMeters <= 150 * 150;
-}
-
-bool _stopMatchesOrigin(RideStop stop, Station origin) {
-  if (stop.id == origin.id) return true;
-  final lat = stop.latitude;
-  final lon = stop.longitude;
-  final originLat = origin.latitude;
-  final originLon = origin.longitude;
-  if (lat == null || lon == null || originLat == null || originLon == null) {
-    return false;
-  }
-  final latMeters = (lat - originLat) * 111200;
-  final lonMeters = (lon - originLon) * 111200 * 0.7;
-  return latMeters * latMeters + lonMeters * lonMeters <= 100 * 100;
-}
-
 /// Keep the exact vehicle, but make its boarding point match the route the
 /// rider opened. A trip endpoint may be many stops before that point.
 Map<String, dynamic>? rideLegFromBoardingStop(
@@ -138,44 +109,73 @@ Map<String, dynamic>? rideLegFromBoardingStop(
   return null;
 }
 
-class DirectLineOption {
-  final String line;
-  final String direction;
-  final DateTime departure;
-  final DateTime arrival;
-
-  const DirectLineOption({
-    required this.line,
-    required this.direction,
-    required this.departure,
-    required this.arrival,
-  });
+/// Distinct first vehicles from every loaded journey, including journeys that
+/// reach the destination after a transfer. The caller keeps adding results
+/// when the traveller loads earlier or later connections.
+List<String> availableFirstLines(Iterable<Journey> journeys) {
+  final names = <String>{};
+  for (final journey in journeys) {
+    for (final step in journey.steps) {
+      if (step.type != 'ride') continue;
+      final name = step.line.trim();
+      if (name.isNotEmpty && name != '?') names.add(name);
+      break;
+    }
+  }
+  return sortLineNames(names);
 }
 
-/// Enumerates departures independently of the journey planner's preferred
-/// itineraries, then checks each sampled vehicle's actual stop sequence.
-Future<List<DirectLineOption>> findDirectLines({
+List<String> sortLineNames(Iterable<String> names) {
+  final result = names.toSet().toList();
+  result.sort((a, b) {
+    final aNumber = int.tryParse(a);
+    final bNumber = int.tryParse(b);
+    if (aNumber != null && bNumber != null) return aNumber.compareTo(bNumber);
+    if (aNumber != null) return -1;
+    if (bNumber != null) return 1;
+    return a.compareTo(b);
+  });
+  return result;
+}
+
+bool _matchesStation(RideStop stop, Station station, double maxMeters) {
+  if (stop.id == station.id) return true;
+  final lat = stop.latitude;
+  final lon = stop.longitude;
+  final stationLat = station.latitude;
+  final stationLon = station.longitude;
+  if (lat == null || lon == null || stationLat == null || stationLon == null) {
+    return false;
+  }
+  final latMeters = (lat - stationLat) * 111200;
+  final lonMeters = (lon - stationLon) * 111200 * 0.7;
+  return latMeters * latMeters + lonMeters * lonMeters <= maxMeters * maxMeters;
+}
+
+/// Adds direct first lines that a journey planner may omit from its preferred
+/// results. Timetable lookup is optional; loaded journeys remain the primary
+/// source of the line list when a provider cannot serve trips.
+Future<List<String>> discoverDirectFirstLines({
   required Station origin,
   required Station destination,
-  required DateTime start,
-  Duration window = const Duration(hours: 2),
+  required DateTime date,
   Future<List<Map<String, dynamic>>> Function(
-    String stationId, {
-    required DateTime start,
-    required DateTime end,
+    String stopId, {
+    DateTime? date,
+    int maxResults,
   })? loadDepartures,
   Future<Map<String, dynamic>?> Function(String tripId)? loadTrip,
 }) async {
   if (origin.id.isEmpty) return [];
   final departures = await (loadDepartures?.call(
         origin.id,
-        start: start,
-        end: start.add(window),
+        date: date,
+        maxResults: 1200,
       ) ??
-      TransportApi.fetchStopDeparturesWindow(
+      TransportApi.fetchStopDepartures(
         origin.id,
-        start: start,
-        end: start.add(window),
+        date: date,
+        maxResults: 1200,
       ));
   departures.sort((a, b) {
     final first = TransportApi.stopDepartureTime(a);
@@ -185,8 +185,6 @@ Future<List<DirectLineOption>> findDirectLines({
     return first.compareTo(second);
   });
 
-  // Three vehicles per line and headsign cover common short turns and branch
-  // patterns without fetching every high-frequency departure at a busy stop.
   final samples = <Map<String, dynamic>>[];
   final sampleCounts = <String, int>{};
   for (final departure in departures) {
@@ -203,15 +201,15 @@ Future<List<DirectLineOption>> findDirectLines({
             '')
         .toString();
     final key = '$line|$direction';
-    if ((sampleCounts[key] ?? 0) >= 3) continue;
+    if ((sampleCounts[key] ?? 0) >= 2) continue;
     sampleCounts[key] = (sampleCounts[key] ?? 0) + 1;
     samples.add(departure);
   }
 
-  final options = <String, DirectLineOption>{};
+  final found = <String>{};
   for (var offset = 0; offset < samples.length; offset += 6) {
     final batch = samples.skip(offset).take(6);
-    final found = await Future.wait(batch.map((departure) async {
+    final checked = await Future.wait(batch.map((departure) async {
       final tripId = TransportApi.stopDepartureTripId(departure)!;
       Map<String, dynamic>? journey;
       try {
@@ -220,46 +218,27 @@ Future<List<DirectLineOption>> findDirectLines({
       } catch (_) {
         return null;
       }
-      final legs = (journey?['legs'] as List?)?.whereType<Map>().toList();
-      if (legs == null || legs.isEmpty) return null;
-      final departureTime = TransportApi.stopDepartureTime(departure);
-      if (departureTime == null) return null;
-      final line = (departure['routeShortName'] ??
-              departure['displayName'] ??
-              _map(departure['line'])?['name'])
-          .toString();
-      final direction = (departure['headsign'] ??
-              departure['direction'] ??
-              _map(departure['tripTo'])?['name'] ??
-              '')
-          .toString();
+      final legs = (journey?['legs'] as List?)?.whereType<Map>();
+      if (legs == null) return null;
       for (final rawLeg in legs) {
-        final leg = Map<String, dynamic>.from(rawLeg);
-        final stops = rideStopsFromLeg(leg);
+        final stops = rideStopsFromLeg(Map<String, dynamic>.from(rawLeg));
         final originIndex =
-            stops.indexWhere((stop) => _stopMatchesOrigin(stop, origin));
+            stops.indexWhere((stop) => _matchesStation(stop, origin, 100));
         if (originIndex < 0) continue;
-        for (final stop in stops.skip(originIndex + 1)) {
-          if (!stopReachesDestination(stop, destination)) continue;
-          return DirectLineOption(
-            line: line,
-            direction: direction,
-            departure: departureTime,
-            arrival: stop.arrival,
-          );
+        if (stops.skip(originIndex + 1).any(
+              (stop) => _matchesStation(stop, destination, 150),
+            )) {
+          return (departure['routeShortName'] ??
+                  departure['displayName'] ??
+                  _map(departure['line'])?['name'])
+              .toString();
         }
       }
       return null;
     }));
-    for (final option in found.whereType<DirectLineOption>()) {
-      final current = options[option.line];
-      if (current == null || option.departure.isBefore(current.departure)) {
-        options[option.line] = option;
-      }
-    }
+    found.addAll(checked.whereType<String>());
   }
-  return options.values.toList()
-    ..sort((a, b) => a.departure.compareTo(b.departure));
+  return sortLineNames(found);
 }
 
 class OnBoardOption {
