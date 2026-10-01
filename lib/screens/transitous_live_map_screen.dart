@@ -72,7 +72,9 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   Timer? _fetchDebounce;
   Timer? _refreshTimer;
   Timer? _animationTimer;
-  StreamSubscription<Position>? _positionStream;
+  Timer? _positionPollTimer;
+  bool _isPollingPosition = false;
+  DateTime? _lastRequestedPositionTimestamp;
   StreamSubscription<CompassEvent>? _compassStream;
   bool _forceNextFetch = false;
   int _selectedTripRouteRequestToken = 0;
@@ -107,7 +109,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
     _fetchDebounce?.cancel();
     _refreshTimer?.cancel();
     _animationTimer?.cancel();
-    _positionStream?.cancel();
+    _positionPollTimer?.cancel();
     _compassStream?.cancel();
     _clock.dispose();
     super.dispose();
@@ -116,12 +118,15 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasActive = _appIsActive;
-    _appIsActive = state != AppLifecycleState.paused &&
-        state != AppLifecycleState.detached;
+    _appIsActive = state == AppLifecycleState.resumed;
     if (_appIsActive && !wasActive) {
+      _startLiveLocationUpdates();
       _startTimers();
       _scheduleFetch(force: true);
     } else if (!_appIsActive && wasActive) {
+      _positionPollTimer?.cancel();
+      _positionPollTimer = null;
+      if (_isCompassMode) _disableCompassMode();
       _stopTimers();
     }
   }
@@ -162,30 +167,12 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
         debugPrint('Live buses map location unavailable: permission denied');
         return;
       }
-
-      LocationSettings settings = const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
+      if (!mounted || !_appIsActive) return;
+      _positionPollTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollPrecisePosition(),
       );
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        settings = AndroidSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 0,
-          intervalDuration: const Duration(seconds: 1),
-        );
-      }
-      await _positionStream?.cancel();
-      _positionStream = Geolocator.getPositionStream(locationSettings: settings)
-          .listen((position) {
-        if (!mounted) return;
-        setState(() => _liveCurrentPosition = position);
-        if (_isCompassMode && _isMapReady) {
-          _mapController.move(
-            LatLng(position.latitude, position.longitude),
-            _mapController.camera.zoom,
-          );
-        }
-      });
+      _pollPrecisePosition();
     } catch (error, stackTrace) {
       AppError.log(
         error,
@@ -194,6 +181,72 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
       );
     } finally {
       _isStartingLiveLocationUpdates = false;
+    }
+  }
+
+  Future<void> _pollPrecisePosition() async {
+    if (_isPollingPosition ||
+        !mounted ||
+        !_appIsActive ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    _isPollingPosition = true;
+    try {
+      Position? cached;
+      try {
+        cached = await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        // A cache miss must not prevent a fresh request.
+      }
+      if (!mounted ||
+          !_appIsActive ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      if (cached != null &&
+          cached.accuracy <= 30 &&
+          DateTime.now().difference(cached.timestamp) <=
+              const Duration(seconds: 2) &&
+          (_lastRequestedPositionTimestamp == null ||
+              cached.timestamp.isAfter(_lastRequestedPositionTimestamp!))) {
+        _acceptLivePosition(cached);
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+      _lastRequestedPositionTimestamp = position.timestamp;
+      if (mounted &&
+          _appIsActive &&
+          ModalRoute.of(context)?.isCurrent != false) {
+        _acceptLivePosition(position);
+      }
+    } catch (error, stackTrace) {
+      AppError.log(error,
+          stackTrace: stackTrace, source: 'live buses precise location');
+    } finally {
+      _isPollingPosition = false;
+    }
+  }
+
+  void _acceptLivePosition(Position position) {
+    if (!mounted) return;
+    if (DateTime.now().difference(position.timestamp) >
+            const Duration(seconds: 10) ||
+        (_liveCurrentPosition != null &&
+            !position.timestamp.isAfter(_liveCurrentPosition!.timestamp))) {
+      return;
+    }
+    setState(() => _liveCurrentPosition = position);
+    if (_isCompassMode && _isMapReady) {
+      _mapController.move(
+        LatLng(position.latitude, position.longitude),
+        _mapController.camera.zoom,
+      );
     }
   }
 
@@ -227,7 +280,7 @@ class _TransitousLiveMapScreenState extends State<TransitousLiveMapScreen>
       }
     }
 
-    if (_positionStream == null) {
+    if (_positionPollTimer == null) {
       await _startLiveLocationUpdates();
     }
 

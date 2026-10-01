@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
@@ -69,7 +68,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final MapController _mapController = MapController();
   List<LatLng> _routePoints = [];
   List<_RoutePath> _routePaths = [];
@@ -83,12 +82,16 @@ class _MapScreenState extends State<MapScreen> {
 
   // Compass Mode State
   bool _isCompassMode = false;
-  StreamSubscription<Position>? _positionStream;
+  Timer? _positionPollTimer;
+  bool _isPollingPosition = false;
+  bool _appActive = true;
+  DateTime? _lastRequestedPositionTimestamp;
   StreamSubscription<CompassEvent>? _compassStream;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _liveCurrentPosition = widget.currentPosition;
     _startLiveLocationUpdates();
     _loadFavoriteMarkers();
@@ -121,9 +124,22 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
-    _positionStream?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _positionPollTimer?.cancel();
     _compassStream?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appActive = state == AppLifecycleState.resumed;
+    if (_appActive) {
+      _startLiveLocationUpdates();
+    } else {
+      _positionPollTimer?.cancel();
+      _positionPollTimer = null;
+      if (_isCompassMode) _disableCompassMode();
+    }
   }
 
   Future<void> _startLiveLocationUpdates() async {
@@ -139,38 +155,85 @@ class _MapScreenState extends State<MapScreen> {
         debugPrint('MapScreen live location unavailable: permission denied');
         return;
       }
-
-      LocationSettings settings = const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-      );
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        settings = AndroidSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 0,
-          intervalDuration: const Duration(seconds: 1),
-        );
+      if (!mounted || !_appActive) {
+        return;
       }
-      _positionStream?.cancel();
-      _positionStream = Geolocator.getPositionStream(locationSettings: settings)
-          .listen((pos) {
-        if (!mounted) return;
-        setState(() {
-          _liveCurrentPosition = pos;
-          if (_routePoints.isEmpty) {
-            _bounds = LatLngBounds(
-              LatLng(pos.latitude - 0.01, pos.longitude - 0.01),
-              LatLng(pos.latitude + 0.01, pos.longitude + 0.01),
-            );
-          }
-        });
-        if (_isCompassMode) {
-          _mapController.move(
-              LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
-        }
-      });
+      _positionPollTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollPrecisePosition(),
+      );
+      _pollPrecisePosition();
     } finally {
       _isStartingLiveLocationUpdates = false;
+    }
+  }
+
+  Future<void> _pollPrecisePosition() async {
+    if (_isPollingPosition ||
+        !mounted ||
+        !_appActive ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    _isPollingPosition = true;
+    try {
+      Position? cached;
+      try {
+        cached = await Geolocator.getLastKnownPosition();
+      } catch (_) {
+        // A cache miss must not prevent a fresh request.
+      }
+      if (!mounted ||
+          !_appActive ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      if (cached != null &&
+          cached.accuracy <= 30 &&
+          DateTime.now().difference(cached.timestamp) <=
+              const Duration(seconds: 2) &&
+          (_lastRequestedPositionTimestamp == null ||
+              cached.timestamp.isAfter(_lastRequestedPositionTimestamp!))) {
+        _acceptLivePosition(cached);
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+      _lastRequestedPositionTimestamp = position.timestamp;
+      if (mounted && _appActive && ModalRoute.of(context)?.isCurrent != false) {
+        _acceptLivePosition(position);
+      }
+    } catch (error) {
+      debugPrint('Route map precise location unavailable: $error');
+    } finally {
+      _isPollingPosition = false;
+    }
+  }
+
+  void _acceptLivePosition(Position pos) {
+    if (!mounted) return;
+    if (DateTime.now().difference(pos.timestamp) >
+            const Duration(seconds: 10) ||
+        (_liveCurrentPosition != null &&
+            !pos.timestamp.isAfter(_liveCurrentPosition!.timestamp))) {
+      return;
+    }
+    setState(() {
+      _liveCurrentPosition = pos;
+      if (_routePoints.isEmpty) {
+        _bounds = LatLngBounds(
+          LatLng(pos.latitude - 0.01, pos.longitude - 0.01),
+          LatLng(pos.latitude + 0.01, pos.longitude + 0.01),
+        );
+      }
+    });
+    if (_isCompassMode) {
+      _mapController.move(
+          LatLng(pos.latitude, pos.longitude), _mapController.camera.zoom);
     }
   }
 
@@ -202,7 +265,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    if (_positionStream == null) {
+    if (_positionPollTimer == null) {
       await _startLiveLocationUpdates();
     }
 

@@ -75,6 +75,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Position? _currentPosition;
   StreamSubscription<AuthState>? _authSubscription;
   StreamSubscription<Position>? _alwaysLocationSubscription;
+  bool _wakeTrackingActive = false;
+  DateTime? _lastAlwaysUiUpdateAt;
+  DateTime? _lastAlwaysPublishedAt;
+  Position? _lastAlwaysPublishedPosition;
   final GlobalKey<RoutesTabState> _routesTabKey = GlobalKey<RoutesTabState>();
   final GlobalKey _ticketPanelKey = GlobalKey();
   bool _isShowingRecoveryDialog = false;
@@ -147,12 +151,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_syncAlwaysLocationSharing());
   }
 
-  void _handleHighAccuracyTrackingChanged(bool active) {
+  Future<void> _handleHighAccuracyTrackingChanged(bool active) async {
+    _wakeTrackingActive = active;
     if (active) {
-      _alwaysLocationSubscription?.cancel();
+      final subscription = _alwaysLocationSubscription;
       _alwaysLocationSubscription = null;
+      await subscription?.cancel();
     } else {
-      unawaited(_syncAlwaysLocationSharing());
+      await _syncAlwaysLocationSharing();
     }
   }
 
@@ -173,7 +179,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _syncAlwaysLocationSharing() async {
+    if (_wakeTrackingActive) {
+      await _alwaysLocationSubscription?.cancel();
+      _alwaysLocationSubscription = null;
+      return;
+    }
     final sharing = await SupabaseService.getJourneySharingSettings();
+    if (_wakeTrackingActive) return;
     if (!sharing.needsAlwaysLocation) {
       await _alwaysLocationSubscription?.cancel();
       _alwaysLocationSubscription = null;
@@ -185,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         permission == LocationPermission.deniedForever) {
       return;
     }
+    if (_wakeTrackingActive || _alwaysLocationSubscription != null) return;
     LocationSettings settings = const LocationSettings(
       accuracy: LocationAccuracy.low,
       distanceFilter: 250,
@@ -214,11 +227,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _alwaysLocationSubscription =
         Geolocator.getPositionStream(locationSettings: settings).listen(
       (position) {
-        if (mounted) setState(() => _currentPosition = position);
-        unawaited(SupabaseService.publishLocationSnapshot(
-          position,
-          isJourneyLocation: false,
-        ));
+        final now = DateTime.now();
+        if (mounted &&
+            (_lastAlwaysUiUpdateAt == null ||
+                now.difference(_lastAlwaysUiUpdateAt!) >=
+                    const Duration(seconds: 15))) {
+          _lastAlwaysUiUpdateAt = now;
+          setState(() => _currentPosition = position);
+        }
+        final previous = _lastAlwaysPublishedPosition;
+        final moved = previous == null
+            ? double.infinity
+            : Geolocator.distanceBetween(previous.latitude, previous.longitude,
+                position.latitude, position.longitude);
+        if (_lastAlwaysPublishedAt == null ||
+            now.difference(_lastAlwaysPublishedAt!) >=
+                const Duration(minutes: 2) ||
+            moved >= 250) {
+          _lastAlwaysPublishedAt = now;
+          _lastAlwaysPublishedPosition = position;
+          unawaited(SupabaseService.publishLocationSnapshot(
+            position,
+            isJourneyLocation: false,
+          ));
+        }
       },
       onError: (Object error, StackTrace stackTrace) {
         AppError.log(error,
@@ -642,6 +674,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _determinePosition() async {
+    if (_wakeTrackingActive) return;
     try {
       bool serviceEnabled;
       LocationPermission permission;
@@ -657,7 +690,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       if (permission == LocationPermission.deniedForever) return;
 
+      if (_wakeTrackingActive) return;
       final pos = await Geolocator.getCurrentPosition();
+      if (!mounted || _wakeTrackingActive) return;
       setState(() => _currentPosition = pos);
 
       unawaited(

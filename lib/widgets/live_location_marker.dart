@@ -23,7 +23,7 @@ class _LiveLocationMarkerState extends State<LiveLocationMarker>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
+    duration: const Duration(milliseconds: 250),
   );
   late LatLng _from = widget.position;
   late LatLng _to = widget.position;
@@ -42,6 +42,11 @@ class _LiveLocationMarkerState extends State<LiveLocationMarker>
     }
     _from = _displayed;
     _to = widget.position;
+    // A fresh fix should win over animation when the old point was far away.
+    if ((_to.latitude - _from.latitude).abs() > 0.0005 ||
+        (_to.longitude - _from.longitude).abs() > 0.0005) {
+      _from = _to;
+    }
     _controller.forward(from: 0);
   }
 

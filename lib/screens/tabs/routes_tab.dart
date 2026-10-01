@@ -36,6 +36,7 @@ import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/utils/ride_progress.dart';
+import 'package:trans/utils/wake_location_policy.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import '../joint_route_results_screen.dart';
@@ -1918,7 +1919,7 @@ class RoutesTab extends StatefulWidget {
   final bool showTrainNumbers;
   final bool alwaysWakeMe;
   final int signalLevel;
-  final void Function(bool active) onHighAccuracyTrackingChanged;
+  final FutureOr<void> Function(bool active) onHighAccuracyTrackingChanged;
 
   const RoutesTab({
     super.key,
@@ -1998,6 +1999,14 @@ class RoutesTabState extends State<RoutesTab>
 
   bool _isWakeAlarmSet = false;
   Position? _wakeCurrentPosition;
+  Timer? _wakeNearTimer;
+  int _wakeTrackingGeneration = 0;
+  bool _wakePreciseFixInFlight = false;
+  DateTime? _lastWakePreciseRequest;
+  DateTime? _lastWakeAdequateFix;
+  DateTime? _lastWakeLocationUpload;
+  DateTime? _lastWakeDetectionCheck;
+  DateTime? _lastSharingDetectionCheck;
   int _alarmStopsBefore = 1;
   StreamSubscription<Position>? _gpsStream;
   StreamSubscription<Position>? _sharingGpsStream;
@@ -2869,6 +2878,8 @@ class RoutesTabState extends State<RoutesTab>
     }
     _debounce?.cancel();
     _focusDebounce?.cancel();
+    _wakeTrackingGeneration++;
+    _wakeNearTimer?.cancel();
     _gpsStream?.cancel();
     _sharingGpsStream?.cancel();
     _journeyDetectionTimer?.cancel();
@@ -2977,7 +2988,16 @@ class RoutesTabState extends State<RoutesTab>
     }
     _sharingGpsStream =
         Geolocator.getPositionStream(locationSettings: settings).listen(
-      (position) => unawaited(_handleJourneyDetectionPosition(position)),
+      (position) {
+        final now = DateTime.now();
+        if (_lastSharingDetectionCheck != null &&
+            now.difference(_lastSharingDetectionCheck!) <
+                const Duration(seconds: 30)) {
+          return;
+        }
+        _lastSharingDetectionCheck = now;
+        unawaited(_handleJourneyDetectionPosition(position));
+      },
       onError: (Object error, StackTrace stackTrace) {
         AppError.log(error,
             stackTrace: stackTrace, source: 'Privacy Level GPS');
@@ -3710,9 +3730,12 @@ class RoutesTabState extends State<RoutesTab>
   }
 
   void _stopWakeAlarm() {
+    _wakeTrackingGeneration++;
+    _wakeNearTimer?.cancel();
+    _wakeNearTimer = null;
     _gpsStream?.cancel();
     _gpsStream = null;
-    widget.onHighAccuracyTrackingChanged(false);
+    unawaited(Future.sync(() => widget.onHighAccuracyTrackingChanged(false)));
     SupabaseService.clearJourneyStatus();
     unawaited(_updateJourneyDetectionMonitoring());
     if (mounted) {
@@ -3765,7 +3788,12 @@ class RoutesTabState extends State<RoutesTab>
     if (mounted) {
       setState(() => _isWakeAlarmSet = true);
     }
-    widget.onHighAccuracyTrackingChanged(true);
+    _lastWakeAdequateFix = null;
+    _lastWakePreciseRequest = null;
+    _lastWakeLocationUpload = null;
+    _lastWakeDetectionCheck = null;
+    await widget.onHighAccuracyTrackingChanged(true);
+    if (!mounted || !_isWakeAlarmSet) return;
     await _sharingGpsStream?.cancel();
     _sharingGpsStream = null;
 
@@ -3793,41 +3821,36 @@ class RoutesTabState extends State<RoutesTab>
         vibrationEnabled: wakeVibrationEnabled,
       );
     }
+    if (!mounted || !_isWakeAlarmSet) return;
 
-    // 3. Configure Background Location (Foreground Service)
-    AndroidSettings androidSettings = AndroidSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 50,
-      forceLocationManager: true,
-      intervalDuration: const Duration(seconds: 10),
-      // Foreground Notification to keep service alive
-      foregroundNotificationConfig: ForegroundNotificationConfig(
-        notificationTitle: l10n.wakeAlarmTitle,
-        notificationText: l10n.wakeAlarmTracking,
-        notificationIcon: AndroidResource(name: 'ic_launcher'),
-        enableWakeLock: true,
-      ),
+    // A balanced request keeps the alarm alive in the background. Near the
+    // target we make short precise requests only when the shared fix is not
+    // already accurate enough. A passive-only stream could miss the stop if
+    // Maps (or another app) stops requesting location.
+    LocationSettings activeSettings = const LocationSettings(
+      accuracy: LocationAccuracy.medium,
+      distanceFilter: 75,
     );
-
-    AppleSettings appleSettings = AppleSettings(
-      accuracy: LocationAccuracy.high,
-      activityType: ActivityType.fitness,
-      distanceFilter: 50,
-      pauseLocationUpdatesAutomatically: false,
-      showBackgroundLocationIndicator: true,
-    );
-
-    const LocationSettings settings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 50,
-    );
-
-    LocationSettings activeSettings = settings;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      activeSettings = androidSettings;
-    }
-    if (defaultTargetPlatform == TargetPlatform.iOS) {
-      activeSettings = appleSettings;
+      activeSettings = AndroidSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 75,
+        intervalDuration: const Duration(seconds: 15),
+        foregroundNotificationConfig: ForegroundNotificationConfig(
+          notificationTitle: l10n.wakeAlarmTitle,
+          notificationText: l10n.wakeAlarmTracking,
+          notificationIcon: AndroidResource(name: 'ic_launcher'),
+          enableWakeLock: false,
+        ),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      activeSettings = AppleSettings(
+        accuracy: LocationAccuracy.medium,
+        activityType: ActivityType.otherNavigation,
+        distanceFilter: 75,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+      );
     }
 
     if (_effectiveCurrentPosition != null) {
@@ -3835,16 +3858,81 @@ class RoutesTabState extends State<RoutesTab>
       SupabaseService.updateLocation(_effectiveCurrentPosition!);
     }
 
-    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
-        .listen((Position pos) async {
+    final trackingGeneration = ++_wakeTrackingGeneration;
+    Future<void> processing = Future.value();
+    late void Function(Position) acceptPosition;
+    late Future<void> Function() requestPreciseFix;
+    late Future<void> Function(Position) processPosition;
+    acceptPosition = (pos) {
+      processing = processing.then((_) async {
+        if (!mounted ||
+            !_isWakeAlarmSet ||
+            trackingGeneration != _wakeTrackingGeneration) {
+          return;
+        }
+        await processPosition(pos);
+      }).catchError((Object error, StackTrace stackTrace) {
+        AppError.log(error, stackTrace: stackTrace, source: 'Wake Me location');
+      });
+    };
+    requestPreciseFix = () async {
+      if (!mounted ||
+          !_isWakeAlarmSet ||
+          trackingGeneration != _wakeTrackingGeneration ||
+          _wakePreciseFixInFlight) {
+        return;
+      }
+      final now = DateTime.now();
+      if (_lastWakeAdequateFix != null &&
+          now.difference(_lastWakeAdequateFix!) < const Duration(seconds: 8)) {
+        return;
+      }
+      if (_lastWakePreciseRequest != null &&
+          now.difference(_lastWakePreciseRequest!) <
+              const Duration(seconds: 8)) {
+        return;
+      }
+      _lastWakePreciseRequest = now;
+      _wakePreciseFixInFlight = true;
+      try {
+        final precise = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+        acceptPosition(precise);
+      } catch (error) {
+        debugPrint('Wake Me precise location unavailable: $error');
+      } finally {
+        _wakePreciseFixInFlight = false;
+      }
+    };
+
+    processPosition = (Position pos) async {
+      if (_wakeCurrentPosition != null &&
+          pos.timestamp.isBefore(_wakeCurrentPosition!.timestamp)) {
+        return;
+      }
       if (mounted) {
         setState(() {
           _gpsAccuracy = pos.accuracy;
           _wakeCurrentPosition = pos;
         });
       }
-      SupabaseService.updateLocation(pos);
-      unawaited(_handleJourneyDetectionPosition(pos));
+      final now = DateTime.now();
+      if (_lastWakeLocationUpload == null ||
+          now.difference(_lastWakeLocationUpload!) >=
+              const Duration(minutes: 1)) {
+        _lastWakeLocationUpload = now;
+        unawaited(SupabaseService.updateLocation(pos));
+      }
+      if (_lastWakeDetectionCheck == null ||
+          now.difference(_lastWakeDetectionCheck!) >=
+              const Duration(seconds: 30)) {
+        _lastWakeDetectionCheck = now;
+        unawaited(_handleJourneyDetectionPosition(pos));
+      }
 
       // Get the currently active route and its enabled alarm steps
       final idx = _tabs.indexWhere((t) => t.id == route.id);
@@ -3873,6 +3961,10 @@ class RoutesTabState extends State<RoutesTab>
           prefs.getString('alarm_trigger_threshold') ?? '5%';
 
       bool triggered = false;
+      bool nearTarget = false;
+      bool adequateNearFix = false;
+      final freshFix =
+          now.difference(pos.timestamp) < const Duration(seconds: 35);
       List<JourneyStep> remainingSteps =
           List.from(currentTab.activeJourney!.steps);
 
@@ -3891,7 +3983,7 @@ class RoutesTabState extends State<RoutesTab>
           final stops = step.stopovers!;
           if (stopsBefore > 0) {
             int targetIndex = stops.length - stopsBefore;
-            if (targetIndex >= 0) {
+            if (targetIndex >= 0 && targetIndex < stops.length) {
               final stopData = stops[targetIndex];
               if (stopData['stop'] != null &&
                   stopData['stop']['location'] != null) {
@@ -3941,7 +4033,27 @@ class RoutesTabState extends State<RoutesTab>
           }
         }
 
-        if (dist <= triggerDist) {
+        if (WakeLocationPolicy.isNearTarget(
+          distanceMeters: dist,
+          accuracyMeters: pos.accuracy,
+          triggerDistanceMeters: triggerDist,
+        )) {
+          nearTarget = true;
+          if (freshFix &&
+              WakeLocationPolicy.isAccurateEnough(
+                accuracyMeters: pos.accuracy,
+                triggerDistanceMeters: triggerDist,
+              )) {
+            adequateNearFix = true;
+          }
+        }
+
+        if (freshFix &&
+            WakeLocationPolicy.canTrigger(
+              distanceMeters: dist,
+              accuracyMeters: pos.accuracy,
+              triggerDistanceMeters: triggerDist,
+            )) {
           _triggerVibration();
           _showNotification();
           triggered = true;
@@ -3966,6 +4078,18 @@ class RoutesTabState extends State<RoutesTab>
         }
       }
 
+      if (nearTarget && remainingSteps.any((s) => s.isWakeAlarmOn)) {
+        if (adequateNearFix) _lastWakeAdequateFix = now;
+        _wakeNearTimer ??= Timer.periodic(
+          const Duration(seconds: 8),
+          (_) => unawaited(requestPreciseFix()),
+        );
+        if (!adequateNearFix) unawaited(requestPreciseFix());
+      } else {
+        _wakeNearTimer?.cancel();
+        _wakeNearTimer = null;
+      }
+
       if (triggered) {
         setState(() {
           final newJourney =
@@ -3979,6 +4103,12 @@ class RoutesTabState extends State<RoutesTab>
           _stopWakeAlarm();
         }
       }
+    };
+
+    _gpsStream = Geolocator.getPositionStream(locationSettings: activeSettings)
+        .listen(acceptPosition, onError: (Object error, StackTrace stackTrace) {
+      AppError.log(error, stackTrace: stackTrace, source: 'Wake Me GPS');
+      _stopWakeAlarm();
     });
   }
 
@@ -10844,7 +10974,6 @@ class RoutesTabState extends State<RoutesTab>
                   }(),
                   isFirst: i == 0,
                   currentPosition: _effectiveCurrentPosition,
-                  wakeAlarmActive: _isWakeAlarmSet,
                   hasEarlierAlternative:
                       _earlierAlternativeSteps[route.id]?.containsKey(i) ??
                           false,
@@ -10950,11 +11079,51 @@ const bool kPreviewHighlightSuggestedAlternative = false;
 /// catchable alternative are marked.
 const bool kPreviewAnimateEveryAltButton = false;
 
+/// Expanded ride cards share the same occasional location checks.
+class _RideFixSampler {
+  static Future<Position?>? _cachedRequest;
+  static DateTime? _cachedCheckedAt;
+  static Position? _cachedPosition;
+  static Future<Position>? _preciseRequest;
+  static DateTime? _preciseCheckedAt;
+  static Position? _precisePosition;
+
+  static Future<Position?> cached() {
+    final now = DateTime.now();
+    if (_cachedCheckedAt != null &&
+        now.difference(_cachedCheckedAt!) < const Duration(seconds: 3)) {
+      return _cachedRequest ?? Future.value(_cachedPosition);
+    }
+    _cachedCheckedAt = now;
+    return _cachedRequest ??= Geolocator.getLastKnownPosition()
+        .then((position) => _cachedPosition = position)
+        .whenComplete(() => _cachedRequest = null);
+  }
+
+  static Future<Position> precise() {
+    final now = DateTime.now();
+    if (_precisePosition != null &&
+        _preciseCheckedAt != null &&
+        now.difference(_preciseCheckedAt!) < const Duration(seconds: 10)) {
+      return Future.value(_precisePosition!);
+    }
+    return _preciseRequest ??= Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 8),
+      ),
+    ).then((position) {
+      _precisePosition = position;
+      _preciseCheckedAt = DateTime.now();
+      return position;
+    }).whenComplete(() => _preciseRequest = null);
+  }
+}
+
 class _StepCard extends StatefulWidget {
   final JourneyStep step;
   final bool isFirst;
   final Position? currentPosition;
-  final bool wakeAlarmActive;
 
   /// An earlier departure for this ride exists that still reaches the
   /// destination in time, so switching buys transfer buffer.
@@ -10995,7 +11164,6 @@ class _StepCard extends StatefulWidget {
     required this.step,
     this.isFirst = false,
     this.currentPosition,
-    this.wakeAlarmActive = false,
     this.hasEarlierAlternative = false,
     this.alternativeHintSeen = false,
     this.onAlternativeHintSeen,
@@ -11019,9 +11187,11 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   Position? _livePosition;
   RideProgress? _confirmedProgress;
   DateTime? _confirmedAt;
-  StreamSubscription<Position>? _progressStream;
   Timer? _progressTicker;
-  bool _isStartingProgressStream = false;
+  bool _isCheckingProgressPosition = false;
+  DateTime? _lastProgressPositionCheck;
+  DateTime? _lastCachedPositionCheck;
+  bool _progressLocationAllowed = false;
   bool _appActive = true;
   final ValueNotifier<RideProgress?> _displayProgress = ValueNotifier(null);
 
@@ -11050,21 +11220,12 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
         if (mounted) _acceptPosition(_livePosition!);
       });
     }
-    if (widget.wakeAlarmActive != oldWidget.wakeAlarmActive && _isExpanded) {
-      if (widget.wakeAlarmActive) {
-        _progressStream?.cancel();
-        _progressStream = null;
-      } else if (_appActive) {
-        _trackExpandedRide();
-      }
-    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _progressTicker?.cancel();
-    _progressStream?.cancel();
     _displayProgress.dispose();
     super.dispose();
   }
@@ -11073,8 +11234,6 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appActive = state == AppLifecycleState.resumed;
     if (!_appActive) {
-      _progressStream?.cancel();
-      _progressStream = null;
       _progressTicker?.cancel();
       _progressTicker = null;
     } else if (_isExpanded) {
@@ -11114,59 +11273,97 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
 
   void _startProgressTicker() {
     _refreshProgress();
-    _progressTicker ??=
-        Timer.periodic(const Duration(seconds: 1), (_) => _refreshProgress());
+    _lastProgressPositionCheck ??=
+        DateTime.now().subtract(const Duration(seconds: 7));
+    _progressTicker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      _refreshProgress();
+      _maybeRefreshProgressPosition();
+    });
+  }
+
+  Future<void> _maybeRefreshProgressPosition() async {
+    if (!mounted ||
+        !_isExpanded ||
+        !_appActive ||
+        _isCheckingProgressPosition ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    final now = DateTime.now();
+    if (!_progressLocationAllowed || widget.step.type != 'ride') return;
+    if (_lastCachedPositionCheck == null ||
+        now.difference(_lastCachedPositionCheck!) >=
+            const Duration(seconds: 3)) {
+      _lastCachedPositionCheck = now;
+      _isCheckingProgressPosition = true;
+      try {
+        final cached = await _RideFixSampler.cached();
+        if (cached != null &&
+            mounted &&
+            _isExpanded &&
+            _appActive &&
+            (_livePosition == null ||
+                cached.timestamp.isAfter(_livePosition!.timestamp))) {
+          _acceptPosition(cached);
+        }
+      } catch (error) {
+        debugPrint('Cached ride location unavailable: $error');
+      } finally {
+        _isCheckingProgressPosition = false;
+      }
+    }
+    if (!mounted ||
+        !_isExpanded ||
+        !_appActive ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    if (_livePosition != null &&
+        _livePosition!.accuracy <= 50 &&
+        DateTime.now().difference(_livePosition!.timestamp) <
+            const Duration(seconds: 10)) {
+      return;
+    }
+    if (_lastProgressPositionCheck != null &&
+        now.difference(_lastProgressPositionCheck!) <
+            const Duration(seconds: 10)) {
+      return;
+    }
+    _lastProgressPositionCheck = now;
+    _isCheckingProgressPosition = true;
+    try {
+      final position = await _RideFixSampler.precise();
+      if (mounted &&
+          _isExpanded &&
+          _appActive &&
+          ModalRoute.of(context)?.isCurrent != false) {
+        _acceptPosition(position);
+      }
+    } catch (error) {
+      debugPrint('Ride progress location unavailable: $error');
+    } finally {
+      _isCheckingProgressPosition = false;
+    }
   }
 
   Future<void> _trackExpandedRide() async {
-    if (widget.step.type != 'ride' ||
-        widget.wakeAlarmActive ||
-        !_appActive ||
-        _progressStream != null ||
-        _isStartingProgressStream) {
-      return;
-    }
-    _isStartingProgressStream = true;
+    if (widget.step.type != 'ride' || !_appActive) return;
     try {
       final permission = await Geolocator.checkPermission();
       if (!mounted ||
           !_isExpanded ||
-          widget.wakeAlarmActive ||
           !_appActive ||
           permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         return;
       }
-      LocationSettings settings = const LocationSettings(
-        accuracy: LocationAccuracy.medium,
-        distanceFilter: 100,
-      );
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        settings = AndroidSettings(
-          accuracy: LocationAccuracy.medium,
-          distanceFilter: 100,
-          intervalDuration: const Duration(seconds: 30),
-        );
-      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        settings = AppleSettings(
-          accuracy: LocationAccuracy.medium,
-          distanceFilter: 100,
-          pauseLocationUpdatesAutomatically: true,
-        );
+      _progressLocationAllowed = true;
+      final cached = await _RideFixSampler.cached();
+      if (cached != null && mounted && _isExpanded && _appActive) {
+        _acceptPosition(cached);
       }
-      _progressStream = Geolocator.getPositionStream(locationSettings: settings)
-          .listen((position) {
-        if (!mounted || !_isExpanded) return;
-        _acceptPosition(position);
-      }, onError: (Object error) {
-        _progressStream?.cancel();
-        _progressStream = null;
-        debugPrint('Ride progress location unavailable: $error');
-      });
     } catch (error) {
       debugPrint('Ride progress location unavailable: $error');
-    } finally {
-      _isStartingProgressStream = false;
     }
   }
 
@@ -11178,8 +11375,6 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
     } else {
       _progressTicker?.cancel();
       _progressTicker = null;
-      _progressStream?.cancel();
-      _progressStream = null;
     }
   }
 
@@ -11203,7 +11398,7 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                     AnimatedPositioned(
                       duration: const Duration(milliseconds: 900),
                       curve: Curves.linear,
-                      left: -8,
+                      left: 4,
                       top: -31 + 48 * progress!.fraction,
                       child: Container(
                         width: 14,
