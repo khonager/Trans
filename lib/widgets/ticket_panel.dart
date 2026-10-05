@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:trans/services/supabase_service.dart';
+import 'package:trans/services/ticket_replacement_reminder.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
@@ -694,9 +695,11 @@ class _TicketPanelState extends State<TicketPanel>
 
   Future<void> _processAndUpload(File file,
       {XFile? isWebFile, Uint8List? directBytes, Rect? detectedQrBox}) async {
+    final replacingTicket = _mobileFile != null || _webBytes != null;
+    final l10n = AppLocalizations.of(context)!;
     setState(() {
       _isLoading = true;
-      _loadingMessage = AppLocalizations.of(context)!.savingTicket;
+      _loadingMessage = l10n.savingTicket;
     });
     try {
       Uint8List bytes;
@@ -740,6 +743,20 @@ class _TicketPanelState extends State<TicketPanel>
           _mobileFile = localFile;
           _resetStyledQrState(detectedQrBox: detectedQrBox);
         });
+      }
+
+      if (replacingTicket &&
+          !kIsWeb &&
+          (Platform.isAndroid || Platform.isIOS)) {
+        try {
+          await TicketReplacementReminder.schedule(
+            replacementDate: DateTime.now(),
+            title: l10n.ticketReplacementReminderTitle,
+            body: l10n.ticketReplacementReminderBody,
+          );
+        } catch (error) {
+          debugPrint('Could not schedule ticket replacement reminder: $error');
+        }
       }
 
       await SupabaseService.uploadTicketBytes(bytes, 'jpg');

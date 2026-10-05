@@ -372,6 +372,8 @@
   "loadingTicket": "Dein Ticket wird vorbereitet…",
   "checkingTicketCode": "Der Ticketcode wird geprüft…",
   "savingTicket": "Dein Ticket wird gespeichert…",
+  "ticketReplacementReminderTitle": "Ticket ersetzen",
+  "ticketReplacementReminderBody": "Heute ist der Erste. Denk daran, dein neues Ticket hinzuzufügen.",
   "loadingBlockedUsers": "Blockierte Personen werden geladen…",
   "loadingLiveBuses": "Live-Busse werden aktualisiert…",
   "preparingImage": "Bild wird vorbereitet…",

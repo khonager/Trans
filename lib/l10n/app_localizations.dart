@@ -2294,6 +2294,18 @@ abstract class AppLocalizations {
   /// **'Saving your ticket…'**
   String get savingTicket;
 
+  /// No description provided for @ticketReplacementReminderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace your ticket'**
+  String get ticketReplacementReminderTitle;
+
+  /// No description provided for @ticketReplacementReminderBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It\'s the first of the month. Remember to add your new ticket.'**
+  String get ticketReplacementReminderBody;
+
   /// No description provided for @loadingBlockedUsers.
   ///
   /// In en, this message translates to:

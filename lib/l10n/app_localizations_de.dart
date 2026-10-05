@@ -1264,6 +1264,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get savingTicket => 'Dein Ticket wird gespeichert…';
 
   @override
+  String get ticketReplacementReminderTitle => 'Ticket ersetzen';
+
+  @override
+  String get ticketReplacementReminderBody =>
+      'Heute ist der Erste. Denk daran, dein neues Ticket hinzuzufügen.';
+
+  @override
   String get loadingBlockedUsers => 'Blockierte Personen werden geladen…';
 
   @override

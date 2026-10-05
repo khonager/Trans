@@ -774,6 +774,8 @@
   "loadingTicket": "Preparing your ticket…",
   "checkingTicketCode": "Checking the ticket code…",
   "savingTicket": "Saving your ticket…",
+  "ticketReplacementReminderTitle": "Replace your ticket",
+  "ticketReplacementReminderBody": "It's the first of the month. Remember to add your new ticket.",
   "loadingBlockedUsers": "Loading blocked users…",
   "loadingLiveBuses": "Updating live buses…",
   "preparingImage": "Preparing image…",

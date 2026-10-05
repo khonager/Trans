@@ -1256,6 +1256,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get savingTicket => 'Saving your ticket…';
 
   @override
+  String get ticketReplacementReminderTitle => 'Replace your ticket';
+
+  @override
+  String get ticketReplacementReminderBody =>
+      'It\'s the first of the month. Remember to add your new ticket.';
+
+  @override
   String get loadingBlockedUsers => 'Loading blocked users…';
 
   @override
