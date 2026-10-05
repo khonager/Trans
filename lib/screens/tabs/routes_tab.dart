@@ -6121,6 +6121,11 @@ class RoutesTabState extends State<RoutesTab>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: TransColors.of(context).scaffoldBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      clipBehavior: Clip.antiAlias,
       builder: (sheetContext) => SizedBox(
         height: MediaQuery.sizeOf(sheetContext).height * 0.85,
         child: OnBoardOptionsSheet(

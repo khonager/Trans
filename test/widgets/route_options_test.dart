@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trans/config/app_theme.dart';
 import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
@@ -47,6 +48,7 @@ void main() {
 
     Future<void> show(List<Journey> candidates) async {
       await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.lightTheme(Colors.indigo),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
@@ -86,6 +88,7 @@ void main() {
   testWidgets('timetable failure leaves known lines visible', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.lightTheme(Colors.indigo),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(

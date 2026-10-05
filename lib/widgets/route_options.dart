@@ -3,11 +3,107 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trans/config/app_theme.dart';
 import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/services/route_options_service.dart';
 import 'package:trans/services/transport_api.dart';
+
+// Keep these controls on the same neutral surfaces as the route cards.
+class _RouteOptionsTheme extends StatelessWidget {
+  final Widget child;
+
+  const _RouteOptionsTheme({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = TransColors.of(context);
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    );
+    return Theme(
+      data: theme.copyWith(
+        cardTheme: CardThemeData(
+          color: colors.cardBg,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 12),
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
+          ),
+        ),
+        listTileTheme: ListTileThemeData(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          iconColor: colors.textSecondary,
+          textColor: colors.textPrimary,
+          titleTextStyle: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          subtitleTextStyle: TextStyle(
+            color: colors.textSecondary,
+            fontSize: 12,
+            height: 1.4,
+          ),
+        ),
+        chipTheme: theme.chipTheme.copyWith(
+          backgroundColor: colors.chipBg,
+          surfaceTintColor: Colors.transparent,
+          side: BorderSide.none,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          labelStyle: TextStyle(
+            color: colors.chipFg,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: colors.searchInputFill,
+          labelStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: border,
+          enabledBorder: border,
+          focusedBorder: border.copyWith(
+            borderSide: BorderSide(color: colors.navBarSelected),
+          ),
+        ),
+        progressIndicatorTheme: ProgressIndicatorThemeData(
+          color: colors.navBarSelected,
+          linearTrackColor: colors.chipBg,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _RouteOptionsIcon extends StatelessWidget {
+  final IconData icon;
+
+  const _RouteOptionsIcon(this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = TransColors.of(context);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colors.searchHeaderIconBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: 20, color: colors.searchHeaderIcon),
+    );
+  }
+}
 
 class KnownLinesPanel extends StatefulWidget {
   final Station origin;
@@ -142,49 +238,56 @@ class _KnownLinesPanelState extends State<KnownLinesPanel> {
       ..._discovered,
       ...availableFirstLines(widget.candidates),
     });
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.directions_bus_outlined),
-            title: Text(l10n.usefulLines),
-            subtitle: Text(l10n.usefulLinesExplanation),
-            trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-            onTap: () {
-              setState(() => _expanded = !_expanded);
-              if (_expanded) _discover();
-            },
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_loadingDiscovery) const LinearProgressIndicator(),
-                  if (lines.isEmpty && !_loadingDiscovery)
-                    Text(l10n.noUsefulLinesFound),
-                  if (lines.isNotEmpty)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 180),
-                      child: SingleChildScrollView(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              for (final line in lines) Chip(label: Text(line)),
-                            ],
+    return _RouteOptionsTheme(
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            ListTile(
+              leading: const _RouteOptionsIcon(Icons.directions_bus_outlined),
+              title: Text(l10n.usefulLines),
+              subtitle: Text(l10n.usefulLinesExplanation),
+              trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+              onTap: () {
+                setState(() => _expanded = !_expanded);
+                if (_expanded) _discover();
+              },
+            ),
+            if (_expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_loadingDiscovery)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 12),
+                        child: LinearProgressIndicator(),
+                      ),
+                    if (lines.isEmpty && !_loadingDiscovery)
+                      Text(l10n.noUsefulLinesFound),
+                    if (lines.isNotEmpty)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 180),
+                        child: SingleChildScrollView(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (final line in lines)
+                                  Chip(label: Text(line)),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -343,108 +446,133 @@ class _OnBoardOptionsSheetState extends State<OnBoardOptionsSheet> {
         bestArrival.isBefore(
           widget.currentPlanArrival.subtract(const Duration(minutes: 2)),
         );
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.onThisBus, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Card(
-              child: ListTile(
-                leading: Icon(_loadingTrip || _loadingOptions
-                    ? Icons.more_horiz
-                    : changeRecommended
-                        ? Icons.bolt
-                        : Icons.check_circle_outline),
-                title: Text(_loadingTrip || _loadingOptions
-                    ? l10n.checkingOnBoardOptions
-                    : changeRecommended
-                        ? bestIsDirect
-                            ? l10n.stayOnUntil(directStop.name)
-                            : l10n.getOffAt(bestChange!.alight.name)
-                        : l10n.stayWithCurrentPlan),
-                subtitle: Text(_loadingTrip || _loadingOptions
-                    ? l10n.onBoardCurrentPlan(
-                        DateFormat.Hm().format(widget.currentPlanArrival),
-                      )
-                    : changeRecommended
-                        ? _arrivalLabel(bestArrival)
-                        : l10n.onBoardCurrentPlan(
-                            DateFormat.Hm().format(widget.currentPlanArrival),
-                          )),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_loadingTrip)
-              const LinearProgressIndicator()
-            else if (_stops.length < 2)
-              Text(l10n.onBoardStopsUnavailable)
-            else ...[
-              DropdownButtonFormField<int>(
-                initialValue: _nextStopIndex,
-                decoration: InputDecoration(labelText: l10n.nextStop),
-                isExpanded: true,
-                items: [
-                  for (var i = 1; i < _stops.length; i++)
-                    DropdownMenuItem(
-                      value: i,
-                      child: Text(
-                        '${_stops[i].name} · ${DateFormat.Hm().format(_stops[i].arrival)}',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-                onChanged: (index) {
-                  if (index == null) return;
-                  setState(() => _nextStopIndex = index);
-                  _search();
-                },
-              ),
-              const SizedBox(height: 12),
-              if (directStop != null)
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.directions_bus),
-                    title: Text(l10n.stayOnUntil(directStop.name)),
-                    subtitle: Text(_arrivalLabel(directStop.arrival)),
-                    onTap: () => widget.onStayOn(directStop, _rideLeg!),
+    final colors = TransColors.of(context);
+    return _RouteOptionsTheme(
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: colors.modalHandle.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              if (_loadingOptions) const LinearProgressIndicator(),
-              Expanded(
-                child: _options.isEmpty && !_loadingOptions
-                    ? Center(child: Text(l10n.noOnBoardChangesFound))
-                    : ListView.builder(
-                        itemCount: _options.length,
-                        itemBuilder: (context, index) {
-                          final option = _options[index];
-                          final firstRide =
-                              (option.onwardJourney['legs'] as List)
-                                  .whereType<Map>()
-                                  .firstWhere(
-                                    (leg) => leg['line'] != null,
-                                    orElse: () => const {},
-                                  );
-                          final line = (firstRide['line'] as Map?)?['name'];
-                          return Card(
-                            child: ListTile(
-                              leading: const Icon(Icons.alt_route),
-                              title: Text(l10n.getOffAt(option.alight.name)),
-                              subtitle: Text(
-                                '${_arrivalLabel(option.arrival)}'
-                                '${line == null ? '' : ' · $line'}'
-                                ' · ${l10n.transfersCount(option.transfers.toString())}',
-                              ),
-                              onTap: () => widget.onSelected(option, _rideLeg!),
-                            ),
-                          );
-                        },
-                      ),
               ),
+              Text(l10n.onThisBus,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  )),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: _RouteOptionsIcon(_loadingTrip || _loadingOptions
+                      ? Icons.more_horiz
+                      : changeRecommended
+                          ? Icons.bolt
+                          : Icons.check_circle_outline),
+                  title: Text(_loadingTrip || _loadingOptions
+                      ? l10n.checkingOnBoardOptions
+                      : changeRecommended
+                          ? bestIsDirect
+                              ? l10n.stayOnUntil(directStop.name)
+                              : l10n.getOffAt(bestChange!.alight.name)
+                          : l10n.stayWithCurrentPlan),
+                  subtitle: Text(_loadingTrip || _loadingOptions
+                      ? l10n.onBoardCurrentPlan(
+                          DateFormat.Hm().format(widget.currentPlanArrival),
+                        )
+                      : changeRecommended
+                          ? _arrivalLabel(bestArrival)
+                          : l10n.onBoardCurrentPlan(
+                              DateFormat.Hm().format(widget.currentPlanArrival),
+                            )),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_loadingTrip)
+                const LinearProgressIndicator()
+              else if (_stops.length < 2)
+                Text(l10n.onBoardStopsUnavailable)
+              else ...[
+                DropdownButtonFormField<int>(
+                  initialValue: _nextStopIndex,
+                  dropdownColor: colors.cardBg,
+                  style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                  iconEnabledColor: colors.textSecondary,
+                  borderRadius: BorderRadius.circular(12),
+                  decoration: InputDecoration(labelText: l10n.nextStop),
+                  isExpanded: true,
+                  items: [
+                    for (var i = 1; i < _stops.length; i++)
+                      DropdownMenuItem(
+                        value: i,
+                        child: Text(
+                          '${_stops[i].name} · ${DateFormat.Hm().format(_stops[i].arrival)}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (index) {
+                    if (index == null) return;
+                    setState(() => _nextStopIndex = index);
+                    _search();
+                  },
+                ),
+                const SizedBox(height: 12),
+                if (directStop != null)
+                  Card(
+                    child: ListTile(
+                      leading: const _RouteOptionsIcon(Icons.directions_bus),
+                      title: Text(l10n.stayOnUntil(directStop.name)),
+                      subtitle: Text(_arrivalLabel(directStop.arrival)),
+                      onTap: () => widget.onStayOn(directStop, _rideLeg!),
+                    ),
+                  ),
+                if (_loadingOptions) const LinearProgressIndicator(),
+                Expanded(
+                  child: _options.isEmpty && !_loadingOptions
+                      ? Center(child: Text(l10n.noOnBoardChangesFound))
+                      : ListView.builder(
+                          itemCount: _options.length,
+                          itemBuilder: (context, index) {
+                            final option = _options[index];
+                            final firstRide =
+                                (option.onwardJourney['legs'] as List)
+                                    .whereType<Map>()
+                                    .firstWhere(
+                                      (leg) => leg['line'] != null,
+                                      orElse: () => const {},
+                                    );
+                            final line = (firstRide['line'] as Map?)?['name'];
+                            return Card(
+                              child: ListTile(
+                                leading:
+                                    const _RouteOptionsIcon(Icons.alt_route),
+                                title: Text(l10n.getOffAt(option.alight.name)),
+                                subtitle: Text(
+                                  '${_arrivalLabel(option.arrival)}'
+                                  '${line == null ? '' : ' · $line'}'
+                                  ' · ${l10n.transfersCount(option.transfers.toString())}',
+                                ),
+                                onTap: () =>
+                                    widget.onSelected(option, _rideLeg!),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
