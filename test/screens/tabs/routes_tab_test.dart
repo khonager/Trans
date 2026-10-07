@@ -1,11 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trans/config/app_theme.dart';
 import 'package:trans/l10n/app_localizations.dart';
 import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/screens/tabs/routes_tab.dart';
+import 'package:trans/services/supabase_service.dart';
 
 final _pullOrigin = Station(id: 'origin', name: 'Origin', type: 'station');
 
@@ -330,6 +334,28 @@ Future<void> _settleIndicator(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('saved stops refresh after account settings arrive',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_favorites': <String>[
+        jsonEncode({'id': 'old', 'label': 'Old stop', 'type': 'station'}),
+      ],
+    });
+    await _pumpRoutesTab(tester);
+    await tester.pump();
+    expect(find.text('Old stop'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('saved_favorites', <String>[
+      jsonEncode({'id': 'new', 'label': 'New stop', 'type': 'station'}),
+    ]);
+    SupabaseService.settingsRefreshNotifier.value++;
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('New stop'), findsOneWidget);
+    expect(find.text('Old stop'), findsNothing);
+  });
   _testCompactStopNames();
   test('saved journey identity survives realtime provider changes', () {
     const savedKey = 'origin::destination::saved-connection';

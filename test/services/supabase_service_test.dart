@@ -79,4 +79,59 @@ void main() {
       );
     });
   });
+
+  group('offline account cache', () {
+    test('keeps existing installs\' saved stops when first assigning an owner',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'saved_favorites': <String>['favorite'],
+      });
+
+      await SupabaseService.prepareAccountLocalState('user-a');
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('saved_favorites'), <String>['favorite']);
+      expect(
+        prefs.getString(SupabaseService.cachedAccountUserIdPreferenceKey),
+        'user-a',
+      );
+    });
+
+    test('retains saved stops and routes for the same account', () async {
+      SharedPreferences.setMockInitialValues({
+        SupabaseService.cachedAccountUserIdPreferenceKey: 'user-a',
+        'saved_favorites': <String>['favorite'],
+        'saved_journeys': <String>['journey'],
+        'saved_ticket_base64': 'ticket',
+      });
+
+      await SupabaseService.prepareAccountLocalState('user-a');
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('saved_favorites'), <String>['favorite']);
+      expect(prefs.getStringList('saved_journeys'), <String>['journey']);
+      expect(prefs.getString('saved_ticket_base64'), 'ticket');
+    });
+
+    test('clears the previous account cache but keeps the local ticket',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        SupabaseService.cachedAccountUserIdPreferenceKey: 'user-a',
+        'saved_favorites': <String>['favorite'],
+        'saved_journeys': <String>['journey'],
+        'saved_ticket_base64': 'ticket',
+      });
+
+      await SupabaseService.prepareAccountLocalState('user-b');
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(prefs.getStringList('saved_favorites'), isNull);
+      expect(prefs.getStringList('saved_journeys'), isNull);
+      expect(prefs.getString('saved_ticket_base64'), 'ticket');
+      expect(
+        prefs.getString(SupabaseService.cachedAccountUserIdPreferenceKey),
+        'user-b',
+      );
+    });
+  });
 }

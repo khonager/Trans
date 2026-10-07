@@ -1,11 +1,46 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:trans/main.dart';
+import 'package:trans/services/supabase_service.dart';
+import 'package:trans/widgets/ticket_panel.dart';
 
 void main() {
+  testWidgets('ticket and tabs stay usable during a stalled session refresh',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(const {
+      'ticket_docked_to_navigation': true,
+      'current_tab_id': 'routes',
+    });
+    final preparation = Completer<void>();
+    await tester.pumpWidget(TransApp(
+      sessionPreparationOverride: () => preparation.future,
+    ));
+    await tester.pump();
+
+    SupabaseService.requestAppRefresh();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('app-refresh-indicator')), findsOneWidget);
+
+    await tester.tap(find.text('QR'));
+    await tester.pump();
+    expect(find.byType(TicketPanel), findsOneWidget);
+    expect(find.text('My Ticket'), findsOneWidget);
+
+    await tester.tap(find.text('Settings').last);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('app-refresh-indicator')), findsOneWidget);
+
+    preparation.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('app-refresh-indicator')), findsNothing);
+  });
+
   testWidgets('app shell renders without startup services', (
     WidgetTester tester,
   ) async {

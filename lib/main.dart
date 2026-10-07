@@ -91,12 +91,6 @@ Future<void> main() async {
           );
         }
       }
-
-      await SupabaseService.init();
-
-      if (!kIsWeb && Platform.isLinux) {
-        await LinuxUrlSchemeRegistration.ensureRegistered();
-      }
     } catch (e, st) {
       initFailed = true;
       initError = e.toString();
@@ -117,6 +111,18 @@ Future<void> main() async {
         startupAuthNotice: startupAuthNotice,
       ),
     );
+    unawaited(SupabaseService.init().catchError((Object error, StackTrace st) {
+      AppError.log(error, stackTrace: st, source: 'background initialization');
+    }));
+    if (!kIsWeb && Platform.isLinux) {
+      unawaited(LinuxUrlSchemeRegistration.ensureRegistered().catchError(
+        (Object error, StackTrace st) => AppError.log(
+          error,
+          stackTrace: st,
+          source: 'Linux URL scheme registration',
+        ),
+      ));
+    }
   }, (error, stack) {
     AppError.log(error, stackTrace: stack, source: 'runZonedGuarded');
   });
@@ -138,19 +144,22 @@ class TransApp extends StatefulWidget {
   final bool initFailed;
   final String? initError;
   final StartupAuthNotice? startupAuthNotice;
+  @visibleForTesting
+  final Future<void> Function()? sessionPreparationOverride;
 
   const TransApp({
     super.key,
     this.initFailed = false,
     this.initError,
     this.startupAuthNotice,
+    this.sessionPreparationOverride,
   });
 
   @override
   State<TransApp> createState() => _TransAppState();
 }
 
-class _TransAppState extends State<TransApp> {
+class _TransAppState extends State<TransApp> with WidgetsBindingObserver {
   final AppLinks _appLinks = AppLinks();
   ThemeMode _themeMode = ThemeMode.light;
   bool _useSystemTheme = false;
@@ -163,16 +172,27 @@ class _TransAppState extends State<TransApp> {
   int _appRefreshKey = 0;
   bool _isAppRefreshing = false;
   bool _appRefreshRequested = false;
+  Timer? _sessionRetryTimer;
+  String? _shellUserId;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _shellUserId = SupabaseService.currentUser?.id;
     _readPreferences(); // Show immediate local state
     if (_setupAuthStateSync()) {
       unawaited(_refreshAppShell());
     }
     SupabaseService.settingsRefreshNotifier.addListener(_readPreferences);
     SupabaseService.appRefreshNotifier.addListener(_handleAppRefreshRequest);
+    _sessionRetryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!_isAppRefreshing &&
+          SupabaseService.currentUser != null &&
+          !SupabaseService.isCurrentUserPrepared) {
+        unawaited(_refreshAppShell());
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (widget.startupAuthNotice != null) {
         await _showStartupAuthNotice(widget.startupAuthNotice!);
@@ -183,11 +203,22 @@ class _TransAppState extends State<TransApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _sessionRetryTimer?.cancel();
     _authLinkSubscription?.cancel();
     _authStateSubscription?.cancel();
     SupabaseService.settingsRefreshNotifier.removeListener(_readPreferences);
     SupabaseService.appRefreshNotifier.removeListener(_handleAppRefreshRequest);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        SupabaseService.currentUser != null &&
+        !SupabaseService.isCurrentUserPrepared) {
+      unawaited(_refreshAppShell());
+    }
   }
 
   bool _setupAuthStateSync() {
@@ -217,28 +248,38 @@ class _TransAppState extends State<TransApp> {
     }
 
     setState(() => _isAppRefreshing = true);
-    final minimumOverlayTime =
-        Future<void>.delayed(const Duration(milliseconds: 650));
     try {
       do {
         _appRefreshRequested = false;
-        await _prepareCurrentSession();
+        await _prepareCurrentSession().timeout(const Duration(seconds: 12));
         await _readPreferences();
 
         if (!mounted) return;
-        setState(() => _appRefreshKey++);
+        final userId = SupabaseService.currentUser?.id;
+        if (_shellUserId != userId) {
+          setState(() {
+            _shellUserId = userId;
+            _appRefreshKey++;
+          });
+        }
       } while (_appRefreshRequested);
-      await minimumOverlayTime;
     } catch (e, st) {
       AppError.log(e, stackTrace: st, source: 'app session refresh');
     } finally {
+      final refreshRequested = _appRefreshRequested;
+      _appRefreshRequested = false;
       if (mounted) {
         setState(() => _isAppRefreshing = false);
+        if (refreshRequested) unawaited(_refreshAppShell());
       }
     }
   }
 
   Future<void> _prepareCurrentSession() async {
+    if (widget.sessionPreparationOverride != null) {
+      await widget.sessionPreparationOverride!();
+      return;
+    }
     if (SupabaseService.currentUser == null) {
       await SupabaseService.prepareSignedOutState();
       return;
@@ -516,68 +557,18 @@ class _TransAppState extends State<TransApp> {
             ),
           ),
           if (_isAppRefreshing)
-            const Positioned.fill(child: _AppRefreshOverlay()),
-        ],
-      ),
-    );
-  }
-}
-
-class _AppRefreshOverlay extends StatefulWidget {
-  const _AppRefreshOverlay();
-
-  @override
-  State<_AppRefreshOverlay> createState() => _AppRefreshOverlayState();
-}
-
-class _AppRefreshOverlayState extends State<_AppRefreshOverlay>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<Offset> _offset;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    )..repeat(reverse: true);
-    _offset = Tween<Offset>(
-      begin: const Offset(0, 0.08),
-      end: const Offset(0, -0.08),
-    ).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.94),
-      child: Center(
-        child: SlideTransition(
-          position: _offset,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Image.asset(
-              isDark ? 'lib/assets/logo_light.png' : 'lib/assets/logo_dark.png',
-              width: 88,
-              height: 88,
-              errorBuilder: (context, error, stackTrace) => Icon(
-                Icons.directions_transit,
-                size: 72,
-                color: Theme.of(context).colorScheme.primary,
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                child: LinearProgressIndicator(
+                  key: ValueKey('app-refresh-indicator'),
+                  minHeight: 3,
+                ),
               ),
             ),
-          ),
-        ),
+        ],
       ),
     );
   }

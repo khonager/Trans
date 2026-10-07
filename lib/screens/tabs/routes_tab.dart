@@ -2052,6 +2052,8 @@ class RoutesTabState extends State<RoutesTab>
   int _maximumEffectiveSignalLevel = 0;
   double? _gpsAccuracy;
   List<Favorite> _favorites = [];
+  int _favoritesLoadGeneration = 0;
+  int _historyLoadGeneration = 0;
   bool _favoritesExpanded = false;
   List<Station> _sharedFriendPlaces = [];
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -2592,6 +2594,8 @@ class RoutesTabState extends State<RoutesTab>
 
   void _handleDeviceRouteSettingsRefresh() {
     unawaited(_loadDeviceRoutePreferences());
+    unawaited(_loadFavorites());
+    unawaited(_loadHistoryData());
     unawaited(_refreshJourneySharingConfiguration());
   }
 
@@ -2628,11 +2632,14 @@ class RoutesTabState extends State<RoutesTab>
   bool get _showBikeSearchToggle => _hasBikeModesConfiguredForDevice;
 
   Future<void> _loadHistoryData() async {
+    final generation = ++_historyLoadGeneration;
     final history = await SearchHistoryManager.getHistory();
     final frequent = await SearchHistoryManager.getFrequentJourneys();
     final recent = await SearchHistoryManager.getRecentJourneys();
     final saved = await SearchHistoryManager.getSavedJourneys();
+    if (!mounted || generation != _historyLoadGeneration) return;
     await _restoreSavedJourneyHealthStates(saved);
+    if (!mounted || generation != _historyLoadGeneration) return;
     debugPrint(
         "Loaded history: ${history.length} items, frequent: ${frequent.length} items, recent: ${recent.length} items, saved: ${saved.length} items");
     if (mounted) {
@@ -3268,10 +3275,22 @@ class RoutesTabState extends State<RoutesTab>
   }
 
   Future<void> _loadFavorites() async {
+    final generation = ++_favoritesLoadGeneration;
     final favs = await FavoritesManager.getFavorites();
+    if (!mounted || generation != _favoritesLoadGeneration) return;
+    setState(() {
+      _favorites = favs;
+      _sharedFriendPlaces = [];
+    });
     final sharedPlaces = <Station>[];
     if (SupabaseService.currentUser != null) {
-      final friends = await SupabaseService.getFriends();
+      List<Map<String, dynamic>> friends;
+      try {
+        friends = await SupabaseService.getFriends();
+      } catch (e, st) {
+        AppError.log(e, stackTrace: st, source: 'RoutesTab._loadFavorites');
+        return;
+      }
       for (final friend in friends) {
         final username = friend['username']?.toString() ?? 'Friend';
         final latitude = friend['latitude'];
@@ -3304,9 +3323,8 @@ class RoutesTabState extends State<RoutesTab>
         }
       }
     }
-    if (!mounted) return;
+    if (!mounted || generation != _favoritesLoadGeneration) return;
     setState(() {
-      _favorites = favs;
       _sharedFriendPlaces = sharedPlaces;
     });
   }

@@ -1,4 +1,5 @@
 // lib/services/favorites_manager.dart
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,7 +45,7 @@ class FavoritesManager {
     if (sanitized.length != favorites.length) {
       final encoded = sanitized.map((f) => json.encode(f.toJson())).toList();
       await prefs.setStringList(_key, encoded);
-      await _syncToSupabase(sanitized);
+      unawaited(_syncToSupabase(sanitized));
     }
 
     if (sanitized.isEmpty) {

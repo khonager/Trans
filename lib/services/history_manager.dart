@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/station.dart';
 import 'supabase_service.dart';
@@ -286,7 +288,11 @@ class SearchHistoryManager {
         .toList();
 
     if (pruned.length != journeys.length) {
-      await _persistSavedJourneys(pruned);
+      final jsonList = pruned.map((entry) => json.encode(entry)).toList();
+      await prefs.setStringList(_keySavedJourneys, jsonList);
+      unawaited(_syncSavedJourneysToCloud(jsonList).catchError((Object error) {
+        debugPrint('Could not sync pruned saved journeys: $error');
+      }));
     }
 
     return pruned;

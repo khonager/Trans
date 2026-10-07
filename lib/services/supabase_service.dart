@@ -20,6 +20,8 @@ import 'wake_alarm_settings.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
+  static const String cachedAccountUserIdPreferenceKey =
+      'cached_account_user_id';
   static const String privacyLevelPreferenceKey = 'privacy_level';
   static const String _legacySignalLevelPreferenceKey = 'journey_signal_level';
   static const Set<String> accountBoundPreferenceKeys = {
@@ -70,6 +72,11 @@ class SupabaseService {
   }
 
   static User? get currentUser => maybeClient?.auth.currentUser;
+
+  static bool get isCurrentUserPrepared {
+    final user = currentUser;
+    return user == null || _preparedUserId == user.id;
+  }
 
   static final ValueNotifier<int> friendsListRefresh = ValueNotifier(0);
   static final ValueNotifier<int> settingsRefreshNotifier = ValueNotifier(0);
@@ -415,6 +422,7 @@ class SupabaseService {
   static Future<bool> _finishSignIn() async {
     final user = currentUser;
     if (user != null) {
+      await prepareAccountLocalState(user.id);
       final username = user.userMetadata?['username']?.toString();
       await _ensureProfileRow(user.id, username: username);
     }
@@ -614,6 +622,8 @@ class SupabaseService {
     _sharingSettingsCachedAt = null;
 
     await _clearAccountBoundPreferences();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(cachedAccountUserIdPreferenceKey);
 
     settingsRefreshNotifier.value++;
     triggerFriendsListRefresh();
@@ -624,6 +634,21 @@ class SupabaseService {
     for (final key in accountBoundPreferenceKeys) {
       await prefs.remove(key);
     }
+  }
+
+  /// Keep the last successful account download available offline, while
+  /// clearing it before a different account can use this device.
+  @visibleForTesting
+  static Future<void> prepareAccountLocalState(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedUserId = prefs.getString(cachedAccountUserIdPreferenceKey);
+    if (cachedUserId != null && cachedUserId != userId) {
+      await _clearAccountBoundPreferences();
+      settingsRefreshNotifier.value++;
+    }
+    // Older installs have no marker. Their account data is retained because
+    // explicit sign-out has always cleared it.
+    await prefs.setString(cachedAccountUserIdPreferenceKey, userId);
   }
 
   static Future<void> updatePassword(String newPassword) async {
@@ -940,6 +965,7 @@ class SupabaseService {
 
       // Apply to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
+      await prepareAccountLocalState(user.id);
       await _clearAccountBoundPreferences();
 
       await _syncPrimitiveSettingsToPrefs(prefs, settings);
@@ -965,11 +991,8 @@ class SupabaseService {
       settingsRefreshNotifier.value++;
       return true;
     } catch (e, st) {
-      // Never leave data cached from a previous account visible if the new
-      // account cannot be downloaded. The app can safely fall back to guest
-      // defaults and retry on the next auth/session refresh.
-      await _clearAccountBoundPreferences();
-      settingsRefreshNotifier.value++;
+      // A network failure must not erase this account's offline data. The
+      // account check at sign-in clears data only when the user changes.
       AppError.log(e, stackTrace: st, source: 'loadAndSyncSettings');
       return false;
     }
