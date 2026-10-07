@@ -1614,6 +1614,9 @@ class _SettingsTabState extends State<SettingsTab> {
     final ctrl =
         TextEditingController(text: (_profile?['username'] ?? '').toString());
     bool isSaving = false;
+    String? saveError;
+    Object? saveException;
+    StackTrace? saveStackTrace;
 
     await showDialog(
       context: context,
@@ -1622,14 +1625,38 @@ class _SettingsTabState extends State<SettingsTab> {
           backgroundColor: colors.cardBg,
           title: Text(AppLocalizations.of(context)!.changeUsername,
               style: TextStyle(color: colors.textPrimary)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            style: TextStyle(color: colors.textPrimary),
-            decoration: InputDecoration(
-              labelText: AppLocalizations.of(context)!.username,
-            ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)!.username,
+                  errorText: saveError,
+                ),
+              ),
+              if (saveError != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => AppError.showReportDialog(
+                      ctx,
+                      error: saveException ?? saveError!,
+                      stackTrace: saveStackTrace,
+                      source: 'update username',
+                      userMessage: saveError!,
+                    ),
+                    child: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Melden'
+                          : 'Report',
+                    ),
+                  ),
+                ),
+            ],
           ),
           actions: [
             TextButton(
@@ -1642,15 +1669,20 @@ class _SettingsTabState extends State<SettingsTab> {
                   : () async {
                       final username = ctrl.text.trim();
                       if (username.isEmpty) {
-                        _showMessage(
-                          l10n.fillRequiredFields,
-                          reportable: true,
-                          source: 'update username validation',
-                        );
+                        setState(() {
+                          saveError = l10n.fillRequiredFields;
+                          saveException = null;
+                          saveStackTrace = null;
+                        });
                         return;
                       }
 
-                      setState(() => isSaving = true);
+                      setState(() {
+                        isSaving = true;
+                        saveError = null;
+                        saveException = null;
+                        saveStackTrace = null;
+                      });
                       try {
                         await SupabaseService.updateUsername(username);
                         if (!ctx.mounted) return;
@@ -1659,13 +1691,15 @@ class _SettingsTabState extends State<SettingsTab> {
                         _showMessage(l10n.usernameUpdated);
                       } catch (e, st) {
                         if (!ctx.mounted) return;
-                        setState(() => isSaving = false);
-                        AppError.showSnackBar(
-                          ctx,
-                          error: e,
-                          stackTrace: st,
-                          source: 'update username',
-                        );
+                        AppError.log(e,
+                            stackTrace: st, source: 'update username');
+                        final message = AppError.userMessage(ctx, e);
+                        setState(() {
+                          isSaving = false;
+                          saveError = message;
+                          saveException = e;
+                          saveStackTrace = st;
+                        });
                       }
                     },
               child: isSaving

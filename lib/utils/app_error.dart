@@ -208,6 +208,21 @@ class AppError {
     );
   }
 
+  static Future<void> showReportDialog(
+    BuildContext context, {
+    required Object error,
+    StackTrace? stackTrace,
+    required String source,
+    required String userMessage,
+  }) =>
+      _showReportDialog(
+        context,
+        error: error,
+        stackTrace: stackTrace,
+        source: source,
+        userMessage: userMessage,
+      );
+
   static String _buildReport({
     required Object error,
     StackTrace? stackTrace,

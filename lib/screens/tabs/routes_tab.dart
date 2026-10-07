@@ -11331,6 +11331,100 @@ class _StepCard extends StatefulWidget {
 
 class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   bool _isExpanded = false;
+  final ExpansibleController _expansionController = ExpansibleController();
+  List<Map<String, dynamic>>? _stopsBeforeRide;
+  List<Map<String, dynamic>>? _stopsAfterRide;
+  bool _loadingFullTrip = false;
+
+  Future<void> _showFullTrip() async {
+    _expansionController.expand();
+    final selectedStep = widget.step;
+    final tripId = selectedStep.tripId;
+    if (tripId == null || tripId.isEmpty || _loadingFullTrip) return;
+    if (_stopsBeforeRide != null) return;
+    setState(() => _loadingFullTrip = true);
+    final trip = await TransportApi.fetchLiveTripJourney(tripId);
+    if (!mounted || widget.step != selectedStep) return;
+    List<Map<String, dynamic>>? before;
+    List<Map<String, dynamic>>? after;
+    for (final rawLeg
+        in (trip?['legs'] as List? ?? const []).whereType<Map>()) {
+      final leg = Map<String, dynamic>.from(rawLeg);
+      final line = leg['line'];
+      if (line is! Map || line['tripId']?.toString() != tripId) continue;
+      final events = <Map<String, dynamic>>[
+        {
+          'stop': leg['origin'],
+          'departure': leg['departure'],
+          'plannedDeparture': leg['plannedDeparture']
+        },
+        ...(leg['stopovers'] as List? ?? const [])
+            .whereType<Map>()
+            .map(Map<String, dynamic>.from),
+        {
+          'stop': leg['destination'],
+          'arrival': leg['arrival'],
+          'plannedArrival': leg['plannedArrival']
+        },
+      ];
+      bool matches(Map<String, dynamic> event, String? id, String? name) {
+        final stop = event['stop'];
+        if (stop is! Map) return false;
+        if (id != null && id.isNotEmpty && stop['id']?.toString() == id) {
+          return true;
+        }
+        return name != null &&
+            name.isNotEmpty &&
+            stop['name']?.toString().trim().toLowerCase() ==
+                name.trim().toLowerCase();
+      }
+
+      final from = events.indexWhere((event) => matches(
+          event, widget.step.startStationId, widget.step.startStationName));
+      if (from < 0) continue;
+      final to = events.indexWhere(
+          (event) => matches(event, widget.step.destinationStationId,
+              widget.step.destinationName),
+          from + 1);
+      if (to <= from) continue;
+      before = events.sublist(0, from);
+      after = events.sublist(to + 1);
+      break;
+    }
+    setState(() {
+      _stopsBeforeRide = before;
+      _stopsAfterRide = after;
+      _loadingFullTrip = false;
+    });
+  }
+
+  Widget _outsideRideStop(Map<String, dynamic> event, TransColors colors) {
+    final stop = event['stop'];
+    final name = stop is Map ? stop['name']?.toString() ?? '' : '';
+    final rawTime = event['departure'] ??
+        event['arrival'] ??
+        event['plannedDeparture'] ??
+        event['plannedArrival'];
+    final time = DateTime.tryParse(rawTime?.toString() ?? '')?.toLocal();
+    final timeText = time == null
+        ? ''
+        : '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      leading: Icon(Icons.circle,
+          size: 10, color: colors.textSecondary.withValues(alpha: 0.55)),
+      title: Text(name,
+          style: TextStyle(
+              fontSize: 13,
+              color: colors.textSecondary.withValues(alpha: 0.65))),
+      trailing: Text(timeText,
+          style: TextStyle(
+              fontSize: 12,
+              color: colors.textSecondary.withValues(alpha: 0.65))),
+    );
+  }
+
   Position? _livePosition;
   RideProgress? _confirmedProgress;
   DateTime? _confirmedAt;
@@ -11355,6 +11449,14 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(covariant _StepCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.step.tripId != oldWidget.step.tripId ||
+        widget.step.startStationId != oldWidget.step.startStationId ||
+        widget.step.destinationStationId !=
+            oldWidget.step.destinationStationId) {
+      _stopsBeforeRide = null;
+      _stopsAfterRide = null;
+      _loadingFullTrip = false;
+    }
     final incoming = widget.currentPosition;
     if (incoming != null &&
         (_livePosition == null ||
@@ -11835,94 +11937,99 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
         child: Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
+                controller: _expansionController,
                 tilePadding: const EdgeInsets.fromLTRB(16, 8, 0, 8),
                 onExpansionChanged: _setExpanded,
-                title: Builder(builder: (context) {
-                  final dest = (step.destinationName ??
-                      step.instruction.split('→').last.trim());
-                  // Check if destination is practically the headsign (End of Line)
-                  // Use simple string containment or equality check
-                  final isEnd = dest.isNotEmpty &&
-                      stepHeadsign.isNotEmpty &&
-                      (stepHeadsign
-                              .toLowerCase()
-                              .contains(dest.toLowerCase()) ||
-                          dest
-                              .toLowerCase()
-                              .contains(stepHeadsign.toLowerCase()));
-                  final displayDest =
-                      isEnd ? AppLocalizations.of(context)!.endOfLine : dest;
-                  final displayLine = formatRideDisplayLine(
-                    line: step.line,
-                    platform: null,
-                    arrivalPlatform: step.arrivalPlatform,
-                    tripId: step.tripId,
-                    showTrainNumbers: widget.showTrainNumbers,
-                  );
-                  final isCoupledService = displayLine.contains(' / ');
+                title: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onLongPress: _showFullTrip,
+                    child: Builder(builder: (context) {
+                      final dest = (step.destinationName ??
+                          step.instruction.split('→').last.trim());
+                      // Check if destination is practically the headsign (End of Line)
+                      // Use simple string containment or equality check
+                      final isEnd = dest.isNotEmpty &&
+                          stepHeadsign.isNotEmpty &&
+                          (stepHeadsign
+                                  .toLowerCase()
+                                  .contains(dest.toLowerCase()) ||
+                              dest
+                                  .toLowerCase()
+                                  .contains(stepHeadsign.toLowerCase()));
+                      final displayDest = isEnd
+                          ? AppLocalizations.of(context)!.endOfLine
+                          : dest;
+                      final displayLine = formatRideDisplayLine(
+                        line: step.line,
+                        platform: null,
+                        arrivalPlatform: step.arrivalPlatform,
+                        tripId: step.tripId,
+                        showTrainNumbers: widget.showTrainNumbers,
+                      );
+                      final isCoupledService = displayLine.contains(' / ');
 
-                  // Keep the line compact and let the destination use all
-                  // remaining space. Giving both labels flex space leaves a
-                  // short line number with an unused half of the row.
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Icons use a geometric rather than typographic
-                      // baseline, so nudge the vehicle glyph down to sit on
-                      // the same visual line as the route number.
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Icon(
-                          _rideModeIconForLine(step.line),
-                          size: 18,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: isCoupledService ? 132 : 72,
-                        ),
-                        child: Text(
-                          displayLine,
-                          maxLines: isCoupledService ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: colors.textPrimary),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.arrow_right_alt,
-                          size: 24, color: colors.textPrimary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          displayDest,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: colors.textPrimary),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // Manual Arrow on Top Line with Rotation
-                      Baseline(
-                        baseline: 16,
-                        baselineType: TextBaseline.alphabetic,
-                        child: AnimatedRotation(
-                            turns: _isExpanded ? 0.5 : 0,
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(Icons.keyboard_arrow_down,
-                                color: _isExpanded
-                                    ? colors.effectiveSeed
-                                    : colors.textSecondary)),
-                      ),
-                    ],
-                  );
-                }),
+                      // Keep the line compact and let the destination use all
+                      // remaining space. Giving both labels flex space leaves a
+                      // short line number with an unused half of the row.
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Icons use a geometric rather than typographic
+                          // baseline, so nudge the vehicle glyph down to sit on
+                          // the same visual line as the route number.
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Icon(
+                              _rideModeIconForLine(step.line),
+                              size: 18,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: isCoupledService ? 132 : 72,
+                            ),
+                            child: Text(
+                              displayLine,
+                              maxLines: isCoupledService ? 2 : 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.textPrimary),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(Icons.arrow_right_alt,
+                              size: 24, color: colors.textPrimary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              displayDest,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: colors.textPrimary),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Manual Arrow on Top Line with Rotation
+                          Baseline(
+                            baseline: 16,
+                            baselineType: TextBaseline.alphabetic,
+                            child: AnimatedRotation(
+                                turns: _isExpanded ? 0.5 : 0,
+                                duration: const Duration(milliseconds: 200),
+                                child: Icon(Icons.keyboard_arrow_down,
+                                    color: _isExpanded
+                                        ? colors.effectiveSeed
+                                        : colors.textSecondary)),
+                          ),
+                        ],
+                      );
+                    })),
                 trailing:
                     const SizedBox.shrink(), // Hide default centered arrow
                 subtitle: Column(
@@ -12060,6 +12167,14 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                       )
                     ]),
                 children: [
+                  if (_loadingFullTrip)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  for (final stop
+                      in _stopsBeforeRide ?? const <Map<String, dynamic>>[])
+                    _outsideRideStop(stop, colors),
                   if (step.startStationName != null)
                     Container(
                         decoration: BoxDecoration(
@@ -12450,7 +12565,10 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
-                          )))
+                          ))),
+                  for (final stop
+                      in _stopsAfterRide ?? const <Map<String, dynamic>>[])
+                    _outsideRideStop(stop, colors)
                 ])));
   }
 
