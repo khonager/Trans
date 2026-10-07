@@ -4621,13 +4621,7 @@ class RoutesTabState extends State<RoutesTab>
   }
 
   void _closeTab(String id) {
-    final controller = _routeResultsScrollControllers.remove(id);
-    controller?.dispose();
-    _activeJourneyScrollControllers.remove(id)?.dispose();
-    _routeResultsScrollOffsets.remove(id);
-    _routeResultsSortSelections.remove(id);
-    _jointRouteContexts.remove(id);
-    _resetEarlierAlternativeScans(id);
+    _disposeTabResources(id);
     setState(() {
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -4635,6 +4629,28 @@ class RoutesTabState extends State<RoutesTab>
       }
     });
     _stopWakeAlarm();
+  }
+
+  void _closeOtherTabs(String id) {
+    if (!_tabs.any((tab) => tab.id == id)) return;
+    for (final tab in _tabs) {
+      if (tab.id != id) _disposeTabResources(tab.id);
+    }
+    setState(() {
+      _tabs.removeWhere((tab) => tab.id != id);
+      _activeTabId = id;
+    });
+    _stopWakeAlarm();
+  }
+
+  void _disposeTabResources(String id) {
+    final controller = _routeResultsScrollControllers.remove(id);
+    controller?.dispose();
+    _activeJourneyScrollControllers.remove(id)?.dispose();
+    _routeResultsScrollOffsets.remove(id);
+    _routeResultsSortSelections.remove(id);
+    _jointRouteContexts.remove(id);
+    _resetEarlierAlternativeScans(id);
   }
 
   bool _journeyMatches(Map<String, dynamic> item, Station from, Station to) {
@@ -8061,6 +8077,7 @@ class RoutesTabState extends State<RoutesTab>
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: () => _closeTab(tab.id),
+                      onLongPress: () => _closeOtherTabs(tab.id),
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
                         child: Icon(Icons.close,
