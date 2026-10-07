@@ -11401,6 +11401,9 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
   Widget _outsideRideStop(Map<String, dynamic> event, TransColors colors) {
     final stop = event['stop'];
     final name = stop is Map ? stop['name']?.toString() ?? '' : '';
+    final stopId = stop is Map ? stop['id']?.toString() : null;
+    final platform =
+        event['platform'] ?? (stop is Map ? stop['platform'] : null);
     final rawTime = event['departure'] ??
         event['arrival'] ??
         event['plannedDeparture'] ??
@@ -11409,19 +11412,29 @@ class _StepCardState extends State<_StepCard> with WidgetsBindingObserver {
     final timeText = time == null
         ? ''
         : '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-      leading: Icon(Icons.circle,
-          size: 10, color: colors.textSecondary.withValues(alpha: 0.55)),
-      title: Text(name,
-          style: TextStyle(
-              fontSize: 13,
-              color: colors.textSecondary.withValues(alpha: 0.65))),
-      trailing: Text(timeText,
-          style: TextStyle(
-              fontSize: 12,
-              color: colors.textSecondary.withValues(alpha: 0.65))),
+    return GestureDetector(
+      onLongPress: stopId == null || stopId.isEmpty
+          ? null
+          : () => widget.onShowStopDepartures(
+                stopId: stopId,
+                stopName: name,
+                date: time ?? widget.step.dateTime ?? DateTime.now(),
+                preferredPlatform: platform?.toString(),
+              ),
+      child: ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+        leading: Icon(Icons.circle,
+            size: 10, color: colors.textSecondary.withValues(alpha: 0.55)),
+        title: Text(name,
+            style: TextStyle(
+                fontSize: 13,
+                color: colors.textSecondary.withValues(alpha: 0.65))),
+        trailing: Text(timeText,
+            style: TextStyle(
+                fontSize: 12,
+                color: colors.textSecondary.withValues(alpha: 0.65))),
+      ),
     );
   }
 
