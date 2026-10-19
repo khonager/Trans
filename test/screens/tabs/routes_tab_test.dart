@@ -10,6 +10,7 @@ import 'package:trans/models/journey.dart';
 import 'package:trans/models/station.dart';
 import 'package:trans/screens/tabs/routes_tab.dart';
 import 'package:trans/services/supabase_service.dart';
+import 'package:trans/utils/journey_extension.dart';
 
 final _pullOrigin = Station(id: 'origin', name: 'Origin', type: 'station');
 
@@ -2069,5 +2070,44 @@ void main() {
       expect(find.byType(RefreshIndicator), findsNothing);
       expect(state.debugActiveJourneyRefreshCount, 0);
     });
+  });
+
+  testWidgets('route detail bottom plus starts from the route end',
+      (tester) async {
+    final state = await _pumpRoutesTab(tester);
+    state.debugOpenRouteTabs([
+      _routeTab(index: 0, activeJourney: _pullJourney(steps: 1)),
+    ]);
+    await tester.pump();
+
+    final add = find.byKey(const ValueKey('append-route-button'));
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add to route'), findsWidgets);
+    expect(find.text('Destination 0'), findsWidgets);
+    expect(find.text('Thu 3 Sep, 12:00'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('append-route-destination')), findsOneWidget);
+  });
+
+  test('a realtime update retains an appended section', () {
+    final original = _pullJourney(steps: 1);
+    final extended = original.copyWith(rawSource: {
+      'legs': [
+        {routeExtensionStartKey: true},
+      ],
+    });
+    final refreshed = original.copyWith(
+      arrival: original.arrival.add(const Duration(minutes: 5)),
+      rawSource: const {'legs': []},
+    );
+
+    final result = applyLivePlatformRefreshForTesting(extended, refreshed);
+
+    expect((result.rawSource['legs'] as List).first[routeExtensionStartKey],
+        isTrue);
+    expect(result.arrival, original.arrival);
   });
 }

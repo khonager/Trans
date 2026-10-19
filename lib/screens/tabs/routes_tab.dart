@@ -37,7 +37,9 @@ import 'package:trans/config/app_theme.dart';
 import 'package:trans/utils/app_error.dart';
 import 'package:trans/utils/format_utils.dart';
 import 'package:trans/utils/ride_progress.dart';
+import 'package:trans/utils/journey_extension.dart';
 import 'package:trans/utils/wake_location_policy.dart';
+import 'package:trans/widgets/append_route_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import '../joint_route_results_screen.dart';
@@ -1817,6 +1819,16 @@ Journey _mergeJourneyWithFreshRealtime(
   bool updateJourneyBounds = true,
   bool replaceRawSource = true,
 }) {
+  final hasExtension = (existing.rawSource['legs'] as List? ?? const [])
+      .any((leg) => leg is Map && leg[routeExtensionStartKey] == true);
+  final incomingHasExtension = (incoming.rawSource['legs'] as List? ?? const [])
+      .any((leg) => leg is Map && leg[routeExtensionStartKey] == true);
+  // A provider search can refresh a vehicle in a manually extended route,
+  // but it cannot replace the traveller's chosen section boundaries.
+  if (hasExtension && !incomingHasExtension) {
+    updateJourneyBounds = false;
+    replaceRawSource = false;
+  }
   final freshRideSteps =
       incoming.steps.where((step) => step.type == 'ride').toList();
   final hasMatchingStepShape = existing.steps.length == incoming.steps.length &&
@@ -1877,6 +1889,7 @@ Journey _mergeJourneyWithFreshRealtime(
   // Do not replace an itinerary merely because a same-key provider result has
   // an unexpected shape. This can happen when a transfer is no longer offered.
   if (!matchedRide && existing.steps.any((step) => step.type == 'ride')) {
+    if (hasExtension) return existing;
     return _preferJourneyWithMorePlatformDetail(existing, incoming);
   }
 
@@ -6144,6 +6157,106 @@ class RoutesTabState extends State<RoutesTab>
     });
   }
 
+  void _showAppendRouteSheet(RouteTab route) {
+    final current = route.activeJourney;
+    if (current == null) return;
+    final legs = current.rawSource['legs'] as List?;
+    final lastDestination = legs?.isNotEmpty == true && legs!.last is Map
+        ? (legs.last as Map)['destination']
+        : null;
+    final stationData = lastDestination is Map
+        ? Map<String, dynamic>.from(lastDestination)
+        : null;
+    final origin = stationData != null &&
+            (stationData['id']?.toString().isNotEmpty ?? false)
+        ? Station.fromJson(stationData)
+        : route.destination;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: TransColors.of(context).scaffoldBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      builder: (sheetContext) => SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * 0.9,
+        child: AppendRouteSheet(
+          origin: origin,
+          routeArrival: current.arrival,
+          search: (destination, when) async {
+            final data = await _searchJourneysForSettings(
+              origin,
+              destination,
+              settings: route.searchSettings.copyWith(
+                when: when,
+                isArrival: false,
+              ),
+              results: 15,
+            );
+            final journeys = <Journey>[];
+            for (final raw in data) {
+              try {
+                journeys.add(_createJourney(
+                  raw,
+                  destinationNameOverride: destination.name,
+                ));
+              } catch (_) {
+                // A malformed provider result should not hide valid options.
+              }
+            }
+            return journeys;
+          },
+          onAppend: (onward, destination) {
+            final tabIndex = _tabs.indexWhere((tab) => tab.id == route.id);
+            if (tabIndex < 0) return;
+            final latest = _tabs[tabIndex];
+            final base = latest.activeJourney;
+            if (base == null || onward.departure.isBefore(base.arrival)) {
+              return;
+            }
+            try {
+              final combined = _createJourney(
+                appendJourneyData(
+                  original: base.rawSource,
+                  onward: onward.rawSource,
+                ),
+                destinationNameOverride: destination.name,
+              );
+              setState(() {
+                _tabs[tabIndex] = latest.copyWith(
+                  title: destination.name,
+                  destination: destination,
+                  eta: DateFormat('HH:mm').format(combined.arrival),
+                  totalDuration:
+                      FormatUtils.formatDuration(combined.duration.inMinutes),
+                  activeJourney: combined,
+                  steps: combined.steps,
+                  source: combined.source,
+                  stack: _stackWithJourneyEntry(latest.stack, combined),
+                );
+              });
+              Navigator.pop(sheetContext);
+              _resetEarlierAlternativeScans(route.id);
+              _scheduleEarlierAlternativeScans(_tabs[tabIndex], combined);
+              unawaited(_enrichActiveJourneyPlatforms(route.id, combined));
+            } catch (_) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    Localizations.localeOf(context).languageCode == 'de'
+                        ? 'Route konnte nicht hinzugefügt werden.'
+                        : 'Could not add this route.',
+                  ),
+                ),
+              );
+            }
+          },
+        ),
+      ),
+    );
+  }
+
   void _showOnBoardOptions(
     BuildContext context,
     RouteTab route,
@@ -6503,6 +6616,12 @@ class RoutesTabState extends State<RoutesTab>
 
     for (var legIndex = 0; legIndex < legs.length; legIndex++) {
       final leg = legs[legIndex];
+      if (leg is Map && leg[routeExtensionStartKey] == true) {
+        // Keep a final access walk from the preceding section separate from
+        // the new section's first transfer.
+        flushTransferBuffer(null, null, null, null, null, null,
+            isFinalWalk: true);
+      }
       if (leg['line'] != null && leg['line']['name'] != null) {
         DateTime? dep, arr;
         DateTime? scheduledDep, scheduledArr;
@@ -6730,6 +6849,45 @@ class RoutesTabState extends State<RoutesTab>
       legs,
       destinationNameOverride: destinationNameOverride,
     );
+    for (var legIndex = legs.length - 1; legIndex >= 0; legIndex--) {
+      final leg = legs[legIndex];
+      if (leg is! Map || leg[routeExtensionStartKey] != true) continue;
+      final insertion = steps.indexWhere(
+        (step) => (step.legIndex ?? -1) >= legIndex,
+      );
+      if (insertion < 0 || legIndex == 0) continue;
+      final previousLeg = legs[legIndex - 1];
+      final previousArrival = previousLeg is Map
+          ? DateTime.tryParse((previousLeg['arrival'] ??
+                      previousLeg['plannedArrival'] ??
+                      '')
+                  .toString())
+              ?.toLocal()
+          : null;
+      final nextDeparture = DateTime.tryParse(
+        (leg['departure'] ?? leg['plannedDeparture'] ?? '').toString(),
+      )?.toLocal();
+      final gap = previousArrival != null && nextDeparture != null
+          ? nextDeparture.difference(previousArrival)
+          : Duration.zero;
+      final safeGap = gap.isNegative ? Duration.zero : gap;
+      steps.insert(
+        insertion,
+        JourneyStep(
+          type: 'extensionDivider',
+          line: '',
+          instruction: '',
+          duration: FormatUtils.formatDuration(safeGap.inMinutes),
+          departureTime: previousArrival == null
+              ? ''
+              : DateFormat('HH:mm').format(previousArrival),
+          arrivalTime: nextDeparture == null
+              ? ''
+              : DateFormat('HH:mm').format(nextDeparture),
+          dateTime: previousArrival,
+        ),
+      );
+    }
 
     DateTime? dep, arr;
     DateTime? pDep, pArr;
@@ -11109,92 +11267,140 @@ class RoutesTabState extends State<RoutesTab>
                   ]);
                 })),
             for (int i = 0; i < route.steps.length; i++) ...[
-              if (route.activeJourney?.branchStepIndex == i &&
-                  route.activeJourney?.parentJourney != null)
-                _buildReturnToParentButton(context, route),
-              _StepCard(
-                  step: () {
-                    final step = route.steps[i];
-                    final platformChange =
-                        transferPlatformChangeForStep(route.steps, i);
-                    if (platformChange == null) return step;
+              if (route.steps[i].type == 'extensionDivider')
+                _buildRouteExtensionDivider(context, route.steps[i]),
+              if (route.steps[i].type != 'extensionDivider') ...[
+                if (route.activeJourney?.branchStepIndex == i &&
+                    route.activeJourney?.parentJourney != null)
+                  _buildReturnToParentButton(context, route),
+                _StepCard(
+                    step: () {
+                      final step = route.steps[i];
+                      final platformChange =
+                          transferPlatformChangeForStep(route.steps, i);
+                      if (platformChange == null) return step;
 
-                    final l10n = AppLocalizations.of(context)!;
-                    String platformLabel(String platform) =>
-                        int.tryParse(platform) == null
-                            ? platform
-                            : l10n.platformShort(platform);
-                    return step.copyWith(
-                      instruction: l10n.switchPlatform(
-                        platformLabel(platformChange.fromPlatform),
-                        platformLabel(platformChange.toPlatform),
-                      ),
-                    );
-                  }(),
-                  isFirst: i == 0,
-                  currentPosition: _effectiveCurrentPosition,
-                  hasEarlierAlternative:
-                      _earlierAlternativeSteps[route.id]?.containsKey(i) ??
-                          false,
-                  alternativeHintSeen: _seenAlternativeHints
-                      .contains(_alternativeHintKey(route.id, i)),
-                  onAlternativeHintSeen: () =>
-                      _markAlternativeHintSeen(route.id, i),
-                  finalDestinationId: route.destination.id,
-                  onShowStopDepartures: ({
-                    required String stopId,
-                    required String stopName,
-                    required DateTime date,
-                    String? preferredPlatform,
-                  }) =>
-                      _showStopDeparturesForStop(
-                        stopId: stopId,
-                        stopName: stopName,
-                        date: date,
-                        preferredPlatform: preferredPlatform,
-                      ),
-                  onOpenAlternatives: (stationId, time,
-                          {double? lat,
-                          double? lng,
-                          String? name,
-                          bool isIntermediateStop = false}) =>
-                      _showAlternatives(
-                          context, stationId, route.destination, time,
-                          lat: lat,
-                          lng: lng,
-                          stationName: name,
-                          highlightKey: _earlierAlternativeSteps[route.id]?[i],
-                          earliestDeparture:
-                              earliestCatchableDeparture(route.steps, i),
-                          currentTripId: route.steps[i].tripId,
-                          currentLine: route.steps[i].line,
-                          initialResults: _preloadedAlternatives[
-                              _alternativeHintKey(route.id, i)],
-                          branchFrom: route.activeJourney,
-                          branchRideLegIndex: route.steps[i].legIndex,
-                          branchIntermediateStopId:
-                              isIntermediateStop ? stationId : null,
-                          branchIntermediateStopTime: isIntermediateStop ? time : null,
-                          onBoardRoute: route,
-                          onBoardStep: route.steps[i]),
-                  onOpenOnBoardOptions: () => _showOnBoardOptions(context, route, route.steps[i]),
-                  onIntermediateAlarmLongPress: (stopName, {required int stopIndex, double? targetLat, double? targetLng, double? originLat, double? originLng}) => _toggleIntermediateStopAlarm(
-                        route,
-                        route.steps[i],
-                        stopIndex: stopIndex,
-                        stopName: stopName,
-                        targetLat: targetLat,
-                        targetLng: targetLng,
-                        originLat: originLat,
-                        originLng: originLng,
-                      ),
-                  onChat: (line) => _showChat(context, line),
-                  onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
-                  onMapTap: () => _openMap(route, focusStep: route.steps[i]),
-                  alarmStopsBefore: _alarmStopsBefore,
-                  showTrainNumbers: widget.showTrainNumbers),
+                      final l10n = AppLocalizations.of(context)!;
+                      String platformLabel(String platform) =>
+                          int.tryParse(platform) == null
+                              ? platform
+                              : l10n.platformShort(platform);
+                      return step.copyWith(
+                        instruction: l10n.switchPlatform(
+                          platformLabel(platformChange.fromPlatform),
+                          platformLabel(platformChange.toPlatform),
+                        ),
+                      );
+                    }(),
+                    isFirst: i == 0,
+                    currentPosition: _effectiveCurrentPosition,
+                    hasEarlierAlternative:
+                        _earlierAlternativeSteps[route.id]?.containsKey(i) ??
+                            false,
+                    alternativeHintSeen: _seenAlternativeHints
+                        .contains(_alternativeHintKey(route.id, i)),
+                    onAlternativeHintSeen: () =>
+                        _markAlternativeHintSeen(route.id, i),
+                    finalDestinationId: route.destination.id,
+                    onShowStopDepartures: ({
+                      required String stopId,
+                      required String stopName,
+                      required DateTime date,
+                      String? preferredPlatform,
+                    }) =>
+                        _showStopDeparturesForStop(
+                          stopId: stopId,
+                          stopName: stopName,
+                          date: date,
+                          preferredPlatform: preferredPlatform,
+                        ),
+                    onOpenAlternatives: (stationId, time,
+                            {double? lat,
+                            double? lng,
+                            String? name,
+                            bool isIntermediateStop = false}) =>
+                        _showAlternatives(context, stationId, route.destination, time,
+                            lat: lat,
+                            lng: lng,
+                            stationName: name,
+                            highlightKey: _earlierAlternativeSteps[route.id]
+                                ?[i],
+                            earliestDeparture:
+                                earliestCatchableDeparture(route.steps, i),
+                            currentTripId: route.steps[i].tripId,
+                            currentLine: route.steps[i].line,
+                            initialResults: _preloadedAlternatives[
+                                _alternativeHintKey(route.id, i)],
+                            branchFrom: route.activeJourney,
+                            branchRideLegIndex: route.steps[i].legIndex,
+                            branchIntermediateStopId: isIntermediateStop ? stationId : null,
+                            branchIntermediateStopTime: isIntermediateStop ? time : null,
+                            onBoardRoute: route,
+                            onBoardStep: route.steps[i]),
+                    onOpenOnBoardOptions: () => _showOnBoardOptions(context, route, route.steps[i]),
+                    onIntermediateAlarmLongPress: (stopName, {required int stopIndex, double? targetLat, double? targetLng, double? originLat, double? originLng}) => _toggleIntermediateStopAlarm(
+                          route,
+                          route.steps[i],
+                          stopIndex: stopIndex,
+                          stopName: stopName,
+                          targetLat: targetLat,
+                          targetLng: targetLng,
+                          originLat: originLat,
+                          originLng: originLng,
+                        ),
+                    onChat: (line) => _showChat(context, line),
+                    onAlarmToggle: () => _toggleStepAlarm(route, route.steps[i]),
+                    onMapTap: () => _openMap(route, focusStep: route.steps[i]),
+                    alarmStopsBefore: _alarmStopsBefore,
+                    showTrainNumbers: widget.showTrainNumbers),
+              ],
             ],
+            if (route.activeJourney != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 16),
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('append-route-button'),
+                    onPressed: () => _showAppendRouteSheet(route),
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: Text(
+                      Localizations.localeOf(context).languageCode == 'de'
+                          ? 'Route hinzufügen'
+                          : 'Add to route',
+                    ),
+                  ),
+                ),
+              ),
           ]),
+    );
+  }
+
+  Widget _buildRouteExtensionDivider(BuildContext context, JourneyStep step) {
+    final colors = TransColors.of(context);
+    final german = Localizations.localeOf(context).languageCode == 'de';
+    final timing = step.departureTime.isNotEmpty && step.arrivalTime.isNotEmpty
+        ? '${step.departureTime} – ${step.arrivalTime} · ${step.duration}'
+        : step.duration;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(children: [
+        Expanded(child: Divider(color: colors.stepTransferText, thickness: 2)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Column(children: [
+            Text(
+              german ? 'Nächster Abschnitt' : 'Next section',
+              style: TextStyle(
+                color: colors.stepTransferText,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(timing,
+                style: TextStyle(color: colors.stepTransferText, fontSize: 12)),
+          ]),
+        ),
+        Expanded(child: Divider(color: colors.stepTransferText, thickness: 2)),
+      ]),
     );
   }
 
