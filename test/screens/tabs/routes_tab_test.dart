@@ -2064,7 +2064,7 @@ void main() {
       await tester.pump();
       expect(find.byType(RefreshIndicator), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.tap(find.byIcon(Icons.add_circle_outline).first);
       await tester.pumpAndSettle();
 
       expect(find.byType(RefreshIndicator), findsNothing);
@@ -2085,11 +2085,80 @@ void main() {
     await tester.tap(add);
     await tester.pumpAndSettle();
 
-    expect(find.text('Add to route'), findsWidgets);
-    expect(find.text('Destination 0'), findsWidgets);
-    expect(find.text('Thu 3 Sep, 12:00'), findsOneWidget);
+    final from = tester.widget<TextField>(
+      find.byKey(const ValueKey('route-search-field-from')),
+    );
+    final to = tester.widget<TextField>(
+      find.byKey(const ValueKey('route-search-field-to')),
+    );
+    expect(from.controller!.text, 'Destination 0');
+    expect(to.controller!.text, isEmpty);
+    expect(find.textContaining('3.9'), findsOneWidget);
+    expect(find.text('Favorites'), findsWidgets);
     expect(
-        find.byKey(const ValueKey('append-route-destination')), findsOneWidget);
+        find.byKey(const ValueKey('append-route-destination')), findsNothing);
+  });
+
+  testWidgets('a normal search result appends to the original route',
+      (tester) async {
+    final state = await _pumpRoutesTab(tester);
+    final endStation = Station(id: 'destination-0', name: 'Destination 0');
+    final onwardDestination = Station(id: 'c', name: 'C');
+    final base = _pullJourney(steps: 1).copyWith(
+      arrival: DateTime(2026, 9, 3, 10, 30),
+      duration: const Duration(minutes: 30),
+      rawSource: {
+        'source': 'test',
+        'legs': [
+          {
+            'origin': {'id': 'origin', 'name': 'Origin'},
+            'destination': {'id': 'destination-0', 'name': 'Destination 0'},
+            'departure': '2026-09-03T10:00:00',
+            'arrival': '2026-09-03T10:30:00',
+            'line': {'name': 'RB 1'},
+          },
+        ],
+      },
+    );
+    state.debugOpenRouteTabs([_routeTab(index: 0, activeJourney: base)]);
+    await tester.pump();
+    final add = find.byKey(const ValueKey('append-route-button'));
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pump();
+
+    final onward = _pullJourney(steps: 1).copyWith(
+      departure: DateTime(2026, 9, 3, 10, 45),
+      arrival: DateTime(2026, 9, 3, 11),
+      duration: const Duration(minutes: 15),
+      rawSource: {
+        'source': 'test',
+        'legs': [
+          {
+            'origin': {'id': 'destination-0', 'name': 'Destination 0'},
+            'destination': {'id': 'c', 'name': 'C'},
+            'departure': '2026-09-03T10:45:00',
+            'arrival': '2026-09-03T11:00:00',
+            'line': {'name': 'Bus 2'},
+          },
+        ],
+      },
+    );
+    state.debugOpenAppendSearchResults(_routeTab(
+      index: 1,
+      candidates: [onward],
+    ).copyWith(origin: endStation, destination: onwardDestination));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'results view layout');
+
+    await tester.tap(find.text('10:45 - 11:00').first);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'combined route layout');
+
+    expect(find.text('10:00 - 11:00'), findsWidgets);
+    expect(find.text('Next section'), findsOneWidget);
+    expect(find.text('Bus 2'), findsWidgets);
+    expect(find.byKey(const ValueKey('append-route-button')), findsOneWidget);
   });
 
   test('a realtime update retains an appended section', () {

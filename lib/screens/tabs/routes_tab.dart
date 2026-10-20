@@ -39,7 +39,6 @@ import 'package:trans/utils/format_utils.dart';
 import 'package:trans/utils/ride_progress.dart';
 import 'package:trans/utils/journey_extension.dart';
 import 'package:trans/utils/wake_location_policy.dart';
-import 'package:trans/widgets/append_route_sheet.dart';
 import '../../l10n/app_localizations.dart';
 import '../map_screen.dart';
 import '../joint_route_results_screen.dart';
@@ -1980,6 +1979,8 @@ class RoutesTabState extends State<RoutesTab>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final List<RouteTab> _tabs = [];
   String? _activeTabId;
+  String? _appendToRouteId;
+  String? _appendResultsTabId;
 
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
@@ -2129,6 +2130,8 @@ class RoutesTabState extends State<RoutesTab>
 
   void routeToSharedPlace(Station station) {
     setState(() {
+      _appendToRouteId = null;
+      _appendResultsTabId = null;
       _activeTabId = null;
       _toStation = station;
       _toIsCapturedCurrentLocation = false;
@@ -4636,6 +4639,10 @@ class RoutesTabState extends State<RoutesTab>
   void _closeTab(String id) {
     _disposeTabResources(id);
     setState(() {
+      if (_appendToRouteId == id || _appendResultsTabId == id) {
+        _appendToRouteId = null;
+        _appendResultsTabId = null;
+      }
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
         _activeTabId = _tabs.isNotEmpty ? _tabs.last.id : null;
@@ -4650,6 +4657,10 @@ class RoutesTabState extends State<RoutesTab>
       if (tab.id != id) _disposeTabResources(tab.id);
     }
     setState(() {
+      if (_appendToRouteId != null) {
+        _appendToRouteId = null;
+        _appendResultsTabId = null;
+      }
       _tabs.removeWhere((tab) => tab.id != id);
       _activeTabId = id;
     });
@@ -4687,6 +4698,16 @@ class RoutesTabState extends State<RoutesTab>
         ..clear()
         ..addAll(tabs);
       _activeTabId = activeId ?? (tabs.isEmpty ? null : tabs.first.id);
+    });
+  }
+
+  /// Supplies the normal results view after an append search in widget tests.
+  @visibleForTesting
+  void debugOpenAppendSearchResults(RouteTab resultsTab) {
+    setState(() {
+      _tabs.add(resultsTab);
+      _appendResultsTabId = resultsTab.id;
+      _activeTabId = resultsTab.id;
     });
   }
 
@@ -6157,7 +6178,7 @@ class RoutesTabState extends State<RoutesTab>
     });
   }
 
-  void _showAppendRouteSheet(RouteTab route) {
+  void _startAppendRouteSearch(RouteTab route) {
     final current = route.activeJourney;
     if (current == null) return;
     final legs = current.rawSource['legs'] as List?;
@@ -6171,90 +6192,105 @@ class RoutesTabState extends State<RoutesTab>
             (stationData['id']?.toString().isNotEmpty ?? false)
         ? Station.fromJson(stationData)
         : route.destination;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: TransColors.of(context).scaffoldBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      builder: (sheetContext) => SizedBox(
-        height: MediaQuery.sizeOf(sheetContext).height * 0.9,
-        child: AppendRouteSheet(
-          origin: origin,
-          routeArrival: current.arrival,
-          search: (destination, when) async {
-            final data = await _searchJourneysForSettings(
-              origin,
-              destination,
-              settings: route.searchSettings.copyWith(
-                when: when,
-                isArrival: false,
-              ),
-              results: 15,
-            );
-            final journeys = <Journey>[];
-            for (final raw in data) {
-              try {
-                journeys.add(_createJourney(
-                  raw,
-                  destinationNameOverride: destination.name,
-                ));
-              } catch (_) {
-                // A malformed provider result should not hide valid options.
-              }
-            }
-            return journeys;
-          },
-          onAppend: (onward, destination) {
-            final tabIndex = _tabs.indexWhere((tab) => tab.id == route.id);
-            if (tabIndex < 0) return;
-            final latest = _tabs[tabIndex];
-            final base = latest.activeJourney;
-            if (base == null || onward.departure.isBefore(base.arrival)) {
-              return;
-            }
-            try {
-              final combined = _createJourney(
-                appendJourneyData(
-                  original: base.rawSource,
-                  onward: onward.rawSource,
-                ),
-                destinationNameOverride: destination.name,
-              );
-              setState(() {
-                _tabs[tabIndex] = latest.copyWith(
-                  title: destination.name,
-                  destination: destination,
-                  eta: DateFormat('HH:mm').format(combined.arrival),
-                  totalDuration:
-                      FormatUtils.formatDuration(combined.duration.inMinutes),
-                  activeJourney: combined,
-                  steps: combined.steps,
-                  source: combined.source,
-                  stack: _stackWithJourneyEntry(latest.stack, combined),
-                );
-              });
-              Navigator.pop(sheetContext);
-              _resetEarlierAlternativeScans(route.id);
-              _scheduleEarlierAlternativeScans(_tabs[tabIndex], combined);
-              unawaited(_enrichActiveJourneyPlatforms(route.id, combined));
-            } catch (_) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    Localizations.localeOf(context).languageCode == 'de'
-                        ? 'Route konnte nicht hinzugefügt werden.'
-                        : 'Could not add this route.',
-                  ),
-                ),
-              );
-            }
-          },
-        ),
-      ),
+    _setJointPlanningEnabled(false);
+    setState(() {
+      _appendToRouteId = route.id;
+      _appendResultsTabId = null;
+      _activeTabId = null;
+      _fromStation = origin;
+      _fromUsesCurrentLocation = false;
+      _fromController.text = origin.name;
+      _toStation = null;
+      _toIsCapturedCurrentLocation = false;
+      _toController.clear();
+      _selectedDate = DateTime(
+        current.arrival.year,
+        current.arrival.month,
+        current.arrival.day,
+      );
+      _selectedTime = TimeOfDay.fromDateTime(current.arrival);
+      _isArrival = false;
+      _activeSearchField = '';
+      _suggestions = [];
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  void _appendSelectedJourney(RouteTab resultsTab, Journey onward) {
+    final originalId = _appendToRouteId;
+    if (originalId == null) return;
+    final originalIndex = _tabs.indexWhere((tab) => tab.id == originalId);
+    if (originalIndex < 0) return;
+    final original = _tabs[originalIndex];
+    final base = original.activeJourney;
+    if (base == null) return;
+
+    final legs = base.rawSource['legs'] as List?;
+    final lastDestination = legs?.isNotEmpty == true && legs!.last is Map
+        ? (legs.last as Map)['destination']
+        : null;
+    final endData = lastDestination is Map ? lastDestination : null;
+
+    final startsAtRouteEnd = _sameTransitStation(
+      endData?['id']?.toString() ?? original.destination.id,
+      endData?['name']?.toString() ?? original.destination.name,
+      resultsTab.origin?.id,
+      resultsTab.origin?.name,
     );
+    if (!startsAtRouteEnd || onward.departure.isBefore(base.arrival)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          Localizations.localeOf(context).languageCode == 'de'
+              ? 'Die neue Route muss am bisherigen Ziel starten und nach der Ankunft abfahren.'
+              : 'The new route must start at the current destination and depart after arrival.',
+        ),
+      ));
+      return;
+    }
+
+    try {
+      final combined = _createJourney(
+        appendJourneyData(
+          original: base.rawSource,
+          onward: onward.rawSource,
+        ),
+        destinationNameOverride: resultsTab.destination.name,
+      );
+      setState(() {
+        final latestIndex = _tabs.indexWhere((tab) => tab.id == originalId);
+        if (latestIndex < 0) return;
+        final latest = _tabs[latestIndex];
+        _tabs[latestIndex] = latest.copyWith(
+          title: resultsTab.destination.name,
+          destination: resultsTab.destination,
+          eta: DateFormat('HH:mm').format(combined.arrival),
+          totalDuration:
+              FormatUtils.formatDuration(combined.duration.inMinutes),
+          activeJourney: combined,
+          steps: combined.steps,
+          source: combined.source,
+          stack: _stackWithJourneyEntry(latest.stack, combined),
+        );
+        _tabs.removeWhere((tab) => tab.id == resultsTab.id);
+        _activeTabId = originalId;
+        _appendToRouteId = null;
+        _appendResultsTabId = null;
+      });
+      _disposeTabResources(resultsTab.id);
+      _resetEarlierAlternativeScans(originalId);
+      final updated = _tabs.firstWhere((tab) => tab.id == originalId);
+      _scheduleEarlierAlternativeScans(updated, combined);
+      unawaited(_enrichActiveJourneyPlatforms(originalId, combined));
+      unawaited(_updateJourneyDetectionMonitoring());
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          Localizations.localeOf(context).languageCode == 'de'
+              ? 'Route konnte nicht hinzugefügt werden.'
+              : 'Could not add this route.',
+        ),
+      ));
+    }
   }
 
   void _showOnBoardOptions(
@@ -7455,6 +7491,7 @@ class RoutesTabState extends State<RoutesTab>
               origin: resolvedFrom,
               destination: _toStation,
               searchSettings: searchSettings);
+          if (_appendToRouteId != null) _appendResultsTabId = currentTabId;
           TransportApi.addSyntheticDebugLog(
             'ui: created tab id=$currentTabId token=$searchToken partial=${partial.length}',
           );
@@ -7486,6 +7523,7 @@ class RoutesTabState extends State<RoutesTab>
                 origin: resolvedFrom,
                 destination: _toStation,
                 searchSettings: searchSettings);
+            if (_appendToRouteId != null) _appendResultsTabId = currentTabId;
             TransportApi.addSyntheticDebugLog(
               'ui: created tab from ${late ? 'late ' : ''}final id=$currentTabId token=$searchToken results=${res.length}',
             );
@@ -8166,8 +8204,11 @@ class RoutesTabState extends State<RoutesTab>
                             padding: const EdgeInsets.only(bottom: 20),
                             child: IconButton(
                                 icon: const Icon(Icons.add_circle_outline),
-                                onPressed: () =>
-                                    setState(() => _activeTabId = null)));
+                                onPressed: () => setState(() {
+                                      _appendToRouteId = null;
+                                      _appendResultsTabId = null;
+                                      _activeTabId = null;
+                                    })));
                       }
                       return _buildTabItem(_tabs[idx], colors);
                     }))),
@@ -8606,10 +8647,19 @@ class RoutesTabState extends State<RoutesTab>
                                     final picked = await showDatePicker(
                                         context: context,
                                         initialDate: _selectedDate ?? now,
-                                        firstDate: now
-                                            .subtract(const Duration(days: 30)),
-                                        lastDate:
-                                            now.add(const Duration(days: 90)));
+                                        firstDate: (_selectedDate != null &&
+                                                _selectedDate!.isBefore(
+                                                    now.subtract(const Duration(
+                                                        days: 30))))
+                                            ? _selectedDate!
+                                            : now.subtract(
+                                                const Duration(days: 30)),
+                                        lastDate: (_selectedDate != null &&
+                                                _selectedDate!.isAfter(now.add(
+                                                    const Duration(days: 90))))
+                                            ? _selectedDate!
+                                            : now
+                                                .add(const Duration(days: 90)));
                                     if (picked != null) {
                                       setState(() {
                                         _selectedDate = picked;
@@ -8630,11 +8680,15 @@ class RoutesTabState extends State<RoutesTab>
                                               size: 16,
                                               color: colors.sectionHeader),
                                           const SizedBox(width: 6),
-                                          Text(
-                                              "${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}",
-                                              style: TextStyle(
-                                                  color: colors.textPrimary,
-                                                  fontWeight: FontWeight.bold))
+                                          Flexible(
+                                            child: Text(
+                                                "${_selectedDate!.day}.${_selectedDate!.month}  ${_selectedTime?.format(context) ?? ''}",
+                                                softWrap: true,
+                                                style: TextStyle(
+                                                    color: colors.textPrimary,
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                          )
                                         ])
                                       : Row(children: [
                                           Icon(Icons.calendar_today,
@@ -11033,6 +11087,14 @@ class RoutesTabState extends State<RoutesTab>
         key: ValueKey<String>('route-results-${route.id}'),
         candidates: route.candidates!,
         onSelect: (journey) {
+          if (_appendToRouteId != null && _appendResultsTabId == route.id) {
+            final selectedJourney = _bestCurrentJourneyVersion(
+              journey,
+              route.candidates!,
+            );
+            _appendSelectedJourney(route, selectedJourney);
+            return;
+          }
           Journey? selectedJourneyForEnrichment;
           setState(() {
             final idx = _tabs.indexWhere((t) => t.id == route.id);
@@ -11359,15 +11421,14 @@ class RoutesTabState extends State<RoutesTab>
               Center(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 16),
-                  child: OutlinedButton.icon(
+                  child: IconButton(
                     key: const ValueKey('append-route-button'),
-                    onPressed: () => _showAppendRouteSheet(route),
+                    tooltip:
+                        Localizations.localeOf(context).languageCode == 'de'
+                            ? 'Route hinzufügen'
+                            : 'Add to route',
+                    onPressed: () => _startAppendRouteSearch(route),
                     icon: const Icon(Icons.add_circle_outline),
-                    label: Text(
-                      Localizations.localeOf(context).languageCode == 'de'
-                          ? 'Route hinzufügen'
-                          : 'Add to route',
-                    ),
                   ),
                 ),
               ),

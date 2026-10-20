@@ -1414,13 +1414,19 @@ class _JourneyCard extends StatelessWidget {
                       Row(
                         children: [
                           if (journey.isCancelled) ...[
-                            Text(
-                              "$depStr - $arrStr",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: colors.textSecondary,
-                                decoration: TextDecoration.lineThrough,
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  "$depStr - $arrStr",
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: colors.textSecondary,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
                               ),
                             ),
                             Padding(
@@ -1435,57 +1441,62 @@ class _JourneyCard extends StatelessWidget {
                               ),
                             )
                           ] else
-                            Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: depStr,
-                                    style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: colors.textPrimary),
-                                  ),
-                                  if (journey.departureDelay != 0)
-                                    TextSpan(
-                                      text:
-                                          " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: journey.departureDelay > 0
-                                            ? Colors.red
-                                            : Colors.green,
+                            Flexible(
+                                child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: depStr,
+                                            style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: colors.textPrimary),
+                                          ),
+                                          if (journey.departureDelay != 0)
+                                            TextSpan(
+                                              text:
+                                                  " ${journey.departureDelay > 0 ? '+' : ''}${journey.departureDelay}",
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color:
+                                                    journey.departureDelay > 0
+                                                        ? Colors.red
+                                                        : Colors.green,
+                                              ),
+                                            ),
+                                          TextSpan(
+                                            text: " - ",
+                                            style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: colors.textPrimary),
+                                          ),
+                                          TextSpan(
+                                            text: arrStr,
+                                            style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: colors.textPrimary),
+                                          ),
+                                          if (journey.arrivalDelay != 0)
+                                            TextSpan(
+                                              text:
+                                                  " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: journey.arrivalDelay > 0
+                                                    ? Colors.red
+                                                    : Colors.green,
+                                              ),
+                                            ),
+                                        ],
                                       ),
-                                    ),
-                                  TextSpan(
-                                    text: " - ",
-                                    style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: colors.textPrimary),
-                                  ),
-                                  TextSpan(
-                                    text: arrStr,
-                                    style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: colors.textPrimary),
-                                  ),
-                                  if (journey.arrivalDelay != 0)
-                                    TextSpan(
-                                      text:
-                                          " ${journey.arrivalDelay > 0 ? '+' : ''}${journey.arrivalDelay}",
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: journey.arrivalDelay > 0
-                                            ? Colors.red
-                                            : Colors.green,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
+                                    ))),
                         ],
                       ),
                       const SizedBox(height: 4),
