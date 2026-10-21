@@ -1981,6 +1981,7 @@ class RoutesTabState extends State<RoutesTab>
   String? _activeTabId;
   String? _appendToRouteId;
   String? _appendResultsTabId;
+  Station? _appendOrigin;
 
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
@@ -2132,6 +2133,7 @@ class RoutesTabState extends State<RoutesTab>
     setState(() {
       _appendToRouteId = null;
       _appendResultsTabId = null;
+      _appendOrigin = null;
       _activeTabId = null;
       _toStation = station;
       _toIsCapturedCurrentLocation = false;
@@ -4642,6 +4644,7 @@ class RoutesTabState extends State<RoutesTab>
       if (_appendToRouteId == id || _appendResultsTabId == id) {
         _appendToRouteId = null;
         _appendResultsTabId = null;
+        _appendOrigin = null;
       }
       _tabs.removeWhere((t) => t.id == id);
       if (_activeTabId == id) {
@@ -4660,6 +4663,7 @@ class RoutesTabState extends State<RoutesTab>
       if (_appendToRouteId != null) {
         _appendToRouteId = null;
         _appendResultsTabId = null;
+        _appendOrigin = null;
       }
       _tabs.removeWhere((tab) => tab.id != id);
       _activeTabId = id;
@@ -6196,6 +6200,7 @@ class RoutesTabState extends State<RoutesTab>
     setState(() {
       _appendToRouteId = route.id;
       _appendResultsTabId = null;
+      _appendOrigin = origin;
       _activeTabId = null;
       _fromStation = origin;
       _fromUsesCurrentLocation = false;
@@ -6225,24 +6230,32 @@ class RoutesTabState extends State<RoutesTab>
     final base = original.activeJourney;
     if (base == null) return;
 
-    final legs = base.rawSource['legs'] as List?;
-    final lastDestination = legs?.isNotEmpty == true && legs!.last is Map
-        ? (legs.last as Map)['destination']
-        : null;
-    final endData = lastDestination is Map ? lastDestination : null;
-
+    final appendOrigin = _appendOrigin;
     final startsAtRouteEnd = _sameTransitStation(
-      endData?['id']?.toString() ?? original.destination.id,
-      endData?['name']?.toString() ?? original.destination.name,
+      appendOrigin?.id,
+      appendOrigin?.name,
       resultsTab.origin?.id,
       resultsTab.origin?.name,
     );
-    if (!startsAtRouteEnd || onward.departure.isBefore(base.arrival)) {
+    if (!startsAtRouteEnd) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
           Localizations.localeOf(context).languageCode == 'de'
-              ? 'Die neue Route muss am bisherigen Ziel starten und nach der Ankunft abfahren.'
-              : 'The new route must start at the current destination and depart after arrival.',
+              ? 'Die neue Route muss am bisherigen Ziel starten.'
+              : 'The new route must start at the current destination.',
+        ),
+      ));
+      return;
+    }
+    if (!canCatchOnwardJourney(
+      previousArrival: base.arrival,
+      onward: onward.rawSource,
+    )) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          Localizations.localeOf(context).languageCode == 'de'
+              ? 'Diese Verbindung fährt zu früh ab, um sie nach der Ankunft zu erreichen.'
+              : 'This connection leaves too early to catch after arrival.',
         ),
       ));
       return;
@@ -6275,6 +6288,7 @@ class RoutesTabState extends State<RoutesTab>
         _activeTabId = originalId;
         _appendToRouteId = null;
         _appendResultsTabId = null;
+        _appendOrigin = null;
       });
       _disposeTabResources(resultsTab.id);
       _resetEarlierAlternativeScans(originalId);
@@ -8207,6 +8221,7 @@ class RoutesTabState extends State<RoutesTab>
                                 onPressed: () => setState(() {
                                       _appendToRouteId = null;
                                       _appendResultsTabId = null;
+                                      _appendOrigin = null;
                                       _activeTabId = null;
                                     })));
                       }
@@ -11439,6 +11454,7 @@ class RoutesTabState extends State<RoutesTab>
   Widget _buildRouteExtensionDivider(BuildContext context, JourneyStep step) {
     final colors = TransColors.of(context);
     final german = Localizations.localeOf(context).languageCode == 'de';
+    final hasBreak = step.duration != '0 min';
     final timing = step.departureTime.isNotEmpty && step.arrivalTime.isNotEmpty
         ? '${step.departureTime} – ${step.arrivalTime} · ${step.duration}'
         : step.duration;
@@ -11456,8 +11472,10 @@ class RoutesTabState extends State<RoutesTab>
                 fontWeight: FontWeight.bold,
               ),
             ),
-            Text(timing,
-                style: TextStyle(color: colors.stepTransferText, fontSize: 12)),
+            if (hasBreak)
+              Text(timing,
+                  style:
+                      TextStyle(color: colors.stepTransferText, fontSize: 12)),
           ]),
         ),
         Expanded(child: Divider(color: colors.stepTransferText, thickness: 2)),

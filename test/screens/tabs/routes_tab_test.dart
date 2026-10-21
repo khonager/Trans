@@ -2105,7 +2105,7 @@ void main() {
     final endStation = Station(id: 'destination-0', name: 'Destination 0');
     final onwardDestination = Station(id: 'c', name: 'C');
     final base = _pullJourney(steps: 1).copyWith(
-      arrival: DateTime(2026, 9, 3, 10, 30),
+      arrival: DateTime(2026, 9, 3, 10, 30, 30),
       duration: const Duration(minutes: 30),
       rawSource: {
         'source': 'test',
@@ -2114,7 +2114,7 @@ void main() {
             'origin': {'id': 'origin', 'name': 'Origin'},
             'destination': {'id': 'destination-0', 'name': 'Destination 0'},
             'departure': '2026-09-03T10:00:00',
-            'arrival': '2026-09-03T10:30:00',
+            'arrival': '2026-09-03T10:30:30',
             'line': {'name': 'RB 1'},
           },
         ],
@@ -2128,14 +2128,21 @@ void main() {
     await tester.pump();
 
     final onward = _pullJourney(steps: 1).copyWith(
-      departure: DateTime(2026, 9, 3, 10, 45),
+      departure: DateTime(2026, 9, 3, 10, 25),
       arrival: DateTime(2026, 9, 3, 11),
-      duration: const Duration(minutes: 15),
+      duration: const Duration(minutes: 35),
       rawSource: {
         'source': 'test',
         'legs': [
           {
             'origin': {'id': 'destination-0', 'name': 'Destination 0'},
+            'destination': {'id': 'boarding', 'name': 'Bus stop'},
+            'departure': '2026-09-03T10:25:00',
+            'arrival': '2026-09-03T10:35:00',
+            'mode': 'WALK',
+          },
+          {
+            'origin': {'id': 'boarding', 'name': 'Bus stop'},
             'destination': {'id': 'c', 'name': 'C'},
             'departure': '2026-09-03T10:45:00',
             'arrival': '2026-09-03T11:00:00',
@@ -2151,12 +2158,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: 'results view layout');
 
-    await tester.tap(find.text('10:45 - 11:00').first);
+    await tester.tap(find.text('10:25 - 11:00').first);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: 'combined route layout');
 
     expect(find.text('10:00 - 11:00'), findsWidgets);
     expect(find.text('Next section'), findsOneWidget);
+    expect(find.textContaining('10:30 – 10:25'), findsNothing);
     expect(find.text('Bus 2'), findsWidgets);
     expect(find.byKey(const ValueKey('append-route-button')), findsOneWidget);
   });

@@ -12,6 +12,56 @@ Map<String, dynamic> leg(
     };
 
 void main() {
+  test('accepts a provider walk starting early when the bus is catchable', () {
+    final onward = {
+      'legs': [
+        {
+          'departure': '2026-10-19T09:25:00',
+          'arrival': '2026-10-19T09:35:00',
+          'mode': 'WALK',
+        },
+        leg('B', 'C', '2026-10-19T09:45:00', '2026-10-19T10:15:00'),
+      ],
+    };
+
+    expect(
+      canCatchOnwardJourney(
+        previousArrival: DateTime(2026, 10, 19, 9, 30),
+        onward: onward,
+      ),
+      isTrue,
+    );
+    expect(
+      canCatchOnwardJourney(
+        previousArrival: DateTime(2026, 10, 19, 9, 36),
+        onward: onward,
+      ),
+      isFalse,
+    );
+  });
+
+  test('compares times at the minute precision used by search', () {
+    final onward = {
+      'legs': [
+        leg('B', 'C', '2026-10-19T09:30:00', '2026-10-19T10:00:00'),
+      ],
+    };
+    expect(
+      canCatchOnwardJourney(
+        previousArrival: DateTime(2026, 10, 19, 9, 30, 45),
+        onward: onward,
+      ),
+      isTrue,
+    );
+    expect(
+      canCatchOnwardJourney(
+        previousArrival: DateTime(2026, 10, 19, 9, 31),
+        onward: onward,
+      ),
+      isFalse,
+    );
+  });
+
   test('appends legs and keeps every section boundary', () {
     final first = {
       'source': 'motis',
