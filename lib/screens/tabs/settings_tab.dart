@@ -22,6 +22,7 @@ import '../../utils/app_error.dart';
 import '../../models/joint_journey.dart';
 import '../../models/journey_sharing.dart';
 import '../changelog_screen.dart';
+import '../tutorial_screen.dart';
 import '../../widgets/privacy_level_tutorial.dart';
 import '../../widgets/togetherness_slider.dart';
 import '../../widgets/loading_status.dart';
@@ -2332,6 +2333,25 @@ class _SettingsTabState extends State<SettingsTab> {
                 ],
               ),
               const SizedBox(height: 30),
+
+              _buildSection(context, [
+                ListTile(
+                  key: const ValueKey('open-app-tutorial'),
+                  leading: Icon(Icons.school_outlined,
+                      color: colors.settingsHeader),
+                  title: Text(isGerman ? 'Tutorial öffnen' : 'Open tutorial',
+                      style: TextStyle(color: colors.textPrimary)),
+                  subtitle: Text(
+                    isGerman
+                        ? 'Alle Funktionen entdecken – in deinem Tempo'
+                        : 'Explore every feature at your own pace',
+                    style: TextStyle(color: colors.textSecondary),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => showAppTutorial(context),
+                ),
+              ]),
+              const SizedBox(height: 24),
 
               if (user != null) ...[
                 Text(AppLocalizations.of(context)!.privacy,
