@@ -377,5 +377,8 @@
   "loadingBlockedUsers": "Blockierte Personen werden geladen…",
   "loadingLiveBuses": "Live-Busse werden aktualisiert…",
   "preparingImage": "Bild wird vorbereitet…",
-  "findingStations": "Haltestellen und Orte werden gesucht…"
+  "findingStations": "Haltestellen und Orte werden gesucht…",
+  "originalConnection": "Ursprüngliche Verbindung",
+  "beforeOriginalConnection": "Frühere Abfahrten",
+  "afterOriginalConnection": "Zeitgleiche oder spätere Abfahrten"
 }

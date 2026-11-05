@@ -296,9 +296,9 @@ ScrollableState _tabStripScrollable(WidgetTester tester) => tester.state(
 /// The scrollable behind whichever route view is on screen: the opened journey
 /// or the route candidates list.
 ScrollController _routeViewScrollController(WidgetTester tester) => tester
-    .widget<ListView>(find.descendant(
+    .widget<ScrollView>(find.descendant(
       of: find.byType(RefreshIndicator),
-      matching: find.byType(ListView),
+      matching: find.byWidgetPredicate((widget) => widget is ScrollView),
     ))
     .controller!;
 

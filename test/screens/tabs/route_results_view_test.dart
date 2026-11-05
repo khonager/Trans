@@ -154,7 +154,7 @@ Future<_RouteResultsHarnessState> _pumpHarness(
   WidgetTester tester,
   Iterable<Journey> candidates,
 ) {
-  final listRect = tester.getRect(find.byType(ListView));
+  final listRect = tester.getRect(find.byType(CustomScrollView));
   for (final journey in candidates) {
     final label = journey.steps.first.line;
     final finder = find.text(label);
@@ -168,6 +168,17 @@ Future<_RouteResultsHarnessState> _pumpHarness(
 }
 
 void main() {
+  testWidgets('result count scrolls away while Back stays accessible',
+      (tester) async {
+    final key = GlobalKey<_RouteResultsHarnessState>();
+    final state = await _pumpHarness(tester, key);
+    expect(find.text('10 Routes Found').hitTestable(), findsOneWidget);
+    state.controller.jumpTo(400);
+    await tester.pumpAndSettle();
+    expect(find.text('10 Routes Found').hitTestable(), findsNothing);
+    expect(find.byIcon(Icons.arrow_back).hitTestable(), findsOneWidget);
+  });
+
   testWidgets('shows both coupled lines in the initial route results',
       (tester) async {
     final key = GlobalKey<_RouteResultsHarnessState>();

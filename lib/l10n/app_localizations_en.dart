@@ -1273,4 +1273,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get findingStations => 'Finding stations and places…';
+
+  @override
+  String get originalConnection => 'Original connection';
+
+  @override
+  String get beforeOriginalConnection => 'Earlier departures';
+
+  @override
+  String get afterOriginalConnection => 'Same time or later departures';
 }

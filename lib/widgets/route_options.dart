@@ -240,13 +240,14 @@ class _KnownLinesPanelState extends State<KnownLinesPanel> {
     });
     return _RouteOptionsTheme(
       child: Card(
-        margin: const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 8),
         child: Column(
           children: [
             ListTile(
               leading: const _RouteOptionsIcon(Icons.directions_bus_outlined),
+              dense: true,
+              visualDensity: VisualDensity.compact,
               title: Text(l10n.usefulLines),
-              subtitle: Text(l10n.usefulLinesExplanation),
               trailing: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
               onTap: () {
                 setState(() => _expanded = !_expanded);
@@ -259,6 +260,8 @@ class _KnownLinesPanelState extends State<KnownLinesPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(l10n.usefulLinesExplanation),
+                    const SizedBox(height: 8),
                     if (_loadingDiscovery)
                       const Padding(
                         padding: EdgeInsets.only(bottom: 12),

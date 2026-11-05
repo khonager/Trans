@@ -1281,4 +1281,13 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get findingStations => 'Haltestellen und Orte werden gesucht…';
+
+  @override
+  String get originalConnection => 'Ursprüngliche Verbindung';
+
+  @override
+  String get beforeOriginalConnection => 'Frühere Abfahrten';
+
+  @override
+  String get afterOriginalConnection => 'Zeitgleiche oder spätere Abfahrten';
 }

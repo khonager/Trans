@@ -753,9 +753,9 @@ class _RouteResultsViewState extends State<RouteResultsView> {
       children: [
         Column(
           children: [
-            // Header with Back button and Title
+            // Keep Back and sorting accessible while the summary scrolls away.
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+              padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
               child: Row(
                 children: [
                   IconButton(
@@ -764,16 +764,21 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                     onPressed: widget.onBack,
                   ),
                   Expanded(
-                    child: Text(
-                      AppLocalizations.of(context)!
-                          .routesFound(widget.candidates.length.toString()),
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: colors.textPrimary,
-                      ),
+                      child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: <Widget>[
+                        for (var index = 0;
+                            index < _sortOrder.length;
+                            index++) ...[
+                          if (index > 0) const SizedBox(width: 8),
+                          _buildReorderableSortChip(context, _sortOrder[index]),
+                        ],
+                      ],
                     ),
-                  ),
+                  )),
                   if (kDebugMode)
                     IconButton(
                       tooltip: 'Copy debug logs',
@@ -785,29 +790,6 @@ class _RouteResultsViewState extends State<RouteResultsView> {
               ),
             ),
 
-            // Sorting Options
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: <Widget>[
-                  for (var index = 0; index < _sortOrder.length; index++) ...[
-                    if (index > 0) const SizedBox(width: 8),
-                    _buildReorderableSortChip(context, _sortOrder[index]),
-                  ],
-                ],
-              ),
-            ),
-            if (widget.origin != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: KnownLinesPanel(
-                  origin: widget.origin!,
-                  destination: widget.destination,
-                  candidates: widget.candidates,
-                  sampleDate: widget.searchDate ?? _fallbackSearchDate,
-                ),
-              ),
             if (showBackgroundLoadingSpace)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -826,104 +808,144 @@ class _RouteResultsViewState extends State<RouteResultsView> {
                 onRefresh: _handleRefresh,
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _debugHandleScrollNotification,
-                  child: ListView.builder(
+                  child: CustomScrollView(
                     key: _listKey,
                     controller: widget.scrollController,
                     cacheExtent: _routeResultsAnchorCacheExtent,
-                    findChildIndexCallback: _findJourneyChildIndex,
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      16,
-                      16,
-                      _routeResultsBottomInset +
-                          MediaQuery.paddingOf(context).bottom,
-                    ),
-                    // Items: "Load Earlier" button + routes + "Load Later" button
-                    itemCount: _sortedCandidates.length + 3,
-                    itemBuilder: (ctx, idx) {
-                      if (idx == 0) {
-                        // Load Earlier Button
-                        return Center(
-                          key: const ValueKey<String>(
-                            'route-results-load-earlier',
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: SizedBox(
-                              height: 36,
-                              child: Center(
-                                child: _isLoadingMoreEarlier
-                                    ? _LoadTrigger(
-                                        label: AppLocalizations.of(context)!
-                                            .findingEarlierAlternatives,
-                                        icon: Icons.keyboard_arrow_up,
-                                        onTap: null,
-                                        isLoading: true,
-                                        loadingColor:
-                                            widget.loadingIndicatorColor,
-                                      )
-                                    : _LoadTrigger(
-                                        label: AppLocalizations.of(context)!
-                                            .loadEarlier,
-                                        icon: Icons.keyboard_arrow_up,
-                                        onTap: _handleLoadEarlier,
-                                      ),
-                              ),
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                          child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                AppLocalizations.of(context)!.routesFound(
+                                    widget.candidates.length.toString()),
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.textPrimary,
+                                ),
+                              )),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                          child: Column(children: [
+                        if (widget.origin != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: KnownLinesPanel(
+                              origin: widget.origin!,
+                              destination: widget.destination,
+                              candidates: widget.candidates,
+                              sampleDate:
+                                  widget.searchDate ?? _fallbackSearchDate,
                             ),
                           ),
-                        );
-                      }
-
-                      if (idx == _sortedCandidates.length + 1) {
-                        // Load Later Button
-                        return Center(
-                          key: const ValueKey<String>(
-                            'route-results-load-later',
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: _isLoadingMoreLater
-                                ? _LoadTrigger(
-                                    label: AppLocalizations.of(context)!
-                                        .findingLaterAlternatives,
-                                    icon: Icons.keyboard_arrow_down,
-                                    onTap: null,
-                                    isLoading: true,
-                                    loadingColor: widget.loadingIndicatorColor,
-                                  )
-                                : _LoadTrigger(
-                                    label:
-                                        AppLocalizations.of(context)!.loadLater,
-                                    icon: Icons.keyboard_arrow_down,
-                                    onTap: _handleLoadLater,
+                      ])),
+                      SliverPadding(
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          16,
+                          16,
+                          _routeResultsBottomInset +
+                              MediaQuery.paddingOf(context).bottom,
+                        ),
+                        sliver: SliverList.builder(
+                          findChildIndexCallback: _findJourneyChildIndex,
+                          itemCount: _sortedCandidates.length + 3,
+                          itemBuilder: (ctx, idx) {
+                            if (idx == 0) {
+                              // Load Earlier Button
+                              return Center(
+                                key: const ValueKey<String>(
+                                  'route-results-load-earlier',
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.only(bottom: 8.0),
+                                  child: SizedBox(
+                                    height: 36,
+                                    child: Center(
+                                      child: _isLoadingMoreEarlier
+                                          ? _LoadTrigger(
+                                              label: AppLocalizations.of(
+                                                      context)!
+                                                  .findingEarlierAlternatives,
+                                              icon: Icons.keyboard_arrow_up,
+                                              onTap: null,
+                                              isLoading: true,
+                                              loadingColor:
+                                                  widget.loadingIndicatorColor,
+                                            )
+                                          : _LoadTrigger(
+                                              label:
+                                                  AppLocalizations.of(context)!
+                                                      .loadEarlier,
+                                              icon: Icons.keyboard_arrow_up,
+                                              onTap: _handleLoadEarlier,
+                                            ),
+                                    ),
                                   ),
-                          ),
-                        );
-                      }
+                                ),
+                              );
+                            }
 
-                      if (idx == _sortedCandidates.length + 2) {
-                        final origin = widget.origin;
-                        if (origin == null) return const SizedBox.shrink();
-                        return _ExternalPlannerActions(
-                          key: const ValueKey<String>(
-                            'route-results-external-planners',
-                          ),
-                          origin: origin,
-                          destination: widget.destination,
-                          when: _externalSearchTime,
-                          onOpen: _openExternalPlanner,
-                        );
-                      }
+                            if (idx == _sortedCandidates.length + 1) {
+                              // Load Later Button
+                              return Center(
+                                key: const ValueKey<String>(
+                                  'route-results-load-later',
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 8.0),
+                                  child: _isLoadingMoreLater
+                                      ? _LoadTrigger(
+                                          label: AppLocalizations.of(context)!
+                                              .findingLaterAlternatives,
+                                          icon: Icons.keyboard_arrow_down,
+                                          onTap: null,
+                                          isLoading: true,
+                                          loadingColor:
+                                              widget.loadingIndicatorColor,
+                                        )
+                                      : _LoadTrigger(
+                                          label: AppLocalizations.of(context)!
+                                              .loadLater,
+                                          icon: Icons.keyboard_arrow_down,
+                                          onTap: _handleLoadLater,
+                                        ),
+                                ),
+                              );
+                            }
 
-                      final journey = _sortedCandidates[idx - 1];
-                      return _JourneyCard(
-                        key: _journeyCardKeyFor(journey),
-                        journey: journey,
-                        onTap: () => widget.onSelect(journey),
-                        onCopy: () => _handleCopyJourney(journey),
-                        showTrainNumbers: widget.showTrainNumbers,
-                      );
-                    },
+                            if (idx == _sortedCandidates.length + 2) {
+                              final origin = widget.origin;
+                              if (origin == null) {
+                                return const SizedBox.shrink();
+                              }
+                              return _ExternalPlannerActions(
+                                key: const ValueKey<String>(
+                                  'route-results-external-planners',
+                                ),
+                                origin: origin,
+                                destination: widget.destination,
+                                when: _externalSearchTime,
+                                onOpen: _openExternalPlanner,
+                              );
+                            }
+
+                            final journey = _sortedCandidates[idx - 1];
+                            return _JourneyCard(
+                              key: _journeyCardKeyFor(journey),
+                              journey: journey,
+                              onTap: () => widget.onSelect(journey),
+                              onCopy: () => _handleCopyJourney(journey),
+                              showTrainNumbers: widget.showTrainNumbers,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

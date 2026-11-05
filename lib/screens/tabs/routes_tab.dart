@@ -13179,8 +13179,7 @@ class _AlternativesSheet extends StatefulWidget {
   /// are only dimmed and never recommended.
   final DateTime? earliestDeparture;
 
-  /// The ride this sheet was opened from. It is filtered out, because the trip
-  /// the traveller is already on is not an alternative to itself.
+  /// The ride this sheet was opened from, shown as the reference row.
   final String? currentTripId;
   final String? currentLine;
 
@@ -13212,6 +13211,10 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
   /// Set once the traveller asked for the earlier departures that the cap
   /// keeps out of the way.
   bool _showAllEarlier = false;
+  final _originalSliverKey = GlobalKey();
+
+  bool get _hasOriginal =>
+      widget.currentLine != null || widget.currentTripId != null;
 
   final List<Map<String, dynamic>> _results = [];
   bool _isLoading = true;
@@ -13238,6 +13241,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
     if (mounted) {
       setState(() {
         _isLoading = _results.isEmpty;
+        _isMoreLoading = true;
         _loadingEarlier = false;
       });
     }
@@ -13309,7 +13313,12 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
         });
       }
     } finally {
-      if (mounted) setState(() => _isMoreLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isMoreLoading = false;
+        });
+      }
     }
   }
 
@@ -13425,7 +13434,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
             label: Text(l10n.onThisBus),
           ),
         const SizedBox(height: 8),
-        if (_isLoading)
+        if (_isLoading && !_hasOriginal)
           Expanded(
               child: Center(
                   child: LoadingStatus(
@@ -13434,7 +13443,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                 : l10n.findingLaterAlternatives,
             color: colors.textPrimary,
           )))
-        else if (_error != null && _results.isEmpty)
+        else if (_error != null && _results.isEmpty && !_hasOriginal)
           Expanded(
               child: Center(
                   child: Padding(
@@ -13449,7 +13458,7 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                             icon: const Icon(Icons.refresh),
                             label: Text(l10n.retry))
                       ]))))
-        else if (_results.isEmpty)
+        else if (_results.isEmpty && !_hasOriginal)
           Expanded(child: Center(child: Text(l10n.noRoutesFound)))
         else
           Expanded(
@@ -13463,37 +13472,109 @@ class _AlternativesSheetState extends State<_AlternativesSheet> {
                       selectable,
                       reference: widget.initialTime,
                     );
-              const leadingCount = 1;
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: visible.length + leadingCount + 1,
-                itemBuilder: (ctx, idx) {
-                  if (idx == 0) {
-                    return TextButton.icon(
-                        style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12)),
-                        onPressed: _isMoreLoading ? null : _loadEarlier,
-                        icon: const Icon(Icons.history, size: 18),
-                        label: Text(l10n.loadEarlier));
-                  }
-                  if (idx == visible.length + leadingCount) {
-                    return TextButton.icon(
-                        style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12)),
-                        onPressed: _isMoreLoading ? null : _loadLater,
-                        icon: const Icon(Icons.update, size: 18),
-                        label: Text(l10n.loadLater));
-                  }
-
-                  final journey = visible[idx - leadingCount];
-                  return _buildJourneyTile(
+              final earlier = visible
+                  .where((j) => _getDepTime(j).isBefore(widget.initialTime))
+                  .toList();
+              final later = visible
+                  .where((j) => !_getDepTime(j).isBefore(widget.initialTime))
+                  .toList();
+              Widget tile(Map<String, dynamic> journey) => _buildJourneyTile(
                     context,
                     journey,
                     highlighted:
                         alternativeRideKey(journey) == _highlightedKey(),
                     reachable: _isReachable(journey),
                   );
-                },
+              Widget heading(String text) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Row(children: [
+                      const Expanded(child: Divider()),
+                      const SizedBox(width: 8),
+                      Flexible(
+                          flex: 4,
+                          child: Text(text,
+                              style: TextStyle(
+                                  color: colors.textSecondary, fontSize: 12))),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Divider()),
+                    ]),
+                  );
+              final before = <Widget>[
+                TextButton.icon(
+                  onPressed: _isMoreLoading ? null : _loadEarlier,
+                  icon: const Icon(Icons.history, size: 18),
+                  label: Text(l10n.loadEarlier),
+                ),
+                if (_hasOriginal) heading(l10n.beforeOriginalConnection),
+                ...earlier.map(tile),
+              ];
+              return CustomScrollView(
+                // Earlier results grow upwards without moving the original
+                // departure from the initial viewport, even during streaming.
+                center: _hasOriginal ? _originalSliverKey : null,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    sliver: SliverList.list(
+                        children:
+                            _hasOriginal ? before.reversed.toList() : before),
+                  ),
+                  SliverPadding(
+                    key: _originalSliverKey,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    sliver: SliverList.list(children: [
+                      if (_hasOriginal)
+                        Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text('↑ ${l10n.beforeOriginalConnection}',
+                                  style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 12)),
+                            )),
+                      if (_hasOriginal)
+                        Container(
+                          key:
+                              const ValueKey('original-alternative-connection'),
+                          decoration: BoxDecoration(
+                            color: colors.effectiveSeed.withValues(alpha: 0.12),
+                            border: Border.all(color: colors.effectiveSeed),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            leading: Icon(Icons.trip_origin,
+                                color: colors.effectiveSeed),
+                            title: Text(l10n.originalConnection,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Text(
+                                '${widget.currentLine ?? ""} · ${widget.from.name}'),
+                            trailing: Text(
+                                DateFormat('HH:mm').format(widget.initialTime),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      if (_hasOriginal) heading(l10n.afterOriginalConnection),
+                      ...later.map(tile),
+                      if (_isLoading)
+                        LoadingStatus(
+                            message: l10n.findingLaterAlternatives,
+                            compact: true),
+                      if (_error != null) ...[
+                        Text(errorMessage ?? l10n.noRoutesFoundBusy),
+                        TextButton(
+                            onPressed: _fetchInitial, child: Text(l10n.retry)),
+                      ],
+                      TextButton.icon(
+                        onPressed: _isMoreLoading ? null : _loadLater,
+                        icon: const Icon(Icons.update, size: 18),
+                        label: Text(l10n.loadLater),
+                      ),
+                    ]),
+                  ),
+                ],
               );
             }),
           ),

@@ -2329,6 +2329,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Finding stations and places…'**
   String get findingStations;
+
+  /// No description provided for @originalConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Original connection'**
+  String get originalConnection;
+
+  /// No description provided for @beforeOriginalConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier departures'**
+  String get beforeOriginalConnection;
+
+  /// No description provided for @afterOriginalConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Same time or later departures'**
+  String get afterOriginalConnection;
 }
 
 class _AppLocalizationsDelegate

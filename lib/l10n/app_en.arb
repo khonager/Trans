@@ -779,5 +779,8 @@
   "loadingBlockedUsers": "Loading blocked users…",
   "loadingLiveBuses": "Updating live buses…",
   "preparingImage": "Preparing image…",
-  "findingStations": "Finding stations and places…"
+  "findingStations": "Finding stations and places…",
+  "originalConnection": "Original connection",
+  "beforeOriginalConnection": "Earlier departures",
+  "afterOriginalConnection": "Same time or later departures"
 }
