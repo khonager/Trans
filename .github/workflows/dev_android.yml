@@ -5,8 +5,13 @@ on:
     branches: ["unstable"]
   workflow_dispatch:
 
+concurrency:
+  group: trans-dev-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    if: github.ref == 'refs/heads/unstable'
     name: Build Dev APK
     runs-on: ubuntu-latest
 
@@ -34,11 +39,21 @@ jobs:
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "PORTFOLIO_BRIDGE_BASE_URL=${{ secrets.PORTFOLIO_BRIDGE_BASE_URL }}" >> .env
 
+      - name: Prepare development version
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version: \([^+]*\)+.*$/\1/p' pubspec.yaml)
+          test -n "$version"
+          echo "DEV_VERSION=$version-dev.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          # Keep development codes above historical pubspec build numbers.
+          echo "DEV_BUILD_NUMBER=$((100000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
       - name: Build APK
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --flavor unstable --dart-define=IS_DEV=true
+          flutter build apk --release --flavor unstable --dart-define=IS_DEV=true \
+            --build-name "$DEV_VERSION" --build-number "$DEV_BUILD_NUMBER"
 
       - name: Debug Build Output on Failure
         if: failure()
@@ -56,17 +71,8 @@ jobs:
         run: |
           BUILD_TOOLS_PATH=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
 
-          # Find flavored APK in the entire runner workspace
-          APK_PATH=$(find /home/runner/work/Trans -name "*unstable-release.apk" | grep -v "intermediates" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            # Fallback to any release APK
-            APK_PATH=$(find /home/runner/work/Trans -name "*-release.apk" | grep -v "intermediates" | head -n 1)
-          fi
-
-          if [ -z "$APK_PATH" ]; then
-            echo "Error: APK not found"
-            exit 1
-          fi
+          APK_PATH=build/app/outputs/flutter-apk/app-unstable-release.apk
+          test -s "$APK_PATH"
 
           KEY_ALIAS=$(echo "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r' | tr -d '\n')
           KS_PASS=$(echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r' | tr -d '\n')
@@ -79,7 +85,7 @@ jobs:
             --key-pass "pass:$KEY_PASS" \
             "$APK_PATH"
 
-          # Rename with -dev and build number
+          # Each release has its own immutable download URL.
           APK_DIR=$(dirname "$APK_PATH")
           mv "$APK_PATH" "$APK_DIR/trans-dev.apk"
           echo "SIGNED_APK_PATH=$APK_DIR/trans-dev.apk" >> $GITHUB_ENV
@@ -90,19 +96,17 @@ jobs:
           name: trans-dev-${{ github.run_number }}
           path: ${{ env.SIGNED_APK_PATH }}
 
-      - name: Delete Old Dev Release
-        uses: dev-drprasad/delete-older-releases@v0.3.3
-        with:
-          keep_latest: 0
-          delete_tag_pattern: dev-latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Create Dev Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-latest
-          name: Latest Dev Build
+          tag_name: dev-${{ github.run_number }}-${{ github.run_attempt }}
+          target_commitish: ${{ github.sha }}
+          name: Trans ${{ env.DEV_VERSION }}
+          body: |
+            Development APK built from ${{ github.sha }}.
+            Build: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          make_latest: false
+          fail_on_unmatched_files: true
           prerelease: true
           files: ${{ env.SIGNED_APK_PATH }}
         env:
